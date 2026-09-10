@@ -1,0 +1,42 @@
+{
+  "name": "people-experience",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "server": "node server/server.js",
+    "client": "vite --host 0.0.0.0 --port 3000",
+    "dev": "concurrently \"node server/server.js\" \"vite --host 0.0.0.0 --port 3000\"",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "mssql": "^12.7.0",
+    "multer": "^2.3.0",
+    "pptxgenjs": "^4.0.1",
+    "qrcode": "^1.5.4",
+    "uuid": "^14.0.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^6.1.1",
+    "autoprefixer": "^10.5.4",
+    "clsx": "^2.1.1",
+    "concurrently": "^10.0.5",
+    "lucide-react": "^1.37.0",
+    "postcss": "^8.5.26",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "recharts": "^3.10.1",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.2.2"
+  }
+}
