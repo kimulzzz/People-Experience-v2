@@ -237,6 +237,19 @@ domain model, not just descriptive:
   `tests/regressionTest.js` gained Module 26 (3 positive tests). Verified by running the
   full suite twice in a row (88/88 PASS both times) with the Signature Program Events count
   staying at the clean baseline of 2 across both runs.
+- **v2.17.0** (2026-09-24, see `CHANGELOG.md` and `docs/05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md`
+  §3.8): User asked for a new "Glossary" tab, themed to match the main app, sourced from
+  `docs/People_Experience_Glossary_Full_Text.xlsx` (44 terms, 2-column Istilah/Definisi
+  format the user prepared). New `GlossaryView.jsx` embeds all 44 terms directly (this is a
+  static reference dictionary, not operational data, so no API/database layer needed) grouped
+  into 7 categories — Framework & Konsep Inti (14) and Tools & Sistem (3), plus one group per
+  Employee Journey (Arrival 4, Connect 8, Belong 7, Contribute 5, Depart 3) — reusing the exact
+  journey color palette from `docs/05` §4 (Orange/Amber/Purple/Teal/Magenta) so the tab reads
+  as part of the same app, not a bolted-on page. Search box filters by term or definition text
+  client-side; category filter chips reuse the exact pill-button pattern from `Calculator.jsx`'s
+  Journey filters (solid `backgroundColor` when active, count badge). Wired into `Header.jsx`
+  (new nav button, `BookMarked` icon) and `App.jsx` (`activeTab === 'glossary'`). Purely
+  frontend/static — no backend changes, so the regression suite stayed at 88/88 PASS.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

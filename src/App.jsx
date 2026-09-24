@@ -15,6 +15,7 @@ import AdminSurveyQuestionsModal from './components/AdminSurveyQuestionsModal';
 import AdminParametersModal from './components/AdminParametersModal';
 import PublicCheckInForm from './components/PublicCheckInForm';
 import PublicFeedbackForm from './components/PublicFeedbackForm';
+import GlossaryView from './components/GlossaryView';
 
 // Derived from the real browser clock (not a frozen literal) so the Dashboard's default year
 // tracks forward automatically instead of silently staying on a past year — this mirrors the
@@ -347,6 +348,8 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {activeTab === 'glossary' && <GlossaryView />}
 
       </main>
 

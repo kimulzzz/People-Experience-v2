@@ -4,6 +4,18 @@ Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Managemen
 
 ---
 
+## [2.17.0] - 2026-09-24
+
+### 📖 Tab Baru: People Experience Glossary (Added)
+- **Permintaan pengguna**: menambahkan tab kamus istilah People Experience, dengan tema visual yang nyambung dengan menu utama, bersumber dari daftar istilah yang sudah disiapkan pengguna di `docs/People_Experience_Glossary_Full_Text.xlsx` (44 istilah, format 2 kolom Istilah/Definisi).
+- **Komponen baru `GlossaryView.jsx`**: menampilkan seluruh 44 istilah, dikelompokkan ke dalam 7 kategori — **Framework & Konsep Inti** (14, aksen Deep Maroon `#780000`), **Tools & Sistem** (3, Royal Blue `#2563EB`), dan 5 grup mengikuti Employee Journey yang sudah ada di seluruh aplikasi — **Arrival** (4, Orange `#FF8000`), **Connect** (8, Amber `#F7901E`), **Belong** (7, Purple `#6716C4`), **Contribute** (5, Teal `#16C0B7`), **Depart** (3, Magenta `#C1009D`) — memakai palet warna Journey yang identik dengan kartu Journey di Dashboard & filter di Explore Metrics (`docs/05` §4 CIMB Brand Digital Guidelines), sehingga tab ini terasa senada dengan menu utama, bukan halaman terpisah.
+- **Pencarian & filter kategori**: search box mencocokkan nama istilah maupun isi definisi secara real-time; filter chip kategori memakai pola pill-button yang identik dengan filter Journey di Explore Metrics (warna solid saat aktif, badge jumlah istilah).
+- **Navigasi**: tab baru "Glossary" (ikon `BookMarked`) ditambahkan ke `Header.jsx` mengikuti pola tab lain (Dashboard & Trends, Explore Metrics, Signature Program Events, Action Library & AI Alerts), dirutekan di `App.jsx` sebagai `activeTab === 'glossary'`.
+- **Sepenuhnya frontend/statis** — tidak ada endpoint API baru; data istilah di-embed langsung di komponen (bersumber dari file Excel yang disediakan pengguna) karena kontennya adalah kamus istilah framework yang tidak berubah dari sesi ke sesi, bukan data operasional yang perlu di-CRUD dari database.
+- **Verifikasi**: `node tests/regressionTest.js` → **88/88 PASS** (tidak ada perubahan backend). Dicek langsung di Browser: seluruh 44 istilah tampil terkelompok benar, pencarian ("recognition") mencocokkan lintas istilah & definisi dengan tepat, dan warna kategori tampil konsisten dengan Dashboard.
+
+---
+
 ## [2.16.0] - 2026-09-22
 
 ### 🕵️ Audit Menyeluruh: Menghapus Sisa Hardcode di Seluruh Web (Fixed)

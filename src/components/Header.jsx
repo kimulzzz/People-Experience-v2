@@ -9,7 +9,8 @@ import {
   Sliders,
   Building2,
   GitBranch,
-  Clock
+  Clock,
+  BookMarked
 } from 'lucide-react';
 import CimbLogo from './CimbLogo';
 
@@ -321,6 +322,18 @@ export default function Header({
           >
             <Sparkles className="w-4 h-4" />
             <span>Action Library & AI Alerts</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('glossary')}
+            className={`px-4 py-2 text-xs font-semibold rounded-md flex items-center space-x-2 transition ${
+              activeTab === 'glossary'
+                ? 'bg-red-50 text-[#ED1C24] font-bold'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+            }`}
+          >
+            <BookMarked className="w-4 h-4" />
+            <span>Glossary</span>
           </button>
         </div>
 
