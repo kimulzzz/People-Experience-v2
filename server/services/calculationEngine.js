@@ -2,6 +2,21 @@
 const storage = require('../db/storage');
 const { getQuestionsForMetric } = require('./metricQuestionService');
 
+// Default year for YTD/unparseable period requests, derived from the real server clock
+// instead of a hardcoded literal — this dataset happens to be seeded for 2026 (today's real
+// year while this app is in active use), so this resolves to '2026' today and will track
+// forward automatically rather than silently freezing on a past year.
+const CURRENT_YEAR = String(new Date().getFullYear());
+
+// Real "today" as YYYY-MM-DD, used as the last-resort fallback when a metric/response has no
+// real date at all (e.g. a brand-new metric created via Admin with no survey/ingestion history
+// yet) — instead of a frozen calendar literal that would otherwise display as a permanently
+// stale "last updated" date once that specific day has passed.
+function todayDateString() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 /**
  * Normalizes raw metric value into 0-100 scale based on scale type.
  */
@@ -24,6 +39,18 @@ function normalizeScore(metric, rawValue = null) {
     default:
       return Math.min(Math.max(value, 0), 100);
   }
+}
+
+/**
+ * Converts a metric's target_value into the same normalized 0-100 scale as
+ * normalizeScore()'s output, so status thresholds can compare apples to apples.
+ * Without this, a RATING_5 metric's raw target (e.g. 4.00 on a 1-5 scale) was being
+ * compared directly against a 0-100 normalized score — a target of "4" is virtually
+ * never exceeded by a 0-100 value, so the WARNING band silently never triggered for
+ * any RATING_5/QUOTA_COUNT metric (only CRITICAL vs HEALTHY was reachable).
+ */
+function normalizeTarget(metric, targetConfig) {
+  return normalizeScore({ ...metric, ...targetConfig }, parseFloat(targetConfig.target_value || 0));
 }
 
 /**
@@ -56,7 +83,13 @@ function syncLiveEventMetrics() {
 
   if (totalAttendees > 0) {
     const avgAttendance = totalAttendees / events.length;
-    const normScore = Math.min((avgAttendance / 500) * 100, 100);
+    // Denominator is Metric 11's own admin-configurable target (Admin Parameters →
+    // Target Nilai), not a frozen literal — so editing the target there immediately changes
+    // how live event attendance is normalized, instead of silently comparing against a stale
+    // hardcoded quota.
+    const metric11Target = storage.getMetricTargetById(11) || storage.getMetricById(11);
+    const quotaTarget = parseFloat((metric11Target && metric11Target.target_value) || 500);
+    const normScore = quotaTarget > 0 ? Math.min((avgAttendance / quotaTarget) * 100, 100) : 0;
     storage.updateMetricScore(11, avgAttendance, normScore, 'Calculated from live event registrations');
   }
 
@@ -118,69 +151,155 @@ function normalizeDateString(dateVal) {
   return str;
 }
 
+const MONTH_NAMES_ID = [
+  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+];
+
 /**
- * Computes 12-month trend progression for 2026 with support for filter options.
+ * Determines the last COMPLETE calendar month (1-based, e.g. 8 = August) for a given target
+ * year, relative to the real server clock. A month in progress isn't final yet, so it (and
+ * anything after it) is never eligible to appear on the Performance Trend chart:
+ * - Target year in the past → the whole year (12) already happened.
+ * - Target year in the future → nothing has happened yet (0 — no valid months).
+ * - Target year = this year → up through last month (this month is still in progress).
+ */
+function getLastCompleteMonth(targetYear) {
+  const today = new Date();
+  const todayYear = today.getFullYear();
+  const y = parseInt(targetYear, 10);
+  if (y < todayYear) return 12;
+  if (y > todayYear) return 0;
+  return today.getMonth(); // 0-based getMonth() == 1-based number of the PREVIOUS month
+}
+
+/**
+ * Clamps a (year, month) pair so it never points at the current in-progress month or any
+ * future month — walking backward a year at a time if the whole requested year hasn't
+ * happened yet (e.g. requesting 2027 today resolves to December of the last real year).
+ */
+function clampToCompleteMonth(year, month) {
+  let y = parseInt(year, 10);
+  let m = parseInt(month, 10);
+  if (!Number.isFinite(y)) y = parseInt(CURRENT_YEAR, 10);
+  if (!Number.isFinite(m)) m = 1;
+
+  let lastComplete = getLastCompleteMonth(y);
+  // Walk backward through fully-future years until we land on one with at least one
+  // complete month (guards against pathological input like year 3000).
+  let guard = 0;
+  while (lastComplete < 1 && guard < 50) {
+    y -= 1;
+    lastComplete = getLastCompleteMonth(y);
+    guard += 1;
+  }
+  m = Math.min(Math.max(m, 1), lastComplete || 12);
+  return { year: y, month: m };
+}
+
+/**
+ * Builds an inclusive, chronologically-ordered list of {year, month} pairs from a start
+ * point through an end point — the backbone of cross-year Performance Trend ranges (e.g.
+ * November 2025 s/d Februari 2026). Capped at 240 months (20 years) as a sanity guard
+ * against runaway input.
+ */
+function buildMonthRange(startYear, startMonth, endYear, endMonth) {
+  const pairs = [];
+  let y = startYear;
+  let m = startMonth;
+  let guard = 0;
+  while ((y < endYear || (y === endYear && m <= endMonth)) && guard < 240) {
+    pairs.push({ year: y, month: m });
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+    guard += 1;
+  }
+  return pairs;
+}
+
+/**
+ * Computes a Performance Trend progression across a caller-chosen date range — which CAN
+ * span multiple years (e.g. November 2025 s/d Februari 2026) — never including the current
+ * in-progress month or any future month, since that data isn't final yet.
+ *
+ * `filterOptions.mode` controls the shape of each point, mirroring the Dashboard's YTD/MTD
+ * toggle:
+ * - `'YTD'` (default): each point is the CUMULATIVE Year-to-Date average from January of
+ *   ITS OWN year through that month — a running progression that resets every January 1st
+ *   (standard YTD reporting convention), converging toward that year's final YTD figure.
+ *   A cross-year range therefore shows each year's own YTD curve back-to-back, not one
+ *   running total spanning both years (which wouldn't be a meaningful "YTD" any more).
+ * - `'MTD'`: each point is that SINGLE month's own standalone average — pure month-to-month
+ *   movement, independent of any other month, so a cross-year range here is trivial.
+ *
+ * Range params (1-based month strings/numbers, e.g. "01".."12"):
+ * - `filterOptions.year` / `filterOptions.startMonth` — default start (year defaults to the
+ *   real current year, startMonth defaults to January of that year).
+ * - `filterOptions.endYear` / `filterOptions.endMonth` — default end (defaults to the last
+ *   complete month of `filterOptions.year`). `endYear`/`endMonth` are ALWAYS clamped so the
+ *   range can never reach an in-progress or future month, however far it's requested to go.
+ * - `filterOptions.startYear` overrides the start year independently of `filterOptions.year`
+ *   (which remains the scorecard's own primary year) — this is what enables a genuinely
+ *   cross-year range from the chart's period-range filter.
  */
 function computeMonthlyTrends(filterOptions = {}) {
-  const monthNames = [
-    'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-    'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
-  ];
-  const monthCodes = [
-    '2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06',
-    '2026-07', '2026-08', '2026-09', '2026-10', '2026-11', '2026-12'
-  ];
-
   const directorate = filterOptions.directorate || 'ALL';
   const subDirectorate = filterOptions.sub_directorate || filterOptions.subDirectorate || 'ALL';
+  const trendMode = (filterOptions.mode || 'YTD').toUpperCase() === 'MTD' ? 'MTD' : 'YTD';
 
-  return monthCodes.map((code, idx) => {
-    const responsesInMonth = storage.getAllResponsesByPeriod({
-      mode: 'MTD',
-      year: '2026',
-      month: String(idx + 1).padStart(2, '0'),
-      period: code,
-      directorate,
-      sub_directorate: subDirectorate
-    });
-    const hasData = responsesInMonth.length > 0;
+  // Default year for whichever endpoint isn't explicitly given — the real current year, NOT
+  // a hardcoded '2026', so this keeps working correctly once the calendar moves past 2026.
+  const defaultYear = filterOptions.year ? parseInt(filterOptions.year, 10) : parseInt(CURRENT_YEAR, 10);
 
-    let surveyScore = 0;
-    let outcomeScore = 0;
-    let pxScore = 0;
+  const rawStartYear = filterOptions.startYear ? parseInt(filterOptions.startYear, 10) : defaultYear;
+  const rawStartMonth = filterOptions.startMonth ? parseInt(filterOptions.startMonth, 10) : 1;
+  const rawEndYear = filterOptions.endYear ? parseInt(filterOptions.endYear, 10) : defaultYear;
+  const rawEndMonth = filterOptions.endMonth ? parseInt(filterOptions.endMonth, 10)
+    : getLastCompleteMonth(rawEndYear);
 
-    if (hasData) {
-      // Calculate average score of responses in this month
-      const sum = responsesInMonth.reduce((acc, r) => acc + (parseFloat(r.rating_score) || 0), 0);
-      const avg = sum / responsesInMonth.length;
-      // Normalization factor: if avg <= 5.0 -> (avg/5)*100, else avg
-      surveyScore = avg <= 5.0 ? (avg / 5.0) * 100 : avg;
-      
-      // Progression of outcomes in Q1
-      if (idx === 0) outcomeScore = 87.2;
-      else if (idx === 1) outcomeScore = 88.5;
-      else if (idx === 2) outcomeScore = 89.1;
-      else outcomeScore = 88.0;
+  let start = clampToCompleteMonth(rawStartYear, rawStartMonth);
+  let end = clampToCompleteMonth(rawEndYear, rawEndMonth);
 
-      pxScore = (0.70 * surveyScore) + (0.30 * outcomeScore);
-    } else {
-      // Benchmark projection for remaining months
-      const baselineSurvey = 84.5 + (idx * 0.35);
-      const baselineOutcome = 86.0 + (idx * 0.25);
-      surveyScore = Math.min(baselineSurvey, 92.5);
-      outcomeScore = Math.min(baselineOutcome, 93.0);
-      pxScore = (0.70 * surveyScore) + (0.30 * outcomeScore);
-    }
+  // Reconcile an inverted range (start after end) by swapping, rather than erroring —
+  // callers (including bad/negative-test input) always get a sane, non-crashing response.
+  const startKey = start.year * 100 + start.month;
+  const endKey = end.year * 100 + end.month;
+  if (startKey > endKey) { const tmp = start; start = end; end = tmp; }
+
+  const pairs = buildMonthRange(start.year, start.month, end.year, end.month);
+
+  return pairs.map(({ year, month }) => {
+    const idx = month - 1; // 0-based, for month-name lookup
+    const monthNum = String(month).padStart(2, '0');
+    const yearStr = String(year);
+    const code = `${yearStr}-${monthNum}`;
+
+    // Delegate to calculatePEIndex so every trend point uses the EXACT same per-metric,
+    // weighted, scale-aware normalization as the main scorecard — this is what keeps the
+    // chart consistent with the "CIMB Niaga PX Index" number shown above it (previously this
+    // used a simplistic pooled raw-average across all responses regardless of metric scale
+    // type, which could diverge sharply, e.g. ~59% on the chart vs ~83% YTD scorecard for the
+    // same period). For YTD mode, `endMonth` bounds the cumulative window to Jan..month of
+    // THIS point's own `year` — never spilling over into a prior/next year's data.
+    const periodFilter = trendMode === 'MTD'
+      ? { mode: 'MTD', year: yearStr, month: monthNum, directorate, sub_directorate: subDirectorate }
+      : { mode: 'YTD', year: yearStr, endMonth: monthNum, directorate, sub_directorate: subDirectorate };
+    const periodResult = calculatePEIndex(periodFilter, { skipTrends: true });
+
+    const responseCount = periodResult.metrics
+      .filter(mt => mt.metric_type === 'SURVEY' && !mt.is_disabled)
+      .reduce((sum, mt) => sum + (mt.sample_size || 0), 0);
 
     return {
       month_code: code,
-      month_name: monthNames[idx],
-      has_actual_data: hasData,
-      response_count: responsesInMonth.length,
-      survey_index: parseFloat(surveyScore.toFixed(2)),
-      outcome_index: parseFloat(outcomeScore.toFixed(2)),
-      px_index: parseFloat(pxScore.toFixed(2)),
-      pe_index: parseFloat(pxScore.toFixed(2)) // backward compatibility
+      month_name: MONTH_NAMES_ID[idx],
+      year: yearStr,
+      has_actual_data: responseCount > 0,
+      response_count: responseCount,
+      survey_index: periodResult.survey_index,
+      outcome_index: periodResult.outcome_index,
+      px_index: periodResult.px_index,
+      pe_index: periodResult.px_index // backward compatibility
     };
   });
 }
@@ -192,21 +311,22 @@ function computeMonthlyTrends(filterOptions = {}) {
  * - Directorate / Sub-Directorate: When selected, non-employee metrics (#1-#5) are disabled
  *   and excluded from journey & bankwide PX calculations.
  */
-function calculatePEIndex(filterInput = 'YTD') {
+function calculatePEIndex(filterInput = 'YTD', options = {}) {
   syncLiveEventMetrics();
 
   let mode = 'YTD';
-  let year = '2026';
+  let year = CURRENT_YEAR;
   let month = '01';
   let directorate = 'ALL';
   let subDirectorate = 'ALL';
   let periodString = 'YTD';
+  let endMonth = null;
 
   if (typeof filterInput === 'string') {
     periodString = filterInput.trim();
     if (periodString === 'YTD' || periodString === 'ALL') {
       mode = 'YTD';
-      year = '2026';
+      year = CURRENT_YEAR;
     } else if (/^\d{4}-\d{2}$/.test(periodString)) {
       mode = 'MTD';
       const parts = periodString.split('-');
@@ -217,19 +337,22 @@ function calculatePEIndex(filterInput = 'YTD') {
       year = periodString;
     } else {
       mode = 'YTD';
-      year = '2026';
+      year = CURRENT_YEAR;
     }
   } else if (typeof filterInput === 'object' && filterInput !== null) {
     mode = filterInput.mode || (filterInput.period && /^\d{4}-\d{2}$/.test(filterInput.period) ? 'MTD' : 'YTD');
-    year = filterInput.year ? String(filterInput.year) : (filterInput.period && /^\d{4}/.test(filterInput.period) ? filterInput.period.slice(0, 4) : '2026');
+    year = filterInput.year ? String(filterInput.year) : (filterInput.period && /^\d{4}/.test(filterInput.period) ? filterInput.period.slice(0, 4) : CURRENT_YEAR);
     month = filterInput.month ? String(filterInput.month).padStart(2, '0') : (filterInput.period && filterInput.period.length >= 7 && /^\d{4}-\d{2}/.test(filterInput.period) ? filterInput.period.slice(5, 7) : '01');
     directorate = filterInput.directorate || 'ALL';
     subDirectorate = filterInput.sub_directorate || filterInput.subDirectorate || 'ALL';
     periodString = filterInput.period || (mode === 'MTD' ? `${year}-${month}` : (mode === 'YTD' ? 'YTD' : `${year}`));
+    // Optional upper bound month for a "cumulative YTD as of end of this month" snapshot
+    // (used internally by computeMonthlyTrends — not exposed on the main scorecard).
+    endMonth = filterInput.endMonth ? String(filterInput.endMonth).padStart(2, '0') : null;
   }
 
   const isDirectorateFiltered = directorate && directorate !== 'ALL';
-  const queryFilter = { mode, year, month, directorate, sub_directorate: subDirectorate, period: periodString };
+  const queryFilter = { mode, year, month, directorate, sub_directorate: subDirectorate, period: periodString, endMonth };
 
   const metrics = storage.getMetrics();
   const journeys = storage.getJourneys();
@@ -264,33 +387,26 @@ function calculatePEIndex(filterInput = 'YTD') {
         rawVal = sum / responses.length;
         const lastResp = responses[responses.length - 1];
         const rawDate = lastResp.survey_date || lastResp.created_at;
-        lastSurveyDate = normalizeDateString(rawDate) || '2026-03-20';
+        lastSurveyDate = normalizeDateString(rawDate) || todayDateString();
       } else {
-        lastSurveyDate = normalizeDateString(m.last_survey_date) || '2026-03-20';
+        lastSurveyDate = normalizeDateString(m.last_survey_date) || todayDateString();
       }
     } else {
-      // OUTCOME METRICS
-      const outcomeIngestionDates = {
-        1: '2026-03-24', // Career website & social media
-        3: '2026-03-22', // Success ratio targeted university
-        4: '2026-03-23', // Success ratio candidate by channel
-        10: '2026-03-21', // Internal mobility fulfillment
-        11: '2026-03-15', // Signature program attendance
-        16: '2026-03-24', // Medical check-up & wellness
-        27: '2026-03-25'  // Exit interview completion & turnover
-      };
-      const rawDate = m.last_data_date || m.last_survey_date || outcomeIngestionDates[m.metric_id] || '2026-03-24';
-      lastSurveyDate = normalizeDateString(rawDate) || '2026-03-24';
+      // OUTCOME METRICS — last ingestion date is a real database field (`last_data_date`,
+      // seeded by OUTCOME_INGESTION_DATES in seedData.js, admin-editable via
+      // PUT /api/admin/metrics/:id), not a hardcoded lookup in business logic.
+      const rawDate = m.last_data_date || m.last_survey_date || todayDateString();
+      lastSurveyDate = normalizeDateString(rawDate) || todayDateString();
     }
 
     const normScore = normalizeScore({ ...m, ...targetConfig }, rawVal);
-    const target = parseFloat(targetConfig.target_value || 100);
     const minThreshold = parseFloat(targetConfig.min_threshold || 75);
+    const normalizedTarget = normalizeTarget(m, targetConfig);
 
     let status = 'HEALTHY';
     if (normScore < minThreshold) {
       status = 'CRITICAL';
-    } else if (normScore < target) {
+    } else if (normScore < normalizedTarget) {
       status = 'WARNING';
     }
 
@@ -306,6 +422,7 @@ function calculatePEIndex(filterInput = 'YTD') {
       source_of_data: m.source_of_data,
       experience_owner: m.experience_owner,
       target_value: targetConfig.target_value,
+      target_value_normalized: parseFloat(normalizedTarget.toFixed(2)),
       target_display: targetConfig.target_display,
       min_threshold: targetConfig.min_threshold,
       raw_value: parseFloat(rawVal.toFixed(2)),
@@ -314,7 +431,7 @@ function calculatePEIndex(filterInput = 'YTD') {
       status,
       sample_size: sampleSize,
       last_survey_date: lastSurveyDate,
-      gap: parseFloat((target - normScore).toFixed(2)),
+      gap: parseFloat((normalizedTarget - normScore).toFixed(2)),
       is_employee_metric: isEmployeeMetric,
       target_audience: m.target_audience || (isEmployeeMetric ? 'EMPLOYEE' : 'EXTERNAL_MARKET'),
       is_disabled: isDisabled,
@@ -413,7 +530,11 @@ function calculatePEIndex(filterInput = 'YTD') {
     };
   });
 
-  const monthlyTrends = computeMonthlyTrends(queryFilter);
+  // computeMonthlyTrends() itself calls calculatePEIndex() once per month (with
+  // skipTrends: true) to guarantee the trend chart's numbers are computed via the exact
+  // same per-metric weighted-normalization logic as this scorecard. Skip re-computing
+  // trends on those 12 inner calls, or this would recurse indefinitely.
+  const monthlyTrends = options.skipTrends ? [] : computeMonthlyTrends(queryFilter);
 
   return {
     period: periodString,
@@ -441,6 +562,7 @@ function calculatePEIndex(filterInput = 'YTD') {
     survey_metrics_count: activeSurveyMetrics.length,
     outcome_metrics_count: activeOutcomeMetrics.length,
     monthly_trends: monthlyTrends,
+    available_years: storage.getAvailableSurveyYears(),
     journeys: journeySummaries,
     checkpoints: checkpointSummaries,
     metrics: enrichedMetrics
@@ -461,7 +583,7 @@ function getMetricDetail(metricId, filterInput = 'YTD') {
   if (!metric) return null;
 
   let mode = 'YTD';
-  let year = '2026';
+  let year = CURRENT_YEAR;
   let month = '01';
   let directorate = 'ALL';
   let subDirectorate = 'ALL';
@@ -471,7 +593,7 @@ function getMetricDetail(metricId, filterInput = 'YTD') {
     periodString = filterInput.trim();
     if (periodString === 'YTD' || periodString === 'ALL') {
       mode = 'YTD';
-      year = '2026';
+      year = CURRENT_YEAR;
     } else if (/^\d{4}-\d{2}$/.test(periodString)) {
       mode = 'MTD';
       const parts = periodString.split('-');
@@ -482,11 +604,11 @@ function getMetricDetail(metricId, filterInput = 'YTD') {
       year = periodString;
     } else {
       mode = 'YTD';
-      year = '2026';
+      year = CURRENT_YEAR;
     }
   } else if (typeof filterInput === 'object' && filterInput !== null) {
     mode = filterInput.mode || (filterInput.period && /^\d{4}-\d{2}$/.test(filterInput.period) ? 'MTD' : 'YTD');
-    year = filterInput.year ? String(filterInput.year) : (filterInput.period && /^\d{4}/.test(filterInput.period) ? filterInput.period.slice(0, 4) : '2026');
+    year = filterInput.year ? String(filterInput.year) : (filterInput.period && /^\d{4}/.test(filterInput.period) ? filterInput.period.slice(0, 4) : CURRENT_YEAR);
     month = filterInput.month ? String(filterInput.month).padStart(2, '0') : (filterInput.period && filterInput.period.length >= 7 && /^\d{4}-\d{2}/.test(filterInput.period) ? filterInput.period.slice(5, 7) : '01');
     directorate = filterInput.directorate || 'ALL';
     subDirectorate = filterInput.sub_directorate || filterInput.subDirectorate || 'ALL';
@@ -533,43 +655,17 @@ function getMetricDetail(metricId, filterInput = 'YTD') {
           registered_at: a.checkin_time || a.created_at
         };
       });
-    } else if (id === 1) {
-      operationalRecords = [
-        { unit: 'Information Technology', target_headcount: 45, fulfilled: 42, sla_achievement: '93.3%', status: 'Achieved' },
-        { unit: 'Consumer Banking', target_headcount: 80, fulfilled: 71, sla_achievement: '88.8%', status: 'Achieved' },
-        { unit: 'Risk Management', target_headcount: 25, fulfilled: 23, sla_achievement: '92.0%', status: 'Achieved' },
-        { unit: 'Corporate Banking & Markets', target_headcount: 30, fulfilled: 26, sla_achievement: '86.7%', status: 'Achieved' },
-        { unit: 'Operations & Support', target_headcount: 50, fulfilled: 46, sla_achievement: '92.0%', status: 'Achieved' }
-      ];
-    } else if (id === 3) {
-      operationalRecords = [
-        { stage: 'Directorate Head Approval', avg_sla_hours: 36, sla_target_hours: 48, compliance: '94.5%' },
-        { stage: 'Talent Acquisition Review', avg_sla_hours: 24, sla_target_hours: 24, compliance: '96.0%' },
-        { stage: 'Total Rewards Compensation Review', avg_sla_hours: 28, sla_target_hours: 48, compliance: '93.2%' }
-      ];
-    } else if (id === 4) {
-      operationalRecords = [
-        { channel: 'CIMB Niaga Careers Official Website', hires_count: 95, percentage: '39.6%', quality_score: '88.5%' },
-        { channel: 'LinkedIn Talent Solutions', hires_count: 82, percentage: '34.2%', quality_score: '86.0%' },
-        { channel: 'Jobstreet / Job Portals', hires_count: 42, percentage: '17.5%', quality_score: '80.0%' },
-        { channel: 'Employee Referral Program (Teman Baru)', hires_count: 21, percentage: '8.7%', quality_score: '92.0%' }
-      ];
-    } else if (id === 14) {
-      operationalRecords = [
-        { category: 'Bravo! Peer-to-Peer Recognition', recipient_count: 2840, points_awarded: '142,000 pts', source: 'Arjuna Recognition' },
-        { category: 'Shining Star Quarterly Award', recipient_count: 980, points_awarded: '98,000 pts', source: 'Arjuna Recognition' },
-        { category: 'Long Service & Milestone Recognition', recipient_count: 510, points_awarded: '51,000 pts', source: 'Arjuna HRIS' }
-      ];
-    } else if (id === 25) {
-      operationalRecords = [
-        { tenure_bracket: 'Month 1 - 2 (Onboarding & Probation)', attrition_count: 12, rate: '1.2%', benchmark: '< 2.0%' },
-        { tenure_bracket: 'Month 3 - 4 (Initial Assignment)', attrition_count: 18, rate: '1.8%', benchmark: '< 2.0%' },
-        { tenure_bracket: 'Month 5 - 6 (Probation Review)', attrition_count: 12, rate: '1.2%', benchmark: '< 2.0%' }
-      ];
+    } else {
+      // Operational drilldown table for this OUTCOME metric (recruitment SLA by unit, approval
+      // stage compliance, hiring channel mix, recognition categories, attrition by tenure) —
+      // sourced from the database (server/data/store.json via storage.getOperationalRecords()),
+      // not frozen inline here. Metrics without a seeded breakdown table simply return [].
+      operationalRecords = storage.getOperationalRecords(id);
     }
 
     const rawVal = parseFloat(metric.raw_value || 0);
     const normalizedScore = normalizeScore({ ...metric, ...targetConfig }, rawVal);
+    const normalizedTargetOutcome = normalizeTarget(metric, targetConfig);
 
     return {
       metric: {
@@ -582,6 +678,7 @@ function getMetricDetail(metricId, filterInput = 'YTD') {
         journey_name: journey?.journey_name || '',
         checkpoint_name: checkpoint?.checkpoint_name || '',
         target_value: targetConfig.target_value,
+        target_value_normalized: parseFloat(normalizedTargetOutcome.toFixed(2)),
         target_display: targetConfig.target_display,
         min_threshold: targetConfig.min_threshold,
         is_employee_metric: isEmployeeMetric,
@@ -604,11 +701,12 @@ function getMetricDetail(metricId, filterInput = 'YTD') {
       journey_color: journey?.color || '#ED1C24',
       checkpoint_name: checkpoint?.checkpoint_name || '',
       target_value: targetConfig.target_value,
+      target_value_normalized: parseFloat(normalizedTargetOutcome.toFixed(2)),
       target_display: targetConfig.target_display,
       min_threshold: targetConfig.min_threshold,
       current_raw_value: rawVal,
       normalized_score: parseFloat(normalizedScore.toFixed(2)),
-      status: normalizedScore < targetConfig.min_threshold ? 'CRITICAL' : (normalizedScore < targetConfig.target_value ? 'WARNING' : 'HEALTHY'),
+      status: normalizedScore < targetConfig.min_threshold ? 'CRITICAL' : (normalizedScore < normalizedTargetOutcome ? 'WARNING' : 'HEALTHY'),
       period: periodString,
       filter_options: queryFilter,
       total_respondents: null,
@@ -786,7 +884,9 @@ function getMetricDetail(metricId, filterInput = 'YTD') {
     }
   }
 
-  const totalRespondents = isEss && responses.length === 0 ? 1250 : responses.length;
+  // Real response count from the database — no fabricated population placeholder. A metric
+  // with genuinely zero responses reports 0, not an invented "typical ESS sample size".
+  const totalRespondents = responses.length;
   
   let overallAvg = responses.length > 0 
     ? responses.reduce((acc, r) => acc + (parseFloat(r.rating_score) || 0), 0) / responses.length
@@ -799,6 +899,7 @@ function getMetricDetail(metricId, filterInput = 'YTD') {
   const normalizedOverall = isEss && responses.length === 0 && essSummary
     ? essSummary.summary_score
     : normalizeScore({ ...metric, ...targetConfig }, overallAvg);
+  const normalizedTargetSurvey = normalizeTarget(metric, targetConfig);
 
   return {
     metric: {
@@ -811,6 +912,7 @@ function getMetricDetail(metricId, filterInput = 'YTD') {
       journey_name: journey?.journey_name || '',
       checkpoint_name: checkpoint?.checkpoint_name || '',
       target_value: targetConfig.target_value,
+      target_value_normalized: parseFloat(normalizedTargetSurvey.toFixed(2)),
       target_display: targetConfig.target_display,
       min_threshold: targetConfig.min_threshold,
       is_employee_metric: isEmployeeMetric,
@@ -834,24 +936,33 @@ function getMetricDetail(metricId, filterInput = 'YTD') {
     journey_color: journey?.color || '#ED1C24',
     checkpoint_name: checkpoint?.checkpoint_name || '',
     target_value: targetConfig.target_value,
+    target_value_normalized: parseFloat(normalizedTargetSurvey.toFixed(2)),
     target_display: targetConfig.target_display,
     min_threshold: targetConfig.min_threshold,
     current_raw_value: parseFloat(overallAvg.toFixed(2)),
     normalized_score: parseFloat(normalizedOverall.toFixed(2)),
-    status: normalizedOverall < targetConfig.min_threshold ? 'CRITICAL' : (normalizedOverall < targetConfig.target_value ? 'WARNING' : 'HEALTHY'),
+    status: normalizedOverall < targetConfig.min_threshold ? 'CRITICAL' : (normalizedOverall < normalizedTargetSurvey ? 'WARNING' : 'HEALTHY'),
     period: periodString,
     filter_options: queryFilter,
     total_respondents: totalRespondents,
     questions: questionBreakdown,
     questions_breakdown: questionBreakdown,
-    responses: responses.slice(0, 100)
+    // Most-recent-first, capped at 100 for payload size — sorting before capping matters:
+    // as seeded response volume has grown (2025 + extended 2026 monthly data), a metric can
+    // now have well over 100 responses in a single period, and a plain insertion-order slice
+    // would silently hide any freshly-uploaded response that happens to land past index 100.
+    responses: [...responses]
+      .sort((a, b) => (b.survey_date || b.created_at || '').localeCompare(a.survey_date || a.created_at || ''))
+      .slice(0, 100)
   };
 }
 
 module.exports = {
   normalizeScore,
+  normalizeTarget,
   calculatePEIndex,
   getMetricDetail,
   computeMonthlyTrends,
+  getLastCompleteMonth,
   syncLiveEventMetrics
 };

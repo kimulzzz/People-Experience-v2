@@ -105,6 +105,37 @@ Program **${event.event_name}** (${event.program_category}) telah sukses diselen
 }
 
 /**
+ * Generates a dynamic narrative for a Score Deficit Alert (metric below target/threshold).
+ * Falls back to a deterministic rule-based sentence (always works fully offline) when
+ * Ollama is unreachable, so the Score Deficit Alerts panel never breaks.
+ */
+async function generateAlertNarrative(metric, journey, actionText) {
+  const ollamaOnline = await isOllamaAvailable();
+
+  if (ollamaOnline) {
+    const prompt = `Anda adalah People Experience AI Specialist di CIMB Niaga.
+Buatkan SATU paragraf narasi ringkas (maksimal 3 kalimat, Bahasa Indonesia formal korporat)
+yang menjelaskan defisit skor metrik People Experience berikut, mengapa ini penting, dan
+mendesak PIC untuk segera bertindak. Jangan mengulang angka lebih dari satu kali per kalimat.
+
+Nama Metrik: ${metric.metric_name}
+Journey: ${journey ? journey.journey_name : '-'}
+Skor Saat Ini: ${metric.normalized_score}%
+Target: ${metric.target_display}
+Ambang Batas Minimum: ${metric.min_threshold}%
+Gap Defisit: ${metric.gap}%
+PIC / Experience Owner: ${metric.experience_owner}
+Rekomendasi Aksi: ${actionText}`;
+
+    const aiResult = await queryLocalOllama(prompt);
+    if (aiResult && aiResult.trim().length > 20) return aiResult.trim();
+  }
+
+  // Fallback rule-based narrative (always works offline)
+  return `Metrik "${metric.metric_name}" pada Journey ${journey ? journey.journey_name : ''} berada pada skor ${metric.normalized_score}% (Target: ${metric.target_display}, Ambang Minimum: ${metric.min_threshold}%). Gap defisit sebesar ${metric.gap}%. Diperlukan intervensi segera oleh ${metric.experience_owner}.`;
+}
+
+/**
  * Generates captions & narrative for media items (Photos / Videos).
  */
 async function generateMediaNarratives(mediaItems, eventName) {
@@ -130,5 +161,6 @@ async function generateMediaNarratives(mediaItems, eventName) {
 module.exports = {
   isOllamaAvailable,
   generateEventSummary,
+  generateAlertNarrative,
   generateMediaNarratives
 };

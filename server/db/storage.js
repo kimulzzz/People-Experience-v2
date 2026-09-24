@@ -10,7 +10,8 @@ const {
   sampleEvents,
   sampleAttendances,
   sampleFeedbackResponses,
-  initialSurveyUploadedResponses
+  initialSurveyUploadedResponses,
+  initialOperationalRecords
 } = require('./seedData');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -71,6 +72,15 @@ function normalizeDateString(dateVal) {
   } catch (e) {}
   return str;
 }
+
+function todayDateString() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Default year for filter queries with no explicit year, derived from the real server clock
+// instead of a frozen literal — mirrors CURRENT_YEAR in server/services/calculationEngine.js.
+const CURRENT_YEAR = String(new Date().getFullYear());
 
 let store = null;
 
@@ -150,7 +160,8 @@ function loadInitialStore() {
       }
     ],
     customSurveyQuestions: {},
-    acknowledgedAlerts: []
+    acknowledgedAlerts: [],
+    operationalRecords: JSON.parse(JSON.stringify(initialOperationalRecords))
   };
 }
 
@@ -178,6 +189,15 @@ function getStore() {
             } else if (m.is_employee_metric === undefined) {
               m.is_employee_metric = true;
             }
+            // Backfill Data Update Cadence & Manual Survey Upload Reminder fields for
+            // metrics saved before these parameters existed.
+            if (m.update_frequency === undefined) m.update_frequency = (seed && seed.update_frequency) || 'MONTHLY';
+            if (m.requires_manual_upload === undefined) m.requires_manual_upload = (seed && seed.requires_manual_upload !== undefined) ? seed.requires_manual_upload : (m.metric_type === 'SURVEY');
+            if (m.upload_deadline_day === undefined) m.upload_deadline_day = (seed && seed.upload_deadline_day) || 25;
+            if (m.upload_deadline_month === undefined) m.upload_deadline_month = (seed && seed.upload_deadline_month) || 11;
+            if (m.pic_name === undefined) m.pic_name = (seed && seed.pic_name) || m.experience_owner || '';
+            if (m.pic_email === undefined) m.pic_email = (seed && seed.pic_email) || '';
+            if (m.metric_type === 'OUTCOME' && m.last_data_date === undefined) m.last_data_date = (seed && seed.last_data_date) || todayDateString();
           });
         }
         if (!store.directorates || store.directorates.length === 0) {
@@ -186,8 +206,29 @@ function getStore() {
         if (!store.weights || store.weights.length === 0) {
           store.weights = store.metrics.map(m => ({ metric_id: m.metric_id, weight: m.weight || 1.0 }));
         }
+        if (!store.operationalRecords) {
+          store.operationalRecords = JSON.parse(JSON.stringify(initialOperationalRecords));
+        }
         if (!store.surveyUploadedResponses || store.surveyUploadedResponses.length < 50) {
           store.surveyUploadedResponses = initialSurveyUploadedResponses;
+        } else {
+          // Incrementally merge in any newly-generated seed months (e.g. the demo dataset was
+          // extended to cover more recent months for the Performance Trend chart) into an
+          // existing store.json, without touching real/previously-uploaded response data.
+          const existingSeedDates = new Set(
+            store.surveyUploadedResponses
+              .filter(r => r.upload_id === 'seed-batch-2026')
+              .map(r => `${r.metric_id}|${r.survey_date}|${r.nip || r.participant_id || r.candidate_id}`)
+          );
+          const newSeedRecords = initialSurveyUploadedResponses.filter(
+            r => !existingSeedDates.has(`${r.metric_id}|${r.survey_date}|${r.nip || r.participant_id || r.candidate_id}`)
+          );
+          if (newSeedRecords.length > 0) {
+            const maxId = store.surveyUploadedResponses.reduce((mx, r) => Math.max(mx, r.response_id || 0), 0);
+            newSeedRecords.forEach((r, i) => {
+              store.surveyUploadedResponses.push({ ...r, response_id: maxId + i + 1 });
+            });
+          }
         }
         // Sanitize and normalize any existing dates to YYYY-MM-DD
         if (store.surveyUploadedResponses && Array.isArray(store.surveyUploadedResponses)) {
@@ -331,6 +372,13 @@ const storage = {
   getMetricById(metric_id) {
     return getStore().metrics.find(m => m.metric_id === parseInt(metric_id));
   },
+  // Per-metric operational drilldown records for OUTCOME metrics backed by an internal HR
+  // breakdown table rather than individual survey responses (recruitment SLA by unit, approval
+  // stage compliance, hiring channel mix, recognition categories, attrition by tenure).
+  getOperationalRecords(metric_id) {
+    const s = getStore();
+    return (s.operationalRecords && s.operationalRecords[parseInt(metric_id)]) || [];
+  },
   addMetric(metricData) {
     const s = getStore();
     const maxId = s.metrics.reduce((max, m) => Math.max(max, m.metric_id || 0), 0);
@@ -357,7 +405,16 @@ const storage = {
       is_indicative: Boolean(metricData.is_indicative),
       is_employee_metric: isEmployee,
       target_audience: metricData.target_audience || (isEmployee ? 'EMPLOYEE' : 'EXTERNAL_MARKET'),
-      underlying_questions: Array.isArray(metricData.underlying_questions) ? metricData.underlying_questions : [metricData.metric_name || 'Satisfaction Score']
+      underlying_questions: Array.isArray(metricData.underlying_questions) ? metricData.underlying_questions : [metricData.metric_name || 'Satisfaction Score'],
+      // --- Data Update Cadence & Manual Survey Upload Reminder Settings (defaults) ---
+      update_frequency: metricData.update_frequency ? String(metricData.update_frequency).toUpperCase() : 'MONTHLY',
+      requires_manual_upload: metricData.requires_manual_upload !== undefined
+        ? Boolean(metricData.requires_manual_upload)
+        : ((metricData.metric_type || 'SURVEY').toUpperCase() === 'SURVEY'),
+      upload_deadline_day: metricData.upload_deadline_day !== undefined && metricData.upload_deadline_day !== '' ? parseInt(metricData.upload_deadline_day) : 25,
+      upload_deadline_month: metricData.upload_deadline_month !== undefined && metricData.upload_deadline_month !== '' ? parseInt(metricData.upload_deadline_month) : 11,
+      pic_name: metricData.pic_name ? String(metricData.pic_name).trim() : (metricData.experience_owner || ''),
+      pic_email: metricData.pic_email ? String(metricData.pic_email).trim() : ''
     };
 
     s.metrics.push(newMetric);
@@ -386,9 +443,12 @@ const storage = {
       ? Boolean(metricData.is_employee_metric) 
       : (current.is_employee_metric !== undefined ? current.is_employee_metric : true);
 
-    const weightVal = metricData.metric_weight !== undefined 
-      ? parseFloat(metricData.metric_weight) 
+    const weightVal = metricData.metric_weight !== undefined
+      ? parseFloat(metricData.metric_weight)
       : (metricData.weight !== undefined ? parseFloat(metricData.weight) : (current.weight !== undefined ? current.weight : 1.0));
+
+    const resolvedMetricType = metricData.metric_type ? metricData.metric_type.toUpperCase().trim() : current.metric_type;
+    const defaultRequiresManualUpload = resolvedMetricType === 'SURVEY';
 
     const updated = {
       ...current,
@@ -405,7 +465,27 @@ const storage = {
       weight: weightVal,
       metric_weight: weightVal,
       is_employee_metric: isEmployee,
-      target_audience: metricData.target_audience || (isEmployee ? 'EMPLOYEE' : current.target_audience || 'EXTERNAL_MARKET')
+      target_audience: metricData.target_audience || (isEmployee ? 'EMPLOYEE' : current.target_audience || 'EXTERNAL_MARKET'),
+      // --- Data Update Cadence ("Frekuensi Update Data") ---
+      update_frequency: metricData.update_frequency
+        ? String(metricData.update_frequency).toUpperCase()
+        : (current.update_frequency || 'MONTHLY'),
+      // --- Manual Survey Upload Reminder Settings ---
+      requires_manual_upload: metricData.requires_manual_upload !== undefined
+        ? Boolean(metricData.requires_manual_upload)
+        : (current.requires_manual_upload !== undefined ? current.requires_manual_upload : defaultRequiresManualUpload),
+      upload_deadline_day: metricData.upload_deadline_day !== undefined && metricData.upload_deadline_day !== ''
+        ? parseInt(metricData.upload_deadline_day)
+        : (current.upload_deadline_day !== undefined ? current.upload_deadline_day : 25),
+      upload_deadline_month: metricData.upload_deadline_month !== undefined && metricData.upload_deadline_month !== ''
+        ? parseInt(metricData.upload_deadline_month)
+        : (current.upload_deadline_month !== undefined ? current.upload_deadline_month : 11),
+      pic_name: metricData.pic_name !== undefined ? String(metricData.pic_name).trim() : (current.pic_name || current.experience_owner || ''),
+      pic_email: metricData.pic_email !== undefined ? String(metricData.pic_email).trim() : (current.pic_email || ''),
+      // Last HR-system ingestion date (OUTCOME metrics) — must be explicitly whitelisted here
+      // too, or admin edits via PUT /api/admin/metrics/:id would silently be dropped and the
+      // metric would keep falling back to its seeded/previous value forever.
+      last_data_date: metricData.last_data_date !== undefined ? String(metricData.last_data_date).trim() : current.last_data_date
     };
 
     s.metrics[idx] = updated;
@@ -558,6 +638,20 @@ const storage = {
     saveStore();
     return newEvent;
   },
+  deleteEvent(event_id) {
+    const s = getStore();
+    const idx = s.events.findIndex(e => e.event_id === event_id);
+    if (idx === -1) {
+      throw new Error(`Event "${event_id}" tidak ditemukan.`);
+    }
+    const [removed] = s.events.splice(idx, 1);
+    // Clean up everything tied to this event so no orphaned records remain.
+    s.attendances = (s.attendances || []).filter(a => a.event_id !== event_id);
+    if (s.feedbackResponses) s.feedbackResponses = s.feedbackResponses.filter(f => f.event_id !== event_id);
+    if (s.eventQuestions) delete s.eventQuestions[event_id];
+    saveStore();
+    return removed;
+  },
 
   // --- ATTENDANCE ---
   getAttendances() {
@@ -591,6 +685,16 @@ const storage = {
     s.attendances.push(record);
     saveStore();
     return record;
+  },
+  deleteAttendance(event_id, nip) {
+    const s = getStore();
+    const idx = s.attendances.findIndex(a => a.event_id === event_id && a.nip === nip);
+    if (idx === -1) {
+      throw new Error(`Data absensi NIP ${nip} pada event "${event_id}" tidak ditemukan.`);
+    }
+    const [removed] = s.attendances.splice(idx, 1);
+    saveStore();
+    return removed;
   },
 
   // --- SURVEY QUESTIONS & FEEDBACK ---
@@ -636,6 +740,16 @@ const storage = {
     s.feedbackResponses.push(responseRecord);
     saveStore();
     return responseRecord;
+  },
+  deleteFeedbackResponse(event_id, nip) {
+    const s = getStore();
+    const idx = s.feedbackResponses.findIndex(f => f.event_id === event_id && f.nip === nip);
+    if (idx === -1) {
+      throw new Error(`Feedback NIP ${nip} pada event "${event_id}" tidak ditemukan.`);
+    }
+    const [removed] = s.feedbackResponses.splice(idx, 1);
+    saveStore();
+    return removed;
   },
 
   // --- MEDIA GALLERY ---
@@ -895,6 +1009,21 @@ const storage = {
     return getQuestionsForMetric(id);
   },
 
+  // Distinct years that actually have survey response data in the database, ascending —
+  // used to populate year dropdowns (e.g. the Performance Trend period-range filter) instead
+  // of hardcoding a fixed list of years in the frontend.
+  getAvailableSurveyYears() {
+    const s = getStore();
+    const responses = s.surveyUploadedResponses || [];
+    const years = new Set();
+    responses.forEach(r => {
+      const d = normalizeDateString(r.survey_date || r.created_at);
+      if (d && /^\d{4}/.test(d)) years.add(d.slice(0, 4));
+    });
+    years.add(String(new Date().getFullYear())); // always include the real current year
+    return Array.from(years).sort();
+  },
+
   // --- PERIOD & DIRECTORATE FILTERED RESPONSES ---
   getResponsesByMetricAndPeriod(metric_id, filterOptions = 'YTD') {
     let responses = this.getUploadedResponsesByMetric(metric_id);
@@ -909,17 +1038,18 @@ const storage = {
     if (!filterOptions) return responses;
 
     let mode = 'YTD';
-    let year = '2026';
+    let year = CURRENT_YEAR;
     let month = '01';
     let directorate = 'ALL';
     let subDirectorate = 'ALL';
     let rawPeriod = '';
+    let endMonth = null;
 
     if (typeof filterOptions === 'string') {
       rawPeriod = filterOptions.trim();
       if (rawPeriod === 'YTD' || rawPeriod === 'ALL') {
         mode = 'YTD';
-        year = '2026';
+        year = CURRENT_YEAR;
       } else if (/^\d{4}-\d{2}$/.test(rawPeriod)) {
         mode = 'MTD';
         const parts = rawPeriod.split('-');
@@ -930,25 +1060,30 @@ const storage = {
         year = rawPeriod;
       } else {
         mode = 'YTD';
-        year = '2026';
+        year = CURRENT_YEAR;
       }
     } else if (typeof filterOptions === 'object') {
       mode = filterOptions.mode || (filterOptions.period && /^\d{4}-\d{2}$/.test(filterOptions.period) ? 'MTD' : 'YTD');
-      year = filterOptions.year ? String(filterOptions.year) : (filterOptions.period && /^\d{4}/.test(filterOptions.period) ? filterOptions.period.slice(0, 4) : '2026');
+      year = filterOptions.year ? String(filterOptions.year) : (filterOptions.period && /^\d{4}/.test(filterOptions.period) ? filterOptions.period.slice(0, 4) : CURRENT_YEAR);
       month = filterOptions.month ? String(filterOptions.month).padStart(2, '0') : (filterOptions.period && filterOptions.period.length >= 7 && /^\d{4}-\d{2}/.test(filterOptions.period) ? filterOptions.period.slice(5, 7) : '01');
       directorate = filterOptions.directorate || 'ALL';
       subDirectorate = filterOptions.sub_directorate || filterOptions.subDirectorate || 'ALL';
+      // Optional upper bound month for YTD mode — used to compute a "cumulative Year-to-Date
+      // as of the end of this month" snapshot (e.g. for the Performance Trend chart), instead
+      // of the whole year. Ignored when mode is MTD or when not provided (full-year YTD).
+      endMonth = filterOptions.endMonth ? String(filterOptions.endMonth).padStart(2, '0') : null;
     }
 
     return responses.filter(r => {
       const d = normalizeDateString(r.survey_date || r.created_at) || '';
-      
+
       // 1. Period / Date Filtering
       if (mode === 'MTD') {
         const targetPrefix = `${year}-${month}`;
         if (!d.startsWith(targetPrefix)) return false;
       } else if (mode === 'YTD') {
         if (year && !d.startsWith(year)) return false;
+        if (endMonth && d > `${year}-${endMonth}-31`) return false;
       }
 
       // 2. Directorate Filtering

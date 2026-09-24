@@ -13,13 +13,18 @@ import {
 } from 'lucide-react';
 import CimbLogo from './CimbLogo';
 
-export default function Header({ 
+// Derived from the real browser clock (not a frozen literal) — only used as a last-resort
+// fallback when App.jsx hasn't passed filterOptions/availableYears yet.
+const CURRENT_YEAR = String(new Date().getFullYear());
+
+export default function Header({
   activeTab, 
   setActiveTab, 
   alertCount, 
-  filterOptions = { mode: 'YTD', year: '2026', month: '01', directorate: 'ALL', sub_directorate: 'ALL' },
+  filterOptions = { mode: 'YTD', year: CURRENT_YEAR, month: '01', directorate: 'ALL', sub_directorate: 'ALL' },
   onFilterChange,
   directoratesList = [],
+  availableYears,
   onOpenAdminParametersModal,
   onOpenSurveyQuestionsModal
 }) {
@@ -38,7 +43,12 @@ export default function Header({
     { value: '12', label: '12 - Desember' }
   ];
 
-  const years = ['2026', '2025'];
+  // Years the database actually has survey data for (from `/api/metrics/calculate`'s
+  // `available_years`, sourced from `storage.getAvailableSurveyYears()`) — falls back to just
+  // the currently-selected year until that first response arrives, instead of a hardcoded list.
+  const years = availableYears && availableYears.length > 0
+    ? [...availableYears].sort((a, b) => b.localeCompare(a))
+    : [filterOptions.year || CURRENT_YEAR];
 
   // Current selected directorate object
   const currentDirectorateObj = directoratesList.find(d => d.id === filterOptions.directorate);

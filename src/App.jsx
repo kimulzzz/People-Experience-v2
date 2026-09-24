@@ -16,6 +16,11 @@ import AdminParametersModal from './components/AdminParametersModal';
 import PublicCheckInForm from './components/PublicCheckInForm';
 import PublicFeedbackForm from './components/PublicFeedbackForm';
 
+// Derived from the real browser clock (not a frozen literal) so the Dashboard's default year
+// tracks forward automatically instead of silently staying on a past year — this mirrors the
+// backend's CURRENT_YEAR constant in server/services/calculationEngine.js.
+const CURRENT_YEAR = String(new Date().getFullYear());
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [calculationData, setCalculationData] = useState(null);
@@ -28,7 +33,7 @@ export default function App() {
   // Active Filter Options: Mode (YTD / MTD), Year, Month, Directorate, Sub-Directorate
   const [filterOptions, setFilterOptions] = useState({
     mode: 'YTD',
-    year: '2026',
+    year: CURRENT_YEAR,
     month: '01',
     directorate: 'ALL',
     sub_directorate: 'ALL'
@@ -80,7 +85,7 @@ export default function App() {
       const { mode, year, month, directorate, sub_directorate } = filters;
       const queryParams = new URLSearchParams({
         mode: mode || 'YTD',
-        year: year || '2026',
+        year: year || CURRENT_YEAR,
         month: month || '01',
         directorate: directorate || 'ALL',
         sub_directorate: sub_directorate || 'ALL'
@@ -207,6 +212,7 @@ export default function App() {
         filterOptions={filterOptions}
         onFilterChange={handleFilterChange}
         directoratesList={directoratesList}
+        availableYears={calculationData?.available_years}
         onOpenWeightsModal={() => setIsWeightsModalOpen(true)}
         onOpenSurveyImportModal={() => {
           setPreSelectedSurveyMetricId(null);

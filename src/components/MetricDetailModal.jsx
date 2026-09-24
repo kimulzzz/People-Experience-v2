@@ -82,7 +82,14 @@ function normalizeDateString(dateVal) {
   return str;
 }
 
-export default function MetricDetailModal({ 
+// Real "today" as YYYY-MM-DD — last-resort fallback only, since the backend now always sends a
+// real last_survey_date/last_data_date. Avoids ever displaying a frozen calendar literal.
+function todayDateString() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+export default function MetricDetailModal({
   isOpen, 
   onClose, 
   metricId, 
@@ -172,7 +179,7 @@ export default function MetricDetailModal({
             <div>
               <div className="flex items-center space-x-2 flex-wrap gap-1">
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-gray-200/80 text-gray-700">
-                  Metric #{detailData?.metric_id || metricId}
+                  Metric {detailData?.metric_id || metricId}
                 </span>
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-red-50 text-[#ED1C24] border border-red-200/60">
                   {detailData?.journey_name || 'People Experience (PX)'}
@@ -264,11 +271,11 @@ export default function MetricDetailModal({
                     <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-xl">
                       <div className="text-[11px] font-bold text-gray-500 uppercase">Total Respondents</div>
                       <div className="text-2xl font-black text-gray-900 mt-1">
-                        {detailData.total_respondents || 1250} <span className="text-xs font-normal text-gray-500">respondents</span>
+                        {detailData.total_respondents ?? 0} <span className="text-xs font-normal text-gray-500">respondents</span>
                       </div>
                       <div className="text-[10px] text-gray-500 mt-0.5 flex items-center space-x-1">
                         <Calendar className="w-3 h-3 text-[#ED1C24]" />
-                        <span>Latest Survey Date: <strong>{normalizeDateString(detailData.last_survey_date) || '2026-03-20'}</strong></span>
+                        <span>Latest Survey Date: <strong>{normalizeDateString(detailData.last_survey_date) || todayDateString()}</strong></span>
                       </div>
                     </div>
 

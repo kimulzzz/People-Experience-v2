@@ -17,7 +17,9 @@ Backend dibangun menggunakan **Node.js dan Express.js** sebagai REST API Server 
 │   ├── 📄 surveyImportService.js          # Parser Impor Respon CSV & Normalisasi Data
 │   ├── 📄 surveyEvidenceService.js        # Generator Berkas Audit Trail Evidence CSV
 │   ├── 📄 pptExportService.js             # Generator Corporate Deck PowerPoint (.pptx)
-│   └── 📄 actionRecommendationEngine.js   # Pemetaan Metrik Defisit ke Inisiatif Aksi
+│   ├── 📄 alertEngine.js                  # Pemetaan Metrik Defisit ke Inisiatif Aksi + Narasi AI
+│   ├── 📄 localAiService.js               # Integrasi Local Ollama (Narasi Alert & Event Summary) + Fallback Rule-Based
+│   └── 📄 reminderService.js              # Deteksi & Pengiriman Email Reminder Upload Survei Manual
 └── 📁 db/                                 # Lapisan Akses & Persistensi Data
     ├── 📄 storage.js                      # Transactional In-Memory + File Store Adapter
     └── 📄 seedData.js                     # Inisialisasi Data Awal 27 Metrik & Transaksi
@@ -37,9 +39,9 @@ Backend dibangun menggunakan **Node.js dan Express.js** sebagai REST API Server 
 ### 2.2 Modul Kalkulasi & Analitik Metrik
 | Method | Endpoint | Deskripsi | Parameter Query / Body |
 | :---: | :--- | :--- | :--- |
-| `GET` | `/api/metrics/calculate` | Mengkalkulasi skor PE Index konsolidasi, skor journey, checkpoint, dan rincian 27 metrik (mendukung mode YTD/MTD & filter Direktorat) | `mode=YTD\|MTD`, `year=2026`, `month=01..12`, `directorate=...`, `sub_directorate=...` |
-| `GET` | `/api/metrics/trends` | Mengambil data deret waktu 12 bulan (Januari–Desember 2026) | `-` |
-| `GET` | `/api/metrics/:metric_id/detail`| Mengambil rincian drilldown metrik (question breakdown, responses table / HR operational logs) | `period=YTD` atau `mode=YTD\|MTD&year=2026&month=01` |
+| `GET` | `/api/metrics/calculate` | Mengkalkulasi skor PE Index konsolidasi, skor journey, checkpoint, dan rincian 27 metrik (mendukung mode YTD/MTD & filter Direktorat). Tahun default diambil dari jam server saat ini (bukan lagi dibekukan ke `2026`). Response menyertakan `available_years` (daftar tahun yang benar-benar punya data survei di database, dipakai untuk mengisi dropdown Tahun di Header secara dinamis). Sejak v2.15.0, setiap metrik menyertakan `target_value_normalized` — `target_value` (yang tersimpan dalam skala asli metrik, mis. `4.00` untuk RATING_5) dikonversi ke skala 0-100 yang sama dengan `normalized_score`/`min_threshold` via `normalizeTarget()`, dan status HEALTHY/WARNING/CRITICAL kini dihitung dari perbandingan yang sudah senormalisasi ini (sebelumnya WARNING nyaris tidak pernah tercapai untuk metrik RATING_5/QUOTA_COUNT karena target mentah dibandingkan langsung dengan skor 0-100) | `mode=YTD\|MTD`, `year` (default: tahun berjalan), `month=01..12`, `endMonth` (opsional, mode YTD saja — batasi kumulatif s/d akhir bulan tertentu), `directorate=...`, `sub_directorate=...` |
+| `GET` | `/api/metrics/trends` | Mengambil deret waktu Performance Trend, **bisa lintas tahun** (mis. November 2025 s/d Februari 2026) via `startYear`/`startMonth`/`endYear`/`endMonth` — tidak lagi dibekukan ke satu tahun atau ke 2026. `mode=YTD` (default) → tiap titik adalah rata-rata kumulatif Januari **tahunnya sendiri** s/d bulan tersebut (reset tiap 1 Januari, konvensi YTD standar — rentang lintas tahun menampilkan kurva YTD tiap tahun berurutan, bukan satu akumulasi menerus); `mode=MTD` → tiap titik berdiri sendiri (trivial lintas tahun). **Hanya bulan yang benar-benar lengkap yang dikembalikan** — bulan berjalan dan seterusnya **tidak muncul sama sekali** di array `trends`. `endYear`/`endMonth` selalu di-clamp ke bulan lengkap terakhir di tahun manapun yang diminta, sekalipun user meminta rentang jauh ke masa depan. Response menyertakan `year`, `last_complete_month`, dan `available_years` (daftar tahun yang benar-benar punya data di database, dari `storage.getAvailableSurveyYears()`) agar frontend tahu batas rentang & opsi tahun yang valid. Setiap titik trend menyertakan field `year` dan dihitung via `calculatePEIndex()` (metode normalisasi + bobot per-metrik yang **identik** dengan scorecard utama `/api/metrics/calculate`) | `mode` (`YTD`\|`MTD`), `year`, `startYear`, `startMonth`, `endYear`, `endMonth`, `directorate`, `sub_directorate` |
+| `GET` | `/api/metrics/:metric_id/detail`| Mengambil rincian drilldown metrik (question breakdown, responses table / HR operational logs). Untuk metrik OUTCOME, field `operational_records` (breakdown SLA/channel/recognition per unit) sejak v2.16.0 dibaca dari database (`storage.getOperationalRecords(metric_id)`, sumber: `seedData.js`'s `initialOperationalRecords`), bukan lagi array statis inline di `calculationEngine.js` — metrik tanpa tabel breakdown seeded mengembalikan `[]`. `total_respondents` selalu berupa hitungan respons asli dari database (bisa `0`), tidak lagi memakai placeholder fiktif untuk metrik ESS tanpa data | `period=YTD` atau `mode=YTD\|MTD&year=2026&month=01` |
 | `GET` | `/api/directorates` | Mengambil daftar 7 Direktorat CIMB Niaga beserta Sub-Direktorat / Divisi terkait | `-` |
 
 ---
@@ -56,7 +58,7 @@ Backend dibangun menggunakan **Node.js dan Express.js** sebagai REST API Server 
 ### 2.4 Modul Admin: Parameter Terpadu Journeys & Metrics (CRUD, Bobot & Thresholds) (v2.9.0)
 | Method | Endpoint | Deskripsi | Parameter / Payload |
 | :---: | :--- | :--- | :--- |
-| `GET` | `/api/admin/parameters` | Mengambil konfigurasi lengkap Journeys, Checkpoints, dan 27 Metrik | `-` |
+| `GET` | `/api/admin/parameters` | Mengambil konfigurasi lengkap Journeys, Checkpoints, dan 27 Metrik. Sejak v2.15.0, setiap metrik disertai `target_value_normalized` (target dikonversi ke skala 0-100 yang sama dengan `min_threshold`, via `normalizeTarget()`) sehingga Admin Parameter UI bisa menampilkan Target dan Threshold dalam satuan yang sebanding, bukan skala asli metrik (mis. 1-5) vs persen. | `-` |
 | `POST` | `/api/admin/journeys` | Menambahkan journey baru | Body: `{ journey_code, journey_name, tagline, color, icon, display_order }` |
 | `PUT` | `/api/admin/journeys/:id` | Memperbarui parameter journey | Body: `{ journey_name, tagline, color, icon, display_order }` |
 | `DELETE`| `/api/admin/journeys/:id`| Menghapus journey | Path: `id` |
@@ -85,6 +87,9 @@ Backend dibangun menggunakan **Node.js dan Express.js** sebagai REST API Server 
 | `GET` | `/api/events/:event_id` | Mengambil detail event, log absensi, dan skor feedback | Path: `event_id` |
 | `POST` | `/api/events/:event_id/attendance` | Mencatat absensi kehadiran peserta via QR Code / Form | Body: `{ nip, employee_name, cimb_email, ... }` |
 | `POST` | `/api/events/:event_id/feedback` | Menyimpan respon kuesioner evaluasi pasca-event | Body: `{ nip, ratings: {...}, verbatim }` |
+| `DELETE` | `/api/events/:event_id` | Menghapus event beserta seluruh absensi, feedback, dan pertanyaan kustom terkait | Path: `event_id` |
+| `DELETE` | `/api/events/:event_id/attendance/:nip` | Menghapus satu catatan absensi berdasarkan NIP (mis. untuk membersihkan data uji) | Path: `event_id`, `nip` |
+| `DELETE` | `/api/events/:event_id/feedback/:nip` | Menghapus satu respon feedback berdasarkan NIP (mis. untuk membersihkan data uji) | Path: `event_id`, `nip` |
 | `POST` | `/api/events/:event_id/generate-ppt` | Menghasilkan dan menyajikan berkas presentasi PowerPoint (.pptx) | Path: `event_id` |
 
 ---
@@ -92,7 +97,18 @@ Backend dibangun menggunakan **Node.js dan Express.js** sebagai REST API Server 
 ### 2.7 Modul Peringatan Kinerja & Rekomendasi Aksi
 | Method | Endpoint | Deskripsi | Parameter Query |
 | :---: | :--- | :--- | :--- |
-| `GET` | `/api/alerts` | Mengambil daftar metrik yang mengalami defisit kinerja beserta rekomendasi inisiatif AI/HR | `-` |
+| `GET` | `/api/alerts` | Mengambil daftar metrik yang mengalami defisit kinerja beserta rekomendasi inisiatif AI/HR. Setiap alert memuat `narrative_summary` — narasi 1 paragraf yang dihasilkan dinamis via **local Ollama** (`alertEngine.js` → `localAiService.generateAlertNarrative()`); otomatis fallback ke kalimat rule-based deterministik jika Ollama offline, sehingga endpoint ini tidak pernah gagal. | `-` |
+
+---
+
+### 2.8 Modul Pengingat Upload Survei (Survey Upload Reminders)
+| Method | Endpoint | Deskripsi | Parameter Query |
+| :---: | :--- | :--- | :--- |
+| `GET` | `/api/admin/upload-reminders` | Mengambil daftar metrik SURVEY yang memerlukan reminder (`requires_manual_upload: true`) dan belum diupload untuk siklus berjalan — status `DUE_SOON` (≤5 hari sebelum `upload_deadline_day`/`upload_deadline_month`) atau `OVERDUE` (lewat batas waktu) | `-` |
+| `POST` | `/api/admin/upload-reminders/send` | Mengirim email reminder ke seluruh `pic_email` yang tercantum pada daftar pending reminder, via SMTP on-premise (`reminderService.js` + `nodemailer`). Jika `SMTP_HOST` belum dikonfigurasi, reminder tetap dihitung dan dicatat di log server (`email_status: "LOGGED_ONLY"`) tanpa membuat request gagal | `-` |
+
+Server juga menjalankan pengecekan reminder otomatis setiap 24 jam (mulai ±15 detik setelah
+backend boot) tanpa perlu dipicu manual — lihat `server.js` bagian `app.listen(...)`.
 
 ---
 

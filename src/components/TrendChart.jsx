@@ -1,26 +1,150 @@
 // src/components/TrendChart.jsx
-import React, { useState } from 'react';
-import { 
-  TrendingUp, 
-  Calendar, 
-  Sparkles, 
-  Award, 
-  BarChart2, 
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  TrendingUp,
+  Calendar,
+  Sparkles,
+  Award,
+  BarChart2,
   Layers,
   ArrowUpRight,
-  Info
+  Info,
+  Filter,
+  RotateCcw
 } from 'lucide-react';
 
-export default function TrendChart({ 
-  trendData = [], 
-  selectedPeriod, 
-  onSelectPeriod, 
-  ytdPeIndex 
+const MONTH_NAMES_ID = [
+  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+];
+
+// Mirrors calculationEngine.js's getLastCompleteMonth() so the range-picker dropdowns can
+// populate instantly (no network round-trip) — the server is still the authority and clamps
+// the actual query regardless, this is purely for a responsive UI.
+function clientLastCompleteMonth(year) {
+  const today = new Date();
+  const y = parseInt(year, 10);
+  if (y < today.getFullYear()) return 12;
+  if (y > today.getFullYear()) return 0;
+  return today.getMonth(); // 0-based getMonth() == 1-based number of the PREVIOUS month
+}
+
+export default function TrendChart({
+  selectedPeriod,
+  onSelectPeriod,
+  ytdPeIndex,
+  trendMode = 'YTD',
+  directorate = 'ALL',
+  subDirectorate = 'ALL',
+  year
 }) {
   const [hoveredMonth, setHoveredMonth] = useState(null);
+  const [trendData, setTrendData] = useState([]);
+  const [lastCompleteMonthByYear, setLastCompleteMonthByYear] = useState({}); // { '2025': '12', '2026': '08' }
+  const [availableYears, setAvailableYears] = useState([]); // e.g. ['2025', '2026'], from the database
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  // Period-range filter — start/end each carry their OWN year, so the range can genuinely
+  // cross a year boundary (e.g. November 2025 s/d Februari 2026). null = not yet initialized
+  // from the server's default range.
+  const [rangeStartYear, setRangeStartYear] = useState(null);
+  const [rangeStartMonth, setRangeStartMonth] = useState(null);
+  const [rangeEndYear, setRangeEndYear] = useState(null);
+  const [rangeEndMonth, setRangeEndMonth] = useState(null);
+
+  const isMtd = trendMode === 'MTD';
+
+  const fetchTrend = useCallback(async (range) => {
+    setLoading(true);
+    setErrorMsg('');
+    try {
+      const params = new URLSearchParams({
+        mode: trendMode,
+        directorate,
+        sub_directorate: subDirectorate
+      });
+      if (year) params.set('year', year);
+      if (range?.startYear) params.set('startYear', range.startYear);
+      if (range?.startMonth) params.set('startMonth', range.startMonth);
+      if (range?.endYear) params.set('endYear', range.endYear);
+      if (range?.endMonth) params.set('endMonth', range.endMonth);
+
+      const res = await fetch(`/api/metrics/trends?${params.toString()}`);
+      if (!res.ok) throw new Error('Gagal memuat data tren');
+      const data = await res.json();
+
+      setTrendData(data.trends || []);
+      setAvailableYears(data.available_years || []);
+      setLastCompleteMonthByYear(prev => ({ ...prev, [data.year]: data.last_complete_month }));
+
+      // Initialize the range selectors to the server's default range on first load /
+      // whenever mode-directorate-year context changes (but not while the user is actively
+      // narrowing the range themselves — that's handled by explicit onChange calls instead).
+      if (!range?.startYear) setRangeStartYear(data.year);
+      if (!range?.startMonth) setRangeStartMonth('01');
+      if (!range?.endYear) setRangeEndYear(data.year);
+      if (!range?.endMonth) setRangeEndMonth(data.last_complete_month);
+    } catch (err) {
+      setErrorMsg(err.message);
+      setTrendData([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [trendMode, directorate, subDirectorate, year]);
+
+  // Re-fetch the FULL default range whenever the Dashboard's mode/directorate/year context
+  // changes (a genuinely new context resets any manual period-range narrowing).
+  useEffect(() => {
+    setRangeStartYear(null);
+    setRangeStartMonth(null);
+    setRangeEndYear(null);
+    setRangeEndMonth(null);
+    fetchTrend(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trendMode, directorate, subDirectorate, year]);
+
+  const handleRangeChange = (next) => {
+    const range = {
+      startYear: next.startYear ?? rangeStartYear,
+      startMonth: next.startMonth ?? rangeStartMonth,
+      endYear: next.endYear ?? rangeEndYear,
+      endMonth: next.endMonth ?? rangeEndMonth
+    };
+    setRangeStartYear(range.startYear);
+    setRangeStartMonth(range.startMonth);
+    setRangeEndYear(range.endYear);
+    setRangeEndMonth(range.endMonth);
+    fetchTrend(range);
+  };
+
+  const handleResetRange = () => {
+    fetchTrend(null);
+  };
+
+  const isRangeNarrowed = trendData.length > 0 && (
+    rangeStartYear !== trendData[0].year || rangeStartMonth !== trendData[0].month_code.slice(5) ||
+    rangeEndYear !== trendData[trendData.length - 1].year || rangeEndMonth !== trendData[trendData.length - 1].month_code.slice(5)
+  );
+
+  // Whether the currently displayed series spans more than one calendar year — used to
+  // disambiguate x-axis labels (e.g. "Jan'25" vs "Jan'26") when it does.
+  const spansMultipleYears = new Set(trendData.map(t => t.year)).size > 1;
+
+  if (loading && trendData.length === 0) {
+    return (
+      <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-xs flex items-center justify-center min-h-[200px]">
+        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-[#ED1C24]" />
+      </div>
+    );
+  }
 
   if (!trendData || trendData.length === 0) {
-    return null;
+    return (
+      <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-xs text-center text-xs text-gray-400">
+        {errorMsg || 'Belum ada bulan lengkap yang tersedia untuk ditampilkan pada periode ini.'}
+      </div>
+    );
   }
 
   // Full percentage scale from 0% to 100% to ensure no metric line is ever cut off
@@ -35,7 +159,9 @@ export default function TrendChart({
   const plotWidth = chartWidth - paddingLeft - paddingRight;
   const plotHeight = chartHeight - paddingTop - paddingBottom;
 
-  const getX = (index) => paddingLeft + (index * plotWidth) / (trendData.length - 1);
+  const getX = (index) => trendData.length > 1
+    ? paddingLeft + (index * plotWidth) / (trendData.length - 1)
+    : paddingLeft + plotWidth / 2;
   const getY = (val) => {
     const clamped = Math.max(minVal, Math.min(maxVal, val));
     return paddingTop + (1 - (clamped - minVal) / (maxVal - minVal)) * plotHeight;
@@ -48,6 +174,12 @@ export default function TrendChart({
 
   const activeHover = hoveredMonth !== null ? trendData[hoveredMonth] : null;
 
+  const chartTitle = trendData.length === 0
+    ? 'People Experience (PX) Performance Trend'
+    : spansMultipleYears
+      ? `People Experience (PX) Performance Trend ${trendData[0].year}–${trendData[trendData.length - 1].year}`
+      : `People Experience (PX) Performance Trend ${trendData[0].year}`;
+
   return (
     <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-xs space-y-4">
       {/* Chart Header */}
@@ -59,14 +191,16 @@ export default function TrendChart({
           <div>
             <div className="flex items-center space-x-2">
               <h3 className="text-base font-extrabold text-[#231F20]">
-                People Experience (PX) Performance Trend 2026
+                {chartTitle}
               </h3>
               <span className="text-[10px] font-bold px-2 py-0.5 bg-red-100 text-[#ED1C24] rounded-full">
-                Monthly & YTD
+                {isMtd ? 'Monthly Movement (MTD)' : 'Cumulative YTD'}
               </span>
             </div>
             <p className="text-xs text-gray-500">
-              Progression of PX Index, Survey Index (70%), and Outcome Index (30%) across 2026 (Full 0% – 100% Scale)
+              {isMtd
+                ? 'Pergerakan skor bulanan berdiri sendiri (MTD) — setiap titik murni data bulan tersebut, tanpa akumulasi dari bulan sebelumnya'
+                : 'Progresi kumulatif Year-to-Date — setiap titik adalah rata-rata berjalan dari Januari hingga bulan tersebut'} (PX Index 100%, Survey 70%, Outcome 30% — Skala 0% – 100%). Hanya bulan yang sudah lengkap yang ditampilkan.
             </p>
           </div>
         </div>
@@ -92,6 +226,90 @@ export default function TrendChart({
         </div>
       </div>
 
+      {/* Period Range Filter — start and end each carry their own Year + Month, so the
+          range can genuinely cross a year boundary (e.g. November 2025 s/d Februari 2026) */}
+      <div className="flex flex-wrap items-center gap-2.5 p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs">
+        <div className="flex items-center space-x-1.5 text-gray-500 font-bold shrink-0">
+          <Filter className="w-3.5 h-3.5 text-[#ED1C24]" />
+          <span>Rentang Periode:</span>
+        </div>
+
+        {/* Start Year + Month */}
+        <div className="flex items-center space-x-1">
+          <select
+            value={rangeStartYear || year}
+            onChange={(e) => {
+              const newStartYear = e.target.value;
+              const maxMonth = clientLastCompleteMonth(newStartYear);
+              const newStartMonth = Math.min(parseInt(rangeStartMonth || '1', 10), maxMonth || 12);
+              handleRangeChange({ startYear: newStartYear, startMonth: String(newStartMonth).padStart(2, '0') });
+            }}
+            className="px-2 py-1.5 bg-white border border-gray-300 rounded-lg font-semibold focus:outline-none focus:ring-2 focus:ring-red-500"
+          >
+            {(availableYears.length > 0 ? availableYears : [year]).map(y => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+          <select
+            value={rangeStartMonth || '01'}
+            onChange={(e) => handleRangeChange({ startMonth: e.target.value })}
+            className="px-2 py-1.5 bg-white border border-gray-300 rounded-lg font-semibold focus:outline-none focus:ring-2 focus:ring-red-500"
+          >
+            {Array.from({ length: Math.max(clientLastCompleteMonth(rangeStartYear || year), 1) }, (_, i) => String(i + 1).padStart(2, '0')).map(m => (
+              <option key={m} value={m}>{MONTH_NAMES_ID[parseInt(m, 10) - 1]}</option>
+            ))}
+          </select>
+        </div>
+
+        <span className="text-gray-400 font-bold">s/d</span>
+
+        {/* End Year + Month */}
+        <div className="flex items-center space-x-1">
+          <select
+            value={rangeEndYear || year}
+            onChange={(e) => {
+              const newEndYear = e.target.value;
+              const maxMonth = clientLastCompleteMonth(newEndYear) || 12;
+              const newEndMonth = Math.min(parseInt(rangeEndMonth || String(maxMonth), 10), maxMonth);
+              handleRangeChange({ endYear: newEndYear, endMonth: String(newEndMonth).padStart(2, '0') });
+            }}
+            className="px-2 py-1.5 bg-white border border-gray-300 rounded-lg font-semibold focus:outline-none focus:ring-2 focus:ring-red-500"
+          >
+            {(availableYears.length > 0 ? availableYears : [year]).map(y => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+          <select
+            value={rangeEndMonth || ''}
+            onChange={(e) => handleRangeChange({ endMonth: e.target.value })}
+            className="px-2 py-1.5 bg-white border border-gray-300 rounded-lg font-semibold focus:outline-none focus:ring-2 focus:ring-red-500"
+          >
+            {Array.from({ length: Math.max(clientLastCompleteMonth(rangeEndYear || year), 1) }, (_, i) => String(i + 1).padStart(2, '0')).map(m => (
+              <option key={m} value={m}>{MONTH_NAMES_ID[parseInt(m, 10) - 1]}</option>
+            ))}
+          </select>
+        </div>
+
+        {isRangeNarrowed && (
+          <button
+            onClick={handleResetRange}
+            className="inline-flex items-center space-x-1 px-2.5 py-1.5 text-[#ED1C24] hover:bg-red-50 border border-red-200 rounded-lg font-bold transition"
+            title="Kembalikan ke rentang default (Awal Tahun s/d Bulan Terakhir Sebelum Bulan Ini)"
+          >
+            <RotateCcw className="w-3 h-3" />
+            <span>Reset</span>
+          </button>
+        )}
+
+        {loading && (
+          <span className="text-gray-400 italic">Memuat...</span>
+        )}
+
+        <span className="text-gray-400 ml-auto">
+          Rentang bisa lintas tahun (mis. Nov {year ? parseInt(year, 10) - 1 : ''} s/d Feb {year})
+        </span>
+      </div>
+
       {/* SVG Chart Container */}
       <div className="relative overflow-x-auto">
         <div className="min-w-[700px]">
@@ -104,21 +322,21 @@ export default function TrendChart({
 
               return (
                 <g key={val}>
-                  <line 
-                    x1={paddingLeft - 5} 
-                    y1={yPos} 
-                    x2={chartWidth - paddingRight} 
-                    y2={yPos} 
-                    stroke={isTarget ? '#780000' : (isBase ? '#D1D5DB' : '#F3F4F6')} 
+                  <line
+                    x1={paddingLeft - 5}
+                    y1={yPos}
+                    x2={chartWidth - paddingRight}
+                    y2={yPos}
+                    stroke={isTarget ? '#780000' : (isBase ? '#D1D5DB' : '#F3F4F6')}
                     strokeDasharray={isTarget ? '4 4' : undefined}
-                    strokeWidth={isTarget ? '1.5' : (isBase ? '1.2' : '1')} 
+                    strokeWidth={isTarget ? '1.5' : (isBase ? '1.2' : '1')}
                     opacity={isTarget ? 0.85 : 1}
                   />
-                  <text 
-                    x={paddingLeft - 10} 
-                    y={yPos + 3.5} 
-                    fontSize="9.5" 
-                    fill={isTarget ? '#780000' : '#6B7280'} 
+                  <text
+                    x={paddingLeft - 10}
+                    y={yPos + 3.5}
+                    fontSize="9.5"
+                    fill={isTarget ? '#780000' : '#6B7280'}
                     fontWeight={isTarget ? 'bold' : '500'}
                     textAnchor="end"
                   >
@@ -167,8 +385,8 @@ export default function TrendChart({
               const isHovered = hoveredMonth === i;
 
               return (
-                <g 
-                  key={d.month_code} 
+                <g
+                  key={d.month_code}
                   className="cursor-pointer transition-all"
                   onMouseEnter={() => setHoveredMonth(i)}
                   onMouseLeave={() => setHoveredMonth(null)}
@@ -189,26 +407,27 @@ export default function TrendChart({
                   )}
 
                   {/* Survey Point (Teal) */}
-                  <circle 
-                    cx={cx} 
-                    cy={getY(d.survey_index)} 
-                    r="3.5" 
-                    fill="#16C0B7" 
-                    stroke="#FFFFFF" 
+                  <circle
+                    cx={cx}
+                    cy={getY(d.survey_index)}
+                    r="3.5"
+                    fill="#16C0B7"
+                    stroke="#FFFFFF"
                     strokeWidth="1.5"
                   />
 
                   {/* Outcome Point (Royal Blue) */}
-                  <circle 
-                    cx={cx} 
-                    cy={getY(d.outcome_index)} 
-                    r="3.5" 
-                    fill="#2563EB" 
-                    stroke="#FFFFFF" 
+                  <circle
+                    cx={cx}
+                    cy={getY(d.outcome_index)}
+                    r="3.5"
+                    fill="#2563EB"
+                    stroke="#FFFFFF"
                     strokeWidth="1.5"
                   />
 
-                  {/* PX Index Main Point (Red) */}
+                  {/* PX Index Main Point (Red — pale if this complete month simply had zero
+                      responses uploaded yet, still real data, just empty) */}
                   <circle
                     cx={cx}
                     cy={cy}
@@ -227,7 +446,7 @@ export default function TrendChart({
                     fill={isSelected ? '#ED1C24' : '#4B5563'}
                     textAnchor="middle"
                   >
-                    {d.month_name.slice(0, 3)}
+                    {spansMultipleYears ? `${d.month_name.slice(0, 3)} '${d.year.slice(2)}` : d.month_name.slice(0, 3)}
                   </text>
                 </g>
               );
@@ -244,12 +463,12 @@ export default function TrendChart({
           </div>
           <div>
             <span className="text-gray-500 font-medium">
-              {activeHover ? `Period Detail (${activeHover.month_name} 2026):` : 'Active Period Summary:'}
+              {activeHover ? `Period Detail (${activeHover.month_name} ${activeHover.year}):` : 'Active Period Summary:'}
             </span>
             <div className="font-extrabold text-[#231F20] text-sm">
-              {activeHover 
-                ? `${activeHover.month_name} 2026 (PX Index: ${activeHover.px_index || activeHover.pe_index}%)`
-                : (selectedPeriod === 'YTD' ? `Year-to-Date 2026 (PX Index: ${ytdPeIndex || '-'}%)` : `Month ${selectedPeriod}`)}
+              {activeHover
+                ? `${activeHover.month_name} ${activeHover.year} (PX Index: ${activeHover.px_index || activeHover.pe_index}%)`
+                : (selectedPeriod === 'YTD' ? `Year-to-Date ${year} (PX Index: ${ytdPeIndex || '-'}%)` : `Month ${selectedPeriod}`)}
             </div>
           </div>
         </div>
@@ -279,4 +498,3 @@ export default function TrendChart({
     </div>
   );
 }
-

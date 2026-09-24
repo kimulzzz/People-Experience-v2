@@ -106,3 +106,46 @@ Buka berkas CSV di Microsoft Excel atau editor teks dan isi baris data:
 2. Geser slider bobot konsolidasi (default: **70% Survey / 30% Outcome**).
 3. Sesuaikan bobot proporsi untuk masing-masing 5 Journey jika diperlukan.
 4. Klik **"Simpan Pengaturan Bobot"**.
+
+---
+
+## 🔄 7. Panduan Frekuensi Update Data & Pengingat Upload Survei
+
+Setiap metrik memiliki parameter **"Update Data Berkala"** yang menentukan seberapa sering data
+metrik tersebut perlu diperbarui, serta (khusus metrik Survey) pengaturan pengingat email ke PIC
+yang bertanggung jawab meng-upload data secara manual.
+
+### 7.1 Frekuensi Update Data
+Buka **Parameter Admin → Parameter Metric → Edit** pada metrik yang dituju, lalu pada bagian
+*"Update Data Berkala & Pengingat Upload Survei"* pilih salah satu:
+
+| Pilihan | Kapan Dipakai |
+| :--- | :--- |
+| **Bulanan (Update Berkala Tiap Bulan)** | Metrik yang datanya perlu di-upload/diperbarui setiap bulan (default untuk sebagian besar metrik). |
+| **Tahunan (Sekali Upload untuk Full Year)** | Metrik yang cukup diupload sekali dan dipakai untuk kalkulasi sepanjang tahun — contoh default: 11 metrik **ESS (Employee Sentiment Survey)**. |
+
+### 7.2 Pengingat Upload Survei Manual (Reminder Email PIC)
+Khusus metrik bertipe **Survey**, tersedia toggle **"Survei ini masih diupload manual oleh PIC"**.
+Jika diaktifkan:
+1. Isi **Nama PIC Upload** dan **Email PIC (Tujuan Reminder)**.
+2. Tentukan **Batas Tanggal Upload** — tanggal (1–28) setiap bulan untuk metrik Bulanan, atau
+   bulan + tanggal untuk metrik Tahunan (default: 25 November).
+3. Sistem otomatis mendeteksi jika data belum diupload untuk siklus berjalan (bulan ini, atau
+   tahun ini untuk metrik Tahunan), dan menandai status:
+   - **Segera Jatuh Tempo (DUE_SOON)** — ≤5 hari sebelum batas waktu.
+   - **Terlambat (OVERDUE)** — sudah melewati batas waktu.
+4. Metrik yang berstatus DUE_SOON/OVERDUE muncul otomatis sebagai **banner kuning** di atas
+   tabel Parameter Metric, lengkap dengan tombol **"Kirim Reminder Sekarang"** untuk mengirim
+   email ke seluruh PIC terkait via SMTP internal perusahaan (dikonfigurasi lewat variabel
+   lingkungan `SMTP_HOST`, dsb. — lihat `.env.example`). Server juga otomatis mengecek dan
+   mengirim reminder setiap 24 jam tanpa perlu diklik manual.
+5. Jika SMTP belum dikonfigurasi di lingkungan on-premise Anda, reminder tetap terhitung dan
+   tercatat di log server — email hanya benar-benar terkirim setelah SMTP diaktifkan.
+
+### 7.3 Tanggal Data Terakhir untuk Metrik Outcome
+Untuk metrik bertipe **Outcome** (data dari sistem HR internal, bukan survei manual), field
+**Tanggal Data Terakhir** (`last_data_date`) menyimpan kapan data terakhir kali ditarik dari
+sistem HR sumbernya (SLA Rekrutmen, Arjuna Recognition, dll.). Field ini tersimpan di database
+metrik itu sendiri dan dapat diperbarui via `PUT /api/admin/metrics/:id` — sebelumnya nilai ini
+sempat "terkunci" di dalam kode program (bukan database), sehingga admin tidak bisa benar-benar
+mengubahnya; sudah diperbaiki di v2.12.0 (lihat `CHANGELOG.md`).

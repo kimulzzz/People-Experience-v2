@@ -210,7 +210,7 @@ export default function AdminSettingsModal({
                   return (
                     <tr key={m.metric_id} className="hover:bg-gray-50/70 transition">
                       <td className="py-3 px-3 text-center font-bold text-gray-500">
-                        #{m.metric_id}
+                        {m.metric_id}
                       </td>
                       <td className="py-3 px-3">
                         <div className="font-bold text-gray-900 leading-snug">

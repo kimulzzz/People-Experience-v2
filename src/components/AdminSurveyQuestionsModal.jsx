@@ -243,7 +243,7 @@ export default function AdminSurveyQuestionsModal({
             >
               {surveyMetrics.map(m => (
                 <option key={m.metric_id} value={m.metric_id}>
-                  #{m.metric_id} — {m.metric_name} ({m.experience_owner || 'HR'})
+                  {m.metric_id} — {m.metric_name} ({m.experience_owner || 'HR'})
                 </option>
               ))}
             </select>
@@ -291,7 +291,7 @@ export default function AdminSurveyQuestionsModal({
             <div className="flex items-center justify-between">
               <span className="font-bold text-white flex items-center gap-1.5">
                 <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
-                Standard CSV Header Preview for Metric #{selectedMetricId}:
+                Standard CSV Header Preview for Metric {selectedMetricId}:
               </span>
               <span className="text-[11px] text-slate-400">{questions.length} Active Questions</span>
             </div>

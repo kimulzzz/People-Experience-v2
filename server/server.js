@@ -10,13 +10,18 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const storage = require('./db/storage');
-const { calculatePEIndex, getMetricDetail, computeMonthlyTrends } = require('./services/calculationEngine');
+const { calculatePEIndex, getMetricDetail, computeMonthlyTrends, getLastCompleteMonth, normalizeTarget } = require('./services/calculationEngine');
 const { getAlertsAndRecommendations } = require('./services/alertEngine');
 const { generateEventPPT } = require('./services/pptGenerator');
 const { isOllamaAvailable, generateEventSummary } = require('./services/localAiService');
 const { generateSurveyCsvTemplate } = require('./services/surveyTemplateService');
 const { processSurveyCsv } = require('./services/surveyImportService');
 const { generateSurveyEvidenceCsv } = require('./services/surveyEvidenceService');
+const { getPendingUploadReminders, sendPendingUploadReminders } = require('./services/reminderService');
+
+// Default year for YTD/unparseable period query params, derived from the real server clock
+// instead of a hardcoded literal (mirrors CURRENT_YEAR in calculationEngine.js).
+const CURRENT_YEAR = String(new Date().getFullYear());
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -53,7 +58,7 @@ app.get('/api/health', async (req, res) => {
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.9.0',
+    version: '2.16.0',
     local_ai: {
       ollama_status: ollama ? 'connected' : 'offline (using local heuristic engine)',
       host: process.env.OLLAMA_HOST || 'http://localhost:11434'
@@ -78,12 +83,16 @@ app.get('/api/directorates', (req, res) => {
 // 2. Metrics & PE Index Calculation (Supports ?mode=YTD|MTD&year=2026&month=03&directorate=...&sub_directorate=...)
 app.get('/api/metrics/calculate', (req, res) => {
   try {
-    const { period, mode, year, month, directorate, sub_directorate, subDirectorate } = req.query;
+    const { period, mode, year, month, endMonth, directorate, sub_directorate, subDirectorate } = req.query;
     const filterOptions = {
-      period: period || (mode === 'MTD' ? `${year || '2026'}-${month || '01'}` : (mode === 'YTD' ? 'YTD' : (year || '2026'))),
+      period: period || (mode === 'MTD' ? `${year || CURRENT_YEAR}-${month || '01'}` : (mode === 'YTD' ? 'YTD' : (year || CURRENT_YEAR))),
       mode: mode || (period && /^\d{4}-\d{2}$/.test(period) ? 'MTD' : 'YTD'),
-      year: year || (period && /^\d{4}/.test(period) ? period.slice(0, 4) : '2026'),
+      year: year || (period && /^\d{4}/.test(period) ? period.slice(0, 4) : CURRENT_YEAR),
       month: month || (period && period.length >= 7 && /^\d{4}-\d{2}/.test(period) ? period.slice(5, 7) : '01'),
+      // Optional: bound a YTD query to "Jan..end of this month" (e.g. ?mode=YTD&endMonth=08)
+      // instead of the full year — mainly used to audit/verify the Performance Trend chart's
+      // cumulative points against this same scorecard endpoint.
+      endMonth: endMonth || null,
       directorate: directorate || 'ALL',
       sub_directorate: sub_directorate || subDirectorate || 'ALL'
     };
@@ -100,9 +109,9 @@ app.get('/api/metrics/:id/detail', (req, res) => {
   try {
     const { period, mode, year, month, directorate, sub_directorate, subDirectorate } = req.query;
     const filterOptions = {
-      period: period || (mode === 'MTD' ? `${year || '2026'}-${month || '01'}` : (mode === 'YTD' ? 'YTD' : (year || '2026'))),
+      period: period || (mode === 'MTD' ? `${year || CURRENT_YEAR}-${month || '01'}` : (mode === 'YTD' ? 'YTD' : (year || CURRENT_YEAR))),
       mode: mode || (period && /^\d{4}-\d{2}$/.test(period) ? 'MTD' : 'YTD'),
-      year: year || (period && /^\d{4}/.test(period) ? period.slice(0, 4) : '2026'),
+      year: year || (period && /^\d{4}/.test(period) ? period.slice(0, 4) : CURRENT_YEAR),
       month: month || (period && period.length >= 7 && /^\d{4}-\d{2}/.test(period) ? period.slice(5, 7) : '01'),
       directorate: directorate || 'ALL',
       sub_directorate: sub_directorate || subDirectorate || 'ALL'
@@ -120,13 +129,32 @@ app.get('/api/metrics/:id/detail', (req, res) => {
 // 2c. Monthly Trend Series
 app.get('/api/metrics/trends', (req, res) => {
   try {
-    const { directorate, sub_directorate, subDirectorate } = req.query;
+    const { mode, year, startYear, startMonth, endYear, endMonth, directorate, sub_directorate, subDirectorate } = req.query;
+    const targetYear = year || CURRENT_YEAR;
     const filterOptions = {
+      mode: (mode || 'YTD').toUpperCase() === 'MTD' ? 'MTD' : 'YTD',
+      year: targetYear,
+      startYear: startYear || null,
+      startMonth: startMonth || null,
+      endYear: endYear || null,
+      endMonth: endMonth || null,
       directorate: directorate || 'ALL',
       sub_directorate: sub_directorate || subDirectorate || 'ALL'
     };
     const trends = computeMonthlyTrends(filterOptions);
-    res.json({ trends });
+    // last_complete_month tells the frontend range picker which months of `year` are even
+    // selectable — the chart can never be pushed into showing the in-progress current month
+    // or beyond. available_years lists every year that actually has survey data (plus the
+    // real current year), so the frontend's year dropdowns reflect the database, not a
+    // hardcoded guess.
+    const lastCompleteMonth = getLastCompleteMonth(targetYear);
+    res.json({
+      trends,
+      mode: filterOptions.mode,
+      year: targetYear,
+      last_complete_month: lastCompleteMonth > 0 ? String(lastCompleteMonth).padStart(2, '0') : null,
+      available_years: storage.getAvailableSurveyYears()
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -139,8 +167,14 @@ app.get('/api/admin/parameters', (req, res) => {
   try {
     const journeys = storage.getJourneys();
     const checkpoints = storage.getCheckpoints();
-    const metrics = storage.getMetrics();
     const directorates = storage.getDirectorates();
+    // target_value_normalized converts each metric's raw target (e.g. 4.00 on a 1-5
+    // Likert scale) into the same 0-100 scale as min_threshold, so Admin Parameters can
+    // display Target and Threshold using one consistent unit instead of mixing scales.
+    const metrics = storage.getMetrics().map(m => ({
+      ...m,
+      target_value_normalized: parseFloat(normalizeTarget(m, m).toFixed(2))
+    }));
     res.json({
       success: true,
       journeys,
@@ -331,6 +365,30 @@ app.post('/api/admin/survey-questions/:metric_id/reset', (req, res) => {
   }
 });
 
+// Survey Upload Reminders — Periodic Data Update / Manual Survey Upload Deadline tracking
+app.get('/api/admin/upload-reminders', (req, res) => {
+  try {
+    const reminders = getPendingUploadReminders();
+    res.json({
+      total_reminders: reminders.length,
+      overdue_count: reminders.filter(r => r.status === 'OVERDUE').length,
+      due_soon_count: reminders.filter(r => r.status === 'DUE_SOON').length,
+      reminders
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/upload-reminders/send', async (req, res) => {
+  try {
+    const result = await sendPendingUploadReminders();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/metrics/score', (req, res) => {
   try {
     const { metric_id, raw_value, normalized_score, notes } = req.body;
@@ -358,9 +416,9 @@ app.post('/api/metrics/weights', (req, res) => {
 });
 
 // 3. Alerts & Action Library Recommendations
-app.get('/api/alerts', (req, res) => {
+app.get('/api/alerts', async (req, res) => {
   try {
-    const alertsData = getAlertsAndRecommendations();
+    const alertsData = await getAlertsAndRecommendations();
     res.json(alertsData);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -546,6 +604,16 @@ app.post('/api/events', (req, res) => {
   }
 });
 
+app.delete('/api/events/:id', (req, res) => {
+  try {
+    const removed = storage.deleteEvent(req.params.id);
+    calculatePEIndex();
+    res.json({ success: true, event: removed });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.get('/api/events/by-code/:code', (req, res) => {
   const code = req.params.code.toUpperCase();
   const preEvent = storage.getEventByPreCode(code);
@@ -637,6 +705,26 @@ app.post('/api/events/:id/feedback', (req, res) => {
     calculatePEIndex();
 
     res.status(201).json({ success: true, message: 'Terima kasih, evaluasi kepuasan Anda telah berhasil dikirim!', response: record });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/events/:id/attendance/:nip', (req, res) => {
+  try {
+    const removed = storage.deleteAttendance(req.params.id, req.params.nip);
+    calculatePEIndex();
+    res.json({ success: true, attendance: removed });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/events/:id/feedback/:nip', (req, res) => {
+  try {
+    const removed = storage.deleteFeedbackResponse(req.params.id, req.params.nip);
+    calculatePEIndex();
+    res.json({ success: true, feedback: removed });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -738,4 +826,16 @@ app.listen(PORT, () => {
   console.log(`📡 URL: http://localhost:${PORT}`);
   console.log(`📊 Health: http://localhost:${PORT}/api/health`);
   console.log(`=======================================================`);
+
+  // Daily automatic check for Survey Upload Reminders (Batas Waktu Upload Survei).
+  // Runs once shortly after boot, then every 24h — emails PICs whose metrics are
+  // DUE_SOON or OVERDUE. Safe to run repeatedly: metrics already uploaded this
+  // cycle are automatically skipped, so PICs aren't spammed once they've uploaded.
+  const DAILY_MS = 24 * 60 * 60 * 1000;
+  setTimeout(() => {
+    sendPendingUploadReminders().catch(err => console.error('[reminderService] daily check failed:', err.message));
+    setInterval(() => {
+      sendPendingUploadReminders().catch(err => console.error('[reminderService] daily check failed:', err.message));
+    }, DAILY_MS);
+  }, 15000);
 });

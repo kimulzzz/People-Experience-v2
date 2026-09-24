@@ -78,6 +78,18 @@ const initialCheckpoints = [
   { checkpoint_id: 17, journey_id: 5, checkpoint_name: 'Intent to Stay', experience_owner: 'Performance, Reward & Budgeting' }
 ];
 
+// Last HR-system ingestion date per OUTCOME metric — seed default for the `last_data_date`
+// field (admin-editable via PUT /api/admin/metrics/:id), not business logic.
+const OUTCOME_INGESTION_DATES = {
+  1: '2026-03-24', // Career website & social media
+  3: '2026-03-22', // Success ratio targeted university
+  4: '2026-03-23', // Success ratio candidate by channel
+  10: '2026-03-21', // Internal mobility fulfillment
+  11: '2026-03-15', // Signature program attendance
+  16: '2026-03-24', // Medical check-up & wellness
+  27: '2026-03-25'  // Exit interview completion & turnover
+};
+
 const initialMetrics = [
   // --- ARRIVAL (7 metrics) ---
   {
@@ -693,7 +705,42 @@ const initialMetrics = [
       'I would recommend CIMB as a great place to work to prospective candidates (84%)'
     ]
   }
-];
+].map(m => {
+  // --- Data Update Cadence ("Frekuensi Update Data") ---
+  // ESS (Employee Sentiment Survey) metrics are collected once a year in real CIMB HR
+  // practice, so their full-year calculation only needs a single annual upload. Everything
+  // else (recurring survey instruments, HR system feeds) is refreshed every month.
+  const isEssMetric = (m.source_of_data || '').toUpperCase().includes('ESS');
+  const update_frequency = isEssMetric ? 'ONE_TIME_ANNUAL' : 'MONTHLY';
+
+  // --- Manual Survey Upload Reminder Settings ---
+  // Only SURVEY-type metrics rely on a human PIC manually uploading a CSV each cycle;
+  // OUTCOME metrics are sourced from HR system feeds/reports, not manual survey upload.
+  const requires_manual_upload = m.metric_type === 'SURVEY';
+  const picSlug = m.experience_owner
+    ? m.experience_owner.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '')
+    : 'pxcwb.team';
+
+  // --- Last HR System Ingestion Date (OUTCOME metrics only) ---
+  // This used to live as a hardcoded { metric_id: date } lookup table inside
+  // calculationEngine.js's business logic — moved here so it's a real, admin-editable
+  // database field (via PUT /api/admin/metrics/:id) instead of a second, code-only source
+  // of truth that could silently drift from what an admin configures.
+  const last_data_date = m.metric_type === 'OUTCOME' ? (OUTCOME_INGESTION_DATES[m.metric_id] || '2026-03-24') : undefined;
+
+  return {
+    ...m,
+    update_frequency,
+    requires_manual_upload,
+    // Monthly metrics: due by the 25th of every month. Annual (ESS) metrics: due by
+    // the 25th of November, ahead of Year-to-Date closing calculations in December.
+    upload_deadline_day: 25,
+    upload_deadline_month: 11,
+    pic_name: m.experience_owner || 'PXCWB Team',
+    pic_email: `${picSlug}@cimbniaga.co.id`,
+    ...(last_data_date ? { last_data_date } : {})
+  };
+});
 
 const initialActionLibrary = [
   {
@@ -940,11 +987,38 @@ function generateInitialSurveyResponses() {
   const responses = [];
   let respId = 1;
 
-  const dates = [
+  const dates = [];
+
+  // --- Prior year (2025) — a FULL 12-month dataset, so switching the Dashboard's year
+  // selector to 2025 (or building a cross-year Performance Trend range, e.g. Nov 2025 s/d
+  // Feb 2026) pulls genuine database-backed monthly variation instead of silently falling
+  // back to each metric's static default raw_value (which looked identical/"hardcoded" no
+  // matter which year was selected).
+  const PRIOR_YEAR = 2025;
+  for (let m = 1; m <= 12; m++) {
+    const mm = String(m).padStart(2, '0');
+    dates.push(`${PRIOR_YEAR}-${mm}-05`, `${PRIOR_YEAR}-${mm}-15`, `${PRIOR_YEAR}-${mm}-25`);
+  }
+
+  // --- Current seed year (2026) ---
+  dates.push(
     '2026-01-15', '2026-01-22', '2026-01-29',
     '2026-02-05', '2026-02-14', '2026-02-24',
     '2026-03-04', '2026-03-12', '2026-03-20'
-  ];
+  );
+
+  // Dynamically extend seed survey response dates through the CURRENT calendar month
+  // (whatever "today" is when the server boots), so the People Experience Performance
+  // Trend chart always shows real monthly movement up through the latest month instead
+  // of flatlining on a static forecast formula for months that have already passed.
+  // Months genuinely in the future keep using calculationEngine's forecast projection.
+  const SEED_YEAR = 2026;
+  const today = new Date();
+  const currentMonth = (today.getFullYear() === SEED_YEAR) ? (today.getMonth() + 1) : 12;
+  for (let m = 4; m <= currentMonth; m++) {
+    const mm = String(m).padStart(2, '0');
+    dates.push(`${SEED_YEAR}-${mm}-05`, `${SEED_YEAR}-${mm}-15`, `${SEED_YEAR}-${mm}-25`);
+  }
 
   const surveyMetricIds = Object.keys(DEFAULT_METRIC_QUESTIONS).map(k => parseInt(k));
 
@@ -1144,6 +1218,43 @@ function generateInitialSurveyResponses() {
 
 const initialSurveyUploadedResponses = generateInitialSurveyResponses();
 
+// Per-metric operational drilldown records for OUTCOME metrics whose "raw data" is an internal
+// HR operational breakdown table (not individual survey responses) — e.g. recruitment SLA by
+// unit, approval-stage compliance, hiring channel mix, recognition categories, attrition by
+// tenure. Seeded here (like every other demo dataset in this file) so it lives in the database
+// layer and is admin-editable in principle, instead of being frozen directly inside
+// calculationEngine.js's business logic.
+const initialOperationalRecords = {
+  1: [
+    { unit: 'Information Technology', target_headcount: 45, fulfilled: 42, sla_achievement: '93.3%', status: 'Achieved' },
+    { unit: 'Consumer Banking', target_headcount: 80, fulfilled: 71, sla_achievement: '88.8%', status: 'Achieved' },
+    { unit: 'Risk Management', target_headcount: 25, fulfilled: 23, sla_achievement: '92.0%', status: 'Achieved' },
+    { unit: 'Corporate Banking & Markets', target_headcount: 30, fulfilled: 26, sla_achievement: '86.7%', status: 'Achieved' },
+    { unit: 'Operations & Support', target_headcount: 50, fulfilled: 46, sla_achievement: '92.0%', status: 'Achieved' }
+  ],
+  3: [
+    { stage: 'Directorate Head Approval', avg_sla_hours: 36, sla_target_hours: 48, compliance: '94.5%' },
+    { stage: 'Talent Acquisition Review', avg_sla_hours: 24, sla_target_hours: 24, compliance: '96.0%' },
+    { stage: 'Total Rewards Compensation Review', avg_sla_hours: 28, sla_target_hours: 48, compliance: '93.2%' }
+  ],
+  4: [
+    { channel: 'CIMB Niaga Careers Official Website', hires_count: 95, percentage: '39.6%', quality_score: '88.5%' },
+    { channel: 'LinkedIn Talent Solutions', hires_count: 82, percentage: '34.2%', quality_score: '86.0%' },
+    { channel: 'Jobstreet / Job Portals', hires_count: 42, percentage: '17.5%', quality_score: '80.0%' },
+    { channel: 'Employee Referral Program (Teman Baru)', hires_count: 21, percentage: '8.7%', quality_score: '92.0%' }
+  ],
+  14: [
+    { category: 'Bravo! Peer-to-Peer Recognition', recipient_count: 2840, points_awarded: '142,000 pts', source: 'Arjuna Recognition' },
+    { category: 'Shining Star Quarterly Award', recipient_count: 980, points_awarded: '98,000 pts', source: 'Arjuna Recognition' },
+    { category: 'Long Service & Milestone Recognition', recipient_count: 510, points_awarded: '51,000 pts', source: 'Arjuna HRIS' }
+  ],
+  25: [
+    { tenure_bracket: 'Month 1 - 2 (Onboarding & Probation)', attrition_count: 12, rate: '1.2%', benchmark: '< 2.0%' },
+    { tenure_bracket: 'Month 3 - 4 (Initial Assignment)', attrition_count: 18, rate: '1.8%', benchmark: '< 2.0%' },
+    { tenure_bracket: 'Month 5 - 6 (Probation Review)', attrition_count: 12, rate: '1.2%', benchmark: '< 2.0%' }
+  ]
+};
+
 module.exports = {
   initialJourneys,
   initialCheckpoints,
@@ -1154,6 +1265,7 @@ module.exports = {
   sampleEvents,
   sampleAttendances,
   sampleFeedbackResponses,
-  initialSurveyUploadedResponses
+  initialSurveyUploadedResponses,
+  initialOperationalRecords
 };
 

@@ -88,7 +88,7 @@ export default function WeightsModal({ isOpen, onClose, metrics, onSaveWeights }
             <div key={m.metric_id} className="flex items-center justify-between p-2.5 bg-white hover:bg-gray-50 rounded-lg border border-gray-200">
               <div className="max-w-md">
                 <span className="text-[10px] font-bold text-gray-400 uppercase">
-                  #{m.metric_id} • {m.metric_type}
+                  {m.metric_id} • {m.metric_type}
                 </span>
                 <p className="font-bold text-gray-800 leading-snug">{m.metric_name}</p>
               </div>

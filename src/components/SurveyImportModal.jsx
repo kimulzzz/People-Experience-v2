@@ -207,7 +207,7 @@ export default function SurveyImportModal({
                 <option value="ALL">🌟 Master Template: All 20 Survey Metrics (Complete)</option>
                 {surveyMetrics.map(m => (
                   <option key={m.metric_id} value={m.metric_id}>
-                    #{m.metric_id} - {m.metric_name} ({m.scale_type})
+                    {m.metric_id} - {m.metric_name} ({m.scale_type})
                   </option>
                 ))}
               </select>
@@ -264,7 +264,7 @@ export default function SurveyImportModal({
                 className="px-5 py-2.5 bg-[#ED1C24] hover:bg-[#D91B23] text-white rounded-xl text-xs font-bold transition flex items-center space-x-2 shadow-sm"
               >
                 <Download className="w-4 h-4" />
-                <span>Download CSV Template ({selectedMetricId === 'ALL' ? 'Master Template' : `Metric #${selectedMetricId}`})</span>
+                <span>Download CSV Template ({selectedMetricId === 'ALL' ? 'Master Template' : `Metric ${selectedMetricId}`})</span>
               </button>
             </div>
           </div>
@@ -287,7 +287,7 @@ export default function SurveyImportModal({
                 <option value="ALL">Auto-detect from `metric_id` column inside CSV</option>
                 {surveyMetrics.map(m => (
                   <option key={m.metric_id} value={m.metric_id}>
-                    #{m.metric_id} - {m.metric_name} ({m.scale_type})
+                    {m.metric_id} - {m.metric_name} ({m.scale_type})
                   </option>
                 ))}
               </select>
@@ -359,7 +359,7 @@ export default function SurveyImportModal({
                       {uploadResult.affected_metrics.map(af => (
                         <div key={af.metric_id} className="flex items-center justify-between bg-white p-2 rounded border border-gray-200 text-[11px]">
                           <div>
-                            <span className="font-bold text-gray-800">#{af.metric_id} - {af.metric_name}</span>
+                            <span className="font-bold text-gray-800">{af.metric_id} - {af.metric_name}</span>
                             <span className="text-gray-400 block">{af.respondent_count} respondents</span>
                           </div>
                           <div className="text-right">

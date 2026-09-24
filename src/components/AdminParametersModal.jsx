@@ -16,14 +16,53 @@ import {
   Filter,
   UserCheck,
   Users2,
-  Sparkles
+  Sparkles,
+  RefreshCw,
+  CalendarClock,
+  Mail,
+  Bell,
+  Send
 } from 'lucide-react';
+
+const MONTH_NAMES_ID = [
+  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+];
+
+// Converts a metric's raw Target Nilai (stored in its own native scale — e.g. 4.00 on a
+// RATING_5 1-5 scale) into the same 0-100 % scale as Min Threshold, mirroring the backend's
+// normalizeTarget()/normalizeScore() in calculationEngine.js. Used as a client-side fallback
+// when the API response hasn't been refreshed with target_value_normalized yet.
+function computeTargetPercent(metric) {
+  const value = parseFloat(metric.target_value || 0);
+  switch (metric.scale_type) {
+    case 'RATING_5':
+      return Math.min(Math.max((value / 5.0) * 100, 0), 100);
+    case 'QUOTA_COUNT':
+      return value > 0 ? 100 : 0; // by definition, hitting the raw target = 100% achievement
+    case 'PERCENTAGE':
+    case 'NUMERIC':
+    default:
+      return Math.min(Math.max(value, 0), 100);
+  }
+}
 
 export default function AdminParametersModal({ isOpen, onClose, onParametersUpdated }) {
   const [activeTab, setActiveTab] = useState('metrics'); // 'journeys' | 'metrics'
   const [loading, setLoading] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const modalBodyRef = React.useRef(null);
+
+  // The form for Add/Edit renders above the table inside this scrollable body.
+  // If the user had scrolled down the (possibly long) table first, the form
+  // opens off-screen and looks like the button did nothing — so always
+  // scroll the body back to top whenever a form is opened.
+  const scrollBodyToTop = () => {
+    requestAnimationFrame(() => {
+      modalBodyRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  };
 
   // Data states
   const [journeys, setJourneys] = useState([]);
@@ -59,17 +98,28 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
     weight: 1.0,
     target_value: 4.5,
     target_display: '4.50 / 5.0',
-    min_threshold: 4.0,
+    min_threshold: 75.0,
     is_employee_metric: true,
-    target_audience: 'EMPLOYEE'
+    target_audience: 'EMPLOYEE',
+    update_frequency: 'MONTHLY',
+    requires_manual_upload: true,
+    upload_deadline_day: 25,
+    upload_deadline_month: 11,
+    pic_name: '',
+    pic_email: ''
   });
 
   // Reset confirmation modal state
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
+  // Survey Upload Reminders (Batas Waktu Upload Survei)
+  const [uploadReminders, setUploadReminders] = useState({ total_reminders: 0, overdue_count: 0, due_soon_count: 0, reminders: [] });
+  const [sendingReminders, setSendingReminders] = useState(false);
+
   useEffect(() => {
     if (isOpen) {
       fetchParameters();
+      fetchUploadReminders();
     }
   }, [isOpen]);
 
@@ -90,6 +140,38 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
     }
   };
 
+  const fetchUploadReminders = async () => {
+    try {
+      const res = await fetch('/api/admin/upload-reminders');
+      if (res.ok) setUploadReminders(await res.json());
+    } catch (err) {
+      // Non-critical — silently ignore, reminder panel just stays empty
+    }
+  };
+
+  const handleSendUploadReminders = async () => {
+    setSendingReminders(true);
+    try {
+      const res = await fetch('/api/admin/upload-reminders/send', { method: 'POST' });
+      const result = await res.json();
+      if (res.ok) {
+        const sentCount = (result.results || []).filter(r => r.email_status === 'SENT').length;
+        const loggedCount = (result.results || []).filter(r => r.email_status === 'LOGGED_ONLY').length;
+        setSaveSuccess(
+          result.smtp_configured
+            ? `Reminder terkirim ke ${sentCount} PIC.`
+            : `SMTP belum dikonfigurasi — ${loggedCount} reminder dicatat di log server (tidak ada email yang benar-benar terkirim).`
+        );
+        setTimeout(() => setSaveSuccess(''), 4500);
+        await fetchUploadReminders();
+      }
+    } catch (err) {
+      setErrorMessage('Gagal mengirim reminder: ' + err.message);
+    } finally {
+      setSendingReminders(false);
+    }
+  };
+
   // ----------------------------------------------------
   // JOURNEY ACTIONS
   // ----------------------------------------------------
@@ -103,6 +185,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
     });
     setIsAddingJourney(true);
     setEditingJourney(null);
+    scrollBodyToTop();
   };
 
   const handleOpenEditJourney = (j) => {
@@ -115,6 +198,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
     });
     setEditingJourney(j);
     setIsAddingJourney(false);
+    scrollBodyToTop();
   };
 
   const handleSaveJourney = async (e) => {
@@ -188,12 +272,19 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
       weight: 1.0,
       target_value: 4.5,
       target_display: '4.50 / 5.0',
-      min_threshold: 4.0,
+      min_threshold: 75.0,
       is_employee_metric: true,
-      target_audience: 'EMPLOYEE'
+      target_audience: 'EMPLOYEE',
+      update_frequency: 'MONTHLY',
+      requires_manual_upload: true,
+      upload_deadline_day: 25,
+      upload_deadline_month: 11,
+      pic_name: '',
+      pic_email: ''
     });
     setIsAddingMetric(true);
     setEditingMetric(null);
+    scrollBodyToTop();
   };
 
   const handleOpenEditMetric = (m) => {
@@ -208,12 +299,19 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
       weight: m.weight !== undefined ? m.weight : 1.0,
       target_value: m.target_value !== undefined ? m.target_value : 4.5,
       target_display: m.target_display || '',
-      min_threshold: m.min_threshold !== undefined ? m.min_threshold : 4.0,
+      min_threshold: m.min_threshold !== undefined ? m.min_threshold : 75.0,
       is_employee_metric: m.is_employee_metric !== undefined ? m.is_employee_metric : true,
-      target_audience: m.target_audience || (m.is_employee_metric ? 'EMPLOYEE' : 'EXTERNAL_MARKET')
+      target_audience: m.target_audience || (m.is_employee_metric ? 'EMPLOYEE' : 'EXTERNAL_MARKET'),
+      update_frequency: m.update_frequency || 'MONTHLY',
+      requires_manual_upload: m.requires_manual_upload !== undefined ? m.requires_manual_upload : (m.metric_type === 'SURVEY'),
+      upload_deadline_day: m.upload_deadline_day !== undefined ? m.upload_deadline_day : 25,
+      upload_deadline_month: m.upload_deadline_month !== undefined ? m.upload_deadline_month : 11,
+      pic_name: m.pic_name || m.experience_owner || '',
+      pic_email: m.pic_email || ''
     });
     setEditingMetric(m);
     setIsAddingMetric(false);
+    scrollBodyToTop();
   };
 
   const handleSaveMetric = async (e) => {
@@ -253,7 +351,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
   };
 
   const handleDeleteMetric = async (metricId, metricName) => {
-    if (!window.confirm(`Apakah Anda yakin ingin menghapus Metric #${metricId} - "${metricName}"?`)) return;
+    if (!window.confirm(`Apakah Anda yakin ingin menghapus Metric ${metricId} - "${metricName}"?`)) return;
     setLoading(true);
     setErrorMessage('');
     try {
@@ -261,7 +359,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || 'Gagal menghapus Metric');
 
-      setSaveSuccess(`Metric #${metricId} berhasil dihapus.`);
+      setSaveSuccess(`Metric ${metricId} berhasil dihapus.`);
       setTimeout(() => setSaveSuccess(''), 3500);
       await fetchParameters();
       if (onParametersUpdated) onParametersUpdated();
@@ -425,7 +523,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
         </div>
 
         {/* Modal Body Content */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+        <div ref={modalBodyRef} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
 
           {/* ============================================================ */}
           {/* TAB 1: PARAMETER JOURNEY                                      */}
@@ -579,13 +677,51 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
           {/* ============================================================ */}
           {activeTab === 'metrics' && (
             <div>
+              {/* Survey Upload Reminders Panel (Batas Waktu Upload Survei) */}
+              {uploadReminders.total_reminders > 0 && (
+                <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start space-x-3">
+                    <div className="p-2 bg-amber-100 rounded-lg text-amber-700 shrink-0">
+                      <Bell className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-amber-900">
+                        {uploadReminders.overdue_count > 0
+                          ? `${uploadReminders.overdue_count} Survei Terlambat Diupload`
+                          : 'Survei Mendekati Batas Waktu Upload'}
+                        {uploadReminders.due_soon_count > 0 && uploadReminders.overdue_count > 0 && ` & ${uploadReminders.due_soon_count} Segera Jatuh Tempo`}
+                      </h4>
+                      <ul className="text-[11px] text-amber-800 mt-1 space-y-0.5">
+                        {uploadReminders.reminders.slice(0, 4).map(r => (
+                          <li key={r.metric_id}>
+                            <strong>{r.metric_name}</strong> — PIC: {r.pic_name} ({r.pic_email || 'email belum diisi'}) — {r.status === 'OVERDUE' ? `Terlambat sejak ${r.deadline}` : `Jatuh tempo ${r.deadline} (${r.days_until_deadline} hari lagi)`}
+                          </li>
+                        ))}
+                        {uploadReminders.reminders.length > 4 && (
+                          <li className="italic">+{uploadReminders.reminders.length - 4} metrik lainnya...</li>
+                        )}
+                      </ul>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleSendUploadReminders}
+                    disabled={sendingReminders}
+                    className="px-3 py-1.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg flex items-center space-x-1.5 shadow-sm transition shrink-0 disabled:opacity-60"
+                    title="Kirim email reminder ke seluruh PIC yang tercantum"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>{sendingReminders ? 'Mengirim...' : 'Kirim Reminder Sekarang'}</span>
+                  </button>
+                </div>
+              )}
+
               {/* Metric Form (Add or Edit) */}
               {(isAddingMetric || editingMetric) && (
                 <div className="mb-6 p-5 bg-gray-50 border border-gray-300 rounded-xl shadow-xs animate-in fade-in">
                   <div className="flex items-center justify-between pb-3 mb-4 border-b border-gray-200">
                     <h3 className="text-sm font-bold text-gray-900 flex items-center space-x-2">
                       <Sparkles className="w-4 h-4 text-[#ED1C24]" />
-                      <span>{editingMetric ? `Edit Metric #${editingMetric.metric_id}: ${editingMetric.metric_name}` : 'Tambah Metric Baru'}</span>
+                      <span>{editingMetric ? `Edit Metric ${editingMetric.metric_id}: ${editingMetric.metric_name}` : 'Tambah Metric Baru'}</span>
                     </h3>
                     <button
                       onClick={() => { setIsAddingMetric(false); setEditingMetric(null); }}
@@ -663,7 +799,9 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Target Nilai</label>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">
+                        Target Nilai <span className="font-normal text-gray-400">(satuan skala asli — {metricFormData.scale_type === 'RATING_5' ? '1.0 - 5.0' : metricFormData.scale_type === 'PERCENTAGE' ? '0 - 100%' : 'sesuai Quota/Numerik'})</span>
+                      </label>
                       <input
                         type="number"
                         step="0.01"
@@ -672,13 +810,20 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                         onChange={(e) => setMetricFormData({ ...metricFormData, target_value: parseFloat(e.target.value) || 0 })}
                         className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 font-mono font-bold"
                       />
+                      <div className="text-[10px] text-gray-500 mt-1">
+                        ≈ <span className="font-bold text-gray-700">{computeTargetPercent(metricFormData).toFixed(1)}%</span> dari skala penuh — nilai inilah yang dibandingkan langsung dengan Min Threshold di bawah.
+                      </div>
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Min Threshold (Batas Kritis)</label>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">
+                        Min Threshold (Batas Kritis) <span className="font-normal text-gray-400">(selalu dalam %, 0 - 100)</span>
+                      </label>
                       <input
                         type="number"
                         step="0.01"
+                        min="0"
+                        max="100"
                         required
                         value={metricFormData.min_threshold}
                         onChange={(e) => setMetricFormData({ ...metricFormData, min_threshold: parseFloat(e.target.value) || 0 })}
@@ -743,6 +888,103 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                         </span>
                       </label>
                     </div>
+
+                    {/* Data Update Cadence & Manual Survey Upload Reminder Settings */}
+                    <div className="sm:col-span-2 lg:col-span-4 pt-3 border-t border-gray-200">
+                      <h4 className="text-xs font-bold text-gray-800 flex items-center space-x-1.5 mb-3">
+                        <RefreshCw className="w-3.5 h-3.5 text-[#ED1C24]" />
+                        <span>Update Data Berkala & Pengingat Upload Survei</span>
+                      </h4>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">Frekuensi Update Data</label>
+                      <select
+                        value={metricFormData.update_frequency}
+                        onChange={(e) => setMetricFormData({ ...metricFormData, update_frequency: e.target.value })}
+                        className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 font-semibold"
+                      >
+                        <option value="MONTHLY">Bulanan (Update Berkala Tiap Bulan)</option>
+                        <option value="ONE_TIME_ANNUAL">Tahunan (Sekali Upload untuk Full Year)</option>
+                      </select>
+                      <p className="text-[10.5px] text-gray-400 mt-1">
+                        Bulanan: data di-upload/diperbarui tiap bulan. Tahunan: cukup sekali upload, dipakai untuk kalkulasi sepanjang tahun (contoh: metrik ESS).
+                      </p>
+                    </div>
+
+                    {metricFormData.metric_type === 'SURVEY' && (
+                      <div className="flex items-center pt-5">
+                        <label className="flex items-center space-x-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={metricFormData.requires_manual_upload}
+                            onChange={(e) => setMetricFormData({ ...metricFormData, requires_manual_upload: e.target.checked })}
+                            className="w-4 h-4 text-red-600 rounded focus:ring-red-500 border-gray-300"
+                          />
+                          <span className="text-xs font-bold text-gray-800">
+                            Survei ini masih diupload manual oleh PIC (aktifkan reminder email)
+                          </span>
+                        </label>
+                      </div>
+                    )}
+
+                    {metricFormData.metric_type === 'SURVEY' && metricFormData.requires_manual_upload && (
+                      <>
+                        <div>
+                          <label className="block text-xs font-bold text-gray-700 mb-1 flex items-center space-x-1">
+                            <CalendarClock className="w-3 h-3 text-gray-500" />
+                            <span>Batas Tanggal Upload {metricFormData.update_frequency === 'ONE_TIME_ANNUAL' ? '(per Tahun)' : '(per Bulan)'}</span>
+                          </label>
+                          <div className="flex items-center space-x-2">
+                            {metricFormData.update_frequency === 'ONE_TIME_ANNUAL' && (
+                              <select
+                                value={metricFormData.upload_deadline_month}
+                                onChange={(e) => setMetricFormData({ ...metricFormData, upload_deadline_month: parseInt(e.target.value) })}
+                                className="flex-1 px-2 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500"
+                              >
+                                {MONTH_NAMES_ID.map((name, i) => (
+                                  <option key={i + 1} value={i + 1}>{name}</option>
+                                ))}
+                              </select>
+                            )}
+                            <select
+                              value={metricFormData.upload_deadline_day}
+                              onChange={(e) => setMetricFormData({ ...metricFormData, upload_deadline_day: parseInt(e.target.value) })}
+                              className="w-24 px-2 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500"
+                            >
+                              {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
+                                <option key={d} value={d}>Tgl {d}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-gray-700 mb-1">Nama PIC Upload</label>
+                          <input
+                            type="text"
+                            value={metricFormData.pic_name}
+                            onChange={(e) => setMetricFormData({ ...metricFormData, pic_name: e.target.value })}
+                            placeholder="Contoh: Talent Partnership Team"
+                            className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-gray-700 mb-1 flex items-center space-x-1">
+                            <Mail className="w-3 h-3 text-gray-500" />
+                            <span>Email PIC (Tujuan Reminder)</span>
+                          </label>
+                          <input
+                            type="email"
+                            value={metricFormData.pic_email}
+                            onChange={(e) => setMetricFormData({ ...metricFormData, pic_email: e.target.value })}
+                            placeholder="pic.team@cimbniaga.co.id"
+                            className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500"
+                          />
+                        </div>
+                      </>
+                    )}
 
                     <div className="sm:col-span-2 lg:col-span-4 flex justify-end space-x-2 pt-2 border-t border-gray-200">
                       <button
@@ -815,9 +1057,10 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                       <th className="py-2.5 px-3">Journey</th>
                       <th className="py-2.5 px-3 text-center">Tipe</th>
                       <th className="py-2.5 px-3 text-center">Responden</th>
+                      <th className="py-2.5 px-3 text-center">Update Data</th>
                       <th className="py-2.5 px-3 text-center">Bobot</th>
-                      <th className="py-2.5 px-3 text-center">Target</th>
-                      <th className="py-2.5 px-3 text-center">Threshold</th>
+                      <th className="py-2.5 px-3 text-center">Target (%)</th>
+                      <th className="py-2.5 px-3 text-center">Threshold (%)</th>
                       <th className="py-2.5 px-3 text-right">Aksi</th>
                     </tr>
                   </thead>
@@ -827,7 +1070,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                       return (
                         <tr key={m.metric_id} className="hover:bg-gray-50/80 transition">
                           <td className="py-2.5 px-3 text-center font-mono font-black text-gray-700 bg-gray-50/50">
-                            #{m.metric_id}
+                            {m.metric_id}
                           </td>
                           <td className="py-2.5 px-3">
                             <div className="font-bold text-gray-900">{m.metric_name}</div>
@@ -863,14 +1106,41 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                               </span>
                             )}
                           </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span
+                              className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                m.update_frequency === 'ONE_TIME_ANNUAL'
+                                  ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                  : 'bg-sky-50 text-sky-700 border-sky-200'
+                              }`}
+                              title={
+                                m.metric_type === 'SURVEY' && m.requires_manual_upload
+                                  ? `Diupload manual oleh ${m.pic_name || m.experience_owner || 'PIC'} (${m.pic_email || 'email belum diisi'})`
+                                  : 'Tidak memerlukan reminder upload manual'
+                              }
+                            >
+                              <RefreshCw className="w-2.5 h-2.5" />
+                              <span>{m.update_frequency === 'ONE_TIME_ANNUAL' ? 'Tahunan' : 'Bulanan'}</span>
+                            </span>
+                            {m.metric_type === 'SURVEY' && m.requires_manual_upload && (
+                              <div className="text-[9.5px] text-gray-400 mt-0.5">
+                                PIC: {m.pic_name || m.experience_owner || '-'}
+                              </div>
+                            )}
+                          </td>
                           <td className="py-2.5 px-3 text-center font-mono font-bold text-gray-900">
                             {m.weight !== undefined ? m.weight.toFixed(1) : '1.0'}
                           </td>
-                          <td className="py-2.5 px-3 text-center font-mono font-bold text-gray-700">
-                            {m.target_value}
+                          <td className="py-2.5 px-3 text-center">
+                            <div className="font-mono font-bold text-gray-700">
+                              {(m.target_value_normalized !== undefined ? m.target_value_normalized : computeTargetPercent(m)).toFixed(1)}%
+                            </div>
+                            <div className="text-[9.5px] text-gray-400 leading-tight">
+                              {m.target_display || `${m.target_value} raw`}
+                            </div>
                           </td>
                           <td className="py-2.5 px-3 text-center font-mono font-bold text-rose-700">
-                            {m.min_threshold}
+                            {m.min_threshold}%
                           </td>
                           <td className="py-2.5 px-3 text-right">
                             <div className="flex items-center justify-end space-x-1">

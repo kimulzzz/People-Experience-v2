@@ -19,6 +19,10 @@ import {
 } from 'lucide-react';
 import TrendChart from './TrendChart';
 
+// Derived from the real browser clock (not a frozen literal) — only used as a last-resort
+// fallback when App.jsx hasn't passed filterOptions yet.
+const CURRENT_YEAR = String(new Date().getFullYear());
+
 const journeyIcons = {
   ARRIVAL: UserPlus,
   CONNECT: Users,
@@ -31,7 +35,7 @@ export default function Dashboard({
   calculationData, 
   alertsData, 
   selectedPeriod = 'YTD',
-  filterOptions = { mode: 'YTD', year: '2026', month: '01', directorate: 'ALL', sub_directorate: 'ALL' },
+  filterOptions = { mode: 'YTD', year: CURRENT_YEAR, month: '01', directorate: 'ALL', sub_directorate: 'ALL' },
   onSelectPeriod,
   onSelectJourney, 
   onSelectMetric,
@@ -47,13 +51,13 @@ export default function Dashboard({
     );
   }
 
-  const { px_index, pe_index, survey_index, outcome_index, journeys, metrics, monthly_trends } = calculationData;
+  const { px_index, pe_index, survey_index, outcome_index, journeys, metrics } = calculationData;
   const currentPxIndex = px_index !== undefined ? px_index : (pe_index || 0);
   const criticalAlerts = alertsData?.alerts?.filter(a => a.severity === 'CRITICAL') || [];
   const warningAlerts = alertsData?.alerts?.filter(a => a.severity === 'WARNING') || [];
 
   const mode = filterOptions?.mode || 'YTD';
-  const year = filterOptions?.year || '2026';
+  const year = filterOptions?.year || CURRENT_YEAR;
   const month = filterOptions?.month || '01';
   const directorate = filterOptions?.directorate || 'ALL';
   const subDirectorate = filterOptions?.sub_directorate || 'ALL';
@@ -180,10 +184,13 @@ export default function Dashboard({
 
       {/* 2. MONTHLY TREND & PROGRESSION CHART */}
       <TrendChart
-        trendData={monthly_trends}
         selectedPeriod={selectedPeriod}
         onSelectPeriod={onSelectPeriod}
         ytdPeIndex={currentPxIndex}
+        trendMode={mode}
+        directorate={directorate}
+        subDirectorate={subDirectorate}
+        year={year}
       />
 
       {/* 3. ACTIVE ALERTS & ACTION RECOMMENDATIONS (SLIDE 10 FRAMEWORK) */}
@@ -243,6 +250,19 @@ export default function Dashboard({
                     </p>
                   </div>
                 </div>
+
+                {/* AI Narrative (dynamic via local Ollama, offline rule-based fallback) */}
+                {alert.narrative_summary && (
+                  <div className="mt-3 bg-white/80 rounded-lg p-3 border border-gray-200/80 text-xs">
+                    <div className="flex items-center space-x-1.5 text-[#231F20] font-bold mb-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-[#ED1C24]" />
+                      <span>Ringkasan Analisis AI (Local Ollama)</span>
+                    </div>
+                    <p className="text-gray-700 leading-relaxed font-medium">
+                      {alert.narrative_summary}
+                    </p>
+                  </div>
+                )}
 
                 {/* AI & Library Recommendation */}
                 <div className="mt-3 bg-white/80 rounded-lg p-3 border border-gray-200/80 space-y-2 text-xs">
@@ -393,15 +413,15 @@ export default function Dashboard({
                             isDisabled ? 'bg-gray-100 text-gray-400 border-gray-200 opacity-60 cursor-not-allowed' :
                             m.status === 'CRITICAL' ? 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100' :
                             m.status === 'WARNING' ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' :
-                            'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+                            'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
                           }`}
                           title={
-                            isDisabled 
-                              ? `Metrik #${m.metric_id} (${m.metric_name}) dinonaktifkan di filter Direktorat (Bankwide External).`
+                            isDisabled
+                              ? `Metrik ${m.metric_id} (${m.metric_name}) dinonaktifkan di filter Direktorat (Bankwide External).`
                               : `Click to view survey details and questions for ${m.metric_name}`
                           }
                         >
-                          <span className={`truncate max-w-[120px] ${isDisabled ? 'line-through' : ''}`}>#{m.metric_id} {m.metric_name}</span>
+                          <span className={`truncate max-w-[120px] ${isDisabled ? 'line-through' : ''}`}>{m.metric_id} - {m.metric_name}</span>
                           <span className="font-bold">{isDisabled ? '(Exempted)' : `(${m.normalized_score}%)`}</span>
                         </button>
                       );

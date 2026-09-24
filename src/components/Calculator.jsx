@@ -76,7 +76,14 @@ function normalizeDateString(dateVal) {
   return str;
 }
 
-export default function Calculator({ 
+// Real "today" as YYYY-MM-DD — last-resort fallback only, since the backend now always sends a
+// real last_survey_date/last_data_date. Avoids ever displaying a frozen calendar literal.
+function todayDateString() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+export default function Calculator({
   calculationData, 
   selectedJourneyFilter = 'ALL', 
   setSelectedJourneyFilter,
@@ -269,20 +276,20 @@ export default function Calculator({
             <HelpCircle className="w-3.5 h-3.5 text-[#ED1C24]" />
             <span>Action Guide:</span>
           </div>
-          <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold text-[10.5px]">
-            <Download className="w-3 h-3 text-emerald-600 shrink-0" />
+          <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200 font-semibold text-[10.5px]">
+            <Download className="w-3 h-3 text-slate-500 shrink-0" />
             <span><strong>Template:</strong> CSV Format</span>
           </div>
-          <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-purple-50 text-purple-800 border border-purple-200 font-semibold text-[10.5px]">
-            <FileText className="w-3 h-3 text-purple-600 shrink-0" />
+          <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200 font-semibold text-[10.5px]">
+            <FileText className="w-3 h-3 text-slate-500 shrink-0" />
             <span><strong>Evidence:</strong> Audit Trail</span>
           </div>
-          <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-blue-50 text-blue-800 border border-blue-200 font-semibold text-[10.5px]">
-            <FileSpreadsheet className="w-3 h-3 text-blue-600 shrink-0" />
+          <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200 font-semibold text-[10.5px]">
+            <FileSpreadsheet className="w-3 h-3 text-slate-500 shrink-0" />
             <span><strong>Upload:</strong> Import CSV</span>
           </div>
-          <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-red-50 text-red-800 border border-red-200 font-semibold text-[10.5px]">
-            <Eye className="w-3 h-3 text-[#ED1C24] shrink-0" />
+          <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200 font-semibold text-[10.5px]">
+            <Eye className="w-3 h-3 text-slate-500 shrink-0" />
             <span><strong>Detail:</strong> Metric Drilldown</span>
           </div>
         </div>
@@ -363,7 +370,7 @@ export default function Calculator({
             {/* Sticky Table Header */}
             <thead className="sticky top-0 z-20 shadow-xs">
               <tr className="bg-gray-100 text-[10.5px] font-extrabold text-gray-700 uppercase tracking-wider border-b border-gray-200">
-                <th className={`py-3 ${isFit ? 'px-2.5 w-10' : 'px-3.5 w-12'} text-center bg-gray-100`}>#</th>
+                <th className={`py-3 ${isFit ? 'px-2.5 w-10' : 'px-3.5 w-12'} text-center bg-gray-100`}>ID</th>
                 <th className={`py-3 ${isFit ? 'px-2.5 min-w-[210px] max-w-[270px]' : 'px-3.5 min-w-[260px]'} bg-gray-100`}>
                   Check Point & Metric
                 </th>
@@ -399,7 +406,7 @@ export default function Calculator({
                   const cp = checkpoints.find(c => c.checkpoint_id === m.checkpoint_id);
                   const j = journeys.find(jn => jn.journey_id === m.journey_id);
                   const isSurvey = m.metric_type === 'SURVEY';
-                  const rawDate = m.last_survey_date || (isSurvey ? '2026-03-20' : '2026-03-24');
+                  const rawDate = m.last_survey_date || todayDateString();
                   const displayDate = normalizeDateString(rawDate) || rawDate;
 
                   const isDisabled = m.is_disabled === true;
@@ -415,13 +422,13 @@ export default function Calculator({
                       }`}
                       title={
                         isDisabled 
-                          ? `Metrik #${m.metric_id} (${m.metric_name}) dinonaktifkan untuk perhitungan Direktorat karena merupakan metrik non-karyawan / bankwide eksternal.`
-                          : `Click to view full drilldown for metric #${m.metric_id} (${m.metric_name})`
+                          ? `Metrik ${m.metric_id} (${m.metric_name}) dinonaktifkan untuk perhitungan Direktorat karena merupakan metrik non-karyawan / bankwide eksternal.`
+                          : `Click to view full drilldown for metric ${m.metric_id} (${m.metric_name})`
                       }
                     >
                       {/* ID */}
                       <td className={`py-3 ${isFit ? 'px-2.5' : 'px-3.5'} text-center font-bold ${isDisabled ? 'text-gray-400' : 'text-gray-400 group-hover:text-[#ED1C24]'}`}>
-                        #{m.metric_id}
+                        {m.metric_id}
                       </td>
 
                       {/* Name & Checkpoint */}
@@ -570,10 +577,10 @@ export default function Calculator({
                                 href={`/api/surveys/template?metric_id=${m.metric_id}`}
                                 download={`Template_Survey_Metric_${m.metric_id}.csv`}
                                 onClick={(e) => e.stopPropagation()}
-                                className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 hover:text-emerald-900 border border-emerald-200 rounded-md transition shadow-2xs"
+                                className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
                                 title={`Download CSV Template format with standard questions for ${m.metric_name}`}
                               >
-                                <Download className="w-3 h-3 text-emerald-600 shrink-0" />
+                                <Download className="w-3 h-3 text-slate-500 shrink-0" />
                                 <span>Template</span>
                               </a>
 
@@ -582,10 +589,10 @@ export default function Calculator({
                                 href={`/api/surveys/evidence?metric_id=${m.metric_id}&period=${period || 'YTD'}`}
                                 download={`Evidence_Survey_Metric_${m.metric_id}_${period || 'YTD'}.csv`}
                                 onClick={(e) => e.stopPropagation()}
-                                className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 hover:text-purple-900 border border-purple-200 rounded-md transition shadow-2xs"
+                                className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
                                 title={`Download Survey Evidence and Respondent Records for ${m.metric_name}`}
                               >
-                                <FileText className="w-3 h-3 text-purple-600 shrink-0" />
+                                <FileText className="w-3 h-3 text-slate-500 shrink-0" />
                                 <span>Evidence</span>
                               </a>
 
@@ -595,10 +602,10 @@ export default function Calculator({
                                   e.stopPropagation();
                                   if (onOpenSurveyImport) onOpenSurveyImport(m.metric_id);
                                 }}
-                                className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 hover:text-blue-900 border border-blue-200 rounded-md transition shadow-2xs"
+                                className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
                                 title={`Import New CSV Survey Responses for ${m.metric_name}`}
                               >
-                                <FileSpreadsheet className="w-3 h-3 text-blue-600 shrink-0" />
+                                <FileSpreadsheet className="w-3 h-3 text-slate-500 shrink-0" />
                                 <span>Upload</span>
                               </button>
 
@@ -608,10 +615,10 @@ export default function Calculator({
                                   e.stopPropagation();
                                   if (onSelectMetric) onSelectMetric(m.metric_id);
                                 }}
-                                className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-red-700 bg-red-50 hover:bg-red-100 hover:text-red-900 border border-red-200 rounded-md transition shadow-2xs"
+                                className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
                                 title={`Drilldown details and analytics for ${m.metric_name}`}
                               >
-                                <Eye className="w-3 h-3 text-[#ED1C24] shrink-0" />
+                                <Eye className="w-3 h-3 text-slate-500 shrink-0" />
                                 <span>Detail</span>
                               </button>
                             </>
@@ -623,10 +630,10 @@ export default function Calculator({
                                   e.stopPropagation();
                                   if (onSelectMetric) onSelectMetric(m.metric_id);
                                 }}
-                                className="inline-flex items-center space-x-1 px-2.5 py-1 text-[10.5px] font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 hover:text-gray-900 border border-gray-200 rounded-md transition shadow-2xs"
-                                title={`View Data & Specs for Outcome Metric #${m.metric_id}`}
+                                className="inline-flex items-center space-x-1 px-2.5 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
+                                title={`View Data & Specs for Outcome Metric ${m.metric_id}`}
                               >
-                                <Database className="w-3 h-3 text-gray-600 shrink-0" />
+                                <Database className="w-3 h-3 text-slate-500 shrink-0" />
                                 <span>View Data</span>
                               </button>
 
@@ -635,10 +642,10 @@ export default function Calculator({
                                   e.stopPropagation();
                                   if (onOpenAdminSettings) onOpenAdminSettings();
                                 }}
-                                className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 hover:text-amber-900 border border-amber-200 rounded-md transition shadow-2xs"
+                                className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
                                 title={`Configure Target and Threshold for ${m.metric_name}`}
                               >
-                                <SlidersHorizontal className="w-3 h-3 text-amber-600 shrink-0" />
+                                <SlidersHorizontal className="w-3 h-3 text-slate-500 shrink-0" />
                                 <span>Target</span>
                               </button>
                             </>
