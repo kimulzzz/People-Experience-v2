@@ -967,21 +967,33 @@ function generateInitialSurveyResponses() {
     { nip: '8805629', name: 'Fajar Nugroho', email: 'fajar.nugroho@cimbniaga.co.id', dir: 'Information Technology', div: 'Application Development' },
     { nip: '8806781', name: 'Lestari Wulandari', email: 'lestari.w@cimbniaga.co.id', dir: 'Commercial & Corporate Banking', div: 'Commercial Banking SME' },
     { nip: '8807894', name: 'Bambang Kusuma', email: 'bambang.k@cimbniaga.co.id', dir: 'Internal Audit & Legal', div: 'Internal Audit Group' },
-    { nip: '8808935', name: 'Mega Anggraini', email: 'mega.a@cimbniaga.co.id', dir: 'Finance & Operations', div: 'Treasury Operations' }
+    { nip: '8808935', name: 'Mega Anggraini', email: 'mega.a@cimbniaga.co.id', dir: 'Finance & Operations', div: 'Treasury Operations' },
+    { nip: '8810127', name: 'Yoga Prasetyo', email: 'yoga.prasetyo@cimbniaga.co.id', dir: 'Consumer Banking', div: 'Branch Banking Region 2' },
+    { nip: '8811284', name: 'Putri Handayani', email: 'putri.handayani@cimbniaga.co.id', dir: 'Digital Banking', div: 'OCTO Mobile Product' },
+    { nip: '8812356', name: 'Arief Budiman', email: 'arief.budiman@cimbniaga.co.id', dir: 'Risk Management', div: 'Market Risk' },
+    { nip: '8813492', name: 'Sri Wahyuni', email: 'sri.wahyuni@cimbniaga.co.id', dir: 'Human Resources', div: 'Talent Acquisition' },
+    { nip: '8814518', name: 'Bayu Firmansyah', email: 'bayu.firmansyah@cimbniaga.co.id', dir: 'Information Technology', div: 'IT Infrastructure & Security' },
+    { nip: '8815673', name: 'Indah Permatasari', email: 'indah.permatasari@cimbniaga.co.id', dir: 'Commercial & Corporate Banking', div: 'Corporate Banking' },
+    { nip: '8816729', name: 'Rendy Saputra', email: 'rendy.saputra@cimbniaga.co.id', dir: 'Finance & Operations', div: 'Financial Planning & Analysis' },
+    { nip: '8817845', name: 'Melati Kusumawardhani', email: 'melati.k@cimbniaga.co.id', dir: 'Internal Audit & Legal', div: 'Legal & Compliance' }
   ];
 
   const campusStudents = [
     { id: 'PESERTA-2026-001', name: 'Aditya Pratama', email: 'aditya.pratama@ui.ac.id', university: 'Universitas Indonesia', major: 'Teknik Informatika' },
     { id: 'PESERTA-2026-002', name: 'Nadia Salsabila', email: 'nadia.salsabila@itb.ac.id', university: 'Institut Teknologi Bandung', major: 'Manajemen Bisnis' },
     { id: 'PESERTA-2026-003', name: 'Rizky Ramadhan', email: 'rizky.r@ugm.ac.id', university: 'Universitas Gadjah Mada', major: 'Sistem Informasi' },
-    { id: 'PESERTA-2026-004', name: 'Farhan Alamsyah', email: 'farhan.a@unpad.ac.id', university: 'Universitas Padjadjaran', major: 'Akuntansi & Keuangan' }
+    { id: 'PESERTA-2026-004', name: 'Farhan Alamsyah', email: 'farhan.a@unpad.ac.id', university: 'Universitas Padjadjaran', major: 'Akuntansi & Keuangan' },
+    { id: 'PESERTA-2026-005', name: 'Bella Anggraeni', email: 'bella.anggraeni@its.ac.id', university: 'Institut Teknologi Sepuluh Nopember', major: 'Teknik Industri' },
+    { id: 'PESERTA-2026-006', name: 'Dimas Aryasatya', email: 'dimas.aryasatya@unair.ac.id', university: 'Universitas Airlangga', major: 'Ekonomi Pembangunan' }
   ];
 
   const jobCandidates = [
     { id: 'CAND-2026-101', name: 'Jessica Stephanie', email: 'jessica.stephanie@gmail.com', position: 'Digital Banking Specialist', channel: 'LinkedIn Talent Solutions' },
     { id: 'CAND-2026-102', name: 'Kevin Wijaya', email: 'kevin.wijaya@yahoo.com', position: 'Fullstack Engineer', channel: 'CIMB Career Website' },
     { id: 'CAND-2026-103', name: 'Tasya Kamila', email: 'tasya.kamila@outlook.com', position: 'Credit Risk Analyst', channel: 'Campus Hiring Fair' },
-    { id: 'CAND-2026-104', name: 'Hendra Gunawan', email: 'hendra.gunawan@gmail.com', position: 'Wealth Relationship Manager', channel: 'Jobstreet Portal' }
+    { id: 'CAND-2026-104', name: 'Hendra Gunawan', email: 'hendra.gunawan@gmail.com', position: 'Wealth Relationship Manager', channel: 'Jobstreet Portal' },
+    { id: 'CAND-2026-105', name: 'Clara Amelia', email: 'clara.amelia@gmail.com', position: 'Data Analyst', channel: 'Employee Referral Program' },
+    { id: 'CAND-2026-106', name: 'Fikri Ramadhan', email: 'fikri.ramadhan@outlook.com', position: 'Relationship Manager SME', channel: 'LinkedIn Talent Solutions' }
   ];
 
   const responses = [];
@@ -1000,11 +1012,12 @@ function generateInitialSurveyResponses() {
     dates.push(`${PRIOR_YEAR}-${mm}-05`, `${PRIOR_YEAR}-${mm}-15`, `${PRIOR_YEAR}-${mm}-25`);
   }
 
-  // --- Current seed year (2026) ---
+  // --- Current seed year (2026) --- 4 survey dates per month (was 3) for a denser,
+  // richer-looking Performance Trend chart with more underlying response volume per point.
   dates.push(
-    '2026-01-15', '2026-01-22', '2026-01-29',
-    '2026-02-05', '2026-02-14', '2026-02-24',
-    '2026-03-04', '2026-03-12', '2026-03-20'
+    '2026-01-08', '2026-01-15', '2026-01-22', '2026-01-29',
+    '2026-02-05', '2026-02-12', '2026-02-19', '2026-02-24',
+    '2026-03-04', '2026-03-12', '2026-03-20', '2026-03-27'
   );
 
   // Dynamically extend seed survey response dates through the CURRENT calendar month
@@ -1017,7 +1030,21 @@ function generateInitialSurveyResponses() {
   const currentMonth = (today.getFullYear() === SEED_YEAR) ? (today.getMonth() + 1) : 12;
   for (let m = 4; m <= currentMonth; m++) {
     const mm = String(m).padStart(2, '0');
-    dates.push(`${SEED_YEAR}-${mm}-05`, `${SEED_YEAR}-${mm}-15`, `${SEED_YEAR}-${mm}-25`);
+    dates.push(`${SEED_YEAR}-${mm}-05`, `${SEED_YEAR}-${mm}-12`, `${SEED_YEAR}-${mm}-19`, `${SEED_YEAR}-${mm}-25`);
+  }
+
+  // Gentle, monotonic month-over-month improvement across 2026 only (2025's baseline dataset
+  // is left untouched) — represents PXCWB's intervention programs taking effect through the
+  // year. Expressed in 0-100 normalized percentage-points (0pp in January, ramping to roughly
+  // +9pp by December); each scale branch below converts this into its own native scale. This
+  // is what gives the YTD Performance Trend chart genuine, visible upward movement instead of
+  // a nearly flat cumulative line — previously every month used the exact same static base
+  // score, so the cumulative YTD average barely moved (~83.0-83.7% across all of Jan-Aug).
+  function monthTrendBonusPercent(surveyDate) {
+    const str = String(surveyDate);
+    if (str.slice(0, 4) !== String(SEED_YEAR)) return 0;
+    const month = parseInt(str.slice(5, 7), 10) || 1;
+    return (month - 1) * 0.85;
   }
 
   const surveyMetricIds = Object.keys(DEFAULT_METRIC_QUESTIONS).map(k => parseInt(k));
@@ -1036,7 +1063,8 @@ function generateInitialSurveyResponses() {
         // Metric 2: Non-employee Campus Students
         const studentSubset = [
           campusStudents[dateIdx % campusStudents.length],
-          campusStudents[(dateIdx + 1) % campusStudents.length]
+          campusStudents[(dateIdx + 1) % campusStudents.length],
+          campusStudents[(dateIdx + 3) % campusStudents.length]
         ];
 
         studentSubset.forEach((student, sIdx) => {
@@ -1049,7 +1077,7 @@ function generateInitialSurveyResponses() {
             if (type === 'FREE_TEXT') {
               ratings[q.key] = 'Sesi Goes to Campus sangat menarik dan memberi gambaran karir perbankan modern.';
             } else {
-              const base5 = 4.2;
+              const base5 = 4.2 + monthTrendBonusPercent(surveyDate) / 20;
               const variance = ((dateIdx + sIdx + qIdx) % 5 - 2) * 0.15;
               const score = Math.min(5.0, Math.max(3.5, Math.round((base5 + variance) * 10) / 10));
               ratings[q.key] = score;
@@ -1087,7 +1115,8 @@ function generateInitialSurveyResponses() {
         // Metric 5: Non-employee Job Candidates
         const candidateSubset = [
           jobCandidates[dateIdx % jobCandidates.length],
-          jobCandidates[(dateIdx + 1) % jobCandidates.length]
+          jobCandidates[(dateIdx + 1) % jobCandidates.length],
+          jobCandidates[(dateIdx + 3) % jobCandidates.length]
         ];
 
         candidateSubset.forEach((cand, cIdx) => {
@@ -1100,7 +1129,7 @@ function generateInitialSurveyResponses() {
             if (type === 'FREE_TEXT') {
               ratings[q.key] = 'Proses rekrutmen sangat profesional, tepat waktu, dan komunikatif.';
             } else {
-              const base5 = 4.1;
+              const base5 = 4.1 + monthTrendBonusPercent(surveyDate) / 20;
               const variance = ((dateIdx + cIdx + qIdx) % 5 - 2) * 0.15;
               const score = Math.min(5.0, Math.max(3.5, Math.round((base5 + variance) * 10) / 10));
               ratings[q.key] = score;
@@ -1138,23 +1167,28 @@ function generateInitialSurveyResponses() {
         // Regular Employee Metrics
         const empSubset = [
           employees[dateIdx % employees.length],
-          employees[(dateIdx + 3) % employees.length]
+          employees[(dateIdx + 3) % employees.length],
+          employees[(dateIdx + 7) % employees.length]
         ];
 
         empSubset.forEach((emp, empIdx) => {
           const ratings = {};
           let scorableNormalizedSum = 0;
           let scorableCount = 0;
+          const monthBonus = monthTrendBonusPercent(surveyDate);
 
           questions.forEach((q, qIdx) => {
             const type = q.type || 'SCALE_1_5';
             if (type === 'YES_NO') {
-              const isYes = (dateIdx + empIdx + qIdx) % 7 !== 0; // mostly Ya
+              // "Tidak" rate starts at ~1-in-7 in January and gets progressively rarer through
+              // the year as the month-trend bonus grows, instead of staying fixed all year.
+              const yesThresholdDivisor = 7 + Math.floor(monthBonus / 2);
+              const isYes = (dateIdx + empIdx + qIdx) % yesThresholdDivisor !== 0;
               ratings[q.key] = isYes ? 'Ya' : 'Tidak';
               scorableNormalizedSum += isYes ? 100 : 0;
               scorableCount += 1;
             } else if (type === 'SCALE_1_10') {
-              const base10 = isScale5 ? (baseTarget * 2) : (baseTarget / 10);
+              const base10 = (isScale5 ? (baseTarget * 2) : (baseTarget / 10)) + monthBonus / 10;
               const variance = ((dateIdx + empIdx + qIdx) % 5 - 2) * 0.25;
               const score = Math.min(10.0, Math.max(6.0, Math.round((base10 + variance) * 10) / 10));
               ratings[q.key] = score;
@@ -1170,7 +1204,7 @@ function generateInitialSurveyResponses() {
               ratings[q.key] = verbatimList[(dateIdx + empIdx + qIdx) % verbatimList.length];
             } else {
               // SCALE_1_5
-              const base5 = isScale5 ? baseTarget : (baseTarget / 20);
+              const base5 = (isScale5 ? baseTarget : (baseTarget / 20)) + monthBonus / 20;
               const variance = ((dateIdx + empIdx + qIdx) % 5 - 2) * 0.12;
               const score = Math.min(5.0, Math.max(3.0, Math.round((base5 + variance) * 10) / 10));
               ratings[q.key] = score;

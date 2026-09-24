@@ -4,6 +4,19 @@ Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Managemen
 
 ---
 
+## [2.18.0] - 2026-09-24
+
+### 📈 Data Dummy 2026 Lebih Banyak & Grafik Trend Lebih Hidup (Improved)
+- **Permintaan pengguna**: "buatkan data dummy lebih banyak lagi agar grafik trend people experience bisa lebih bagus lagi grafiknya untuk YTD 2026."
+- **Root cause tampilan sebelumnya**: seluruh bulan 2026 memakai base score yang **identik** (statis, tanpa komponen tren) — hanya diberi variasi kecil ±0.12–0.3 pada skala 1-5 yang berulang tiap 5 indeks. Karena PX Index YTD adalah rata-rata kumulatif berjalan, hasilnya nyaris rata: **82.86% – 83.68%** sepanjang Januari–Agustus (rentang <1 poin) — grafik terlihat nyaris datar.
+- **Fix — Data lebih banyak**: pool responden diperluas (karyawan 8→16 orang, mahasiswa kampus 4→6, kandidat pelamar 4→6), dan jumlah tanggal survei per bulan ditambah dari 3 menjadi 4 hari — kombinasi ini menaikkan volume respons bulanan dari ±228 menjadi ±240 respons per bulan sekaligus menambah keragaman nama/divisi/direktorat pada data seed.
+- **Fix — Tren kenaikan yang masuk akal**: fungsi baru `monthTrendBonusPercent()` di `seedData.js` menambahkan bonus skor bulanan yang **naik bertahap** sepanjang 2026 (0pp di Januari, naik ~0.85pp tiap bulan, ~+9pp menjelang Desember) — merepresentasikan efek program intervensi PXCWB yang berjalan sepanjang tahun. Diterapkan konsisten di seluruh jalur skor (SCALE_1_5, SCALE_1_10, YES_NO). **Khusus berlaku untuk data 2026** — dataset baseline 2025 sengaja tidak disentuh agar perbandingan lintas tahun tetap sebagai baseline yang stabil.
+- **Hasil**: PX Index YTD kini menunjukkan kenaikan yang jelas dan realistis — **82.81% (Januari) → 84.82% (Agustus)** — dan mode MTD (bulanan berdiri sendiri) menunjukkan tren yang lebih tegas lagi: **82.81% → 87.04%**. Outcome Index tetap datar di seluruh bulan (`75.11%`) — ini **disengaja**, bukan bug (metrik OUTCOME adalah snapshot HR terkini, bukan deret waktu bulanan, lihat `CHANGELOG.md` **[2.11.1]**).
+- **Housekeeping tambahan**: selagi meregenerasi `store.json`, dibersihkan juga ~180 sisa fixture test lama yang menumpuk (`upl-*` CSV upload test dari regression suite Modul 5/10/12/13, dan ~225 record metadata upload uji di `surveyUploads`) yang sebelumnya tidak masuk cakupan pembersihan `[2.14.1]` — tidak berdampak ke tampilan UI manapun, murni pembersihan data.
+- **Verifikasi**: `node tests/regressionTest.js` dijalankan **2x berturut-turut** → **88/88 PASS** setiap kali. Dicek langsung di Browser: PX Index YTD 2026 naik dari 83.2% → 85.1% dengan data segar, seluruh 5 Journey menampilkan skor yang lebih beragam (77.3%–93.1%, sebelumnya sempit di rentang 78.8%–90.8%), dan jumlah event/absensi/feedback tetap stabil di baseline (2 event, 5 absensi, 3 feedback) — tidak ada kebocoran data test baru.
+
+---
+
 ## [2.17.1] - 2026-09-24
 
 ### 🏷️ Status Eksplisit & Nama Metrik Lebih Lega di Kartu Journey Dashboard (Improved)

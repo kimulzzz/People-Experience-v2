@@ -261,6 +261,27 @@ domain model, not just descriptive:
   "CRITICAL"/"EXEMPTED") next to the score — reusing the exact status-badge pattern already
   used in `Calculator.jsx`'s Explore Metrics table for consistency. Purely frontend — no
   backend changes, regression suite stayed at 88/88 PASS.
+- **v2.18.0** (2026-09-24, see `CHANGELOG.md`): User asked for more 2026 dummy data so the
+  YTD Performance Trend chart would look nicer. Root cause: every 2026 month used an
+  identical static base score with only tiny ±0.12-0.3 variance — since the YTD chart is a
+  cumulative running average, this made it nearly flat (82.86%-83.68% across all of
+  Jan-Aug). Fixed in `seedData.js`: expanded the dummy respondent pools (employees 8→16,
+  campus students 4→6, job candidates 4→6), added a 4th survey date per month (was 3, now
+  ~240 responses/month instead of ~228), and added `monthTrendBonusPercent()` — a gentle,
+  monotonic score bonus that ramps up through 2026 only (0pp in January to ~+9pp by
+  December, applied across the SCALE_1_5/SCALE_1_10/YES_NO generation branches), representing
+  PXCWB's intervention programs taking effect over the year. 2025's baseline dataset is
+  deliberately left untouched so cross-year comparisons stay stable. Result: YTD PX Index now
+  shows a real upward trend (82.81%→84.82% Jan-Aug), MTD shows an even clearer one
+  (82.81%→87.04%); Outcome Index stays flat by design (snapshot metric, not a time series —
+  see `[2.11.1]`). Since existing `store.json` response rows for dates already covered by the
+  old seed logic wouldn't be replaced by the storage layer's additive merge (it only appends
+  months not already present), the fix required directly clearing `surveyUploadedResponses`
+  (and while at it, ~180 leftover `upl-*` CSV-upload test fixtures from regression Modules
+  5/10/12/13 that predated this change) so the server would regenerate the full 2026 dataset
+  fresh on next boot. No new regression tests (data-tuning change, not new testable behavior)
+  — verified by running the full suite twice in a row (88/88 PASS both times) and confirming
+  event/attendance/feedback counts stayed at the clean baseline.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
