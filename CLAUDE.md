@@ -250,6 +250,17 @@ domain model, not just descriptive:
   Journey filters (solid `backgroundColor` when active, count badge). Wired into `Header.jsx`
   (new nav button, `BookMarked` icon) and `App.jsx` (`activeTab === 'glossary'`). Purely
   frontend/static — no backend changes, so the regression suite stayed at 88/88 PASS.
+- **v2.17.1** (2026-09-24, see `CHANGELOG.md` and `docs/05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md`
+  §3.3): User asked for an explicit status label next to each metric name in the "5 Employee
+  Experience Journeys" section, plus more room for metric names that were getting cut off.
+  `Dashboard.jsx`'s journey-card metrics list was a wrapped chip cloud (`flex flex-wrap`) with
+  names hard-truncated at `max-w-[120px]` — status was only implied by chip background color,
+  no text label. Changed to a stacked full-width row list (`flex flex-col`) so names render in
+  full, and added an explicit status icon (`CheckCircle2`/`AlertTriangle`/`AlertCircle`/
+  `MinusCircle` for directorate-exempted metrics) plus a text label ("ON TARGET"/"WARNING"/
+  "CRITICAL"/"EXEMPTED") next to the score — reusing the exact status-badge pattern already
+  used in `Calculator.jsx`'s Explore Metrics table for consistency. Purely frontend — no
+  backend changes, regression suite stayed at 88/88 PASS.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

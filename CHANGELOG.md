@@ -4,6 +4,16 @@ Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Managemen
 
 ---
 
+## [2.17.1] - 2026-09-24
+
+### 🏷️ Status Eksplisit & Nama Metrik Lebih Lega di Kartu Journey Dashboard (Improved)
+- **Permintaan pengguna**: pada bagian "5 Employee Experience Journeys (17 Check Points • 27 PX Metrics)", tambahkan status di samping nama tiap metrik, dan perpanjang ruang untuk nama metrik yang sebelumnya terpotong.
+- **Sebelumnya**: daftar metrik di tiap kartu Journey (`Dashboard.jsx`) memakai chip kecil yang di-wrap (`flex flex-wrap`), dengan nama metrik dibatasi `max-w-[120px]` dan `truncate` — nama panjang seperti "Career website & social media follower, reach & engagement growth" terpotong jadi "Career website & socia...". Status hanya tersirat lewat warna latar chip (hijau/amber/merah), tanpa label eksplisit.
+- **Fix**: Daftar metrik diubah dari chip yang di-wrap menjadi baris penuh bertumpuk (`flex flex-col`), memberi nama metrik jauh lebih banyak ruang horizontal (nama kini tampil utuh, bukan lagi dipotong `...`). Setiap baris kini menampilkan **ikon status eksplisit** (`CheckCircle2` untuk On Target, `AlertTriangle` untuk Warning, `AlertCircle` untuk Critical, `MinusCircle` untuk metrik yang di-exempt filter Direktorat) plus **label teks status** ("ON TARGET"/"WARNING"/"CRITICAL"/"EXEMPTED") di sisi kanan berdampingan dengan skor — mengikuti pola badge status yang sama persis dengan yang sudah dipakai di Explore Metrics (`Calculator.jsx`), sehingga konsisten di seluruh aplikasi. Area scroll kartu Journey diperbesar (`max-h-20` → `max-h-40`) untuk mengakomodasi baris yang kini lebih tinggi.
+- **Verifikasi**: `node tests/regressionTest.js` → **88/88 PASS** (perubahan murni UI/frontend, tidak menyentuh backend). Dicek langsung di Browser: seluruh 27 metrik pada 5 kartu Journey menampilkan nama lengkap tanpa terpotong beserta label status (ON TARGET/WARNING/CRITICAL) di sampingnya — termasuk kasus nyata seperti "Signature Program participation rate" (CRITICAL) dan "Exit Survey — resignation experience" (WARNING).
+
+---
+
 ## [2.17.0] - 2026-09-24
 
 ### 📖 Tab Baru: People Experience Glossary (Added)

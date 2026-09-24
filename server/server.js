@@ -58,7 +58,7 @@ app.get('/api/health', async (req, res) => {
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.17.0',
+    version: '2.17.1',
     local_ai: {
       ollama_status: ollama ? 'connected' : 'offline (using local heuristic engine)',
       host: process.env.OLLAMA_HOST || 'http://localhost:11434'

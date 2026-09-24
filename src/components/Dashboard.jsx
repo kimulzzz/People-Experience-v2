@@ -1,11 +1,12 @@
 import React from 'react';
-import { 
-  TrendingUp, 
-  AlertTriangle, 
-  CheckCircle2, 
-  ChevronRight, 
-  Sparkles, 
-  ArrowUpRight, 
+import {
+  TrendingUp,
+  AlertTriangle,
+  AlertCircle,
+  CheckCircle2,
+  ChevronRight,
+  Sparkles,
+  ArrowUpRight,
   Award,
   Users,
   HeartHandshake,
@@ -15,7 +16,8 @@ import {
   HelpCircle,
   ExternalLink,
   Calendar,
-  Eye
+  Eye,
+  MinusCircle
 } from 'lucide-react';
 import TrendChart from './TrendChart';
 
@@ -396,12 +398,14 @@ export default function Dashboard({
                   </div>
                 </div>
 
-                {/* Metrics Mini-Pills with Click-to-Drilldown */}
+                {/* Metrics List with Explicit Status Badge & Click-to-Drilldown */}
                 <div className="space-y-1 pt-1">
                   <span className="text-[10px] font-bold text-gray-400 uppercase">Metrics ({j.metrics?.length || 0}):</span>
-                  <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
+                  <div className="flex flex-col space-y-1 max-h-40 overflow-y-auto pr-0.5">
                     {j.metrics?.map(m => {
                       const isDisabled = m.is_disabled === true;
+                      const StatusIcon = isDisabled ? MinusCircle : m.status === 'CRITICAL' ? AlertCircle : m.status === 'WARNING' ? AlertTriangle : CheckCircle2;
+                      const statusLabel = isDisabled ? 'Exempted' : m.status === 'CRITICAL' ? 'Critical' : m.status === 'WARNING' ? 'Warning' : 'On Target';
                       return (
                         <button
                           key={m.metric_id}
@@ -409,7 +413,7 @@ export default function Dashboard({
                             e.stopPropagation();
                             if (!isDisabled && onSelectMetric) onSelectMetric(m.metric_id);
                           }}
-                          className={`text-[10px] font-semibold px-2 py-0.5 rounded-md border transition flex items-center space-x-1 ${
+                          className={`w-full text-[10px] font-semibold pl-1.5 pr-2 py-1 rounded-md border transition flex items-center justify-between space-x-2 ${
                             isDisabled ? 'bg-gray-100 text-gray-400 border-gray-200 opacity-60 cursor-not-allowed' :
                             m.status === 'CRITICAL' ? 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100' :
                             m.status === 'WARNING' ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' :
@@ -421,8 +425,14 @@ export default function Dashboard({
                               : `Click to view survey details and questions for ${m.metric_name}`
                           }
                         >
-                          <span className={`truncate max-w-[120px] ${isDisabled ? 'line-through' : ''}`}>{m.metric_id} - {m.metric_name}</span>
-                          <span className="font-bold">{isDisabled ? '(Exempted)' : `(${m.normalized_score}%)`}</span>
+                          <span className="flex items-center space-x-1.5 min-w-0 text-left">
+                            <StatusIcon className="w-3 h-3 shrink-0" />
+                            <span className={`truncate ${isDisabled ? 'line-through' : ''}`}>{m.metric_id} - {m.metric_name}</span>
+                          </span>
+                          <span className="flex items-center space-x-1 shrink-0">
+                            <span className="font-bold uppercase tracking-wide text-[9px]">{statusLabel}</span>
+                            {!isDisabled && <span className="font-bold">({m.normalized_score}%)</span>}
+                          </span>
                         </button>
                       );
                     })}
