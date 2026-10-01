@@ -394,7 +394,7 @@ export default function Calculator({
             </thead>
 
             {/* Table Body */}
-            <tbody className="divide-y divide-red-900/10 font-medium text-gray-700">
+            <tbody className="divide-y divide-white/50 font-medium text-gray-700">
               {filteredMetrics.length === 0 ? (
                 <tr>
                   <td colSpan="9" className="text-center py-12 bg-red-50 text-gray-400 font-medium">
@@ -412,22 +412,22 @@ export default function Calculator({
                   const isDisabled = m.is_disabled === true;
 
                   return (
-                    <tr 
+                    <tr
                       key={m.metric_id}
                       onClick={() => !isDisabled && onSelectMetric && onSelectMetric(m.metric_id)}
                       className={`transition ${
                         isDisabled
                           ? 'bg-gray-200/80 text-gray-400 opacity-60 cursor-not-allowed select-none'
-                          : 'bg-red-50/70 odd:bg-pink-50/70 hover:bg-red-100 cursor-pointer group'
+                          : 'bg-gradient-to-r from-[#D9776E] via-[#EAAFA9] to-[#F8E1DF] hover:from-[#E4918A] hover:via-[#F0C2BD] hover:to-[#FCEEEC] cursor-pointer group'
                       }`}
                       title={
-                        isDisabled 
+                        isDisabled
                           ? `Metrik ${m.metric_id} (${m.metric_name}) dinonaktifkan untuk perhitungan Direktorat karena merupakan metrik non-karyawan / bankwide eksternal.`
                           : `Click to view full drilldown for metric ${m.metric_id} (${m.metric_name})`
                       }
                     >
                       {/* ID */}
-                      <td className={`py-3 ${isFit ? 'px-2.5' : 'px-3.5'} text-center font-bold ${isDisabled ? 'text-gray-400' : 'text-gray-400 group-hover:text-[#ED1C24]'}`}>
+                      <td className={`py-3 ${isFit ? 'px-2.5' : 'px-3.5'} text-center font-bold ${isDisabled ? 'text-gray-400' : 'text-[#7A0C14] group-hover:text-[#ED1C24]'}`}>
                         {m.metric_id}
                       </td>
 
@@ -564,7 +564,7 @@ export default function Calculator({
                       </td>
 
                       {/* STICKY RIGHT COLUMN: ACTION BUTTONS (ALWAYS VISIBLE) */}
-                      <td className={`py-2.5 ${isFit ? 'px-2.5' : 'px-3.5'} text-right whitespace-nowrap sticky right-0 ${isDisabled ? 'bg-gray-200/95' : 'bg-pink-50/90 group-hover:bg-red-100'} transition-colors z-10 shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.15)] border-l border-red-200/50`}>
+                      <td className={`py-2.5 ${isFit ? 'px-2.5' : 'px-3.5'} text-right whitespace-nowrap sticky right-0 ${isDisabled ? 'bg-gray-200/95' : 'bg-[#F8E1DF] group-hover:bg-[#FCEEEC]'} transition-colors z-10 shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.15)] border-l border-red-200/50`}>
                         <div className="flex items-center justify-end space-x-1">
                           {isDisabled ? (
                             <span className="text-[10px] font-semibold text-gray-400 italic px-2 py-1">

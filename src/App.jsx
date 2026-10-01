@@ -229,7 +229,7 @@ export default function App() {
       />
 
       {/* Main App Body */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         
         {activeTab === 'dashboard' && (
           <Dashboard
@@ -424,7 +424,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="bg-white border-t border-gray-200 py-4 text-center text-xs text-gray-400">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+        <div className="max-w-[1600px] mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <span>&copy; {new Date().getFullYear()} PT Bank CIMB Niaga Tbk. People Experience Framework.</span>
           <span className="text-[11px] text-gray-400 font-medium">
             Internal HR Confidential System • 100% On-Premise Compliant

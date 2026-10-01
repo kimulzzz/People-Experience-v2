@@ -106,7 +106,7 @@ export default function Header({
       {/* Top Corporate Red Accent Bar */}
       <div className="h-1.5 bg-gradient-to-r from-[#ED1C24] via-[#D91B23] to-[#800D12]" />
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
         {/* Main Header Top Row */}
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between py-2.5 gap-3 border-b border-gray-100">
           
