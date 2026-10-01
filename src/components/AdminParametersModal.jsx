@@ -415,7 +415,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-150">
-      <div className="bg-gradient-to-br from-[#7A0C14] via-[#9A1420] to-[#ED1C24] rounded-2xl shadow-2xl max-w-6xl w-full max-h-[92vh] flex flex-col overflow-hidden">
+      <div className="bg-gradient-to-br from-[var(--theme-deep)] via-[var(--theme-mid)] to-[var(--theme-base)] rounded-2xl shadow-2xl max-w-6xl w-full max-h-[92vh] flex flex-col overflow-hidden">
 
         {/* Modal Header */}
         <div className="px-6 py-4 text-white flex items-center justify-between border-b border-white/15">
@@ -428,7 +428,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                 <h2 className="text-base sm:text-lg font-bold text-white tracking-tight">
                   Parameter Management: Journey & Metrics
                 </h2>
-                <span className="text-[10px] bg-white/90 text-[#8B0000] font-bold px-2 py-0.5 rounded-full">
+                <span className="text-[10px] bg-white/90 text-[var(--theme-dark)] font-bold px-2 py-0.5 rounded-full">
                   Admin Panel
                 </span>
               </div>
@@ -503,7 +503,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
             {activeTab === 'journeys' && !isAddingJourney && !editingJourney && (
               <button
                 onClick={handleOpenAddJourney}
-                className="px-3 py-1.5 text-xs font-bold text-white bg-[#ED1C24] hover:bg-[#D91B23] rounded-lg flex items-center space-x-1.5 shadow-sm transition"
+                className="px-3 py-1.5 text-xs font-bold text-white bg-[var(--theme-base)] hover:bg-[var(--theme-hover)] rounded-lg flex items-center space-x-1.5 shadow-sm transition"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>Tambah Journey</span>
@@ -513,7 +513,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
             {activeTab === 'metrics' && !isAddingMetric && !editingMetric && (
               <button
                 onClick={handleOpenAddMetric}
-                className="px-3 py-1.5 text-xs font-bold text-white bg-[#ED1C24] hover:bg-[#D91B23] rounded-lg flex items-center space-x-1.5 shadow-sm transition"
+                className="px-3 py-1.5 text-xs font-bold text-white bg-[var(--theme-base)] hover:bg-[var(--theme-hover)] rounded-lg flex items-center space-x-1.5 shadow-sm transition"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>Tambah Metric</span>
@@ -535,7 +535,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                 <div className="mb-6 p-5 bg-white border border-white rounded-xl shadow-lg animate-in fade-in">
                   <div className="flex items-center justify-between pb-3 mb-4 border-b border-gray-200">
                     <h3 className="text-sm font-bold text-gray-900 flex items-center space-x-2">
-                      <Sparkles className="w-4 h-4 text-[#ED1C24]" />
+                      <Sparkles className="w-4 h-4 text-[var(--theme-base)]" />
                       <span>{editingJourney ? `Edit Journey: ${editingJourney.journey_name}` : 'Tambah Journey Baru'}</span>
                     </h3>
                     <button
@@ -604,7 +604,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                       <button
                         type="submit"
                         disabled={loading}
-                        className="w-full px-4 py-2 text-xs font-bold text-white bg-[#ED1C24] hover:bg-[#D91B23] rounded-lg flex items-center justify-center space-x-1.5 shadow transition"
+                        className="w-full px-4 py-2 text-xs font-bold text-white bg-[var(--theme-base)] hover:bg-[var(--theme-hover)] rounded-lg flex items-center justify-center space-x-1.5 shadow transition"
                       >
                         <Save className="w-3.5 h-3.5" />
                         <span>{editingJourney ? 'Update Journey' : 'Simpan Journey'}</span>
@@ -720,7 +720,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                 <div className="mb-6 p-5 bg-white border border-white rounded-xl shadow-lg animate-in fade-in">
                   <div className="flex items-center justify-between pb-3 mb-4 border-b border-gray-200">
                     <h3 className="text-sm font-bold text-gray-900 flex items-center space-x-2">
-                      <Sparkles className="w-4 h-4 text-[#ED1C24]" />
+                      <Sparkles className="w-4 h-4 text-[var(--theme-base)]" />
                       <span>{editingMetric ? `Edit Metric ${editingMetric.metric_id}: ${editingMetric.metric_name}` : 'Tambah Metric Baru'}</span>
                     </h3>
                     <button
@@ -892,7 +892,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                     {/* Data Update Cadence & Manual Survey Upload Reminder Settings */}
                     <div className="sm:col-span-2 lg:col-span-4 pt-3 border-t border-gray-200">
                       <h4 className="text-xs font-bold text-gray-800 flex items-center space-x-1.5 mb-3">
-                        <RefreshCw className="w-3.5 h-3.5 text-[#ED1C24]" />
+                        <RefreshCw className="w-3.5 h-3.5 text-[var(--theme-base)]" />
                         <span>Update Data Berkala & Pengingat Upload Survei</span>
                       </h4>
                     </div>
@@ -997,7 +997,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                       <button
                         type="submit"
                         disabled={loading}
-                        className="px-5 py-2 text-xs font-bold text-white bg-[#ED1C24] hover:bg-[#D91B23] rounded-lg flex items-center space-x-1.5 shadow transition"
+                        className="px-5 py-2 text-xs font-bold text-white bg-[var(--theme-base)] hover:bg-[var(--theme-hover)] rounded-lg flex items-center space-x-1.5 shadow transition"
                       >
                         <Save className="w-3.5 h-3.5" />
                         <span>{editingMetric ? 'Update Parameter Metrik' : 'Simpan Metrik'}</span>
@@ -1050,7 +1050,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
               {/* Metrics Table */}
               <div className="overflow-x-auto rounded-xl shadow-xs">
                 <table className="min-w-full divide-y divide-red-900/10 text-left text-xs">
-                  <thead className="bg-[#7A0C14] font-bold text-white">
+                  <thead className="bg-[var(--theme-deep)] font-bold text-white">
                     <tr>
                       <th className="py-2.5 px-3 w-12 text-center">ID</th>
                       <th className="py-2.5 px-3">Nama Metrik</th>

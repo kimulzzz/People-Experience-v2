@@ -199,7 +199,7 @@ export default function AdminSurveyQuestionsModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-      <div className="bg-gradient-to-br from-[#7A0C14] via-[#9A1420] to-[#ED1C24] rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden">
+      <div className="bg-gradient-to-br from-[var(--theme-deep)] via-[var(--theme-mid)] to-[var(--theme-base)] rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden">
 
         {/* Modal Header */}
         <div className="text-white px-6 py-4.5 flex items-center justify-between border-b border-white/15">
@@ -317,7 +317,7 @@ export default function AdminSurveyQuestionsModal({
                     Survey Questions List ({questions.length} Items)
                   </h3>
                   {selectedMetricId === 7 && (
-                    <span className="text-[10px] bg-white/90 text-[#8B0000] px-2 py-0.5 rounded-full font-bold">
+                    <span className="text-[10px] bg-white/90 text-[var(--theme-dark)] px-2 py-0.5 rounded-full font-bold">
                       Standard Day 1 Onboarding Template
                     </span>
                   )}
@@ -325,7 +325,7 @@ export default function AdminSurveyQuestionsModal({
                 <button
                   type="button"
                   onClick={handleAddQuestion}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-white hover:bg-red-50 text-[#8B0000] rounded-xl text-xs font-bold transition-colors shadow-sm"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-white hover:bg-[var(--theme-tint-50)] text-[var(--theme-dark)] rounded-xl text-xs font-bold transition-colors shadow-sm"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   Add Question
@@ -337,7 +337,7 @@ export default function AdminSurveyQuestionsModal({
                   <p className="text-xs text-red-100 font-medium">No questions defined for this metric yet.</p>
                   <button
                     onClick={handleAddQuestion}
-                    className="mt-2 px-3 py-1.5 bg-white text-[#8B0000] rounded-lg text-xs font-bold"
+                    className="mt-2 px-3 py-1.5 bg-white text-[var(--theme-dark)] rounded-lg text-xs font-bold"
                   >
                     Add First Question
                   </button>
@@ -352,7 +352,7 @@ export default function AdminSurveyQuestionsModal({
                       {/* Row 1: Number, Label, Type, Actions */}
                       <div className="flex flex-wrap items-center justify-between gap-2.5">
                         <div className="flex items-center gap-2.5 flex-1 min-w-[240px]">
-                          <span className="w-6 h-6 rounded-full bg-red-50 text-red-700 text-xs font-black flex items-center justify-center flex-shrink-0 border border-red-100">
+                          <span className="w-6 h-6 rounded-full bg-[var(--theme-tint-50)] text-[var(--theme-base)] text-xs font-black flex items-center justify-center flex-shrink-0 border border-[var(--theme-tint-100)]">
                             {idx + 1}
                           </span>
                           <input
@@ -469,7 +469,7 @@ export default function AdminSurveyQuestionsModal({
               type="button"
               onClick={handleSave}
               disabled={isSaving}
-              className="inline-flex items-center gap-2 px-5 py-2 bg-white hover:bg-red-50 text-[#8B0000] rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50"
+              className="inline-flex items-center gap-2 px-5 py-2 bg-white hover:bg-[var(--theme-tint-50)] text-[var(--theme-dark)] rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50"
             >
               {isSaving ? (
                 <>

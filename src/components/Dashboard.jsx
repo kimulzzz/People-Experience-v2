@@ -71,7 +71,7 @@ export default function Dashboard({
     <div className="space-y-6">
       
       {/* 1. HERO BANNER: PX INDEX CONSOLIDATION */}
-      <div className="bg-gradient-to-br from-[#7A0C14] via-[#B91C28] to-[#ED1C24] rounded-2xl p-6 sm:p-8 text-white shadow-xl relative overflow-hidden">
+      <div className="bg-gradient-to-br from-[var(--theme-deep)] via-[var(--theme-strong)] to-[var(--theme-base)] rounded-2xl p-6 sm:p-8 text-white shadow-xl relative overflow-hidden">
         {/* Subtle background glow */}
         <div className="absolute -right-10 -bottom-10 w-72 h-72 bg-black/20 opacity-30 rounded-full blur-3xl pointer-events-none" />
 
@@ -80,8 +80,8 @@ export default function Dashboard({
           {/* Main PX Index Score */}
           <div className="lg:col-span-5 space-y-3">
             <div className="flex flex-wrap items-center gap-1.5">
-              <div className="inline-flex items-center space-x-1.5 px-3 py-1 bg-white/90 text-[#8B0000] rounded-full text-xs font-semibold">
-                <Award className="w-3.5 h-3.5 text-[#ED1C24]" />
+              <div className="inline-flex items-center space-x-1.5 px-3 py-1 bg-white/90 text-[var(--theme-dark)] rounded-full text-xs font-semibold">
+                <Award className="w-3.5 h-3.5" style={{ color: 'var(--theme-base)' }} />
                 <span>CIMB Niaga PX Index • {periodLabel}</span>
               </div>
               {!isBankwide && (
@@ -105,7 +105,7 @@ export default function Dashboard({
             <div className="pt-2 flex flex-wrap gap-2">
               <button
                 onClick={onNavigateToSimulator}
-                className="px-4 py-2 bg-white hover:bg-red-50 text-[#8B0000] rounded-lg text-xs font-bold transition flex items-center space-x-2 shadow-md"
+                className="px-4 py-2 bg-white hover:bg-[var(--theme-tint-50)] text-[var(--theme-dark)] rounded-lg text-xs font-bold transition flex items-center space-x-2 shadow-md"
               >
                 <span>Simulate & Edit Metrics</span>
                 <ChevronRight className="w-3.5 h-3.5" />
@@ -329,7 +329,7 @@ export default function Dashboard({
             return (
               <div
                 key={j.journey_id}
-                className="bg-gradient-to-br from-[#7A0C14] to-[#ED1C24] rounded-xl p-5 border border-transparent hover:shadow-lg transition flex flex-col justify-between group space-y-4"
+                className="bg-gradient-to-br from-[var(--theme-deep)] to-[var(--theme-base)] rounded-xl p-5 border border-transparent hover:shadow-lg transition flex flex-col justify-between group space-y-4"
               >
                 {/* Header */}
                 <div className="space-y-2">

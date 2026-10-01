@@ -1,18 +1,21 @@
-import React from 'react';
-import { 
-  BarChart3, 
-  Calendar, 
-  Sparkles, 
-  Bell, 
+import React, { useState } from 'react';
+import {
+  BarChart3,
+  Calendar,
+  Sparkles,
+  Bell,
   Layers,
   FileSpreadsheet,
   Sliders,
   Building2,
   GitBranch,
   Clock,
-  BookMarked
+  BookMarked,
+  Palette,
+  Check
 } from 'lucide-react';
 import CimbLogo from './CimbLogo';
+import { THEME_PRESETS, applyTheme, getSavedThemeId } from '../utils/theme';
 
 // Derived from the real browser clock (not a frozen literal) — only used as a last-resort
 // fallback when App.jsx hasn't passed filterOptions/availableYears yet.
@@ -29,6 +32,15 @@ export default function Header({
   onOpenAdminParametersModal,
   onOpenSurveyQuestionsModal
 }) {
+  const [showThemePicker, setShowThemePicker] = useState(false);
+  const [activeThemeId, setActiveThemeId] = useState(getSavedThemeId());
+
+  const handlePickTheme = (presetId) => {
+    applyTheme(presetId);
+    setActiveThemeId(presetId);
+    setShowThemePicker(false);
+  };
+
   const months = [
     { value: '01', label: '01 - Januari' },
     { value: '02', label: '02 - Februari' },
@@ -104,7 +116,7 @@ export default function Header({
   return (
     <header className="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-xs">
       {/* Top Corporate Red Accent Bar */}
-      <div className="h-1.5 bg-gradient-to-r from-[#ED1C24] via-[#D91B23] to-[#800D12]" />
+      <div className="h-1.5 bg-gradient-to-r from-[var(--theme-base)] via-[var(--theme-hover)] to-[var(--theme-edge)]" />
 
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
         {/* Main Header Top Row */}
@@ -270,19 +282,59 @@ export default function Header({
               </button>
             )}
 
+            {/* Website Accent Theme Picker — per-browser only (localStorage), see src/utils/theme.js */}
+            <div className="relative">
+              <button
+                onClick={() => setShowThemePicker(v => !v)}
+                className="px-2.5 py-1 text-xs font-bold text-gray-800 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg flex items-center space-x-1.5 transition shadow-2xs"
+                title="Pilih warna tema tampilan website (tersimpan di browser ini saja)"
+              >
+                <Palette className="w-3.5 h-3.5" style={{ color: 'var(--theme-base)' }} />
+                <span className="hidden lg:inline">Tema</span>
+              </button>
+
+              {showThemePicker && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowThemePicker(false)} />
+                  <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-xl shadow-lg z-50 p-2 space-y-1">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase px-2 pt-1 pb-1.5">
+                      Warna Tema Website
+                    </p>
+                    {THEME_PRESETS.map(preset => (
+                      <button
+                        key={preset.id}
+                        onClick={() => handlePickTheme(preset.id)}
+                        className={`w-full px-2 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-2 transition ${
+                          activeThemeId === preset.id ? 'bg-gray-100' : 'hover:bg-gray-50'
+                        }`}
+                      >
+                        <span
+                          className="w-4 h-4 rounded-full border border-gray-300 shrink-0"
+                          style={{ backgroundColor: preset.base }}
+                        />
+                        <span className="flex-1 text-left text-gray-700">{preset.label}</span>
+                        {activeThemeId === preset.id && <Check className="w-3.5 h-3.5 text-gray-500" />}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
           </div>
 
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex space-x-1 overflow-x-auto py-1 px-1 my-1 rounded-lg bg-gradient-to-r from-red-50 via-pink-50 to-red-50 border border-red-100">
+        <div className="flex space-x-1 overflow-x-auto py-1 px-1 my-1 rounded-lg bg-gradient-to-r from-[var(--theme-tint-50)] via-[var(--theme-tint-100)] to-[var(--theme-tint-50)] border border-[var(--theme-tint-100)]">
           <button
             onClick={() => setActiveTab('dashboard')}
             className={`px-4 py-2 text-xs font-semibold rounded-md flex items-center space-x-2 transition ${
               activeTab === 'dashboard'
-                ? 'bg-white text-[#ED1C24] font-bold shadow-sm'
+                ? 'bg-white font-bold shadow-sm'
                 : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
             }`}
+            style={activeTab === 'dashboard' ? { color: 'var(--theme-base)' } : undefined}
           >
             <BarChart3 className="w-4 h-4" />
             <span>Dashboard & Trends</span>
@@ -292,9 +344,10 @@ export default function Header({
             onClick={() => setActiveTab('calculator')}
             className={`px-4 py-2 text-xs font-semibold rounded-md flex items-center space-x-2 transition ${
               activeTab === 'calculator'
-                ? 'bg-white text-[#ED1C24] font-bold shadow-sm'
+                ? 'bg-white font-bold shadow-sm'
                 : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
             }`}
+            style={activeTab === 'calculator' ? { color: 'var(--theme-base)' } : undefined}
           >
             <Layers className="w-4 h-4" />
             <span>Explore Metrics (PX Metrics)</span>
@@ -304,9 +357,10 @@ export default function Header({
             onClick={() => setActiveTab('events')}
             className={`px-4 py-2 text-xs font-semibold rounded-md flex items-center space-x-2 transition ${
               activeTab === 'events'
-                ? 'bg-white text-[#ED1C24] font-bold shadow-sm'
+                ? 'bg-white font-bold shadow-sm'
                 : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
             }`}
+            style={activeTab === 'events' ? { color: 'var(--theme-base)' } : undefined}
           >
             <Calendar className="w-4 h-4" />
             <span>Signature Program Events</span>
@@ -316,9 +370,10 @@ export default function Header({
             onClick={() => setActiveTab('alerts')}
             className={`px-4 py-2 text-xs font-semibold rounded-md flex items-center space-x-2 transition ${
               activeTab === 'alerts'
-                ? 'bg-white text-[#ED1C24] font-bold shadow-sm'
+                ? 'bg-white font-bold shadow-sm'
                 : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
             }`}
+            style={activeTab === 'alerts' ? { color: 'var(--theme-base)' } : undefined}
           >
             <Sparkles className="w-4 h-4" />
             <span>Action Library & AI Alerts</span>
@@ -328,9 +383,10 @@ export default function Header({
             onClick={() => setActiveTab('glossary')}
             className={`px-4 py-2 text-xs font-semibold rounded-md flex items-center space-x-2 transition ${
               activeTab === 'glossary'
-                ? 'bg-white text-[#ED1C24] font-bold shadow-sm'
+                ? 'bg-white font-bold shadow-sm'
                 : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
             }`}
+            style={activeTab === 'glossary' ? { color: 'var(--theme-base)' } : undefined}
           >
             <BookMarked className="w-4 h-4" />
             <span>About</span>

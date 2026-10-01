@@ -17,6 +17,27 @@
   --cimb-magenta: #C1009D;
   --cimb-royal-purple: #6716C4;
   --cimb-bright-orange: #FF8000;
+
+  /* User-selectable website accent theme (src/utils/theme.js) — defaults to the CIMB red
+     reskin applied across Dashboard/Explore Metrics/Events/Alerts/Admin modals. Overridden
+     at runtime (per-browser, via localStorage) by theme.js's applyTheme(); never persisted
+     server-side. Every value here is one role in that reskin's gradients/buttons/badges, so
+     switching these 13 variables re-themes all of it consistently regardless of preset. */
+  --theme-deep: #7A0C14;
+  --theme-dark: #8B0000;
+  --theme-mid: #9A1420;
+  --theme-strong: #B91C28;
+  --theme-base: #ED1C24;
+  --theme-hover: #D91B23;
+  --theme-edge: #800D12;
+  --theme-row-start: #D9776E;
+  --theme-row-mid: #EAAFA9;
+  --theme-row-end: #F8E1DF;
+  --theme-row-start-h: #E4918A;
+  --theme-row-mid-h: #F0C2BD;
+  --theme-row-end-h: #FCEEEC;
+  --theme-tint-50: #FEF2F2;
+  --theme-tint-100: #FFE4E6;
 }
 
 @layer base {

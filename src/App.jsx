@@ -294,7 +294,7 @@ export default function App() {
               </div>
               <button
                 onClick={() => setActiveTab('dashboard')}
-                className="text-xs font-bold text-[#ED1C24] hover:underline"
+                className="text-xs font-bold text-[var(--theme-base)] hover:underline"
               >
                 &larr; Back to Dashboard
               </button>
@@ -302,11 +302,11 @@ export default function App() {
 
             <div className="grid grid-cols-1 gap-4">
               {alertsData?.alerts?.map((alert) => (
-                <div key={alert.alert_id} className="bg-gradient-to-br from-[#7A0C14] via-[#9A1420] to-[#ED1C24] rounded-xl p-5 shadow-xs space-y-3">
+                <div key={alert.alert_id} className="bg-gradient-to-br from-[var(--theme-deep)] via-[var(--theme-mid)] to-[var(--theme-base)] rounded-xl p-5 shadow-xs space-y-3">
                   <div className="flex items-start justify-between">
                     <div>
                       <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
-                        alert.severity === 'CRITICAL' ? 'bg-white text-[#8B0000]' : 'bg-amber-400 text-amber-950'
+                        alert.severity === 'CRITICAL' ? 'bg-white text-[var(--theme-dark)]' : 'bg-amber-400 text-amber-950'
                       }`}>
                         {alert.severity}
                       </span>
@@ -339,7 +339,7 @@ export default function App() {
                     <span>Data Source: <strong className="text-white">{alert.source_of_data}</strong></span>
                     <button
                       onClick={() => handleOpenMetricDetail(alert.metric_id)}
-                      className="px-3 py-1.5 bg-white text-[#8B0000] hover:bg-red-50 rounded-lg text-xs font-bold transition"
+                      className="px-3 py-1.5 bg-white text-[var(--theme-dark)] hover:bg-[var(--theme-tint-50)] rounded-lg text-xs font-bold transition"
                     >
                       View Survey Details & Questions &rarr;
                     </button>

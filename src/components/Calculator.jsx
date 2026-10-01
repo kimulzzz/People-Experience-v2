@@ -156,7 +156,7 @@ export default function Calculator({
     <div className="space-y-5">
       
       {/* Top Banner: Metrics Performance & Pure Data Calculation */}
-      <div className="bg-gradient-to-br from-[#7A0C14] via-[#B91C28] to-[#ED1C24] rounded-2xl p-5 md:p-6 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div className="bg-gradient-to-br from-[var(--theme-deep)] via-[var(--theme-strong)] to-[var(--theme-base)] rounded-2xl p-5 md:p-6 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="flex items-center space-x-2">
             <div className="w-8 h-8 rounded-lg bg-white/15 text-white flex items-center justify-center font-bold">
@@ -165,7 +165,7 @@ export default function Calculator({
             <h3 className="text-base font-extrabold text-white">
               Explore 27 People Experience Metrics
             </h3>
-            <span className="text-[10px] font-bold px-2 py-0.5 bg-white/90 text-[#8B0000] rounded-full">
+            <span className="text-[10px] font-bold px-2 py-0.5 bg-white/90 text-[var(--theme-dark)] rounded-full">
               Pure Survey & HR Calculation
             </span>
           </div>
@@ -189,7 +189,7 @@ export default function Calculator({
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 bg-gradient-to-br from-[#7A0C14] to-[#ED1C24] p-3.5 rounded-xl shadow-2xs">
+      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 bg-gradient-to-br from-[var(--theme-deep)] to-[var(--theme-base)] p-3.5 rounded-xl shadow-2xs">
 
         {/* Search Box */}
         <div className="relative w-full lg:w-72">
@@ -209,7 +209,7 @@ export default function Calculator({
             onClick={() => setSelectedJourneyFilter('ALL')}
             className={`px-3 py-1.5 text-xs font-bold rounded-lg transition shrink-0 ${
               selectedJourneyFilter === 'ALL'
-                ? 'bg-white text-[#8B0000] shadow-2xs'
+                ? 'bg-white text-[var(--theme-dark)] shadow-2xs'
                 : 'text-red-50 hover:bg-white/15'
             }`}
           >
@@ -268,7 +268,7 @@ export default function Calculator({
       </div>
 
       {/* Action Buttons Guide & Quick Scroll Control Bar */}
-      <div className="bg-gradient-to-br from-[#7A0C14] to-[#ED1C24] rounded-xl px-4 py-2.5 flex flex-col md:flex-row md:items-center justify-between gap-2.5 text-xs">
+      <div className="bg-gradient-to-br from-[var(--theme-deep)] to-[var(--theme-base)] rounded-xl px-4 py-2.5 flex flex-col md:flex-row md:items-center justify-between gap-2.5 text-xs">
 
         {/* Left: Legend */}
         <div className="flex flex-wrap items-center gap-2 text-[11px]">
@@ -302,7 +302,7 @@ export default function Calculator({
             <button
               onClick={() => setTableDensity('fit')}
               className={`px-2 py-1 rounded-md font-bold transition flex items-center space-x-1 ${
-                isFit ? 'bg-red-50 text-[#ED1C24] shadow-2xs' : 'text-gray-500 hover:text-gray-800'
+                isFit ? 'bg-[var(--theme-tint-50)] text-[var(--theme-base)] shadow-2xs' : 'text-gray-500 hover:text-gray-800'
               }`}
               title="Fit to Screen view (Optimized layout to eliminate horizontal scrolling)"
             >
@@ -328,7 +328,7 @@ export default function Calculator({
               disabled={!canScrollLeft}
               className={`p-1 rounded-md transition ${
                 canScrollLeft
-                  ? 'text-gray-700 hover:bg-gray-100 hover:text-[#ED1C24]'
+                  ? 'text-gray-700 hover:bg-gray-100 hover:text-[var(--theme-base)]'
                   : 'text-gray-300 cursor-not-allowed'
               }`}
               title="Scroll table to the left"
@@ -343,7 +343,7 @@ export default function Calculator({
               disabled={!canScrollRight}
               className={`p-1 rounded-md transition ${
                 canScrollRight
-                  ? 'text-gray-700 hover:bg-gray-100 hover:text-[#ED1C24]'
+                  ? 'text-gray-700 hover:bg-gray-100 hover:text-[var(--theme-base)]'
                   : 'text-gray-300 cursor-not-allowed'
               }`}
               title="Scroll table to the right"
@@ -357,7 +357,7 @@ export default function Calculator({
       </div>
 
       {/* 27 Metrics Table Container with Sticky Action Column */}
-      <div className="bg-gradient-to-br from-[#7A0C14] via-[#9A1420] to-[#ED1C24] rounded-2xl shadow-xs overflow-hidden p-1.5">
+      <div className="bg-gradient-to-br from-[var(--theme-deep)] via-[var(--theme-mid)] to-[var(--theme-base)] rounded-2xl shadow-xs overflow-hidden p-1.5">
 
         {/* Table scroll wrapper with scroll listeners */}
         <div
@@ -369,23 +369,23 @@ export default function Calculator({
 
             {/* Sticky Table Header */}
             <thead className="sticky top-0 z-20 shadow-xs">
-              <tr className="bg-[#7A0C14] text-[10.5px] font-extrabold text-white uppercase tracking-wider border-b border-white/10">
-                <th className={`py-3 ${isFit ? 'px-2.5 w-10' : 'px-3.5 w-12'} text-center bg-[#7A0C14]`}>ID</th>
-                <th className={`py-3 ${isFit ? 'px-2.5 min-w-[210px] max-w-[270px]' : 'px-3.5 min-w-[260px]'} bg-[#7A0C14]`}>
+              <tr className="bg-[var(--theme-deep)] text-[10.5px] font-extrabold text-white uppercase tracking-wider border-b border-white/10">
+                <th className={`py-3 ${isFit ? 'px-2.5 w-10' : 'px-3.5 w-12'} text-center bg-[var(--theme-deep)]`}>ID</th>
+                <th className={`py-3 ${isFit ? 'px-2.5 min-w-[210px] max-w-[270px]' : 'px-3.5 min-w-[260px]'} bg-[var(--theme-deep)]`}>
                   Check Point & Metric
                 </th>
-                <th className={`py-3 ${isFit ? 'px-2.5 w-28' : 'px-3.5 w-36'} bg-[#7A0C14]`}>Type & PIC</th>
-                <th className={`py-3 ${isFit ? 'px-2 text-center w-24' : 'px-3.5 text-center w-32'} bg-[#7A0C14]`}>Sample / Source</th>
-                <th className={`py-3 ${isFit ? 'px-2 text-center w-24' : 'px-3.5 text-center w-28'} bg-[#7A0C14]`}>Date / Last Sync</th>
-                <th className={`py-3 ${isFit ? 'px-2 text-right w-24' : 'px-3.5 text-right w-28'} bg-[#7A0C14]`}>Actual Value</th>
-                <th className={`py-3 ${isFit ? 'px-2.5 min-w-[120px] w-32' : 'px-3.5 min-w-[150px]'} bg-[#7A0C14]`}>Index Score (Target)</th>
-                <th className={`py-3 ${isFit ? 'px-2 text-center w-24' : 'px-3.5 text-center w-28'} bg-[#7A0C14]`}>Status</th>
+                <th className={`py-3 ${isFit ? 'px-2.5 w-28' : 'px-3.5 w-36'} bg-[var(--theme-deep)]`}>Type & PIC</th>
+                <th className={`py-3 ${isFit ? 'px-2 text-center w-24' : 'px-3.5 text-center w-32'} bg-[var(--theme-deep)]`}>Sample / Source</th>
+                <th className={`py-3 ${isFit ? 'px-2 text-center w-24' : 'px-3.5 text-center w-28'} bg-[var(--theme-deep)]`}>Date / Last Sync</th>
+                <th className={`py-3 ${isFit ? 'px-2 text-right w-24' : 'px-3.5 text-right w-28'} bg-[var(--theme-deep)]`}>Actual Value</th>
+                <th className={`py-3 ${isFit ? 'px-2.5 min-w-[120px] w-32' : 'px-3.5 min-w-[150px]'} bg-[var(--theme-deep)]`}>Index Score (Target)</th>
+                <th className={`py-3 ${isFit ? 'px-2 text-center w-24' : 'px-3.5 text-center w-28'} bg-[var(--theme-deep)]`}>Status</th>
 
                 {/* STICKY RIGHT COLUMN HEADER (FREEZE COLUMN) */}
-                <th className={`py-3 ${isFit ? 'px-3 w-[260px]' : 'px-3.5 w-[300px]'} text-right sticky right-0 bg-[#7A0C14] backdrop-blur-xs z-30 shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.3)] border-l border-white/10`}>
+                <th className={`py-3 ${isFit ? 'px-3 w-[260px]' : 'px-3.5 w-[300px]'} text-right sticky right-0 bg-[var(--theme-deep)] backdrop-blur-xs z-30 shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.3)] border-l border-white/10`}>
                   <div className="flex items-center justify-end space-x-1.5">
                     <span>Actions & Evidence</span>
-                    <span className="text-[9px] bg-white/90 text-[#8B0000] px-1.5 py-0.2 rounded font-bold uppercase">
+                    <span className="text-[9px] bg-white/90 text-[var(--theme-dark)] px-1.5 py-0.2 rounded font-bold uppercase">
                       Fixed
                     </span>
                   </div>
@@ -397,7 +397,7 @@ export default function Calculator({
             <tbody className="divide-y divide-white/50 font-medium text-gray-700">
               {filteredMetrics.length === 0 ? (
                 <tr>
-                  <td colSpan="9" className="text-center py-12 bg-red-50 text-gray-400 font-medium">
+                  <td colSpan="9" className="text-center py-12 bg-[var(--theme-tint-50)] text-gray-400 font-medium">
                     No metrics found matching the search and filter criteria.
                   </td>
                 </tr>
@@ -418,7 +418,7 @@ export default function Calculator({
                       className={`transition ${
                         isDisabled
                           ? 'bg-gray-200/80 text-gray-400 opacity-60 cursor-not-allowed select-none'
-                          : 'bg-gradient-to-r from-[#D9776E] via-[#EAAFA9] to-[#F8E1DF] hover:from-[#E4918A] hover:via-[#F0C2BD] hover:to-[#FCEEEC] cursor-pointer group'
+                          : 'bg-gradient-to-r from-[var(--theme-row-start)] via-[var(--theme-row-mid)] to-[var(--theme-row-end)] hover:from-[var(--theme-row-start-h)] hover:via-[var(--theme-row-mid-h)] hover:to-[var(--theme-row-end-h)] cursor-pointer group'
                       }`}
                       title={
                         isDisabled
@@ -427,7 +427,7 @@ export default function Calculator({
                       }
                     >
                       {/* ID */}
-                      <td className={`py-3 ${isFit ? 'px-2.5' : 'px-3.5'} text-center font-bold ${isDisabled ? 'text-gray-400' : 'text-[#7A0C14] group-hover:text-[#ED1C24]'}`}>
+                      <td className={`py-3 ${isFit ? 'px-2.5' : 'px-3.5'} text-center font-bold ${isDisabled ? 'text-gray-400' : 'text-[var(--theme-deep)] group-hover:text-[var(--theme-base)]'}`}>
                         {m.metric_id}
                       </td>
 
@@ -436,11 +436,11 @@ export default function Calculator({
                         <div className="flex items-center space-x-1 text-[9.5px] font-bold text-gray-400 uppercase tracking-tight">
                           <span 
                             className="w-2 h-2 rounded-full shrink-0" 
-                            style={{ backgroundColor: isDisabled ? '#9CA3AF' : (j?.color || '#ED1C24') }} 
+                            style={{ backgroundColor: isDisabled ? '#9CA3AF' : (j?.color || 'var(--theme-base)') }} 
                           />
                           <span className="truncate max-w-[190px]">{j?.journey_name} • CP: {cp?.checkpoint_name}</span>
                         </div>
-                        <div className={`font-extrabold ${isDisabled ? 'text-gray-500 line-through decoration-gray-400' : 'text-[#231F20] group-hover:text-[#ED1C24]'} transition ${isFit ? 'text-xs' : 'text-sm'} leading-snug mt-0.5 line-clamp-2`}>
+                        <div className={`font-extrabold ${isDisabled ? 'text-gray-500 line-through decoration-gray-400' : 'text-[#231F20] group-hover:text-[var(--theme-base)]'} transition ${isFit ? 'text-xs' : 'text-sm'} leading-snug mt-0.5 line-clamp-2`}>
                           {m.metric_name}
                         </div>
                         <div className="flex items-center gap-1 mt-0.5">
@@ -524,7 +524,7 @@ export default function Calculator({
                         ) : (
                           <>
                             <div className="flex items-baseline justify-between mb-0.5">
-                              <span className="font-black text-[#ED1C24] text-xs">
+                              <span className="font-black text-[var(--theme-base)] text-xs">
                                 {m.normalized_score}%
                               </span>
                               <span className="text-[9.5px] text-gray-400 font-semibold">
@@ -564,7 +564,7 @@ export default function Calculator({
                       </td>
 
                       {/* STICKY RIGHT COLUMN: ACTION BUTTONS (ALWAYS VISIBLE) */}
-                      <td className={`py-2.5 ${isFit ? 'px-2.5' : 'px-3.5'} text-right whitespace-nowrap sticky right-0 ${isDisabled ? 'bg-gray-200/95' : 'bg-[#F8E1DF] group-hover:bg-[#FCEEEC]'} transition-colors z-10 shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.15)] border-l border-red-200/50`}>
+                      <td className={`py-2.5 ${isFit ? 'px-2.5' : 'px-3.5'} text-right whitespace-nowrap sticky right-0 ${isDisabled ? 'bg-gray-200/95' : 'bg-[var(--theme-row-end)] group-hover:bg-[var(--theme-row-end-h)]'} transition-colors z-10 shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.15)] border-l border-red-200/50`}>
                         <div className="flex items-center justify-end space-x-1">
                           {isDisabled ? (
                             <span className="text-[10px] font-semibold text-gray-400 italic px-2 py-1">
@@ -663,7 +663,7 @@ export default function Calculator({
         {/* Bottom Table Footer Bar with Status and Quick Info */}
         <div className="bg-pink-50/90 rounded-b-xl px-4 py-2.5 flex flex-col sm:flex-row items-center justify-between text-[11px] text-gray-500 gap-2">
           <div className="flex items-center space-x-1.5">
-            <MousePointerClick className="w-3.5 h-3.5 text-[#ED1C24]" />
+            <MousePointerClick className="w-3.5 h-3.5 text-[var(--theme-base)]" />
             <span>
               Displaying <strong>{filteredMetrics.length}</strong> of {metrics.length} People Experience metrics. Click any row to view full details.
             </span>
