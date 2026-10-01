@@ -303,6 +303,25 @@ domain model, not just descriptive:
   `TrendChart.jsx`'s error message was also changed from the raw browser error text to a
   clear Indonesian fallback for the rare case retries are exhausted. `tests/regressionTest.js`
   stayed at 88/88 PASS (frontend-only change, no API contract changes).
+- **v2.20.0** (2026-10-01, see `CHANGELOG.md` and `docs/05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md`
+  §4.1): User provided 7 new mockup screens (`mockup/`, 2 versions each) and asked for them to
+  be analyzed then applied across the whole app, with a git checkpoint first (commit `946e9bc`)
+  for easy rollback and a browser review before considering it done. Applied (commit `650b8b3`)
+  a red-gradient reskin — pure visual/className changes, no layout or logic changes — to
+  `Dashboard.jsx` (hero + journey cards), `Calculator.jsx`/Explore Metrics, `EventManager.jsx`,
+  `App.jsx`'s alerts tab (not `ActionLibraryView.jsx`, which turned out to be unused dead code),
+  `AdminParametersModal.jsx`, `AdminSurveyQuestionsModal.jsx`, and `Header.jsx`'s nav bar.
+  Follow-up #1 (commit `8e8e698`): user reported Explore Metrics needed horizontal scroll,
+  clipping the per-row gradient — widened the main container `max-w-7xl` (1280px) →
+  `max-w-[1600px]` (verified no-scroll at 1440px/1700px) and refined the row styling to match
+  mockup "3. (V.1) ALL JOURNEY SECTION" (left-to-right gradient, bold maroon ID numbers)
+  without touching any button or label. Follow-up #2 (commit `c912abb`): user wants a
+  user-selectable website accent color — added a "Tema" picker in `Header.jsx` (5 presets,
+  localStorage-only, never server-side) backed by 13 new CSS custom properties in
+  `src/index.css` (`--theme-*`) that `src/utils/theme.js` derives per-preset from one base hex
+  via HSL math, applied across every surface from the reskin above. Journey accent colors,
+  delete-button red, and success/error banners deliberately stay un-themed. `tests/regressionTest.js`
+  stayed at 88/88 PASS throughout (pure CSS/frontend, no API changes).
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

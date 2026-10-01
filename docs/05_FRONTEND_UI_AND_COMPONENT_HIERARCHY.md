@@ -187,3 +187,29 @@ graph TD
 | **Web (Tertiary)** | **Digital Teal** | `R22 G192 B183` (`#16C0B7`) | **Survey Index (70%)**, **Journey 4: Contribute (Work)** |
 | **Web (Tertiary)** | **Royal Purple** | `R103 G22 B196` (`#6716C4` / `#563175`) | **Journey 3: Belong (Culture/Engagement)**, Header Spreadsheet ESS, Total Sample counter |
 | **Web (Tertiary)** | **Magenta** | `R193 G0 B157` (`#C1009D`) | **Journey 5: Depart (Exit)**, badge status verifikasi akhir |
+
+### 4.1 Red-Gradient Reskin & Per-User Accent Theme (sejak v2.20.0)
+
+Sejak v2.20.0, permukaan-permukaan besar berikut memakai **latar gradient merah pekat**
+(bukan lagi putih/charcoal dengan aksen merah tipis), mengikuti mockup referensi di `mockup/`:
+`Dashboard.jsx` (hero banner PX Index + kartu 5 Journey), `Calculator.jsx`/Explore Metrics
+(banner, filter bar, action guide, tabel 27 metrik), `EventManager.jsx` (panel Signature
+Program Events), `App.jsx`'s tab Action Library & AI Alerts, `AdminParametersModal.jsx`, dan
+`AdminSurveyQuestionsModal.jsx` — plus nav tab bar `Header.jsx`.
+
+Warna-warna di permukaan tersebut **tidak lagi hex statis** — 13 variabel CSS custom property
+(`src/index.css` `:root`, prefix `--theme-*`: `deep`, `dark`, `mid`, `strong`, `base`, `hover`,
+`edge`, `row-start/mid/end` + varian hover-nya, `tint-50`/`tint-100`) dipakai di seluruh
+komponen tersebut lewat sintaks Tailwind arbitrary-value `[var(--theme-xxx)]`. Nilai variabel
+ini bisa diganti saat runtime oleh viewer lewat tombol **"Tema"** di `Header.jsx` (5 preset:
+Merah CIMB/Biru/Teal/Ungu/Oranye) — `src/utils/theme.js` men-derive ke-13 variabel dari satu
+warna dasar preset via konversi HSL, lalu `applyTheme()` menulisnya ke
+`document.documentElement.style` dan menyimpan pilihan ke `localStorage` (key
+`px_theme_preset`, per-browser, tidak pernah dikirim ke server). `initTheme()` dipanggil di
+`src/main.jsx` sebelum render pertama agar tidak ada flash warna default.
+
+**Sengaja tidak ikut tema** (tetap hex statis `#ED1C24` dkk.): warna asli tiap Journey
+(`journeys[].color` — data domain, bukan chrome web), tombol hapus/delete (konvensi universal
+merah = bahaya), banner notifikasi sukses/error, dan komponen lain yang tidak disentuh reskin
+ini (`MetricDetailModal.jsx`, `TrendChart.jsx`, `SurveyImportModal.jsx`, `CreateEventModal.jsx`,
+`AdminSettingsModal.jsx`, `WeightsModal.jsx`, `QrCodeModal.jsx`).
