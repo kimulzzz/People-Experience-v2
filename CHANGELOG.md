@@ -4,6 +4,18 @@ Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Managemen
 
 ---
 
+## [2.19.0] - 2026-09-25
+
+### 🏷️ Rename Tab Glossary → About, Label Dropdown & Fix "Failed to Fetch" (Improved / Fixed)
+- **Permintaan pengguna**: (1) nama menu "Glossary" diubah menjadi "About"; (2) pada Parameter Admin → Parameter Metric untuk Survey, opsi dropdown "Batas Tanggal Upload" menghilangkan prefix "Tgl"; (3) investigasi notifikasi "Failed to fetch" yang muncul saat memakai aplikasi.
+- **Fix (1)**: label tab navigasi di `Header.jsx` diubah dari "Glossary" menjadi "About" (ikon `BookMarked` dan konten `GlossaryView.jsx` tidak diubah — hanya nama menunya sesuai permintaan).
+- **Fix (2)**: `AdminParametersModal.jsx`'s dropdown "Batas Tanggal Upload" sekarang menampilkan angka polos (`1`–`28`) alih-alih `Tgl 1`–`Tgl 28`.
+- **Root cause (3)**: `npm run dev` menjalankan backend Express (port 5000) dan frontend Vite (port 3000) secara bersamaan (`concurrently`) tanpa readiness handshake — pada beberapa detik pertama setelah start, backend belum selesai boot. `TrendChart.jsx`'s `fetchTrend()` melakukan `fetch('/api/metrics/trends')` begitu komponen dimuat (bagian dari Dashboard yang tampil pertama kali); saat race ini terjadi, `fetch()` browser gagal total (bukan cuma respons HTTP error) dan melempar `TypeError: Failed to fetch` — pesan mentah ini langsung ditangkap lalu ditampilkan sebagai teks di kartu Performance Trend tanpa retry otomatis, sehingga pengguna tetap melihatnya sampai mengubah filter atau me-refresh manual. `App.jsx`'s fetch awal (`/api/directorates` dan 5 fetch paralel di `fetchAllData`) punya celah race yang sama, meski gagalnya cuma ke console (dashboard tampil kosong/basi, tanpa notif eksplisit).
+- **Fix**: `src/utils/fetchWithRetry.js` baru — wrapper tipis di atas `fetch()` yang otomatis retry (hingga 4x, jeda 600ms) saat request gagal total (network error) atau server membalas 502/503/504 (persis gejala race start-up di atas). Dipasang di `TrendChart.jsx`'s `fetchTrend()` dan `App.jsx`'s fetch `/api/directorates` + seluruh 5 fetch di `fetchAllData()`. Pesan error `TrendChart.jsx` juga diganti dari `err.message` mentah menjadi teks Bahasa Indonesia yang jelas ("Gagal memuat data tren. Periksa koneksi ke server dan coba lagi.") untuk kasus retry benar-benar habis (backend memang mati lama).
+- **Verifikasi**: `node tests/regressionTest.js` → **88/88 PASS** (perubahan murni frontend, tidak menyentuh kontrak API). Direstart dev server dan dicek langsung di Browser: tab menu kini bertuliskan "About", dropdown Batas Tanggal Upload menampilkan angka polos, dan reload berulang saat window race start-up tidak lagi memunculkan notifikasi "Failed to fetch" di kartu Performance Trend.
+
+---
+
 ## [2.18.0] - 2026-09-24
 
 ### 📈 Data Dummy 2026 Lebih Banyak & Grafik Trend Lebih Hidup (Improved)

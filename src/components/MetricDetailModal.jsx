@@ -195,7 +195,7 @@ export default function MetricDetailModal({
                   {isSurvey ? (isEss ? 'Type: ESS (Employee Sentiment Survey)' : 'Type: Employee Survey') : 'Type: Outcome (Internal HR Data)'}
                 </span>
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 border border-gray-200">
-                  Period: {period === 'YTD' ? 'Year-to-Date 2026' : period}
+                  Period: {period === 'YTD' ? `Year-to-Date ${detailData?.filter_options?.year || ''}` : period}
                 </span>
               </div>
               <h2 className="text-xl font-black text-gray-900 mt-1">

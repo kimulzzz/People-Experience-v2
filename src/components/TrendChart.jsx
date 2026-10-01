@@ -1,5 +1,6 @@
 // src/components/TrendChart.jsx
 import React, { useState, useEffect, useCallback } from 'react';
+import { fetchWithRetry } from '../utils/fetchWithRetry';
 import {
   TrendingUp,
   Calendar,
@@ -70,7 +71,7 @@ export default function TrendChart({
       if (range?.endYear) params.set('endYear', range.endYear);
       if (range?.endMonth) params.set('endMonth', range.endMonth);
 
-      const res = await fetch(`/api/metrics/trends?${params.toString()}`);
+      const res = await fetchWithRetry(`/api/metrics/trends?${params.toString()}`);
       if (!res.ok) throw new Error('Gagal memuat data tren');
       const data = await res.json();
 
@@ -86,7 +87,8 @@ export default function TrendChart({
       if (!range?.endYear) setRangeEndYear(data.year);
       if (!range?.endMonth) setRangeEndMonth(data.last_complete_month);
     } catch (err) {
-      setErrorMsg(err.message);
+      console.error('Failed to fetch trend data:', err);
+      setErrorMsg('Gagal memuat data tren. Periksa koneksi ke server dan coba lagi.');
       setTrendData([]);
     } finally {
       setLoading(false);

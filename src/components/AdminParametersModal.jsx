@@ -953,7 +953,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                               className="w-24 px-2 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500"
                             >
                               {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
-                                <option key={d} value={d}>Tgl {d}</option>
+                                <option key={d} value={d}>{d}</option>
                               ))}
                             </select>
                           </div>

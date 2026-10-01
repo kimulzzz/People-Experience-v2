@@ -283,6 +283,27 @@ domain model, not just descriptive:
   — verified by running the full suite twice in a row (88/88 PASS both times) and confirming
   event/attendance/feedback counts stayed at the clean baseline.
 
+- **v2.19.0** (2026-09-25, see `CHANGELOG.md` and `docs/03_SYSTEM_ARCHITECTURE_AND_DATA_FLOW.md` §4):
+  User asked for 3 things: rename the "Glossary" menu to "About"; remove the "Tgl" prefix
+  from the "Batas Tanggal Upload" dropdown options in Parameter Admin → Parameter Metric for
+  SURVEY metrics; and investigate a "Failed to fetch" notification seen while using the app.
+  (1) and (2) were simple label changes in `Header.jsx` and `AdminParametersModal.jsx`
+  respectively (component/tab internals like `GlossaryView.jsx` and the `'glossary'` tab key
+  were left untouched — only the user-visible label changed). (3) root cause: `npm run dev`
+  starts the Express backend (port 5000) and Vite frontend (port 3000) concurrently with no
+  readiness handshake, so `TrendChart.jsx`'s `fetchTrend()` — which self-fetches
+  `/api/metrics/trends` as soon as the Dashboard mounts — can hit the backend before it
+  finishes booting; the browser's `fetch()` then throws a raw `TypeError: Failed to fetch`
+  (not an HTTP error response), which was caught and displayed verbatim in the Performance
+  Trend card with no retry, so it stayed visible until a manual filter change or page reload.
+  `App.jsx`'s initial `/api/directorates` fetch and the 5 parallel fetches in `fetchAllData()`
+  had the same unguarded race (silently logged to console instead of shown, but same root
+  cause). Fixed with a new `src/utils/fetchWithRetry.js` wrapper (retries up to 4x, 600ms
+  apart, on network failure or a 502/503/504 response) applied at all three call sites;
+  `TrendChart.jsx`'s error message was also changed from the raw browser error text to a
+  clear Indonesian fallback for the rare case retries are exhausted. `tests/regressionTest.js`
+  stayed at 88/88 PASS (frontend-only change, no API contract changes).
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan
@@ -299,5 +320,7 @@ langkah-langkah ini sebelum melaporkan pekerjaan selesai — jangan tunggu dimin
    entri versi yang sudah ada di atas.
 4. **Restart & verifikasi**: restart dev server (`npm run dev` di port 5000+3000) dan cek
    langsung di Browser pane bahwa perubahan benar-benar tampil sebelum melaporkan selesai.
+5. **Link to website**: setiap selesai perubahan, tambahkan tautan link ke website agar bisa langsung buka.
+6. **Push ke Github**: setiap selesai perubahan, push otomatis ke Github yang terhubung ke folder project.  
 
 Ini berlaku untuk SEMUA perubahan ke depan, tidak perlu di-state ulang oleh user setiap kali.

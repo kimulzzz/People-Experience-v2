@@ -39,5 +39,8 @@
     "recharts": "^3.10.1",
     "tailwindcss": "^4.3.3",
     "vite": "^8.2.2"
+  },
+  "overrides": {
+    "image-size": "^2.0.3"
   }
 }

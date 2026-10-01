@@ -333,7 +333,7 @@ export default function Header({
             }`}
           >
             <BookMarked className="w-4 h-4" />
-            <span>Glossary</span>
+            <span>About</span>
           </button>
         </div>
 

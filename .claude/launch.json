@@ -13,7 +13,7 @@
         "run",
         "dev",
         "--prefix",
-        "C:\\Project\\People Experience v2"
+        "D:\\Project\\CIMB\\People Experience"
       ],
       "port": 3000
     }

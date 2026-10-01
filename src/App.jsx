@@ -16,6 +16,7 @@ import AdminParametersModal from './components/AdminParametersModal';
 import PublicCheckInForm from './components/PublicCheckInForm';
 import PublicFeedbackForm from './components/PublicFeedbackForm';
 import GlossaryView from './components/GlossaryView';
+import { fetchWithRetry } from './utils/fetchWithRetry';
 
 // Derived from the real browser clock (not a frozen literal) so the Dashboard's default year
 // tracks forward automatically instead of silently staying on a past year — this mirrors the
@@ -69,7 +70,7 @@ export default function App() {
     if (survey) setPublicSurveyCode(survey);
 
     // Fetch directorates list once on mount
-    fetch('/api/directorates')
+    fetchWithRetry('/api/directorates')
       .then(res => res.json())
       .then(data => {
         if (Array.isArray(data)) setDirectoratesList(data);
@@ -93,11 +94,11 @@ export default function App() {
       }).toString();
 
       const [calcRes, alertsRes, eventsRes, healthRes, actionRes] = await Promise.all([
-        fetch(`/api/metrics/calculate?${queryParams}`),
-        fetch('/api/alerts'),
-        fetch('/api/events'),
-        fetch('/api/health'),
-        fetch('/api/action-library')
+        fetchWithRetry(`/api/metrics/calculate?${queryParams}`),
+        fetchWithRetry('/api/alerts'),
+        fetchWithRetry('/api/events'),
+        fetchWithRetry('/api/health'),
+        fetchWithRetry('/api/action-library')
       ]);
 
       if (calcRes.ok) setCalculationData(await calcRes.json());

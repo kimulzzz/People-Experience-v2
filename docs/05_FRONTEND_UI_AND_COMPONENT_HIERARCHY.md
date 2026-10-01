@@ -73,7 +73,7 @@ graph TD
 ### 3.1 Root Orchestrator ([`src/App.jsx`](file:///d:/Mul/Project/Anti%20Gravity/People%20Experience/src/App.jsx))
 - **State Management**:
   - `selectedPeriod`: Menyimpan filter periode aktif (`'YTD'`, `'2026-01'`, `'2026-02'`, dst.).
-  - `activeTab`: Navigasi antar tampilan utama (*Dashboard, PX Index Calculator, Signature Programs, Action Library, Glossary*).
+  - `activeTab`: Navigasi antar tampilan utama (*Dashboard, PX Index Calculator, Signature Programs, Action Library, About*).
   - `selectedMetric`: Mengontrol metrik yang sedang dibuka pada *MetricDetailModal*.
   - `isSurveyQuestionsModalOpen`, `isSettingsModalOpen`, `isWeightsModalOpen`, `isImportModalOpen`: Mengontrol visibilitas modal admin dan impor data.
 - **Data Fetching Reactive Hook**: Otomatis memicu pemanggilan ulang `/api/metrics/calculate?period=...` setiap kali filter periode berubah atau data baru berhasil diunggah.
@@ -162,8 +162,8 @@ graph TD
 
 ---
 
-### 3.8 People Experience Glossary ([`src/components/GlossaryView.jsx`](file:///d:/Mul/Project/Anti%20Gravity/People%20Experience/src/components/GlossaryView.jsx)) — sejak v2.17.0
-- Tab navigasi baru ("Glossary", ikon `BookMarked`) berisi kamus 44 istilah resmi framework People Experience, di-embed langsung di komponen (bersumber dari `docs/People_Experience_Glossary_Full_Text.xlsx` yang disiapkan pengguna) — konten kamus statis, bukan data operasional, sehingga tidak memerlukan endpoint API atau tabel database.
+### 3.8 People Experience Glossary ([`src/components/GlossaryView.jsx`](file:///d:/Mul/Project/Anti%20Gravity/People%20Experience/src/components/GlossaryView.jsx)) — sejak v2.17.0, tab di-rename "About" di v2.19.0
+- Tab navigasi ("About" — di-rename dari "Glossary" di v2.19.0, ikon `BookMarked` tetap sama) berisi kamus 44 istilah resmi framework People Experience, di-embed langsung di komponen (bersumber dari `docs/People_Experience_Glossary_Full_Text.xlsx` yang disiapkan pengguna) — konten kamus statis, bukan data operasional, sehingga tidak memerlukan endpoint API atau tabel database. Nama komponen (`GlossaryView.jsx`) dan `activeTab === 'glossary'` di `App.jsx` tetap dipertahankan — hanya label tab yang tampil ke pengguna yang berubah.
 - **7 kategori**: *Framework & Konsep Inti* (14 istilah, aksen Deep Maroon), *Tools & Sistem* (3, Royal Blue), lalu 5 grup mengikuti kelima Employee Journey — *Arrival* (4, Orange), *Connect* (8, Amber), *Belong* (7, Purple), *Contribute* (5, Teal), *Depart* (3, Magenta) — memakai warna Journey yang identik dengan kartu Journey di Dashboard (§4 di bawah), sehingga tab ini terasa senada dengan tampilan utama.
 - **Search box** mencocokkan nama istilah maupun isi definisi secara real-time (client-side filter, tanpa round-trip API).
 - **Filter chip kategori** memakai pola pill-button yang identik dengan filter Journey di Explore Metrics (`Calculator.jsx`) — warna solid (`backgroundColor: cat.color`) saat aktif, badge jumlah istilah di kanan label.

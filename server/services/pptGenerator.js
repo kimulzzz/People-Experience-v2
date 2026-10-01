@@ -27,6 +27,20 @@ async function generateEventPPT(event_id, options = {}) {
   const feedbacks = storage.getFeedbackByEvent(event_id);
   const mediaList = storage.getMediaByEvent(event_id);
 
+  // Metric 12 (Signature Program event satisfaction) config — read from storage so the
+  // target, journey/checkpoint labels and per-aspect breakdown always reflect the real
+  // admin-configured metric instead of being frozen in this generator.
+  const metric12 = storage.getMetricById(12);
+  const metric12Target = storage.getMetricTargetById(12) || {};
+  const metric12Journey = metric12 ? storage.getJourneyById(metric12.journey_id) : null;
+  const metric12Checkpoint = metric12 ? storage.getCheckpointById(metric12.checkpoint_id) : null;
+  const metric12Questions = storage.getSurveyQuestions(12).filter(q => q.type !== 'FREE_TEXT');
+
+  // Metric 11 (Signature Program participation rate) — used for the "Pencapaian Kuota" stat's
+  // sub-label so it reflects the real metric/journey instead of a frozen "Metric 11 (Belong)" string.
+  const metric11 = storage.getMetricById(11);
+  const metric11Journey = metric11 ? storage.getJourneyById(metric11.journey_id) : null;
+
   // Generate AI narratives (Local On-Premise)
   const executiveNarrative = await generateEventSummary(event, attendances, feedbacks, mediaList);
   const enrichedMedia = await generateMediaNarratives(mediaList, event.event_name);
@@ -235,7 +249,7 @@ async function generateEventPPT(event_id, options = {}) {
   const statBoxWidth = 3.6;
   const stats = [
     { label: 'Total Kehadiran', val: `${attendances.length} Pax`, sub: `Target: ${event.target_participants} pax`, color: CIMB_COLORS.primaryRed },
-    { label: 'Pencapaian Kuota', val: `${((attendances.length / (event.target_participants || 500)) * 100).toFixed(0)}%`, sub: 'Metric 11 (Belong)', color: CIMB_COLORS.tealAccent },
+    { label: 'Pencapaian Kuota', val: `${((attendances.length / (event.target_participants || 500)) * 100).toFixed(0)}%`, sub: metric11 ? `Metric ${metric11.metric_id} (${metric11Journey?.journey_name || ''})` : 'Kuota Partisipasi', color: CIMB_COLORS.tealAccent },
     { label: 'Feedback Response Rate', val: `${attendances.length > 0 ? ((feedbacks.length / attendances.length) * 100).toFixed(0) : 0}%`, sub: `${feedbacks.length} Responden`, color: CIMB_COLORS.darkCharcoal }
   ];
 
@@ -334,8 +348,26 @@ async function generateEventPPT(event_id, options = {}) {
       });
     }
   });
-  const avgRating = countScores > 0 ? (totalScoreSum / countScores).toFixed(2) : '4.75';
-  const satisfactionIndex = ((parseFloat(avgRating) / 5.0) * 100).toFixed(1);
+  const hasFeedbackScores = countScores > 0;
+  const avgRating = hasFeedbackScores ? (totalScoreSum / countScores).toFixed(2) : null;
+  const satisfactionIndex = hasFeedbackScores ? ((parseFloat(avgRating) / 5.0) * 100).toFixed(1) : null;
+  const normalizedScore = hasFeedbackScores ? parseFloat(satisfactionIndex) : null;
+  const metric12TargetValue = metric12Target.target_value !== undefined ? metric12Target.target_value : (metric12?.target_value ?? 4.0);
+  const metric12TargetDisplay = metric12Target.target_display || metric12?.target_display || `> ${metric12TargetValue.toFixed(2)} / 5`;
+  const metric12MinThreshold = metric12Target.min_threshold !== undefined ? metric12Target.min_threshold : metric12?.min_threshold;
+  const metric12NormalizedTarget = (metric12TargetValue / 5.0) * 100;
+  let satisfactionStatus = 'Belum Ada Data';
+  if (normalizedScore !== null) {
+    if (metric12MinThreshold !== undefined && normalizedScore < metric12MinThreshold) {
+      satisfactionStatus = 'Di Bawah Target (Critical)';
+    } else if (normalizedScore < metric12NormalizedTarget) {
+      satisfactionStatus = 'Mendekati Target (Warning)';
+    } else {
+      satisfactionStatus = 'Memenuhi Target (Healthy)';
+    }
+  }
+  const metric12JourneyLabel = metric12Journey ? `Journey ${metric12Journey.journey_id} (${metric12Journey.journey_name})` : 'Journey';
+  const metric12CheckpointLabel = metric12Checkpoint?.checkpoint_name || '';
 
   // Left card: Score highlight
   slide4.addShape(pptx.shapes.ROUNDED_RECTANGLE, {
@@ -346,9 +378,9 @@ async function generateEventPPT(event_id, options = {}) {
     fill: { color: CIMB_COLORS.darkCharcoal }
   });
   slide4.addText('Signature Program Satisfaction', { x: 1.1, y: 1.8, w: 4.0, h: 0.3, fontSize: 13, color: 'D1D5DB', fontFace: 'Arial' });
-  slide4.addText(`${avgRating} / 5.00`, { x: 1.1, y: 2.2, w: 4.0, h: 0.8, fontSize: 36, bold: true, color: CIMB_COLORS.pureWhite, fontFace: 'Arial' });
-  slide4.addText(`Indeks Kepuasan: ${satisfactionIndex}%`, { x: 1.1, y: 3.1, w: 4.0, h: 0.4, fontSize: 16, bold: true, color: CIMB_COLORS.primaryRed, fontFace: 'Arial' });
-  slide4.addText(`Target Parameter: > 4.00 / 5 (> 80%)\nStatus: Memenuhi Target (Healthy)\n\nKontribusi ke PE Index:\nJourney 3 (Belong) -> Culture & Engagement`, {
+  slide4.addText(hasFeedbackScores ? `${avgRating} / 5.00` : 'Belum ada data', { x: 1.1, y: 2.2, w: 4.0, h: 0.8, fontSize: 36, bold: true, color: CIMB_COLORS.pureWhite, fontFace: 'Arial' });
+  slide4.addText(hasFeedbackScores ? `Indeks Kepuasan: ${satisfactionIndex}%` : 'Indeks Kepuasan: -', { x: 1.1, y: 3.1, w: 4.0, h: 0.4, fontSize: 16, bold: true, color: CIMB_COLORS.primaryRed, fontFace: 'Arial' });
+  slide4.addText(`Target Parameter: ${metric12TargetDisplay} (> ${metric12NormalizedTarget.toFixed(0)}%)\nStatus: ${satisfactionStatus}\n\nKontribusi ke PE Index:\n${metric12JourneyLabel} -> ${metric12CheckpointLabel}`, {
     x: 1.1,
     y: 3.7,
     w: 3.9,
@@ -370,19 +402,35 @@ async function generateEventPPT(event_id, options = {}) {
   });
   slide4.addText('Rincian Skor Evaluasi per Aspek', { x: 5.9, y: 1.8, w: 6.0, h: 0.3, fontSize: 14, bold: true, color: CIMB_COLORS.darkCharcoal, fontFace: 'Arial' });
 
-  const aspects = [
-    { name: 'Relevansi & Manfaat Materi', score: '4.85 / 5.00', pct: '97.0%' },
-    { name: 'Kemampuan & Kejelasan Pembicara', score: '4.78 / 5.00', pct: '95.6%' },
-    { name: 'Teknis Pelaksanaan & Interaktivitas', score: '4.65 / 5.00', pct: '93.0%' },
-    { name: 'Kepuasan Keseluruhan Program', score: '4.80 / 5.00', pct: '96.0%' }
-  ];
+  const aspects = metric12Questions.map(q => {
+    let sum = 0;
+    let count = 0;
+    feedbacks.forEach(f => {
+      if (f.ratings && f.ratings[q.key] !== undefined) {
+        const num = parseFloat(f.ratings[q.key]);
+        if (!isNaN(num)) {
+          sum += num;
+          count += 1;
+        }
+      }
+    });
+    const aspectHasData = count > 0;
+    const avg = aspectHasData ? sum / count : null;
+    const pct = aspectHasData ? (avg / 5.0) * 100 : 0;
+    return {
+      name: q.label || q.text,
+      score: aspectHasData ? `${avg.toFixed(2)} / 5.00` : 'Belum ada data',
+      pct: aspectHasData ? `${pct.toFixed(1)}%` : '-',
+      ratio: aspectHasData ? Math.min(pct / 100, 1) : 0
+    };
+  });
 
   aspects.forEach((asp, i) => {
     const yP = 2.4 + i * 0.9;
     slide4.addText(asp.name, { x: 5.9, y: yP, w: 4.0, h: 0.3, fontSize: 11, bold: true, color: CIMB_COLORS.darkCharcoal, fontFace: 'Arial' });
     slide4.addText(`${asp.score} (${asp.pct})`, { x: 9.8, y: yP, w: 2.4, h: 0.3, fontSize: 11, align: 'right', bold: true, color: CIMB_COLORS.primaryRed, fontFace: 'Arial' });
     slide4.addShape(pptx.shapes.RECTANGLE, { x: 5.9, y: yP + 0.35, w: 6.3, h: 0.1, fill: { color: 'E5E7EB' } });
-    slide4.addShape(pptx.shapes.RECTANGLE, { x: 5.9, y: yP + 0.35, w: 6.3 * 0.95, h: 0.1, fill: { color: CIMB_COLORS.primaryRed } });
+    slide4.addShape(pptx.shapes.RECTANGLE, { x: 5.9, y: yP + 0.35, w: Math.max(6.3 * asp.ratio, 0.05), h: 0.1, fill: { color: CIMB_COLORS.primaryRed } });
   });
 
   addFooter(slide4, 4);

@@ -65,8 +65,10 @@ async function generateEventSummary(event, attendances, feedbacks, mediaList) {
       });
     }
   });
-  const avgRating = ratingCount > 0 ? (totalRating / ratingCount).toFixed(2) : '4.80';
-  const scorePercent = ((parseFloat(avgRating) / 5.0) * 100).toFixed(1);
+  const hasRatings = ratingCount > 0;
+  const avgRating = hasRatings ? (totalRating / ratingCount).toFixed(2) : null;
+  const scorePercent = hasRatings ? ((parseFloat(avgRating) / 5.0) * 100).toFixed(1) : null;
+  const satisfactionSummary = hasRatings ? `${avgRating}/5.00 (${scorePercent}%)` : 'Belum ada data evaluasi';
 
   const verbatims = feedbacks.map(f => f.verbatim).filter(Boolean);
 
@@ -78,7 +80,7 @@ Tolong buatkan narasi Executive Summary dan Key Highlights untuk event internal:
 Nama Event: ${event.event_name}
 Kategori: ${event.program_category}
 Kehadiran: ${totalPax} dari target ${targetPax} pax (${paxPercent}%)
-Rata-rata Rating Kepuasan: ${avgRating}/5.00 (${scorePercent}%)
+Rata-rata Rating Kepuasan: ${satisfactionSummary}
 Feedback Peserta: ${verbatims.slice(0, 5).join('; ')}
 
 Buatkan:
@@ -92,7 +94,7 @@ Buatkan:
 
   // Fallback High-Quality On-Premise Rule Engine (Always Works Offline)
   return `### Executive Summary
-Program **${event.event_name}** (${event.program_category}) telah sukses diselenggarakan dengan format **${event.event_type}** pada ${new Date(event.event_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}. Kegiatan ini mencatatkan partisipasi sebanyak **${totalPax} karyawan** (${paxPercent}% dari target ${targetPax} pax) dengan indeks kepuasan acara mencapai **${scorePercent}%** (rata-rata rating **${avgRating} / 5.00**).
+Program **${event.event_name}** (${event.program_category}) telah sukses diselenggarakan dengan format **${event.event_type}** pada ${new Date(event.event_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}. Kegiatan ini mencatatkan partisipasi sebanyak **${totalPax} karyawan** (${paxPercent}% dari target ${targetPax} pax)${hasRatings ? ` dengan indeks kepuasan acara mencapai **${scorePercent}%** (rata-rata rating **${avgRating} / 5.00**).` : ', namun belum ada data evaluasi kepuasan yang masuk hingga laporan ini dibuat.'}
 
 ### Key Highlights
 1. **Engagement & Antusiasme Tinggi:** Tingkat kehadiran memenuhi target keikutsertaan lintas direktorat, mencerminkan tingginya minat karyawan terhadap pengembangan karir dan kultur inklusif di CIMB Niaga.

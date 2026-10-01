@@ -101,7 +101,7 @@ export default function Calculator({
 
   if (!calculationData) return null;
 
-  const { metrics, journeys, checkpoints, pe_index, survey_index, outcome_index, period } = calculationData;
+  const { metrics, journeys, checkpoints, pe_index, survey_index, outcome_index, period, year } = calculationData;
 
   // Filtered metrics
   const filteredMetrics = metrics.filter(m => {
@@ -150,7 +150,7 @@ export default function Calculator({
   };
 
   const isFit = tableDensity === 'fit';
-  const periodLabel = period === 'YTD' ? 'Year-to-Date 2026' : `Month ${period}`;
+  const periodLabel = period === 'YTD' ? `Year-to-Date ${year}` : `Month ${period}`;
 
   return (
     <div className="space-y-5">
