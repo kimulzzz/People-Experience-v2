@@ -415,12 +415,12 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-150">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[92vh] flex flex-col overflow-hidden border border-gray-200">
-        
+      <div className="bg-gradient-to-br from-[#7A0C14] via-[#9A1420] to-[#ED1C24] rounded-2xl shadow-2xl max-w-6xl w-full max-h-[92vh] flex flex-col overflow-hidden">
+
         {/* Modal Header */}
-        <div className="px-6 py-4 bg-gradient-to-r from-gray-900 via-gray-800 to-gray-900 text-white flex items-center justify-between border-b border-gray-700">
+        <div className="px-6 py-4 text-white flex items-center justify-between border-b border-white/15">
           <div className="flex items-center space-x-3">
-            <div className="p-2 bg-red-600 rounded-xl shadow-inner">
+            <div className="p-2 bg-white/15 rounded-xl shadow-inner">
               <Settings2 className="w-5 h-5 text-white" />
             </div>
             <div>
@@ -428,11 +428,11 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                 <h2 className="text-base sm:text-lg font-bold text-white tracking-tight">
                   Parameter Management: Journey & Metrics
                 </h2>
-                <span className="text-[10px] bg-red-500/30 text-red-300 font-bold px-2 py-0.5 rounded-full border border-red-500/40">
+                <span className="text-[10px] bg-white/90 text-[#8B0000] font-bold px-2 py-0.5 rounded-full">
                   Admin Panel
                 </span>
               </div>
-              <p className="text-xs text-gray-400">
+              <p className="text-xs text-red-100">
                 Konfigurasi master parameter tahapan Journey, metrik kepuasan, bobot, threshold, dan klasifikasi responden.
               </p>
             </div>
@@ -441,16 +441,16 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
           <div className="flex items-center space-x-2">
             <button
               onClick={() => setShowResetConfirm(true)}
-              className="px-3 py-1.5 text-xs font-semibold text-amber-300 bg-amber-950/60 hover:bg-amber-900 border border-amber-600/50 rounded-lg flex items-center space-x-1.5 transition"
+              className="px-3 py-1.5 text-xs font-semibold text-amber-300 bg-black/40 hover:bg-black/60 border border-amber-600/50 rounded-lg flex items-center space-x-1.5 transition"
               title="Reset ke parameter default CIMB Niaga"
             >
               <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
               <span className="hidden sm:inline">Reset Default</span>
             </button>
 
-            <button 
+            <button
               onClick={onClose}
-              className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition"
+              className="p-1.5 text-white/80 hover:text-white hover:bg-white/15 rounded-lg transition"
             >
               <X className="w-5 h-5" />
             </button>
@@ -472,14 +472,14 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
         )}
 
         {/* Modal Navigation Tabs */}
-        <div className="px-6 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+        <div className="px-6 bg-black/15 border-b border-white/15 flex items-center justify-between">
           <div className="flex space-x-4">
             <button
               onClick={() => { setActiveTab('metrics'); setIsAddingMetric(false); setEditingMetric(null); }}
               className={`py-3 text-xs sm:text-sm font-bold border-b-2 flex items-center space-x-2 transition ${
                 activeTab === 'metrics'
-                  ? 'border-[#ED1C24] text-[#ED1C24]'
-                  : 'border-transparent text-gray-500 hover:text-gray-900'
+                  ? 'border-white text-white'
+                  : 'border-transparent text-red-100 hover:text-white'
               }`}
             >
               <Sliders className="w-4 h-4" />
@@ -490,8 +490,8 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
               onClick={() => { setActiveTab('journeys'); setIsAddingJourney(false); setEditingJourney(null); }}
               className={`py-3 text-xs sm:text-sm font-bold border-b-2 flex items-center space-x-2 transition ${
                 activeTab === 'journeys'
-                  ? 'border-[#ED1C24] text-[#ED1C24]'
-                  : 'border-transparent text-gray-500 hover:text-gray-900'
+                  ? 'border-white text-white'
+                  : 'border-transparent text-red-100 hover:text-white'
               }`}
             >
               <Layers className="w-4 h-4" />
@@ -532,7 +532,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
             <div>
               {/* Journey Form (Add or Edit) */}
               {(isAddingJourney || editingJourney) && (
-                <div className="mb-6 p-5 bg-gray-50 border border-gray-300 rounded-xl shadow-xs animate-in fade-in">
+                <div className="mb-6 p-5 bg-white border border-white rounded-xl shadow-lg animate-in fade-in">
                   <div className="flex items-center justify-between pb-3 mb-4 border-b border-gray-200">
                     <h3 className="text-sm font-bold text-gray-900 flex items-center space-x-2">
                       <Sparkles className="w-4 h-4 text-[#ED1C24]" />
@@ -717,7 +717,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
 
               {/* Metric Form (Add or Edit) */}
               {(isAddingMetric || editingMetric) && (
-                <div className="mb-6 p-5 bg-gray-50 border border-gray-300 rounded-xl shadow-xs animate-in fade-in">
+                <div className="mb-6 p-5 bg-white border border-white rounded-xl shadow-lg animate-in fade-in">
                   <div className="flex items-center justify-between pb-3 mb-4 border-b border-gray-200">
                     <h3 className="text-sm font-bold text-gray-900 flex items-center space-x-2">
                       <Sparkles className="w-4 h-4 text-[#ED1C24]" />
@@ -1008,16 +1008,16 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
               )}
 
               {/* Metric Filters Header */}
-              <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="p-3 bg-white/15 border border-white/20 rounded-xl mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-3">
-                  <div className="flex items-center space-x-1.5 text-xs text-gray-500">
-                    <Filter className="w-3.5 h-3.5 text-gray-600" />
+                  <div className="flex items-center space-x-1.5 text-xs text-red-50">
+                    <Filter className="w-3.5 h-3.5 text-white" />
                     <span className="font-bold">Filter Journey:</span>
                   </div>
                   <select
                     value={selectedJourneyFilter}
                     onChange={(e) => setSelectedJourneyFilter(e.target.value)}
-                    className="px-2.5 py-1 text-xs font-semibold bg-white border border-gray-300 rounded-lg focus:outline-none"
+                    className="px-2.5 py-1 text-xs font-semibold bg-white border border-white rounded-lg focus:outline-none"
                   >
                     <option value="ALL">Semua Journey ({metrics.length})</option>
                     {journeys.map(j => (
@@ -1027,14 +1027,14 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                     ))}
                   </select>
 
-                  <div className="flex items-center space-x-1.5 text-xs text-gray-500 pl-2 border-l border-gray-300">
-                    <Users2 className="w-3.5 h-3.5 text-gray-600" />
+                  <div className="flex items-center space-x-1.5 text-xs text-red-50 pl-2 border-l border-white/30">
+                    <Users2 className="w-3.5 h-3.5 text-white" />
                     <span className="font-bold">Filter Responden:</span>
                   </div>
                   <select
                     value={selectedAudienceFilter}
                     onChange={(e) => setSelectedAudienceFilter(e.target.value)}
-                    className="px-2.5 py-1 text-xs font-semibold bg-white border border-gray-300 rounded-lg focus:outline-none"
+                    className="px-2.5 py-1 text-xs font-semibold bg-white border border-white rounded-lg focus:outline-none"
                   >
                     <option value="ALL">Semua Responden ({metrics.length})</option>
                     <option value="EMPLOYEE">Karyawan Internal ({metrics.filter(m => m.is_employee_metric).length})</option>
@@ -1042,15 +1042,15 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                   </select>
                 </div>
 
-                <div className="text-xs font-semibold text-gray-500">
-                  Menampilkan <span className="text-gray-900 font-bold">{filteredMetrics.length}</span> dari {metrics.length} metrik
+                <div className="text-xs font-semibold text-red-50">
+                  Menampilkan <span className="text-white font-bold">{filteredMetrics.length}</span> dari {metrics.length} metrik
                 </div>
               </div>
 
               {/* Metrics Table */}
-              <div className="overflow-x-auto border border-gray-200 rounded-xl shadow-xs">
-                <table className="min-w-full divide-y divide-gray-200 text-left text-xs">
-                  <thead className="bg-gray-100/80 font-bold text-gray-700">
+              <div className="overflow-x-auto rounded-xl shadow-xs">
+                <table className="min-w-full divide-y divide-red-900/10 text-left text-xs">
+                  <thead className="bg-[#7A0C14] font-bold text-white">
                     <tr>
                       <th className="py-2.5 px-3 w-12 text-center">ID</th>
                       <th className="py-2.5 px-3">Nama Metrik</th>
@@ -1064,12 +1064,12 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                       <th className="py-2.5 px-3 text-right">Aksi</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-200 bg-white">
+                  <tbody className="divide-y divide-red-900/10 bg-pink-50/70">
                     {filteredMetrics.map(m => {
                       const journey = journeys.find(j => j.journey_id === m.journey_id);
                       return (
-                        <tr key={m.metric_id} className="hover:bg-gray-50/80 transition">
-                          <td className="py-2.5 px-3 text-center font-mono font-black text-gray-700 bg-gray-50/50">
+                        <tr key={m.metric_id} className="odd:bg-white/50 hover:bg-red-100 transition">
+                          <td className="py-2.5 px-3 text-center font-mono font-black text-gray-700">
                             {m.metric_id}
                           </td>
                           <td className="py-2.5 px-3">
@@ -1172,9 +1172,9 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
         </div>
 
         {/* Modal Footer */}
-        <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex items-center justify-between text-xs text-gray-500">
+        <div className="px-6 py-3 bg-black/15 border-t border-white/15 flex items-center justify-between text-xs text-red-50">
           <div className="flex items-center space-x-2">
-            <HelpCircle className="w-4 h-4 text-gray-400" />
+            <HelpCircle className="w-4 h-4 text-white" />
             <span>Perubahan parameter metrik, bobot, dan threshold otomatis tersinkronisasi ke penghitungan PE Index.</span>
           </div>
           <button

@@ -6,15 +6,15 @@ export default function ActionLibraryView({ actionLibrary, metrics, checkpoints 
     <div className="space-y-6">
       
       {/* Top Banner */}
-      <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div className="bg-gradient-to-br from-[#7A0C14] via-[#B91C28] to-[#ED1C24] rounded-xl p-5 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center space-x-2">
-            <BookOpen className="w-5 h-5 text-[#ED1C24]" />
-            <h3 className="text-base font-extrabold text-[#231F20]">
+            <BookOpen className="w-5 h-5 text-white" />
+            <h3 className="text-base font-extrabold text-white">
               PX Action Library & Best Practice Interventions (Slide 10)
             </h3>
           </div>
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-red-100">
             Catalog of improvement actions and initiatives automatically triggered by the system when a metric falls into a score deficit.
           </p>
         </div>
@@ -27,27 +27,27 @@ export default function ActionLibraryView({ actionLibrary, metrics, checkpoints 
           const cp = checkpoints?.find(c => c.checkpoint_id === item.checkpoint_id || (metric && metric.checkpoint_id === c.checkpoint_id));
 
           return (
-            <div key={idx} className="bg-white rounded-xl p-5 border border-gray-200 shadow-xs space-y-3">
+            <div key={idx} className="bg-gradient-to-br from-[#7A0C14] to-[#ED1C24] rounded-xl p-5 shadow-xs space-y-3">
               <div className="flex items-start justify-between">
-                <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-red-50 text-[#ED1C24] border border-red-200">
+                <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-white text-[#8B0000]">
                   {item.gap_condition}
                 </span>
-                <span className="text-xs text-gray-400 font-semibold">
+                <span className="text-xs text-red-100 font-semibold">
                   {cp?.checkpoint_name || 'Checkpoint'}
                 </span>
               </div>
 
               <div>
-                <h4 className="text-sm font-bold text-[#231F20]">
+                <h4 className="text-sm font-bold text-white">
                   {metric?.metric_name || 'Related Metric'}
                 </h4>
-                <p className="text-xs text-gray-600 mt-1 font-medium">
+                <p className="text-xs text-red-50 mt-1 font-medium">
                   {item.recommended_action}
                 </p>
               </div>
 
               {item.suggested_initiatives && (
-                <div className="bg-gray-50 rounded-lg p-3 text-xs border border-gray-200 space-y-1">
+                <div className="bg-white rounded-lg p-3 text-xs space-y-1">
                   <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
                     Structured Initiatives:
                   </span>

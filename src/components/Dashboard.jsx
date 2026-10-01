@@ -71,48 +71,48 @@ export default function Dashboard({
     <div className="space-y-6">
       
       {/* 1. HERO BANNER: PX INDEX CONSOLIDATION */}
-      <div className="bg-gradient-to-r from-[#231F20] via-[#2D2A2B] to-[#1A1819] rounded-2xl p-6 sm:p-8 text-white shadow-xl relative overflow-hidden">
+      <div className="bg-gradient-to-br from-[#7A0C14] via-[#B91C28] to-[#ED1C24] rounded-2xl p-6 sm:p-8 text-white shadow-xl relative overflow-hidden">
         {/* Subtle background glow */}
-        <div className="absolute -right-10 -bottom-10 w-72 h-72 bg-[#ED1C24] opacity-20 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -right-10 -bottom-10 w-72 h-72 bg-black/20 opacity-30 rounded-full blur-3xl pointer-events-none" />
 
         <div className="relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-          
+
           {/* Main PX Index Score */}
           <div className="lg:col-span-5 space-y-3">
             <div className="flex flex-wrap items-center gap-1.5">
-              <div className="inline-flex items-center space-x-1.5 px-3 py-1 bg-red-500/20 text-red-300 border border-red-500/30 rounded-full text-xs font-semibold">
+              <div className="inline-flex items-center space-x-1.5 px-3 py-1 bg-white/90 text-[#8B0000] rounded-full text-xs font-semibold">
                 <Award className="w-3.5 h-3.5 text-[#ED1C24]" />
                 <span>CIMB Niaga PX Index • {periodLabel}</span>
               </div>
               {!isBankwide && (
-                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-200 border border-amber-400/40">
                   {directorate} {subDirectorate !== 'ALL' ? `• ${subDirectorate}` : ''}
                 </span>
               )}
             </div>
-            
+
             <div className="flex items-baseline space-x-3">
               <span className="text-6xl sm:text-7xl font-extrabold tracking-tight text-white">
                 {currentPxIndex.toFixed(2)}
               </span>
-              <span className="text-2xl font-bold text-red-400">/ 100</span>
+              <span className="text-2xl font-bold text-red-100">/ 100</span>
             </div>
 
-            <p className="text-sm text-gray-300 font-medium">
+            <p className="text-sm text-red-50 font-medium">
               Formula: <strong className="text-white">70% Survey Results</strong> ({survey_index.toFixed(2)}%) + <strong className="text-white">30% Outcome (HR Data)</strong> ({outcome_index.toFixed(2)}%)
             </p>
 
             <div className="pt-2 flex flex-wrap gap-2">
               <button
                 onClick={onNavigateToSimulator}
-                className="px-4 py-2 bg-[#ED1C24] hover:bg-[#D91B23] text-white rounded-lg text-xs font-bold transition flex items-center space-x-2 shadow-md shadow-red-900/30"
+                className="px-4 py-2 bg-white hover:bg-red-50 text-[#8B0000] rounded-lg text-xs font-bold transition flex items-center space-x-2 shadow-md"
               >
                 <span>Simulate & Edit Metrics</span>
                 <ChevronRight className="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={onNavigateToEvents}
-                className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-xs font-bold transition flex items-center space-x-2 border border-white/20"
+                className="px-4 py-2 bg-black/20 hover:bg-black/30 text-white rounded-lg text-xs font-bold transition flex items-center space-x-2 border border-white/30"
               >
                 <span>Manage Signature Programs</span>
                 <ArrowUpRight className="w-3.5 h-3.5" />
@@ -329,70 +329,70 @@ export default function Dashboard({
             return (
               <div
                 key={j.journey_id}
-                className="bg-white rounded-xl p-5 border border-gray-200 hover:border-gray-300 hover:shadow-md transition flex flex-col justify-between group space-y-4"
+                className="bg-gradient-to-br from-[#7A0C14] to-[#ED1C24] rounded-xl p-5 border border-transparent hover:shadow-lg transition flex flex-col justify-between group space-y-4"
               >
                 {/* Header */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <div 
+                    <div
                       onClick={() => onSelectJourney(j.journey_id)}
                       className="flex items-center space-x-2 cursor-pointer"
                     >
-                      <div 
+                      <div
                         className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold"
                         style={{ backgroundColor: j.color }}
                       >
                         <Icon className="w-4 h-4" />
                       </div>
                       <div>
-                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                        <span className="text-[10px] font-bold text-red-100 uppercase tracking-wider">
                           Journey #{j.journey_id}
                         </span>
-                        <h4 className="text-base font-extrabold text-[#231F20] group-hover:text-[#ED1C24] transition">
+                        <h4 className="text-base font-extrabold text-white transition">
                           {j.journey_name}
                         </h4>
                       </div>
                     </div>
 
                     <div className="text-right">
-                      <span className="text-2xl font-black text-[#231F20]">
+                      <span className="text-2xl font-black text-white">
                         {j.overall_score !== null && j.overall_score !== undefined ? j.overall_score.toFixed(1) : 'Exempted'}
                       </span>
                       {j.overall_score !== null && j.overall_score !== undefined && (
-                        <span className="text-xs text-gray-400 font-bold">%</span>
+                        <span className="text-xs text-red-100 font-bold">%</span>
                       )}
                     </div>
                   </div>
 
-                  <p className="text-xs text-gray-500 line-clamp-2">
+                  <p className="text-xs text-red-100 line-clamp-2">
                     {j.tagline}
                   </p>
                 </div>
 
                 {/* Progress Bar */}
                 <div className="space-y-1">
-                  <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
-                    <div 
-                      className="h-2 rounded-full transition-all duration-500" 
-                      style={{ 
+                  <div className="w-full bg-black/30 rounded-full h-2 overflow-hidden">
+                    <div
+                      className="h-2 rounded-full transition-all duration-500"
+                      style={{
                         width: `${Math.min(j.overall_score || 0, 100)}%`,
-                        backgroundColor: j.overall_score === null ? '#9CA3AF' : j.color 
+                        backgroundColor: j.overall_score === null ? '#9CA3AF' : j.color
                       }}
                     />
                   </div>
                 </div>
 
                 {/* Sub-scores: Survey vs Outcome */}
-                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-100 text-xs">
-                  <div className="bg-gray-50 rounded-lg p-2">
-                    <span className="text-[10px] text-gray-400 block font-semibold">Survey ({j.survey_count})</span>
-                    <span className="font-bold text-gray-800">
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/20 text-xs">
+                  <div className="bg-white/15 rounded-lg p-2">
+                    <span className="text-[10px] text-red-100 block font-semibold">Survey ({j.survey_count})</span>
+                    <span className="font-bold text-white">
                       {j.survey_score !== null ? `${j.survey_score}%` : 'N/A'}
                     </span>
                   </div>
-                  <div className="bg-gray-50 rounded-lg p-2">
-                    <span className="text-[10px] text-gray-400 block font-semibold">Outcome ({j.outcome_count})</span>
-                    <span className="font-bold text-gray-800">
+                  <div className="bg-white/15 rounded-lg p-2">
+                    <span className="text-[10px] text-red-100 block font-semibold">Outcome ({j.outcome_count})</span>
+                    <span className="font-bold text-white">
                       {j.outcome_score !== null ? `${j.outcome_score}%` : 'N/A'}
                     </span>
                   </div>
@@ -400,7 +400,7 @@ export default function Dashboard({
 
                 {/* Metrics List with Explicit Status Badge & Click-to-Drilldown */}
                 <div className="space-y-1 pt-1">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase">Metrics ({j.metrics?.length || 0}):</span>
+                  <span className="text-[10px] font-bold text-red-100 uppercase">Metrics ({j.metrics?.length || 0}):</span>
                   <div className="flex flex-col space-y-1 max-h-40 overflow-y-auto pr-0.5">
                     {j.metrics?.map(m => {
                       const isDisabled = m.is_disabled === true;
@@ -414,10 +414,10 @@ export default function Dashboard({
                             if (!isDisabled && onSelectMetric) onSelectMetric(m.metric_id);
                           }}
                           className={`w-full text-[10px] font-semibold pl-1.5 pr-2 py-1 rounded-md border transition flex items-center justify-between space-x-2 ${
-                            isDisabled ? 'bg-gray-100 text-gray-400 border-gray-200 opacity-60 cursor-not-allowed' :
-                            m.status === 'CRITICAL' ? 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100' :
-                            m.status === 'WARNING' ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' :
-                            'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                            isDisabled ? 'bg-black/20 text-white/50 border-white/10 opacity-70 cursor-not-allowed' :
+                            m.status === 'CRITICAL' ? 'bg-black/30 text-red-100 border-red-300/50 hover:bg-black/40' :
+                            m.status === 'WARNING' ? 'bg-amber-500/90 text-white border-amber-300 hover:bg-amber-500' :
+                            'bg-emerald-500/90 text-white border-emerald-300 hover:bg-emerald-500'
                           }`}
                           title={
                             isDisabled
@@ -440,12 +440,12 @@ export default function Dashboard({
                 </div>
 
                 {/* Footer Details */}
-                <div 
+                <div
                   onClick={() => onSelectJourney(j.journey_id)}
-                  className="flex items-center justify-between text-xs pt-1 text-gray-500 cursor-pointer"
+                  className="flex items-center justify-between text-xs pt-1 text-red-100 cursor-pointer"
                 >
                   <span>{j.metrics_count} Metrics</span>
-                  <div className="flex items-center space-x-1 font-semibold text-[#ED1C24] group-hover:translate-x-0.5 transition">
+                  <div className="flex items-center space-x-1 font-semibold text-white group-hover:translate-x-0.5 transition">
                     <span>Explore Journey</span>
                     <ChevronRight className="w-3.5 h-3.5" />
                   </div>

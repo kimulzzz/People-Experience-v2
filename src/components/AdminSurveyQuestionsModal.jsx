@@ -199,10 +199,10 @@ export default function AdminSurveyQuestionsModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden border border-slate-100">
-        
+      <div className="bg-gradient-to-br from-[#7A0C14] via-[#9A1420] to-[#ED1C24] rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden">
+
         {/* Modal Header */}
-        <div className="bg-gradient-to-r from-red-700 via-red-600 to-rose-700 text-white px-6 py-4.5 flex items-center justify-between shadow-md">
+        <div className="text-white px-6 py-4.5 flex items-center justify-between border-b border-white/15">
           <div className="flex items-center gap-3">
             <div className="p-2.5 bg-white/15 rounded-xl backdrop-blur-md border border-white/20">
               <HelpCircle className="w-6 h-6 text-white" />
@@ -230,16 +230,16 @@ export default function AdminSurveyQuestionsModal({
         </div>
 
         {/* Metric Selector Bar */}
-        <div className="bg-slate-50 border-b border-slate-200 px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
+        <div className="bg-white/15 border-b border-white/15 px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3 flex-1 min-w-[280px]">
-            <label className="text-xs font-bold text-slate-700 uppercase tracking-wider whitespace-nowrap flex items-center gap-1.5">
-              <Layers className="w-4 h-4 text-red-600" />
+            <label className="text-xs font-bold text-red-50 uppercase tracking-wider whitespace-nowrap flex items-center gap-1.5">
+              <Layers className="w-4 h-4 text-white" />
               Select Survey Metric:
             </label>
             <select
               value={selectedMetricId}
               onChange={(e) => setSelectedMetricId(parseInt(e.target.value))}
-              className="flex-1 bg-white border border-slate-300 rounded-xl px-3.5 py-2 text-sm font-semibold text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
+              className="flex-1 bg-white border border-white rounded-xl px-3.5 py-2 text-sm font-semibold text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
             >
               {surveyMetrics.map(m => (
                 <option key={m.metric_id} value={m.metric_id}>
@@ -253,7 +253,7 @@ export default function AdminSurveyQuestionsModal({
             <a
               href={`/api/surveys/template?metric_id=${selectedMetricId}`}
               download
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition-colors shadow-sm"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 border border-emerald-400 transition-colors shadow-sm"
               title="Download CSV Template with active questions"
             >
               <Download className="w-3.5 h-3.5" />
@@ -261,7 +261,7 @@ export default function AdminSurveyQuestionsModal({
             </a>
             <button
               onClick={() => setShowPreview(!showPreview)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 transition-colors shadow-sm"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 border border-white transition-colors shadow-sm"
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-blue-600" />
               {showPreview ? 'Hide Columns' : 'Preview Columns'}
@@ -305,19 +305,19 @@ export default function AdminSurveyQuestionsModal({
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
           {isLoading ? (
             <div className="text-center py-12">
-              <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-red-600 mb-2"></div>
-              <p className="text-xs text-slate-500">Loading question configuration...</p>
+              <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-white mb-2"></div>
+              <p className="text-xs text-red-100">Loading question configuration...</p>
             </div>
           ) : (
             <>
-              <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+              <div className="flex items-center justify-between pb-1 border-b border-white/15">
                 <div className="flex items-center gap-2">
-                  <ListOrdered className="w-4 h-4 text-red-600" />
-                  <h3 className="text-sm font-bold text-slate-800">
+                  <ListOrdered className="w-4 h-4 text-white" />
+                  <h3 className="text-sm font-bold text-white">
                     Survey Questions List ({questions.length} Items)
                   </h3>
                   {selectedMetricId === 7 && (
-                    <span className="text-[10px] bg-rose-50 text-rose-700 px-2 py-0.5 rounded-full font-bold border border-rose-200">
+                    <span className="text-[10px] bg-white/90 text-[#8B0000] px-2 py-0.5 rounded-full font-bold">
                       Standard Day 1 Onboarding Template
                     </span>
                   )}
@@ -325,7 +325,7 @@ export default function AdminSurveyQuestionsModal({
                 <button
                   type="button"
                   onClick={handleAddQuestion}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-colors shadow-sm"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-white hover:bg-red-50 text-[#8B0000] rounded-xl text-xs font-bold transition-colors shadow-sm"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   Add Question
@@ -333,11 +333,11 @@ export default function AdminSurveyQuestionsModal({
               </div>
 
               {questions.length === 0 ? (
-                <div className="text-center py-10 bg-slate-50 rounded-2xl border border-dashed border-slate-300">
-                  <p className="text-xs text-slate-500 font-medium">No questions defined for this metric yet.</p>
+                <div className="text-center py-10 bg-white/10 rounded-2xl border border-dashed border-white/30">
+                  <p className="text-xs text-red-100 font-medium">No questions defined for this metric yet.</p>
                   <button
                     onClick={handleAddQuestion}
-                    className="mt-2 px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-bold"
+                    className="mt-2 px-3 py-1.5 bg-white text-[#8B0000] rounded-lg text-xs font-bold"
                   >
                     Add First Question
                   </button>
@@ -345,9 +345,9 @@ export default function AdminSurveyQuestionsModal({
               ) : (
                 <div className="space-y-3.5">
                   {questions.map((q, idx) => (
-                    <div 
+                    <div
                       key={idx}
-                      className="p-4 rounded-xl border border-slate-200 bg-white hover:border-slate-300 transition-all shadow-xs space-y-3"
+                      className="p-4 rounded-xl border border-white/40 bg-white/90 hover:bg-white transition-all shadow-xs space-y-3"
                     >
                       {/* Row 1: Number, Label, Type, Actions */}
                       <div className="flex flex-wrap items-center justify-between gap-2.5">
@@ -446,12 +446,12 @@ export default function AdminSurveyQuestionsModal({
         </div>
 
         {/* Modal Footer */}
-        <div className="bg-slate-50 border-t border-slate-200 px-6 py-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="bg-black/15 border-t border-white/15 px-6 py-4 flex flex-wrap items-center justify-between gap-3">
           <button
             type="button"
             onClick={handleReset}
             disabled={isSaving}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-600 hover:text-red-700 hover:bg-red-50 rounded-xl border border-slate-300 transition-colors"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-red-100 hover:text-white hover:bg-white/15 rounded-xl border border-white/30 transition-colors"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             Reset to Default
@@ -461,7 +461,7 @@ export default function AdminSurveyQuestionsModal({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-xl transition-colors"
+              className="px-4 py-2 text-xs font-bold text-red-100 hover:bg-white/15 rounded-xl transition-colors"
             >
               Cancel
             </button>
@@ -469,7 +469,7 @@ export default function AdminSurveyQuestionsModal({
               type="button"
               onClick={handleSave}
               disabled={isSaving}
-              className="inline-flex items-center gap-2 px-5 py-2 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50"
+              className="inline-flex items-center gap-2 px-5 py-2 bg-white hover:bg-red-50 text-[#8B0000] rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50"
             >
               {isSaving ? (
                 <>

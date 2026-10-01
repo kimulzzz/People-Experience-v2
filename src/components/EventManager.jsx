@@ -124,25 +124,25 @@ export default function EventManager({
   };
 
   return (
-    <div className="space-y-6">
-      
+    <div className="bg-gradient-to-br from-[#7A0C14] via-[#B91C28] to-[#ED1C24] rounded-2xl p-5 sm:p-6 shadow-xl space-y-6">
+
       {/* Top Header Bar */}
-      <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 pb-5 border-b border-white/15">
         <div>
           <div className="flex items-center space-x-2">
-            <Calendar className="w-5 h-5 text-[#ED1C24]" />
-            <h3 className="text-base font-extrabold text-[#231F20]">
+            <Calendar className="w-5 h-5 text-white" />
+            <h3 className="text-base font-extrabold text-white">
               Signature Programs Event Management & PPT Generator
             </h3>
           </div>
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-red-100">
             Manage Perspektif, D&I, Young, & EVD programs. Generate pre-event attendance QR codes, post-event evaluation surveys, and export automated reports to PowerPoint.
           </p>
         </div>
 
         <button
           onClick={onOpenCreateEventModal}
-          className="px-4 py-2 bg-[#ED1C24] hover:bg-[#D91B23] text-white rounded-lg text-xs font-bold transition flex items-center space-x-2 shadow-sm"
+          className="px-4 py-2 bg-[#ED1C24] hover:bg-[#D91B23] text-white rounded-lg text-xs font-bold transition flex items-center space-x-2 shadow-sm border border-white/30"
         >
           <Plus className="w-4 h-4" />
           <span>Create New Signature Event</span>
@@ -151,12 +151,12 @@ export default function EventManager({
 
       {/* Main Two-Column Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
+
         {/* Left Column: Event List (4 cols) */}
         <div className="lg:col-span-4 space-y-3">
           <div className="flex items-center justify-between px-1">
-            <span className="text-xs font-bold text-gray-500 uppercase">Signature Event List</span>
-            <span className="text-xs font-semibold text-gray-400">{events?.length || 0} Events</span>
+            <span className="text-xs font-bold text-red-100 uppercase">Signature Event List</span>
+            <span className="text-xs font-semibold text-red-100">{events?.length || 0} Events</span>
           </div>
 
           <div className="space-y-3">
@@ -168,8 +168,8 @@ export default function EventManager({
                   onClick={() => setSelectedEventId(ev.event_id)}
                   className={`p-4 rounded-xl border transition cursor-pointer ${
                     isSelected
-                      ? 'bg-red-50/50 border-[#ED1C24] shadow-xs'
-                      : 'bg-white border-gray-200 hover:border-gray-300'
+                      ? 'bg-white border-white shadow-lg'
+                      : 'bg-white/85 border-white/40 hover:bg-white'
                   }`}
                 >
                   <div className="flex items-start justify-between">
@@ -207,31 +207,31 @@ export default function EventManager({
         {/* Right Column: Selected Event Active Workspace (8 cols) */}
         <div className="lg:col-span-8 space-y-6">
           {selectedEvent ? (
-            <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-xs space-y-6">
-              
+            <div className="space-y-6">
+
               {/* Event Header Banner */}
-              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-5 border-b border-gray-100">
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-5 border-b border-white/15">
                 <div className="space-y-1">
                   <div className="flex items-center space-x-2">
-                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#ED1C24] text-white">
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-white text-[#8B0000]">
                       {selectedEvent.program_category}
                     </span>
-                    <span className="text-xs text-gray-500 font-medium">
+                    <span className="text-xs text-red-100 font-medium">
                       {new Date(selectedEvent.event_date).toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
                     </span>
                   </div>
 
-                  <h2 className="text-lg font-extrabold text-[#231F20]">
+                  <h2 className="text-lg font-extrabold text-white">
                     {selectedEvent.event_name}
                   </h2>
 
-                  <div className="flex items-center space-x-4 text-xs text-gray-500 pt-1">
+                  <div className="flex items-center space-x-4 text-xs text-red-100 pt-1">
                     <span className="flex items-center space-x-1">
-                      <MapPin className="w-3.5 h-3.5 text-gray-400" />
+                      <MapPin className="w-3.5 h-3.5 text-red-200" />
                       <span>{selectedEvent.location}</span>
                     </span>
                     <span className="flex items-center space-x-1">
-                      <Clock className="w-3.5 h-3.5 text-gray-400" />
+                      <Clock className="w-3.5 h-3.5 text-red-200" />
                       <span>Format {selectedEvent.event_type}</span>
                     </span>
                   </div>
@@ -241,7 +241,7 @@ export default function EventManager({
                 <button
                   onClick={handleGeneratePpt}
                   disabled={generatingPpt}
-                  className="px-4 py-2.5 bg-gradient-to-r from-[#231F20] to-[#3B3637] hover:from-[#ED1C24] hover:to-[#D91B23] text-white rounded-xl text-xs font-bold transition flex items-center space-x-2 shadow-md"
+                  className="px-4 py-2.5 bg-gradient-to-r from-[#231F20] to-[#3B3637] hover:from-[#3B3637] hover:to-[#4A4445] text-white rounded-xl text-xs font-bold transition flex items-center space-x-2 shadow-md"
                 >
                   <Download className="w-4 h-4" />
                   <span>{generatingPpt ? 'Generating PPT Slides...' : 'Download PPTX Report'}</span>
@@ -252,10 +252,10 @@ export default function EventManager({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 
                 {/* Pra-Event Link Card */}
-                <div className="bg-blue-50/60 border border-blue-200 rounded-xl p-4 space-y-3">
+                <div className="bg-blue-600 border border-blue-400 rounded-xl p-4 space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-blue-900 flex items-center space-x-1.5">
-                      <CheckCircle className="w-4 h-4 text-blue-600" />
+                    <span className="text-xs font-bold text-white flex items-center space-x-1.5">
+                      <CheckCircle className="w-4 h-4 text-white" />
                       <span>Attendance Link (Pre-Event)</span>
                     </span>
                     <button
@@ -267,14 +267,14 @@ export default function EventManager({
                     </button>
                   </div>
 
-                  <p className="text-[11px] text-blue-800 font-medium">
+                  <p className="text-[11px] text-blue-50 font-medium">
                     Share this link during registration/attendance before the event begins.
                   </p>
 
                   <div className="flex items-center space-x-2">
                     <button
                       onClick={() => onOpenPublicCheckIn(selectedEvent.pre_event_code)}
-                      className="flex-1 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition text-center"
+                      className="flex-1 py-1.5 bg-blue-800 hover:bg-blue-900 text-white rounded-lg text-xs font-bold transition text-center"
                     >
                       Open Check-in Form
                     </button>
@@ -292,10 +292,10 @@ export default function EventManager({
                 </div>
 
                 {/* Post-Event Survey Card */}
-                <div className="bg-emerald-50/60 border border-emerald-200 rounded-xl p-4 space-y-3">
+                <div className="bg-emerald-600 border border-emerald-400 rounded-xl p-4 space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-emerald-900 flex items-center space-x-1.5">
-                      <Star className="w-4 h-4 text-emerald-600 fill-emerald-600" />
+                    <span className="text-xs font-bold text-white flex items-center space-x-1.5">
+                      <Star className="w-4 h-4 text-white fill-white" />
                       <span>Evaluation Survey (Post-Event)</span>
                     </span>
                     <button
@@ -307,14 +307,14 @@ export default function EventManager({
                     </button>
                   </div>
 
-                  <p className="text-[11px] text-emerald-800 font-medium">
+                  <p className="text-[11px] text-emerald-50 font-medium">
                     Share at the end of the event to gather satisfaction ratings & verbatim feedback.
                   </p>
 
                   <div className="flex items-center space-x-2">
                     <button
                       onClick={() => onOpenPublicSurvey(selectedEvent.post_event_code)}
-                      className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition text-center"
+                      className="flex-1 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-xs font-bold transition text-center"
                     >
                       Open Evaluation Form
                     </button>
@@ -337,13 +337,13 @@ export default function EventManager({
               <div className="space-y-3 pt-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
-                    <ImageIcon className="w-4 h-4 text-[#ED1C24]" />
-                    <h4 className="text-sm font-extrabold text-[#231F20]">
+                    <ImageIcon className="w-4 h-4 text-white" />
+                    <h4 className="text-sm font-extrabold text-white">
                       Photo Gallery & Event Documentation
                     </h4>
                   </div>
 
-                  <label className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-bold transition cursor-pointer flex items-center space-x-1.5">
+                  <label className="px-3 py-1.5 bg-white/90 hover:bg-white text-[#8B0000] rounded-lg text-xs font-bold transition cursor-pointer flex items-center space-x-1.5">
                     <Upload className="w-3.5 h-3.5" />
                     <span>{uploadingMedia ? 'Uploading...' : 'Upload Photo / Video'}</span>
                     <input
@@ -358,7 +358,7 @@ export default function EventManager({
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {eventDetail?.media?.map((med) => (
-                    <div key={med.media_id} className="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2 relative group">
+                    <div key={med.media_id} className="bg-white border border-white/40 rounded-xl p-3 space-y-2 relative group">
                       <div className="w-full h-28 bg-gray-200 rounded-lg flex items-center justify-center overflow-hidden relative">
                         {med.file_type === 'VIDEO' ? (
                           <div className="text-center text-gray-500">
@@ -386,7 +386,7 @@ export default function EventManager({
                         {med.caption}
                       </p>
 
-                      <div className="bg-white rounded p-2 text-[10px] text-gray-600 border border-gray-100 space-y-1">
+                      <div className="bg-gray-50 rounded p-2 text-[10px] text-gray-600 border border-gray-100 space-y-1">
                         <div className="flex items-center space-x-1 font-bold text-[#ED1C24]">
                           <Sparkles className="w-3 h-3" />
                           <span>AI Description:</span>
@@ -399,7 +399,7 @@ export default function EventManager({
                   ))}
 
                   {(!eventDetail?.media || eventDetail.media.length === 0) && (
-                    <div className="col-span-3 py-8 text-center bg-gray-50 border border-dashed border-gray-300 rounded-xl text-xs text-gray-400">
+                    <div className="col-span-3 py-8 text-center bg-white/10 border border-dashed border-white/30 rounded-xl text-xs text-red-100">
                       No photos or videos uploaded yet. Click "Upload Photo / Video" above.
                     </div>
                   )}
@@ -410,8 +410,8 @@ export default function EventManager({
               <div className="space-y-3 pt-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
-                    <MessageSquare className="w-4 h-4 text-[#ED1C24]" />
-                    <h4 className="text-sm font-extrabold text-[#231F20]">
+                    <MessageSquare className="w-4 h-4 text-white" />
+                    <h4 className="text-sm font-extrabold text-white">
                       Verbatim Feedback & Suggestions ({eventDetail?.feedbacks?.length || 0})
                     </h4>
                   </div>
@@ -419,7 +419,7 @@ export default function EventManager({
 
                 <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                   {eventDetail?.feedbacks?.map((fb) => (
-                    <div key={fb.response_id} className="p-3 bg-gray-50 rounded-xl border border-gray-200 text-xs space-y-1">
+                    <div key={fb.response_id} className="p-3 bg-white border border-white/40 rounded-xl text-xs space-y-1">
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-gray-700">NIP: {fb.nip}</span>
                         <span className="text-[10px] text-gray-400">
@@ -430,7 +430,7 @@ export default function EventManager({
                     </div>
                   ))}
                   {(!eventDetail?.feedbacks || eventDetail.feedbacks.length === 0) && (
-                    <div className="py-4 text-center text-xs text-gray-400">
+                    <div className="py-4 text-center text-xs text-red-100">
                       No feedback submitted yet.
                     </div>
                   )}
@@ -439,7 +439,7 @@ export default function EventManager({
 
             </div>
           ) : (
-            <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-400 text-xs">
+            <div className="bg-white/10 border border-white/20 rounded-xl p-12 text-center text-red-100 text-xs">
               Select an event from the left panel.
             </div>
           )}

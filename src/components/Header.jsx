@@ -275,13 +275,13 @@ export default function Header({
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex space-x-1 overflow-x-auto py-1">
+        <div className="flex space-x-1 overflow-x-auto py-1 px-1 my-1 rounded-lg bg-gradient-to-r from-red-50 via-pink-50 to-red-50 border border-red-100">
           <button
             onClick={() => setActiveTab('dashboard')}
             className={`px-4 py-2 text-xs font-semibold rounded-md flex items-center space-x-2 transition ${
               activeTab === 'dashboard'
-                ? 'bg-red-50 text-[#ED1C24] font-bold'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                ? 'bg-white text-[#ED1C24] font-bold shadow-sm'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
             }`}
           >
             <BarChart3 className="w-4 h-4" />
@@ -292,8 +292,8 @@ export default function Header({
             onClick={() => setActiveTab('calculator')}
             className={`px-4 py-2 text-xs font-semibold rounded-md flex items-center space-x-2 transition ${
               activeTab === 'calculator'
-                ? 'bg-red-50 text-[#ED1C24] font-bold'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                ? 'bg-white text-[#ED1C24] font-bold shadow-sm'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
             }`}
           >
             <Layers className="w-4 h-4" />
@@ -304,8 +304,8 @@ export default function Header({
             onClick={() => setActiveTab('events')}
             className={`px-4 py-2 text-xs font-semibold rounded-md flex items-center space-x-2 transition ${
               activeTab === 'events'
-                ? 'bg-red-50 text-[#ED1C24] font-bold'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                ? 'bg-white text-[#ED1C24] font-bold shadow-sm'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
             }`}
           >
             <Calendar className="w-4 h-4" />
@@ -316,8 +316,8 @@ export default function Header({
             onClick={() => setActiveTab('alerts')}
             className={`px-4 py-2 text-xs font-semibold rounded-md flex items-center space-x-2 transition ${
               activeTab === 'alerts'
-                ? 'bg-red-50 text-[#ED1C24] font-bold'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                ? 'bg-white text-[#ED1C24] font-bold shadow-sm'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
             }`}
           >
             <Sparkles className="w-4 h-4" />
@@ -328,8 +328,8 @@ export default function Header({
             onClick={() => setActiveTab('glossary')}
             className={`px-4 py-2 text-xs font-semibold rounded-md flex items-center space-x-2 transition ${
               activeTab === 'glossary'
-                ? 'bg-red-50 text-[#ED1C24] font-bold'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                ? 'bg-white text-[#ED1C24] font-bold shadow-sm'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
             }`}
           >
             <BookMarked className="w-4 h-4" />

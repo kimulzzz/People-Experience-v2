@@ -156,41 +156,41 @@ export default function Calculator({
     <div className="space-y-5">
       
       {/* Top Banner: Metrics Performance & Pure Data Calculation */}
-      <div className="bg-white rounded-2xl p-5 md:p-6 border border-gray-200 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div className="bg-gradient-to-br from-[#7A0C14] via-[#B91C28] to-[#ED1C24] rounded-2xl p-5 md:p-6 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 rounded-lg bg-red-50 text-[#ED1C24] flex items-center justify-center font-bold">
+            <div className="w-8 h-8 rounded-lg bg-white/15 text-white flex items-center justify-center font-bold">
               <Layers className="w-4 h-4" />
             </div>
-            <h3 className="text-base font-extrabold text-[#231F20]">
+            <h3 className="text-base font-extrabold text-white">
               Explore 27 People Experience Metrics
             </h3>
-            <span className="text-[10px] font-bold px-2 py-0.5 bg-red-100 text-[#ED1C24] rounded-full">
+            <span className="text-[10px] font-bold px-2 py-0.5 bg-white/90 text-[#8B0000] rounded-full">
               Pure Survey & HR Calculation
             </span>
           </div>
-          <p className="text-xs text-gray-500 max-w-2xl">
+          <p className="text-xs text-red-100 max-w-2xl">
             Metric values are calculated directly from employee survey responses (1-5 scale, 1-10 scale, and percentages) and actual HR system data feeds. Click any metric row to view question details, itemized averages, and respondent response records.
           </p>
         </div>
 
         {/* Live Index Snapshot */}
-        <div className="flex items-center space-x-3 bg-gray-50 px-4 py-3 rounded-xl border border-gray-200 shrink-0">
+        <div className="flex items-center space-x-3 bg-white/15 px-4 py-3 rounded-xl border border-white/20 shrink-0">
           <div className="text-right">
-            <span className="text-[10px] uppercase font-bold text-gray-400 block">PX Index ({periodLabel})</span>
-            <span className="text-2xl font-black text-[#FF0000]">{(calculationData.px_index ?? pe_index).toFixed(2)}%</span>
+            <span className="text-[10px] uppercase font-bold text-red-100 block">PX Index ({periodLabel})</span>
+            <span className="text-2xl font-black text-white">{(calculationData.px_index ?? pe_index).toFixed(2)}%</span>
           </div>
-          <div className="h-8 w-px bg-gray-200" />
+          <div className="h-8 w-px bg-white/20" />
           <div className="text-xs space-y-0.5">
-            <div><span className="text-gray-400 font-medium">Survey (70%):</span> <strong className="text-[#16C0B7]">{survey_index.toFixed(2)}%</strong></div>
-            <div><span className="text-gray-400 font-medium">Outcome (30%):</span> <strong className="text-[#F55755]">{outcome_index.toFixed(2)}%</strong></div>
+            <div><span className="text-red-100 font-medium">Survey (70%):</span> <strong className="text-white">{survey_index.toFixed(2)}%</strong></div>
+            <div><span className="text-red-100 font-medium">Outcome (30%):</span> <strong className="text-white">{outcome_index.toFixed(2)}%</strong></div>
           </div>
         </div>
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 bg-white p-3.5 rounded-xl border border-gray-200 shadow-2xs">
-        
+      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 bg-gradient-to-br from-[#7A0C14] to-[#ED1C24] p-3.5 rounded-xl shadow-2xs">
+
         {/* Search Box */}
         <div className="relative w-full lg:w-72">
           <Search className="w-4 h-4 text-gray-400 absolute left-3 top-2.5" />
@@ -199,7 +199,7 @@ export default function Calculator({
             placeholder="Search metric, PIC, data source..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#ED1C24]"
+            className="w-full pl-9 pr-3 py-1.5 text-xs bg-white border border-white/40 rounded-lg focus:outline-none focus:ring-1 focus:ring-white"
           />
         </div>
 
@@ -209,8 +209,8 @@ export default function Calculator({
             onClick={() => setSelectedJourneyFilter('ALL')}
             className={`px-3 py-1.5 text-xs font-bold rounded-lg transition shrink-0 ${
               selectedJourneyFilter === 'ALL'
-                ? 'bg-[#231F20] text-white shadow-2xs'
-                : 'text-gray-600 hover:bg-gray-100'
+                ? 'bg-white text-[#8B0000] shadow-2xs'
+                : 'text-red-50 hover:bg-white/15'
             }`}
           >
             All Journeys ({metrics.length})
@@ -223,13 +223,13 @@ export default function Calculator({
               className={`px-3 py-1.5 text-xs font-bold rounded-lg transition flex items-center space-x-1.5 shrink-0 ${
                 selectedJourneyFilter === j.journey_id.toString()
                   ? 'text-white shadow-2xs'
-                  : 'text-gray-600 hover:bg-gray-100'
+                  : 'text-red-50 hover:bg-white/15'
               }`}
               style={selectedJourneyFilter === j.journey_id.toString() ? { backgroundColor: j.color } : {}}
             >
               <span>{j.journey_name}</span>
               <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                selectedJourneyFilter === j.journey_id.toString() ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-700'
+                selectedJourneyFilter === j.journey_id.toString() ? 'bg-white/20 text-white' : 'bg-black/20 text-red-50'
               }`}>
                 {j.metrics_count}
               </span>
@@ -242,7 +242,7 @@ export default function Calculator({
           <button
             onClick={() => setTypeFilter('ALL')}
             className={`px-3 py-1.5 text-xs rounded-lg font-bold transition ${
-              typeFilter === 'ALL' ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              typeFilter === 'ALL' ? 'bg-[#231F20] text-white' : 'bg-white/15 text-red-50 hover:bg-white/25'
             }`}
           >
             All Types
@@ -250,7 +250,7 @@ export default function Calculator({
           <button
             onClick={() => setTypeFilter('SURVEY')}
             className={`px-3 py-1.5 text-xs rounded-lg font-bold transition ${
-              typeFilter === 'SURVEY' ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+              typeFilter === 'SURVEY' ? 'bg-blue-600 text-white' : 'bg-white/90 text-blue-700 hover:bg-white'
             }`}
           >
             Survey (20)
@@ -258,7 +258,7 @@ export default function Calculator({
           <button
             onClick={() => setTypeFilter('OUTCOME')}
             className={`px-3 py-1.5 text-xs rounded-lg font-bold transition ${
-              typeFilter === 'OUTCOME' ? 'bg-emerald-600 text-white' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+              typeFilter === 'OUTCOME' ? 'bg-emerald-600 text-white' : 'bg-white/90 text-emerald-700 hover:bg-white'
             }`}
           >
             Outcome (7)
@@ -268,37 +268,37 @@ export default function Calculator({
       </div>
 
       {/* Action Buttons Guide & Quick Scroll Control Bar */}
-      <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 flex flex-col md:flex-row md:items-center justify-between gap-2.5 text-xs">
-        
+      <div className="bg-gradient-to-br from-[#7A0C14] to-[#ED1C24] rounded-xl px-4 py-2.5 flex flex-col md:flex-row md:items-center justify-between gap-2.5 text-xs">
+
         {/* Left: Legend */}
         <div className="flex flex-wrap items-center gap-2 text-[11px]">
-          <div className="flex items-center space-x-1.5 text-slate-800 font-bold shrink-0 mr-1">
-            <HelpCircle className="w-3.5 h-3.5 text-[#ED1C24]" />
+          <div className="flex items-center space-x-1.5 text-white font-bold shrink-0 mr-1">
+            <HelpCircle className="w-3.5 h-3.5 text-white" />
             <span>Action Guide:</span>
           </div>
-          <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200 font-semibold text-[10.5px]">
+          <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-white/90 text-slate-700 font-semibold text-[10.5px]">
             <Download className="w-3 h-3 text-slate-500 shrink-0" />
             <span><strong>Template:</strong> CSV Format</span>
           </div>
-          <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200 font-semibold text-[10.5px]">
+          <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-white/90 text-slate-700 font-semibold text-[10.5px]">
             <FileText className="w-3 h-3 text-slate-500 shrink-0" />
             <span><strong>Evidence:</strong> Audit Trail</span>
           </div>
-          <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200 font-semibold text-[10.5px]">
+          <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-white/90 text-slate-700 font-semibold text-[10.5px]">
             <FileSpreadsheet className="w-3 h-3 text-slate-500 shrink-0" />
             <span><strong>Upload:</strong> Import CSV</span>
           </div>
-          <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200 font-semibold text-[10.5px]">
+          <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-white/90 text-slate-700 font-semibold text-[10.5px]">
             <Eye className="w-3 h-3 text-slate-500 shrink-0" />
             <span><strong>Detail:</strong> Metric Drilldown</span>
           </div>
         </div>
 
         {/* Right: Table View & Quick Scroll Controls */}
-        <div className="flex items-center justify-between md:justify-end space-x-2 shrink-0 border-t md:border-t-0 pt-2 md:pt-0 border-slate-200">
-          
+        <div className="flex items-center justify-between md:justify-end space-x-2 shrink-0 border-t md:border-t-0 pt-2 md:pt-0 border-white/20">
+
           {/* Density Toggle */}
-          <div className="inline-flex items-center bg-white border border-gray-200 rounded-lg p-0.5 text-[11px]">
+          <div className="inline-flex items-center bg-white/90 rounded-lg p-0.5 text-[11px]">
             <button
               onClick={() => setTableDensity('fit')}
               className={`px-2 py-1 rounded-md font-bold transition flex items-center space-x-1 ${
@@ -322,13 +322,13 @@ export default function Calculator({
           </div>
 
           {/* Quick Scroll Left / Right Buttons */}
-          <div className="inline-flex items-center space-x-1 bg-white border border-gray-200 rounded-lg p-0.5">
+          <div className="inline-flex items-center space-x-1 bg-white/90 rounded-lg p-0.5">
             <button
               onClick={handleScrollLeft}
               disabled={!canScrollLeft}
               className={`p-1 rounded-md transition ${
-                canScrollLeft 
-                  ? 'text-gray-700 hover:bg-gray-100 hover:text-[#ED1C24]' 
+                canScrollLeft
+                  ? 'text-gray-700 hover:bg-gray-100 hover:text-[#ED1C24]'
                   : 'text-gray-300 cursor-not-allowed'
               }`}
               title="Scroll table to the left"
@@ -342,8 +342,8 @@ export default function Calculator({
               onClick={handleScrollRight}
               disabled={!canScrollRight}
               className={`p-1 rounded-md transition ${
-                canScrollRight 
-                  ? 'text-gray-700 hover:bg-gray-100 hover:text-[#ED1C24]' 
+                canScrollRight
+                  ? 'text-gray-700 hover:bg-gray-100 hover:text-[#ED1C24]'
                   : 'text-gray-300 cursor-not-allowed'
               }`}
               title="Scroll table to the right"
@@ -357,35 +357,35 @@ export default function Calculator({
       </div>
 
       {/* 27 Metrics Table Container with Sticky Action Column */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-xs overflow-hidden">
-        
+      <div className="bg-gradient-to-br from-[#7A0C14] via-[#9A1420] to-[#ED1C24] rounded-2xl shadow-xs overflow-hidden p-1.5">
+
         {/* Table scroll wrapper with scroll listeners */}
-        <div 
+        <div
           ref={tableContainerRef}
           onScroll={checkScrollState}
-          className="overflow-x-auto relative max-h-[75vh] overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 hover:scrollbar-thumb-gray-400"
+          className="overflow-x-auto relative max-h-[75vh] overflow-y-auto rounded-xl scrollbar-thin scrollbar-thumb-gray-300 hover:scrollbar-thumb-gray-400"
         >
           <table className={`w-full text-left border-collapse ${isFit ? 'text-[11.5px]' : 'text-xs'}`}>
-            
+
             {/* Sticky Table Header */}
             <thead className="sticky top-0 z-20 shadow-xs">
-              <tr className="bg-gray-100 text-[10.5px] font-extrabold text-gray-700 uppercase tracking-wider border-b border-gray-200">
-                <th className={`py-3 ${isFit ? 'px-2.5 w-10' : 'px-3.5 w-12'} text-center bg-gray-100`}>ID</th>
-                <th className={`py-3 ${isFit ? 'px-2.5 min-w-[210px] max-w-[270px]' : 'px-3.5 min-w-[260px]'} bg-gray-100`}>
+              <tr className="bg-[#7A0C14] text-[10.5px] font-extrabold text-white uppercase tracking-wider border-b border-white/10">
+                <th className={`py-3 ${isFit ? 'px-2.5 w-10' : 'px-3.5 w-12'} text-center bg-[#7A0C14]`}>ID</th>
+                <th className={`py-3 ${isFit ? 'px-2.5 min-w-[210px] max-w-[270px]' : 'px-3.5 min-w-[260px]'} bg-[#7A0C14]`}>
                   Check Point & Metric
                 </th>
-                <th className={`py-3 ${isFit ? 'px-2.5 w-28' : 'px-3.5 w-36'} bg-gray-100`}>Type & PIC</th>
-                <th className={`py-3 ${isFit ? 'px-2 text-center w-24' : 'px-3.5 text-center w-32'} bg-gray-100`}>Sample / Source</th>
-                <th className={`py-3 ${isFit ? 'px-2 text-center w-24' : 'px-3.5 text-center w-28'} bg-gray-100`}>Date / Last Sync</th>
-                <th className={`py-3 ${isFit ? 'px-2 text-right w-24' : 'px-3.5 text-right w-28'} bg-gray-100`}>Actual Value</th>
-                <th className={`py-3 ${isFit ? 'px-2.5 min-w-[120px] w-32' : 'px-3.5 min-w-[150px]'} bg-gray-100`}>Index Score (Target)</th>
-                <th className={`py-3 ${isFit ? 'px-2 text-center w-24' : 'px-3.5 text-center w-28'} bg-gray-100`}>Status</th>
-                
+                <th className={`py-3 ${isFit ? 'px-2.5 w-28' : 'px-3.5 w-36'} bg-[#7A0C14]`}>Type & PIC</th>
+                <th className={`py-3 ${isFit ? 'px-2 text-center w-24' : 'px-3.5 text-center w-32'} bg-[#7A0C14]`}>Sample / Source</th>
+                <th className={`py-3 ${isFit ? 'px-2 text-center w-24' : 'px-3.5 text-center w-28'} bg-[#7A0C14]`}>Date / Last Sync</th>
+                <th className={`py-3 ${isFit ? 'px-2 text-right w-24' : 'px-3.5 text-right w-28'} bg-[#7A0C14]`}>Actual Value</th>
+                <th className={`py-3 ${isFit ? 'px-2.5 min-w-[120px] w-32' : 'px-3.5 min-w-[150px]'} bg-[#7A0C14]`}>Index Score (Target)</th>
+                <th className={`py-3 ${isFit ? 'px-2 text-center w-24' : 'px-3.5 text-center w-28'} bg-[#7A0C14]`}>Status</th>
+
                 {/* STICKY RIGHT COLUMN HEADER (FREEZE COLUMN) */}
-                <th className={`py-3 ${isFit ? 'px-3 w-[260px]' : 'px-3.5 w-[300px]'} text-right sticky right-0 bg-gray-100/95 backdrop-blur-xs z-30 shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.12)] border-l border-gray-200`}>
+                <th className={`py-3 ${isFit ? 'px-3 w-[260px]' : 'px-3.5 w-[300px]'} text-right sticky right-0 bg-[#7A0C14] backdrop-blur-xs z-30 shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.3)] border-l border-white/10`}>
                   <div className="flex items-center justify-end space-x-1.5">
                     <span>Actions & Evidence</span>
-                    <span className="text-[9px] bg-red-100 text-[#ED1C24] px-1.5 py-0.2 rounded font-bold uppercase">
+                    <span className="text-[9px] bg-white/90 text-[#8B0000] px-1.5 py-0.2 rounded font-bold uppercase">
                       Fixed
                     </span>
                   </div>
@@ -394,10 +394,10 @@ export default function Calculator({
             </thead>
 
             {/* Table Body */}
-            <tbody className="divide-y divide-gray-100 font-medium text-gray-700">
+            <tbody className="divide-y divide-red-900/10 font-medium text-gray-700">
               {filteredMetrics.length === 0 ? (
                 <tr>
-                  <td colSpan="9" className="text-center py-12 text-gray-400 font-medium">
+                  <td colSpan="9" className="text-center py-12 bg-red-50 text-gray-400 font-medium">
                     No metrics found matching the search and filter criteria.
                   </td>
                 </tr>
@@ -416,9 +416,9 @@ export default function Calculator({
                       key={m.metric_id}
                       onClick={() => !isDisabled && onSelectMetric && onSelectMetric(m.metric_id)}
                       className={`transition ${
-                        isDisabled 
-                          ? 'bg-gray-100/80 text-gray-400 opacity-60 cursor-not-allowed select-none' 
-                          : 'hover:bg-red-50/50 cursor-pointer group'
+                        isDisabled
+                          ? 'bg-gray-200/80 text-gray-400 opacity-60 cursor-not-allowed select-none'
+                          : 'bg-red-50/70 odd:bg-pink-50/70 hover:bg-red-100 cursor-pointer group'
                       }`}
                       title={
                         isDisabled 
@@ -564,7 +564,7 @@ export default function Calculator({
                       </td>
 
                       {/* STICKY RIGHT COLUMN: ACTION BUTTONS (ALWAYS VISIBLE) */}
-                      <td className={`py-2.5 ${isFit ? 'px-2.5' : 'px-3.5'} text-right whitespace-nowrap sticky right-0 ${isDisabled ? 'bg-gray-100/95' : 'bg-white group-hover:bg-red-50/80'} transition-colors z-10 shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.1)] border-l border-gray-100`}>
+                      <td className={`py-2.5 ${isFit ? 'px-2.5' : 'px-3.5'} text-right whitespace-nowrap sticky right-0 ${isDisabled ? 'bg-gray-200/95' : 'bg-pink-50/90 group-hover:bg-red-100'} transition-colors z-10 shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.15)] border-l border-red-200/50`}>
                         <div className="flex items-center justify-end space-x-1">
                           {isDisabled ? (
                             <span className="text-[10px] font-semibold text-gray-400 italic px-2 py-1">
@@ -661,7 +661,7 @@ export default function Calculator({
         </div>
 
         {/* Bottom Table Footer Bar with Status and Quick Info */}
-        <div className="bg-gray-50/90 border-t border-gray-200 px-4 py-2.5 flex flex-col sm:flex-row items-center justify-between text-[11px] text-gray-500 gap-2">
+        <div className="bg-pink-50/90 rounded-b-xl px-4 py-2.5 flex flex-col sm:flex-row items-center justify-between text-[11px] text-gray-500 gap-2">
           <div className="flex items-center space-x-1.5">
             <MousePointerClick className="w-3.5 h-3.5 text-[#ED1C24]" />
             <span>

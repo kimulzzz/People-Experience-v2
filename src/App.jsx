@@ -302,44 +302,44 @@ export default function App() {
 
             <div className="grid grid-cols-1 gap-4">
               {alertsData?.alerts?.map((alert) => (
-                <div key={alert.alert_id} className="bg-white rounded-xl p-5 border border-gray-200 shadow-xs space-y-3">
+                <div key={alert.alert_id} className="bg-gradient-to-br from-[#7A0C14] via-[#9A1420] to-[#ED1C24] rounded-xl p-5 shadow-xs space-y-3">
                   <div className="flex items-start justify-between">
                     <div>
                       <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
-                        alert.severity === 'CRITICAL' ? 'bg-[#ED1C24] text-white' : 'bg-amber-500 text-white'
+                        alert.severity === 'CRITICAL' ? 'bg-white text-[#8B0000]' : 'bg-amber-400 text-amber-950'
                       }`}>
                         {alert.severity}
                       </span>
-                      <h4 
+                      <h4
                         onClick={() => handleOpenMetricDetail(alert.metric_id)}
-                        className="text-sm font-extrabold text-[#231F20] mt-1.5 hover:text-[#ED1C24] cursor-pointer"
+                        className="text-sm font-extrabold text-white mt-1.5 hover:text-red-100 cursor-pointer"
                       >
                         {alert.metric_name}
                       </h4>
-                      <p className="text-xs text-gray-500">Journey: {alert.journey_name} • PIC: {alert.experience_owner}</p>
+                      <p className="text-xs text-red-100">Journey: {alert.journey_name} • PIC: {alert.experience_owner}</p>
                     </div>
                     <div className="text-right">
-                      <span className="text-xl font-black text-[#ED1C24]">{alert.current_score}%</span>
-                      <span className="text-xs text-gray-400 block">Target: {alert.target_display}</span>
+                      <span className="text-xl font-black text-white">{alert.current_score}%</span>
+                      <span className="text-xs text-red-100 block">Target: {alert.target_display}</span>
                     </div>
                   </div>
 
-                  <div className="bg-gray-50 rounded-lg p-3 text-xs space-y-2 border border-gray-100">
+                  <div className="bg-white rounded-lg p-3 text-xs space-y-2">
                     <p className="text-gray-700 font-medium leading-relaxed">
                       <strong>AI Recommendation & Action Library:</strong> {alert.recommended_action}
                     </p>
                     {alert.suggested_initiatives && (
-                      <div className="text-[11px] text-gray-600 font-mono whitespace-pre-line bg-white p-2.5 rounded border border-gray-200">
+                      <div className="text-[11px] text-gray-600 font-mono whitespace-pre-line bg-gray-50 p-2.5 rounded border border-gray-200">
                         {alert.suggested_initiatives}
                       </div>
                     )}
                   </div>
 
-                  <div className="flex items-center justify-between text-xs pt-1 text-gray-500 border-t border-gray-100">
-                    <span>Data Source: <strong>{alert.source_of_data}</strong></span>
+                  <div className="flex items-center justify-between text-xs pt-1 text-red-100 border-t border-white/20">
+                    <span>Data Source: <strong className="text-white">{alert.source_of_data}</strong></span>
                     <button
                       onClick={() => handleOpenMetricDetail(alert.metric_id)}
-                      className="px-3 py-1.5 bg-red-50 text-[#ED1C24] hover:bg-red-100 rounded-lg text-xs font-bold transition"
+                      className="px-3 py-1.5 bg-white text-[#8B0000] hover:bg-red-50 rounded-lg text-xs font-bold transition"
                     >
                       View Survey Details & Questions &rarr;
                     </button>
