@@ -1326,6 +1326,98 @@ async function runRegressionSuite() {
     }
   });
 
+  // --- 27. EVENT MEDIA GALLERY: VIEWABLE FILES + VIDEO AI TRANSCRIPT ---
+  console.log('\n📦 MODULE 27: Event Media Upload, Viewing & Video AI Transcript (Positive & Negative Testing)');
+
+  // Smallest valid 1x1 PNG — enough for the server to accept, store and serve an image upload.
+  const TINY_PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64'
+  );
+  const MEDIA_EVENT_ID = 'ev-perspektif-2024-q1';
+
+  async function uploadMedia(buffer, filename, mimeType, extra = {}) {
+    const form = new FormData();
+    form.append('mediaFile', new Blob([buffer], { type: mimeType }), filename);
+    Object.entries(extra).forEach(([k, v]) => form.append(k, v));
+    return fetch(`${BASE_URL}/api/events/${MEDIA_EVENT_ID}/media`, { method: 'POST', body: form });
+  }
+
+  await runTest('[POSITIVE] An uploaded photo is stored as IMAGE (no transcript job) and is served back so it can be viewed', async () => {
+    const res = await uploadMedia(TINY_PNG, 'regression-photo.png', 'image/png', { caption: 'Regression photo' });
+    assert.strictEqual(res.status, 201);
+    const media = (await res.json()).media;
+    try {
+      assert.strictEqual(media.file_type, 'IMAGE');
+      assert.strictEqual(media.transcript_status, undefined, 'Photos must not get an AI transcript job');
+      const fileRes = await fetch(`${BASE_URL}${media.file_path}`);
+      assert.strictEqual(fileRes.status, 200, `Uploaded photo must be served at ${media.file_path}`);
+      assert.ok((fileRes.headers.get('content-type') || '').startsWith('image/'), 'Photo must be served with an image/* content type');
+    } finally {
+      await fetch(`${BASE_URL}/api/media/${media.media_id}`, { method: 'DELETE' });
+    }
+  });
+
+  await runTest('[POSITIVE] Deleting media also removes its file from disk (large videos must not be left orphaned)', async () => {
+    const res = await uploadMedia(TINY_PNG, 'regression-delete.png', 'image/png');
+    const media = (await res.json()).media;
+    const delRes = await fetch(`${BASE_URL}/api/media/${media.media_id}`, { method: 'DELETE' });
+    assert.strictEqual(delRes.status, 200);
+    await new Promise(resolve => setTimeout(resolve, 300)); // unlink is fire-and-forget
+    const fileRes = await fetch(`${BASE_URL}${media.file_path}`);
+    assert.notStrictEqual(fileRes.status, 200, 'The uploaded file must be gone after its media record is deleted');
+  });
+
+  await runTest('[POSITIVE] An uploaded video is answered immediately as PROCESSING and its transcript job always settles (DONE or FAILED with a reason)', async () => {
+    // Not a decodable video on purpose: the job must still terminate, with a reason, instead of
+    // hanging on PROCESSING forever — whether or not the local transcribe API is running.
+    const res = await uploadMedia(Buffer.from('not really a video'), 'regression-video.mp4', 'video/mp4');
+    assert.strictEqual(res.status, 201);
+    const media = (await res.json()).media;
+    try {
+      assert.strictEqual(media.file_type, 'VIDEO');
+      assert.strictEqual(media.transcript_status, 'PROCESSING');
+
+      let settled = null;
+      for (let i = 0; i < 40; i++) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        const detail = await (await fetch(`${BASE_URL}/api/events/${MEDIA_EVENT_ID}`)).json();
+        const current = detail.media.find(m => m.media_id === media.media_id);
+        if (current && current.transcript_status !== 'PROCESSING') { settled = current; break; }
+      }
+      assert.ok(settled, 'Transcript job never left PROCESSING within 60s');
+      assert.ok(['DONE', 'FAILED'].includes(settled.transcript_status));
+      if (settled.transcript_status === 'FAILED') {
+        assert.ok(settled.transcript_error && settled.transcript_error.length > 0, 'A FAILED transcript must carry a human-readable reason');
+      }
+    } finally {
+      await fetch(`${BASE_URL}/api/media/${media.media_id}`, { method: 'DELETE' });
+    }
+  });
+
+  await runTest('[NEGATIVE] Non-photo/video uploads (e.g. HTML) are rejected with 415 so they can never be served from /uploads', async () => {
+    const res = await uploadMedia(Buffer.from('<script>alert(1)</script>'), 'evil.html', 'text/html');
+    assert.strictEqual(res.status, 415);
+    const body = await res.json();
+    assert.ok(body.error, 'Rejection must explain why');
+  });
+
+  await runTest('[NEGATIVE] Requesting an AI transcript for a photo returns 400, not a transcription attempt', async () => {
+    const res = await uploadMedia(TINY_PNG, 'regression-notvideo.png', 'image/png');
+    const media = (await res.json()).media;
+    try {
+      const tRes = await fetch(`${BASE_URL}/api/media/${media.media_id}/transcribe`, { method: 'POST' });
+      assert.strictEqual(tRes.status, 400);
+    } finally {
+      await fetch(`${BASE_URL}/api/media/${media.media_id}`, { method: 'DELETE' });
+    }
+  });
+
+  await runTest('[NEGATIVE] Requesting an AI transcript for a non-existent media ID returns a clean 404', async () => {
+    const res = await fetch(`${BASE_URL}/api/media/does-not-exist/transcribe`, { method: 'POST' });
+    assert.strictEqual(res.status, 404);
+  });
+
   // --- SUMMARY ---
   console.log('\n================================================================');
   console.log(`📊 REGRESSION TEST SUMMARY: ${passedTests}/${totalTests} Tests Passed (${failedTests} Failed)`);

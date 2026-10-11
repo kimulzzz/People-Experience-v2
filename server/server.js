@@ -18,6 +18,7 @@ const { generateSurveyCsvTemplate } = require('./services/surveyTemplateService'
 const { processSurveyCsv } = require('./services/surveyImportService');
 const { generateSurveyEvidenceCsv } = require('./services/surveyEvidenceService');
 const { getPendingUploadReminders, sendPendingUploadReminders } = require('./services/reminderService');
+const { queueMediaTranscription, resumeInterruptedTranscriptions, resolveUploadPath } = require('./services/transcribeService');
 
 // Default year for YTD/unparseable period query params, derived from the real server clock
 // instead of a hardcoded literal (mirrors CURRENT_YEAR in calculationEngine.js).
@@ -48,6 +49,21 @@ const multerStorage = multer.diskStorage({
 });
 const upload = multer({ storage: multerStorage, limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB limit
 
+// Event photo/video uploads are served back as static files from /uploads, so only real
+// image/video MIME types are accepted (an uploaded .html would otherwise be served and run).
+// Videos get a higher cap than the 50MB CSV limit — event recordings are routinely larger.
+const MEDIA_MAX_MB = parseInt(process.env.MEDIA_MAX_MB || '200', 10);
+const mediaUpload = multer({
+  storage: multerStorage,
+  limits: { fileSize: MEDIA_MAX_MB * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (/^(image|video)\//.test(file.mimetype)) return cb(null, true);
+    const err = new Error('Format file tidak didukung. Unggah foto (JPG/PNG/GIF/WEBP) atau video (MP4/MOV/WEBM).');
+    err.code = 'UNSUPPORTED_MEDIA_TYPE';
+    cb(err);
+  }
+});
+
 // ==========================================
 // API ROUTES
 // ==========================================
@@ -58,7 +74,7 @@ app.get('/api/health', async (req, res) => {
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.20.1',
+    version: '2.21.0',
     local_ai: {
       ollama_status: ollama ? 'connected' : 'offline (using local heuristic engine)',
       host: process.env.OLLAMA_HOST || 'http://localhost:11434'
@@ -731,7 +747,18 @@ app.delete('/api/events/:id/feedback/:nip', (req, res) => {
 });
 
 // 6. Media Gallery Uploads
-app.post('/api/events/:id/media', upload.single('mediaFile'), async (req, res) => {
+app.post('/api/events/:id/media', (req, res, next) => {
+  mediaUpload.single('mediaFile')(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: `Ukuran file melebihi batas ${MEDIA_MAX_MB} MB.` });
+    }
+    if (err.code === 'UNSUPPORTED_MEDIA_TYPE') {
+      return res.status(415).json({ error: err.message });
+    }
+    return res.status(400).json({ error: err.message });
+  });
+}, async (req, res) => {
   try {
     const { caption, file_type } = req.body;
     const file = req.file;
@@ -739,14 +766,25 @@ app.post('/api/events/:id/media', upload.single('mediaFile'), async (req, res) =
     const event = storage.getEventById(req.params.id);
     const mediaPath = file ? `/uploads/${file.filename}` : '/uploads/sample.jpg';
     const originalName = file ? file.originalname : 'media_upload.jpg';
+    // The browser-reported MIME type is more trustworthy than the client's file_type field.
+    const detectedType = file
+      ? (file.mimetype.startsWith('video/') ? 'VIDEO' : 'IMAGE')
+      : (file_type || 'IMAGE');
 
     const newMedia = storage.addMedia({
       event_id: req.params.id,
       file_name: originalName,
       file_path: mediaPath,
-      file_type: file_type || 'IMAGE',
-      caption: caption || `Dokumentasi ${event ? event.event_name : 'Event'}`
+      file_type: detectedType,
+      caption: caption || `Dokumentasi ${event ? event.event_name : 'Event'}`,
+      transcript_status: detectedType === 'VIDEO' && file ? 'PROCESSING' : undefined
     });
+
+    // Transcription can take minutes (Whisper on CPU) — answer the upload right away and let
+    // the UI poll the event detail for the transcript.
+    if (newMedia.transcript_status === 'PROCESSING') {
+      setImmediate(() => queueMediaTranscription(newMedia.media_id));
+    }
 
     res.status(201).json({ success: true, media: newMedia });
   } catch (err) {
@@ -754,9 +792,31 @@ app.post('/api/events/:id/media', upload.single('mediaFile'), async (req, res) =
   }
 });
 
+// (Re)run the AI transcript for an uploaded video — used by the "Coba lagi" button after a
+// failure, e.g. when the local transcribe API wasn't running at upload time.
+app.post('/api/media/:id/transcribe', (req, res) => {
+  try {
+    const media = storage.getMediaById(req.params.id);
+    if (!media) return res.status(404).json({ error: 'Media tidak ditemukan.' });
+    if (media.file_type !== 'VIDEO') {
+      return res.status(400).json({ error: 'Transkrip AI hanya tersedia untuk file video.' });
+    }
+    if (media.transcript_status === 'PROCESSING') {
+      return res.status(409).json({ error: 'Transkrip sedang diproses.' });
+    }
+    queueMediaTranscription(media.media_id);
+    res.status(202).json({ success: true, media: storage.getMediaById(media.media_id) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete('/api/media/:id', (req, res) => {
   try {
-    storage.deleteMedia(req.params.id);
+    const removed = storage.deleteMedia(req.params.id);
+    // Uploaded videos are large — don't leave the file behind once its record is gone.
+    const abs = removed && resolveUploadPath(removed.file_path);
+    if (abs) fs.unlink(abs, () => {});
     res.json({ success: true, message: 'Media deleted' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -826,6 +886,9 @@ app.listen(PORT, () => {
   console.log(`📡 URL: http://localhost:${PORT}`);
   console.log(`📊 Health: http://localhost:${PORT}/api/health`);
   console.log(`=======================================================`);
+
+  // Video transcripts interrupted by a restart would otherwise sit on PROCESSING forever.
+  resumeInterruptedTranscriptions();
 
   // Daily automatic check for Survey Upload Reminders (Batas Waktu Upload Survei).
   // Runs once shortly after boot, then every 24h — emails PICs whose metrics are

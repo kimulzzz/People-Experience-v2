@@ -9,13 +9,13 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    26 MODUL PENGUJIAN    │     88 AUTOMATED TESTS      │       100% PASS RATE          │
+│    27 MODUL PENGUJIAN    │     94 AUTOMATED TESTS      │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
 ---
 
-## 📋 2. Rincian 26 Modul & 88 Skenario Pengujian
+## 📋 2. Rincian 27 Modul & 94 Skenario Pengujian
 
 ### 📦 Modul 1: Calculation Engine & Period Filtering (3 Test Cases)
 1. **System Health Endpoint**: Memvalidasi status online server dan identitas sistem (`GET /api/health`).
@@ -178,6 +178,15 @@ OUTCOME, kuota partisipasi Metrik #11, dan jumlah responden ESS yang sebelumnya 
 87. **[POSITIVE] Kuota Metrik #11 Memakai Target Admin-Editable**: Mengubah `target_value` Metrik #11 via `PUT /api/admin/metrics/11`, memverifikasi `normalized_score` di `/api/metrics/calculate` benar-benar bergeser mengikuti target baru — regression guard untuk bug kuota hardcode `500`.
 88. **[POSITIVE] `total_respondents` Jujur ke Database**: Membuat metrik SURVEY/ESS baru dengan nol respons, memverifikasi `total_respondents` = 0 (bukan placeholder fiktif `1250`).
 
+### 📦 Modul 27: Media Event — Upload, Tampil & Transkrip AI Video (6 Test Cases, sejak v2.21.0)
+
+89. **[POSITIVE] Foto Tersimpan sebagai IMAGE & Bisa Dilihat**: Upload PNG kecil → `file_type=IMAGE`, tanpa `transcript_status` (foto tidak memicu transkrip), dan file disajikan di `file_path` dengan content-type `image/*`.
+90. **[POSITIVE] Hapus Media = Hapus File Fisik**: Setelah `DELETE /api/media/:id`, file di `/uploads` tidak lagi dapat diakses (video besar tidak boleh tertinggal yatim).
+91. **[POSITIVE] Job Transkrip Video Selalu Selesai**: Upload "video" tidak valid → langsung dibalas `PROCESSING`, lalu dalam ≤60 detik berubah menjadi `DONE`/`FAILED`; `FAILED` wajib membawa `transcript_error` — regression guard agar tidak ada media yang tersangkut `PROCESSING` selamanya, baik API transkrip hidup maupun mati.
+92. **[NEGATIVE] File Non-Media Ditolak 415**: Upload `.html` ditolak sehingga tidak pernah dapat disajikan dari `/uploads` (mencegah XSS lewat file unggahan).
+93. **[NEGATIVE] Transkrip untuk Foto → 400**: `POST /api/media/:id/transcribe` pada IMAGE tidak memulai transkripsi.
+94. **[NEGATIVE] Transkrip untuk Media Tak Ada → 404**: ID tidak dikenal dijawab 404 bersih.
+
 ---
 
 ## 🚀 3. Cara Menjalankan Pengujian
@@ -222,9 +231,10 @@ node tests/regressionTest.js
 📦 MODULE 24: Event/Attendance/Feedback Deletion (Pos. & Neg.) -> 5/5 PASS
 📦 MODULE 25: Target & Min Threshold Unit Consistency (Positive) -> 4/4 PASS
 📦 MODULE 26: Hardcode Audit Follow-up (Operational/Quota/Resp.) -> 3/3 PASS
+📦 MODULE 27: Event Media Upload, Viewing & Video AI Transcript -> 6/6 PASS
 
 ================================================================
-📊 REGRESSION TEST SUMMARY: 88/88 Tests Passed (0 Failed)
+📊 REGRESSION TEST SUMMARY: 94/94 Tests Passed (0 Failed)
 ================================================================
 ```
 

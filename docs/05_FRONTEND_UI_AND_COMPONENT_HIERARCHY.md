@@ -162,6 +162,12 @@ graph TD
 
 ---
 
+### 3.7a Galeri Media Event & Transkrip AI Video ([`src/components/EventManager.jsx`](file:///d:/Mul/Project/Anti%20Gravity/People%20Experience/src/components/EventManager.jsx)) — sejak v2.21.0
+- **Foto** tampil sebagai thumbnail (klik atau tombol *Perbesar* → lightbox ukuran penuh); **video** tampil dengan pemutar bawaan browser (play/pause/seek/volume/fullscreen, mendukung HTTP Range) dan tombol *Putar di layar besar*. Lightbox (`MediaLightbox`) ditutup dengan klik latar, tombol X, atau `Esc`, dan menyediakan tautan "Buka di tab baru".
+- File yang hilang dari server (mis. data seed contoh) tidak menampilkan gambar rusak, tetapi placeholder "File tidak tersedia di server".
+- **Transkrip AI video** (`MediaCard`): status `PROCESSING` → indikator berputar; halaman melakukan polling `GET /api/events/:id` tiap 4 detik **hanya selama ada media yang diproses**, lalu terisi otomatis. Status `DONE` → cuplikan di *AI Description* + panel lipat **Transkrip AI lengkap** berisi segmen bertimestamp; **klik segmen untuk melompat & memutar video dari detik tersebut**. Status `FAILED` → alasan kegagalan + tombol **Coba lagi** (`POST /api/media/:id/transcribe`).
+- Error upload (format tidak didukung, melebihi batas ukuran) kini ditampilkan sebagai alert dengan pesan dari server, bukan diabaikan diam-diam.
+
 ### 3.8 People Experience Glossary ([`src/components/GlossaryView.jsx`](file:///d:/Mul/Project/Anti%20Gravity/People%20Experience/src/components/GlossaryView.jsx)) — sejak v2.17.0, tab di-rename "About" di v2.19.0
 - Tab navigasi ("About" — di-rename dari "Glossary" di v2.19.0, ikon `BookMarked` tetap sama) berisi kamus 44 istilah resmi framework People Experience, di-embed langsung di komponen (bersumber dari `docs/People_Experience_Glossary_Full_Text.xlsx` yang disiapkan pengguna) — konten kamus statis, bukan data operasional, sehingga tidak memerlukan endpoint API atau tabel database. Nama komponen (`GlossaryView.jsx`) dan `activeTab === 'glossary'` di `App.jsx` tetap dipertahankan — hanya label tab yang tampil ke pengguna yang berubah.
 - **7 kategori**: *Framework & Konsep Inti* (14 istilah, aksen Deep Maroon), *Tools & Sistem* (3, Royal Blue), lalu 5 grup mengikuti kelima Employee Journey — *Arrival* (4, Orange), *Connect* (8, Amber), *Belong* (7, Purple), *Contribute* (5, Teal), *Depart* (3, Magenta) — memakai warna Journey yang identik dengan kartu Journey di Dashboard (§4 di bawah), sehingga tab ini terasa senada dengan tampilan utama.

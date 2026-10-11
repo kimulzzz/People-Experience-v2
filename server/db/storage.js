@@ -756,6 +756,12 @@ const storage = {
   getMediaByEvent(event_id) {
     return getStore().media.filter(m => m.event_id === event_id);
   },
+  getAllMedia() {
+    return getStore().media;
+  },
+  getMediaById(media_id) {
+    return getStore().media.find(m => m.media_id === media_id) || null;
+  },
   addMedia(mediaItem) {
     const s = getStore();
     const newMedia = {
@@ -769,15 +775,35 @@ const storage = {
       highlight_order: mediaItem.highlight_order || s.media.length + 1,
       created_at: new Date().toISOString()
     };
+    // Videos get an AI transcript (transcribeService.js); null for everything else.
+    if (mediaItem.transcript_status) newMedia.transcript_status = mediaItem.transcript_status;
     s.media.push(newMedia);
     saveStore();
     return newMedia;
   },
+  // Whitelisted partial update — used by the background transcription job to record its
+  // progress/result without being able to rewrite identity fields (media_id/event_id/file_path).
+  updateMedia(media_id, patch) {
+    const s = getStore();
+    const media = s.media.find(m => m.media_id === media_id);
+    if (!media) return null;
+    const allowed = [
+      'caption', 'ai_generated_description', 'transcript', 'transcript_segments',
+      'transcript_status', 'transcript_error', 'transcript_language', 'duration_seconds'
+    ];
+    allowed.forEach(k => {
+      if (patch[k] !== undefined) media[k] = patch[k];
+    });
+    saveStore();
+    return media;
+  },
+  // Returns the removed record (so the caller can delete its file from disk), or null.
   deleteMedia(media_id) {
     const s = getStore();
+    const removed = s.media.find(m => m.media_id === media_id) || null;
     s.media = s.media.filter(m => m.media_id !== media_id);
     saveStore();
-    return true;
+    return removed;
   },
 
   // --- ACTION LIBRARY & ALERTS ---

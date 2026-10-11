@@ -1,27 +1,216 @@
-import React, { useState } from 'react';
-import { 
-  Plus, 
-  Calendar, 
-  MapPin, 
-  Users, 
-  Star, 
-  QrCode, 
-  Share2, 
-  FileText, 
-  Download, 
-  Upload, 
-  Image as ImageIcon, 
-  Trash2, 
-  Sparkles, 
-  CheckCircle, 
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Plus,
+  Calendar,
+  MapPin,
+  Users,
+  Star,
+  QrCode,
+  Share2,
+  FileText,
+  Download,
+  Upload,
+  Image as ImageIcon,
+  Trash2,
+  Sparkles,
+  CheckCircle,
   ExternalLink,
   MessageSquare,
   Copy,
   Clock,
-  Video
+  Video,
+  X,
+  Maximize2,
+  Loader2,
+  RefreshCw,
+  AlertCircle
 } from 'lucide-react';
 
-export default function EventManager({ 
+function formatTimestamp(totalSeconds) {
+  const s = Math.max(0, Math.floor(totalSeconds || 0));
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+}
+
+// Full-screen viewer so an uploaded photo can be seen large / a video played large.
+function MediaLightbox({ media, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const isVideo = media.file_type === 'VIDEO';
+  return (
+    <div className="fixed inset-0 z-[80] bg-black/85 flex items-center justify-center p-4" onClick={onClose}>
+      <button
+        onClick={onClose}
+        className="absolute top-4 right-4 p-2 bg-white/15 hover:bg-white/30 text-white rounded-full transition"
+        title="Tutup (Esc)"
+      >
+        <X className="w-5 h-5" />
+      </button>
+      <div className="max-w-5xl w-full" onClick={(e) => e.stopPropagation()}>
+        {isVideo ? (
+          <video src={media.file_path} controls autoPlay className="w-full max-h-[80vh] bg-black rounded-lg" />
+        ) : (
+          <img src={media.file_path} alt={media.caption || media.file_name} className="max-h-[80vh] mx-auto object-contain rounded-lg" />
+        )}
+        <div className="mt-3 flex items-center justify-between gap-4 text-white">
+          <p className="text-sm font-semibold line-clamp-2">{media.caption || media.file_name}</p>
+          <a
+            href={media.file_path}
+            target="_blank"
+            rel="noreferrer"
+            className="shrink-0 text-xs font-bold underline underline-offset-2 text-white/80 hover:text-white flex items-center space-x-1"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            <span>Buka di tab baru</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// One gallery item: viewable photo / playable video, plus (videos only) the AI transcript.
+function MediaCard({ med, onDelete, onOpen, onRetryTranscript }) {
+  const videoRef = useRef(null);
+  const [broken, setBroken] = useState(false);
+  const isVideo = med.file_type === 'VIDEO';
+
+  const openLarge = () => {
+    if (videoRef.current) videoRef.current.pause();
+    onOpen(med);
+  };
+
+  const seekTo = (seconds) => {
+    if (!videoRef.current) return;
+    videoRef.current.currentTime = seconds;
+    videoRef.current.play().catch(() => {});
+  };
+
+  return (
+    <div className="bg-white border border-white/40 rounded-xl p-3 space-y-2 relative group">
+      <div className="w-full aspect-video bg-gray-200 rounded-lg flex items-center justify-center overflow-hidden relative">
+        {broken ? (
+          <div className="text-center text-gray-500 p-2">
+            {isVideo ? <Video className="w-8 h-8 mx-auto text-gray-400" /> : <ImageIcon className="w-8 h-8 mx-auto text-gray-400" />}
+            <span className="text-[10px] font-bold block mt-1 truncate max-w-[160px]">{med.file_name}</span>
+            <span className="text-[9.5px] block text-gray-400">File tidak tersedia di server</span>
+          </div>
+        ) : isVideo ? (
+          <video
+            ref={videoRef}
+            src={`${med.file_path}#t=0.1`}
+            controls
+            preload="metadata"
+            onError={() => setBroken(true)}
+            className="w-full h-full object-contain bg-black"
+          />
+        ) : (
+          <img
+            src={med.file_path}
+            alt={med.caption || med.file_name}
+            loading="lazy"
+            onClick={openLarge}
+            onError={() => setBroken(true)}
+            className="w-full h-full object-cover cursor-zoom-in"
+          />
+        )}
+
+        {!broken && (
+          <button
+            onClick={openLarge}
+            className="absolute top-2 left-2 p-1 bg-black/55 hover:bg-black/75 text-white rounded-md opacity-0 group-hover:opacity-100 transition"
+            title={isVideo ? 'Putar di layar besar' : 'Lihat ukuran penuh'}
+          >
+            <Maximize2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+
+        {/* Delete overlay */}
+        <button
+          onClick={() => onDelete(med.media_id)}
+          className="absolute top-2 right-2 p-1 bg-red-600 text-white rounded-md opacity-0 group-hover:opacity-100 transition shadow-xs"
+          title="Delete"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      <p className="text-[11px] font-bold text-gray-800 line-clamp-2">
+        {med.caption}
+      </p>
+
+      {isVideo && med.transcript_status === 'PROCESSING' && (
+        <div className="bg-gray-50 rounded p-2 text-[10px] text-gray-600 border border-gray-100 flex items-center space-x-1.5">
+          <Loader2 className="w-3 h-3 animate-spin shrink-0" style={{ color: 'var(--theme-base)' }} />
+          <span>Transkrip AI sedang diproses… bisa memakan beberapa menit, halaman ini akan terisi otomatis.</span>
+        </div>
+      )}
+
+      {isVideo && med.transcript_status === 'FAILED' && (
+        <div className="bg-red-50 rounded p-2 text-[10px] text-red-700 border border-red-100 space-y-1">
+          <div className="flex items-start space-x-1.5">
+            <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
+            <span>Transkrip AI gagal: {med.transcript_error || 'alasan tidak diketahui'}</span>
+          </div>
+          <button
+            onClick={() => onRetryTranscript(med.media_id)}
+            className="inline-flex items-center space-x-1 px-2 py-0.5 bg-white border border-red-200 rounded font-bold hover:bg-red-100 transition"
+          >
+            <RefreshCw className="w-3 h-3" />
+            <span>Coba lagi</span>
+          </button>
+        </div>
+      )}
+
+      {med.ai_generated_description && (
+        <div className="bg-gray-50 rounded p-2 text-[10px] text-gray-600 border border-gray-100 space-y-1">
+          <div className="flex items-center space-x-1 font-bold text-[var(--theme-base)]">
+            <Sparkles className="w-3 h-3" />
+            <span>AI Description:</span>
+          </div>
+          <p className="line-clamp-2 italic">
+            "{med.ai_generated_description}"
+          </p>
+        </div>
+      )}
+
+      {isVideo && med.transcript_status === 'DONE' && med.transcript && (
+        <details className="bg-gray-50 rounded border border-gray-100 text-[10px] text-gray-600">
+          <summary className="cursor-pointer select-none p-2 font-bold text-[var(--theme-base)] flex items-center space-x-1">
+            <FileText className="w-3 h-3 inline" />
+            <span>
+              Transkrip AI lengkap
+              {med.duration_seconds ? ` • ${formatTimestamp(med.duration_seconds)}` : ''}
+              {med.transcript_language ? ` • ${med.transcript_language.toUpperCase()}` : ''}
+            </span>
+          </summary>
+          <div className="px-2 pb-2 max-h-44 overflow-y-auto space-y-1">
+            {Array.isArray(med.transcript_segments) && med.transcript_segments.length > 0 ? (
+              med.transcript_segments.map((seg, i) => (
+                <button
+                  key={i}
+                  onClick={() => seekTo(seg.start)}
+                  className="w-full text-left flex items-start space-x-1.5 hover:bg-white rounded px-1 py-0.5 transition"
+                  title="Putar video dari bagian ini"
+                >
+                  <span className="font-mono font-bold text-gray-400 shrink-0">{formatTimestamp(seg.start)}</span>
+                  <span>{seg.text}</span>
+                </button>
+              ))
+            ) : (
+              <p>{med.transcript}</p>
+            )}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+export default function EventManager({
   events, 
   onRefreshEvents,
   onOpenCreateEventModal,
@@ -35,6 +224,7 @@ export default function EventManager({
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [generatingPpt, setGeneratingPpt] = useState(false);
   const [pptDownloadUrl, setPptDownloadUrl] = useState(null);
+  const [lightboxMedia, setLightboxMedia] = useState(null);
 
   const selectedEvent = events?.find(e => e.event_id === selectedEventId) || events?.[0];
 
@@ -60,8 +250,26 @@ export default function EventManager({
     }
   };
 
+  // Video transcripts finish in the background (minutes, on CPU) — while any are still
+  // processing, quietly re-fetch the event so the transcript appears without a manual refresh.
+  const hasProcessingTranscript = !!eventDetail?.media?.some(m => m.transcript_status === 'PROCESSING');
+  useEffect(() => {
+    if (!hasProcessingTranscript || !selectedEvent?.event_id) return undefined;
+    const eventId = selectedEvent.event_id;
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/events/${eventId}`);
+        if (res.ok) setEventDetail(await res.json());
+      } catch (err) {
+        console.error('Transcript status refresh failed:', err);
+      }
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [hasProcessingTranscript, selectedEvent?.event_id]);
+
   const handleMediaUpload = async (e) => {
-    const file = e.target.files[0];
+    const input = e.target;
+    const file = input.files[0];
     if (!file || !selectedEvent) return;
 
     setUploadingMedia(true);
@@ -77,11 +285,30 @@ export default function EventManager({
       });
       if (res.ok) {
         fetchEventDetail(selectedEvent.event_id);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || `Upload gagal (HTTP ${res.status}).`);
       }
     } catch (err) {
       console.error('Media upload error:', err);
+      alert('Upload gagal: ' + err.message);
     } finally {
       setUploadingMedia(false);
+      // Allow picking the same file again after a failed/finished upload.
+      input.value = '';
+    }
+  };
+
+  const handleRetryTranscript = async (mediaId) => {
+    try {
+      const res = await fetch(`/api/media/${mediaId}/transcribe`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || `Gagal memulai transkrip (HTTP ${res.status}).`);
+      }
+      if (selectedEvent) fetchEventDetail(selectedEvent.event_id);
+    } catch (err) {
+      alert('Gagal memulai transkrip: ' + err.message);
     }
   };
 
@@ -356,46 +583,15 @@ export default function EventManager({
                   </label>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-start">
                   {eventDetail?.media?.map((med) => (
-                    <div key={med.media_id} className="bg-white border border-white/40 rounded-xl p-3 space-y-2 relative group">
-                      <div className="w-full h-28 bg-gray-200 rounded-lg flex items-center justify-center overflow-hidden relative">
-                        {med.file_type === 'VIDEO' ? (
-                          <div className="text-center text-gray-500">
-                            <Video className="w-8 h-8 mx-auto text-gray-400" />
-                            <span className="text-[10px] font-bold block mt-1">Video Recording</span>
-                          </div>
-                        ) : (
-                          <div className="text-center text-gray-500 p-2">
-                            <ImageIcon className="w-8 h-8 mx-auto text-gray-400" />
-                            <span className="text-[10px] font-bold block mt-1 truncate max-w-[140px]">{med.file_name}</span>
-                          </div>
-                        )}
-
-                        {/* Delete overlay */}
-                        <button
-                          onClick={() => handleDeleteMedia(med.media_id)}
-                          className="absolute top-2 right-2 p-1 bg-red-600 text-white rounded-md opacity-0 group-hover:opacity-100 transition shadow-xs"
-                          title="Delete"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-
-                      <p className="text-[11px] font-bold text-gray-800 line-clamp-2">
-                        {med.caption}
-                      </p>
-
-                      <div className="bg-gray-50 rounded p-2 text-[10px] text-gray-600 border border-gray-100 space-y-1">
-                        <div className="flex items-center space-x-1 font-bold text-[var(--theme-base)]">
-                          <Sparkles className="w-3 h-3" />
-                          <span>AI Description:</span>
-                        </div>
-                        <p className="line-clamp-2 italic">
-                          "{med.ai_generated_description}"
-                        </p>
-                      </div>
-                    </div>
+                    <MediaCard
+                      key={med.media_id}
+                      med={med}
+                      onDelete={handleDeleteMedia}
+                      onOpen={setLightboxMedia}
+                      onRetryTranscript={handleRetryTranscript}
+                    />
                   ))}
 
                   {(!eventDetail?.media || eventDetail.media.length === 0) && (
@@ -446,6 +642,10 @@ export default function EventManager({
         </div>
 
       </div>
+
+      {lightboxMedia && (
+        <MediaLightbox media={lightboxMedia} onClose={() => setLightboxMedia(null)} />
+      )}
 
     </div>
   );

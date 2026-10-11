@@ -4,6 +4,19 @@ Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Managemen
 
 ---
 
+## [2.21.0] - 2026-10-11
+
+### 🎞️ Foto/Video Event Bisa Dilihat & Diputar + Transkrip AI Video (Added / Security)
+- **Permintaan pengguna**: pada menu Signature Program Events → upload foto/video, file harus bisa dilihat/diputar setelah diupload; dan untuk video, transkrip AI memakai API audio/video-to-text lokal (`POST http://127.0.0.1:8000/transcribe` dengan `{"source": <lokasi file>, "language": "id"}`, bahasa default `id`).
+- **Sebelumnya**: galeri hanya menampilkan ikon + nama file (foto/video tidak pernah benar-benar dirender), dan deskripsi AI video tidak ada.
+- **Tampil/putar**: foto = thumbnail + lightbox ukuran penuh; video = pemutar bawaan (play/seek/volume/fullscreen, HTTP Range terverifikasi 206) + lightbox. File yang tidak ada di server (data seed contoh) menampilkan placeholder, bukan gambar rusak.
+- **Transkrip AI** (`server/services/transcribeService.js`): path **lokal** file yang diupload dikirim ke API transkrip (video tidak keluar dari mesin — patuh 100% on-premise). Karena Whisper di CPU lambat (video uji 72 detik ≈ 60 detik), proses berjalan di background: upload langsung dijawab `PROCESSING`, UI polling tiap 4 detik hanya selama ada yang diproses, lalu menampilkan cuplikan di *AI Description* + transkrip lengkap bertimestamp (klik baris → video lompat ke bagian itu). Gagal → alasan + tombol **Coba lagi** (`POST /api/media/:id/transcribe`). Job yang terputus restart server otomatis dilanjutkan. Memakai modul `http` Node (bukan `fetch`) agar tidak kena batas 5 menit undici.
+- **Keamanan (ditemukan saat mengerjakan)**: endpoint upload media sebelumnya menerima **semua** tipe file dan menyajikannya kembali dari `/uploads` (celah stored-XSS lewat `.html`). Kini hanya `image/*` & `video/*` (selain itu 415), lewat instance multer khusus; batas ukuran media dinaikkan ke 200 MB (`MEDIA_MAX_MB`). Menghapus media kini juga menghapus file fisiknya.
+- **Konfigurasi baru** (`.env.example`): `TRANSCRIBE_API_URL`, `TRANSCRIBE_LANGUAGE`, `TRANSCRIBE_TIMEOUT_MS`, `MEDIA_MAX_MB`.
+- **Verifikasi**: end-to-end di UI dengan video uji (`Tentang WAKTU (Video Narasi)…mp4`) — upload → PROCESSING → terisi otomatis (DONE, `id`, 4 segmen, 01:12), klik segmen memutar video dari detik ke-29 (1920×1080, tanpa error), lightbox video & foto berfungsi. `tests/regressionTest.js` gained Module 27 (6 tests) → **94/94 PASS**. Catatan: `deleteEvent()` masih belum membersihkan media milik event tersebut (kekurangan lama, tidak diubah).
+
+---
+
 ## [2.20.1] - 2026-10-11
 
 ### 🛠️ Fix: Konten PPT Melebihi Ukuran Slide (Fixed)

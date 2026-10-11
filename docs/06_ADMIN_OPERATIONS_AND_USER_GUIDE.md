@@ -87,6 +87,7 @@ Buka berkas CSV di Microsoft Excel atau editor teks dan isi baris data:
 ### Langkah 2: Membagikan QR Code / Link Peserta
 - **QR Absensi Pra-Event**: Klik tombol QR Absensi untuk menampilkan kode QR di layar proyektor atau membagikan URL `http://.../checkin/:event_id` kepada peserta.
 - **QR Evaluasi Pasca-Event**: Di akhir sesi, tampilkan QR Evaluasi agar peserta mengisi rating pembicara, materi, dan kepuasan event.
+- **Dokumentasi Foto/Video & Transkrip AI**: Di bagian *Photo Gallery & Event Documentation* klik **Upload Photo / Video** (foto JPG/PNG/GIF/WEBP atau video MP4/MOV/WEBM, maks. 200 MB). Foto dan video langsung bisa dilihat/diputar di kartu (atau diperbesar lewat tombol *Perbesar*). Untuk video, sistem otomatis membuat **transkrip teks Bahasa Indonesia** lewat API transkrip lokal — prosesnya bisa beberapa menit (kartu menampilkan "sedang diproses" dan terisi sendiri). Buka *Transkrip AI lengkap* untuk membaca per segmen; klik sebuah baris untuk memutar video dari bagian itu. Jika gagal (mis. API transkrip belum dijalankan), klik **Coba lagi** setelah API aktif di `http://127.0.0.1:8000`.
 
 ### Langkah 3: Menghasilkan Executive Report PPT (.pptx)
 1. Pada kartu event, klik tombol **"Generate Executive PPT"**.

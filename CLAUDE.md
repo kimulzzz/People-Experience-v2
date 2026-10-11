@@ -39,7 +39,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(88-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`).
+(94-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`).
 
 ## Documentation map (`docs/`)
 
@@ -55,7 +55,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (88 cases) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (94 cases) |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules |
 
 ## Compliance constraints (do not violate)
@@ -329,6 +329,23 @@ domain model, not just descriptive:
   from the file's `presentation.xml` `sldSz`. Fixed by switching to `LAYOUT_WIDE`; a bounds scan of
   all 6 regenerated slides found 0 out-of-bounds shapes. No LibreOffice here, so text overflow
   *inside* boxes is unverified. Regression suite stayed 88/88 PASS.
+- **v2.21.0** (2026-10-11, see `CHANGELOG.md`, `docs/04` §2.6, `docs/05` §3.7a): User asked that photos/videos
+  uploaded in Signature Program Events be viewable/playable after upload, and that videos get an AI transcript
+  via the local audio/video-to-text API (`POST http://127.0.0.1:8000/transcribe`, `{"source": <local path>,
+  "language": "id"}`). Before this, the gallery only showed an icon + filename placeholder. New
+  `server/services/transcribeService.js` sends the uploaded file's LOCAL path (video never leaves the machine)
+  and runs as a background job (Whisper on CPU took ~60s for a 72s video; uses core `http`, not `fetch`, to avoid
+  undici's 5-min header timeout): upload answers immediately with `transcript_status: PROCESSING`, the UI polls
+  the event detail every 4s only while something is processing, jobs interrupted by a restart are resumed at
+  boot. `storage.js` gained `getMediaById/getAllMedia/updateMedia` (whitelisted fields) and `deleteMedia` now
+  returns the removed record so the route can unlink the physical file. Hardening found along the way: media
+  uploads previously accepted ANY file type and served it back from `/uploads` (stored XSS via .html) — now only
+  `image/*`/`video/*` (415 otherwise) via a dedicated `mediaUpload` multer instance, cap raised to
+  `MEDIA_MAX_MB` (default 200). `EventManager.jsx` got `MediaCard`/`MediaLightbox` (inline player, lightbox,
+  click-a-transcript-line-to-seek, retry button, graceful "file not available" for seed media whose files don't
+  exist). `tests/regressionTest.js` gained Module 27 (6 tests) -> 94/94 PASS. Verified end-to-end with the
+  user's test video via the real UI. Known gap left alone: `deleteEvent()` still doesn't remove that event's
+  media records/files (pre-existing).
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
