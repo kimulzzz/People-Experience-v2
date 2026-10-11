@@ -377,7 +377,7 @@ Dua permintaan pengguna ditangani di rilis ini:
    kalender **berjalan** (September 2026) sebagai data final, padahal bulan tersebut belum
    selesai. `computeMonthlyTrends()` kini menghitung cutoff "aktual" sebagai bulan **sebelum**
    bulan berjalan — lihat `CHANGELOG.md` **[2.12.0]** bagian pertama.
-2. **Sub agent "Auditor" (`.claude/agents/auditor.md`)** dijalankan untuk mengaudit seluruh
+2. **Sub agent "Auditor" (`.claude/agents/ajo.md`)** dijalankan untuk mengaudit seluruh
    `server/services/*.js` dan `server/server.js`, mencari nilai hardcoded yang seharusnya
    bersumber dari database. Auditor melaporkan **5 temuan terkonfirmasi** (peta tanggal
    ingestion Outcome hardcoded, tahun `'2026'` dibekukan di 12+ lokasi, `monthCodes` chart

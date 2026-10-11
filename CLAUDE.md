@@ -23,24 +23,24 @@ experience ("Kejar Mimpi" framework: 70% Survey Index + 30% Outcome Index).
 
 ## Custom subagents (`.claude/agents/`)
 
-- **`auditor`** — read-only agent that scans `server/services/*.js` and `server/server.js` for
+- **`ajo`** (the auditor; formerly named `auditor` — older notes below still say "auditor") — read-only agent that scans `server/services/*.js` and `server/server.js` for
   hardcoded values that should instead come from `server/db/storage.js`/`store.json` (the app's
   database) or the real server clock, as distinct from `server/db/seedData.js`'s intentionally
   static seed/demo data. Run it periodically after touching `calculationEngine.js`,
-  `alertEngine.js`, or `seedData.js`. See `.claude/agents/auditor.md` for its full brief and
+  `alertEngine.js`, or `seedData.js`. See `.claude/agents/ajo.md` for its full brief and
   `CHANGELOG.md` **[2.12.0]** for its first run's findings (all fixed).
 
-- **`developer`** — implements a change (backend, frontend, SQL schema, services). Keeps both storage backends
+- **`nia`** (developer) — implements a change (backend, frontend, SQL schema, services). Keeps both storage backends
   (`sqlStorage.js` + `jsonStorage.js`) in step, runs the regression suite itself, bumps the version; never commits,
-  never edits `.env`/`store.json`, never touches credentials. See `.claude/agents/developer.md`.
-- **`qc`** — read-only quality control: runs the suite (SQL ×2, JSON when relevant), probes API/negative cases,
+  never edits `.env`/`store.json`, never touches credentials. See `.claude/agents/nia.md`.
+- **`fiqih`** (QC) — read-only quality control: runs the suite (SQL ×2, JSON when relevant), probes API/negative cases,
   checks SQL↔JSON parity, data leakage, and verifies the UI in the Browser pane; returns a LULUS/GAGAL verdict with
-  evidence. Never fixes. See `.claude/agents/qc.md`.
-- **`technical-writer`** — documents a finished change (CHANGELOG, `docs/*.md`, `SQLServerDB.md`, these Notes) in the
+  evidence. Never fixes. See `.claude/agents/fiqih.md`.
+- **`zaki`** (technical writer) — documents a finished change (CHANGELOG, `docs/*.md`, `SQLServerDB.md`, these Notes) in the
   project's Indonesian style, verifying claims against the code; docs only, CRLF-safe, never writes secrets. See
-  `.claude/agents/technical-writer.md`.
+  `.claude/agents/zaki.md`.
 
-Suggested flow for a change: `developer` → `qc` → `technical-writer` → (main session) commit & push with explicit
+Suggested flow for a change: `nia` → `fiqih` → `zaki` → (main session) commit & push with explicit
 `git add <files>` (never `git add server`/`.` — it would sweep in `server/data/store.json`).
 
 ## Running locally
