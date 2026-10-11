@@ -92,6 +92,8 @@ Backend dibangun menggunakan **Node.js dan Express.js** sebagai REST API Server 
 | `DELETE` | `/api/events/:event_id/feedback/:nip` | Menghapus satu respon feedback berdasarkan NIP (mis. untuk membersihkan data uji) | Path: `event_id`, `nip` |
 | `POST` | `/api/events/:event_id/generate-ppt` | Menghasilkan dan menyajikan berkas presentasi PowerPoint (.pptx) | Path: `event_id` |
 
+> **Ukuran slide PPT (sejak v2.20.1)**: `server/services/pptGenerator.js` memakai `pptx.layout = 'LAYOUT_WIDE'` (13.33" × 7.5"). Seluruh koordinat konten (judul, kartu, tabel, footer) dirancang pada kanvas tersebut — sebelumnya memakai `LAYOUT_16x9` (10" × 5.625") sehingga konten setiap slide melebihi batas slide. Tambahan elemen baru harus tetap berada dalam 13.33" × 7.5".
+
 ---
 
 ### 2.7 Modul Peringatan Kinerja & Rekomendasi Aksi

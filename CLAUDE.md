@@ -322,6 +322,13 @@ domain model, not just descriptive:
   via HSL math, applied across every surface from the reskin above. Journey accent colors,
   delete-button red, and success/error banners deliberately stay un-themed. `tests/regressionTest.js`
   stayed at 88/88 PASS throughout (pure CSS/frontend, no API changes).
+- **v2.20.1** (2026-10-11, see `CHANGELOG.md` and `docs/04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` §2.6):
+  User reported every slide of a downloaded event PPT (`PX_Report_Perspektif_*.pptx`) had
+  content running past the slide edge. Root cause: `pptGenerator.js` used
+  `LAYOUT_16x9` (10" x 5.625") while all coordinates are laid out for 13.33" x 7.5" — confirmed
+  from the file's `presentation.xml` `sldSz`. Fixed by switching to `LAYOUT_WIDE`; a bounds scan of
+  all 6 regenerated slides found 0 out-of-bounds shapes. No LibreOffice here, so text overflow
+  *inside* boxes is unverified. Regression suite stayed 88/88 PASS.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

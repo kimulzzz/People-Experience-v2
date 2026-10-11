@@ -46,7 +46,9 @@ async function generateEventPPT(event_id, options = {}) {
   const enrichedMedia = await generateMediaNarratives(mediaList, event.event_name);
 
   const pptx = new pptxgen();
-  pptx.layout = 'LAYOUT_16x9';
+  // All slide coordinates below are laid out on a 13.33" x 7.5" canvas — LAYOUT_16x9 is only
+  // 10" x 5.625", which pushed every slide's content past the slide edge.
+  pptx.layout = 'LAYOUT_WIDE';
   pptx.author = 'CIMB Niaga People Experience Team';
   pptx.title = `PX Report - ${event.event_name}`;
 
