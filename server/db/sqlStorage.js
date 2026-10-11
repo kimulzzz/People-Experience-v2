@@ -438,6 +438,39 @@ async function seedAppSettings(tx) {
   }
 }
 
+// ------------------------------------------------------------------ e-mail sender settings (px_email_settings)
+const rowToEmailSettings = r => ({
+  enabled: !!r.enabled,
+  provider: r.provider,
+  smtp_host: r.smtp_host,
+  smtp_port: r.smtp_port,
+  smtp_secure: !!r.smtp_secure,
+  smtp_user: r.smtp_user,
+  smtp_password_enc: r.smtp_password_enc,
+  from_name: r.from_name,
+  from_email: r.from_email,
+  updated_at: iso(r.updated_at)
+});
+
+async function upsertEmailSettings(tx, s) {
+  await run(`MERGE dbo.px_email_settings AS t USING (SELECT 1 AS setting_id) AS src ON t.setting_id = src.setting_id
+             WHEN MATCHED THEN UPDATE SET enabled = @enabled, provider = @provider, smtp_host = @smtp_host, smtp_port = @smtp_port,
+               smtp_secure = @smtp_secure, smtp_user = @smtp_user, smtp_password_enc = @smtp_password_enc, from_name = @from_name,
+               from_email = @from_email, updated_at = SYSUTCDATETIME()
+             WHEN NOT MATCHED THEN INSERT (setting_id, enabled, provider, smtp_host, smtp_port, smtp_secure, smtp_user, smtp_password_enc, from_name, from_email)
+               VALUES (1, @enabled, @provider, @smtp_host, @smtp_port, @smtp_secure, @smtp_user, @smtp_password_enc, @from_name, @from_email);`, {
+    enabled: !!s.enabled, provider: s.provider || 'GMAIL', smtp_host: s.smtp_host || '', smtp_port: parseInt(s.smtp_port || 465, 10),
+    smtp_secure: s.smtp_secure !== false, smtp_user: s.smtp_user || '', smtp_password_enc: T.max(s.smtp_password_enc || ''),
+    from_name: s.from_name || '', from_email: s.from_email || ''
+  }, tx);
+}
+
+// Creates the single settings row (defaults, no account) when it does not exist yet.
+async function seedEmailSettings(tx) {
+  const rows = await run('SELECT COUNT(*) AS c FROM dbo.px_email_settings', {}, tx);
+  if (rows[0].c === 0) await upsertEmailSettings(tx, seed.initialEmailSettings);
+}
+
 // ------------------------------------------------------------------ parameter writers
 // Shared by importStore() and resetParametersToDefault().
 async function insertJourney(tx, j) {
@@ -703,6 +736,8 @@ async function importStore(store, log = () => {}) {
         { key, value: T.max(JSON.stringify(def.value)), description: def.description || '' }, tx);
     }
     await seedAppSettings(tx);
+    if (store.emailSettings) await upsertEmailSettings(tx, store.emailSettings);
+    await seedEmailSettings(tx);
     await seedSurveyQuestions(tx);
     counts.survey_questions = (await run('SELECT COUNT(*) AS c FROM dbo.px_survey_questions', {}, tx))[0].c;
 
@@ -813,7 +848,7 @@ const storage = {
     await getPool();
     await applySchema();
     await seedIfEmpty();
-    await inTransaction(async tx => { await seedSurveyQuestions(tx); await seedAppSettings(tx); });
+    await inTransaction(async tx => { await seedSurveyQuestions(tx); await seedAppSettings(tx); await seedEmailSettings(tx); });
     await topUpDirectory();
     // Demo survey responses for newly elapsed months. Set SEED_DEMO_DATA=false on a real
     // production database so no synthetic responses are ever generated.
@@ -846,9 +881,19 @@ const storage = {
     const tables = ['px_recruitment_sla_by_unit', 'px_approval_stage_compliance', 'px_hiring_channel_mix',
       'px_recognition_categories', 'px_attrition_by_tenure', 'px_acknowledged_alerts', 'px_survey_uploaded_responses',
       'px_survey_uploads', 'px_media', 'px_feedback_responses', 'px_attendances', 'px_event_questions', 'px_events',
-      'px_app_settings', 'px_survey_questions', 'px_custom_survey_questions', 'px_master_survey_questions', 'px_divisions', 'px_directorates', 'px_action_library',
+      'px_email_settings', 'px_app_settings', 'px_survey_questions', 'px_custom_survey_questions', 'px_master_survey_questions', 'px_divisions', 'px_directorates', 'px_action_library',
       'px_metric_targets', 'px_metrics', 'px_checkpoints', 'px_journeys'];
     for (const t of tables) await run(`IF OBJECT_ID(N'dbo.${t}', N'U') IS NOT NULL DROP TABLE dbo.${t}`);
+  },
+
+  // ---- reminder e-mail sender settings
+  async getEmailSettings() {
+    const rows = await run('SELECT * FROM dbo.px_email_settings WHERE setting_id = 1');
+    return rows[0] ? rowToEmailSettings(rows[0]) : { ...seed.initialEmailSettings };
+  },
+  async saveEmailSettings(settings) {
+    await inTransaction(tx => upsertEmailSettings(tx, settings));
+    return this.getEmailSettings();
   },
 
   // ---- app settings

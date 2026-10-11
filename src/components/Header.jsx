@@ -12,7 +12,8 @@ import {
   Clock,
   BookMarked,
   Palette,
-  Check
+  Check,
+  Mail
 } from 'lucide-react';
 import CimbLogo from './CimbLogo';
 import { THEME_PRESETS, applyTheme, getSavedThemeId } from '../utils/theme';
@@ -30,7 +31,8 @@ export default function Header({
   directoratesList = [],
   availableYears,
   onOpenAdminParametersModal,
-  onOpenSurveyQuestionsModal
+  onOpenSurveyQuestionsModal,
+  onOpenEmailSettingsModal
 }) {
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [activeThemeId, setActiveThemeId] = useState(getSavedThemeId());
@@ -270,6 +272,16 @@ export default function Header({
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-rose-600" />
               <span className="hidden md:inline">Survey Templates</span>
+            </button>
+
+            {/* Admin Menu: Setting Email (sender account for the PIC upload reminders) */}
+            <button
+              onClick={onOpenEmailSettingsModal}
+              className="px-2.5 py-1 text-xs font-bold text-gray-800 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg flex items-center space-x-1.5 transition shadow-2xs"
+              title="Admin Menu: Setting Email pengirim reminder upload survei ke PIC"
+            >
+              <Mail className="w-3.5 h-3.5 text-[#ED1C24]" />
+              <span className="hidden md:inline">Setting Email</span>
             </button>
 
             {alertCount > 0 && (

@@ -150,3 +150,13 @@ sistem HR sumbernya (SLA Rekrutmen, Arjuna Recognition, dll.). Field ini tersimp
 metrik itu sendiri dan dapat diperbarui via `PUT /api/admin/metrics/:id` — sebelumnya nilai ini
 sempat "terkunci" di dalam kode program (bukan database), sehingga admin tidak bisa benar-benar
 mengubahnya; sudah diperbaiki di v2.12.0 (lihat `CHANGELOG.md`).
+
+---
+
+## 📧 Mengatur Email Pengirim Reminder PIC (v2.23.0)
+
+1. Klik **Setting Email** di Header.
+2. **Gmail (sementara/uji coba)**: pilih provider *Gmail*, isi alamat Gmail, lalu isi **App Password** — bukan password akun biasa. Cara: akun Google → Keamanan → aktifkan *Verifikasi 2 Langkah* → *Sandi aplikasi* → buat satu → salin 16 karakternya ke kolom password.
+3. **SMTP internal (target akhir, sesuai kebijakan on-premise)**: pilih provider *SMTP Server*, isi host, port, TLS, akun, dan password dari tim infrastruktur.
+4. Centang **Aktifkan**, klik **Simpan**, lalu **Kirim Email Test** (default ke email pengirim sendiri) dan periksa kotak masuk.
+5. Setelah aktif, reminder ke PIC (pengecekan harian otomatis + tombol *Kirim Reminder* di Parameter Admin) memakai akun ini. Password tersimpan terenkripsi di database dan tidak pernah ditampilkan kembali.

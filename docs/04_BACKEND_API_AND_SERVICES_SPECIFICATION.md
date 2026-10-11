@@ -196,3 +196,13 @@ backend boot) tanpa perlu dipicu manual — lihat `server.js` bagian `app.listen
 - **Pertanyaan survei** (`/api/admin/survey-questions[...]`) kini dibaca/ditulis ke `px_survey_questions` (SQL) — `POST` dan `POST .../reset` mengembalikan **404** bila metric tidak ada. Template kode (`metricQuestionService.js`) hanya dipakai untuk seed awal dan aksi Reset.
 - Storage method baru: `getSettings()`, `setSetting(key, value)` (kedua backend); khusus SQL `seedSurveyQuestions()`, `_customizedQuestions()`.
 - Perbaikan logika: alert WARNING membandingkan terhadap `target_value_normalized`; drilldown Metric 11 memakai `event_name` & `attendance_timestamp`.
+
+---
+
+## 📧 Catatan v2.23.0 — Setting Email Reminder
+
+- **`GET /api/admin/email-settings`** → `{ enabled, provider, smtp_host, smtp_port, smtp_secure, smtp_user, from_name, from_email, has_password, updated_at, env_fallback_available }` — **tidak pernah** memuat password.
+- **`PUT /api/admin/email-settings`** body: field di atas + `smtp_password` (opsional; kosong = pertahankan yang tersimpan) + `clear_password`. Provider `GMAIL` mengunci host/port ke smtp.gmail.com:465; `SMTP` memakai host/port/secure yang dikirim. Validasi → 400 (provider, port 1–65535, format email, mengaktifkan tanpa host/akun/password).
+- **`POST /api/admin/email-settings/test`** body `{ to }` (default: email pengirim) → 200 `{ sent: true, to, accepted }` atau 502 `{ sent: false, error }` dengan penjelasan (mis. Gmail menolak password biasa); alamat tujuan tidak valid → 400.
+- `POST /api/admin/upload-reminders/send` kini memakai pengirim dari database (`sender_source`: `database` | `env` | `none`). Storage baru: `getEmailSettings()`, `saveEmailSettings()`. Service baru: `emailSettingsService.js`, `secretBox.js` (AES-256-GCM).
+- `PUT /api/admin/settings/:key` untuk `metric_types`, `scale_types`, `target_audiences`, `update_frequencies`, `question_types`: hanya label yang boleh berubah.

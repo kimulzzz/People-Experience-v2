@@ -40,6 +40,7 @@ Template ada di `.env.example`. Nilai aktual ditulis otomatis oleh `scripts/sqls
 | `DB_PASSWORD` | *(lihat `.env`)* | acak 31 karakter, dibuat oleh script setup |
 | `DB_ENCRYPT` | `false` | koneksi lokal pada mesin yang sama |
 | `DB_TRUST_SERVER_CERTIFICATE` | `true` | |
+| `SETTINGS_ENCRYPTION_KEY` | *(otomatis, lihat `.env`)* | kunci AES-256 yang mengenkripsi password email di tabel `px_email_settings`; **simpan bersama backup database** — tanpa kunci ini password tidak bisa didekripsi |
 | `SEED_DEMO_DATA` | `true` | `false` = jangan buat respons survei demo untuk bulan baru (pakai di produksi) |
 
 Pilihan backend dibaca saat server menyala — **ubah `.env` lalu restart** (`npm run dev`).
@@ -75,7 +76,7 @@ Lalu set `STORAGE_BACKEND=sql` di `.env` dan restart server.
 | **Windows Authentication** | di SSMS pilih *Windows Authentication* (akun Windows administrator) — akses penuh ke seluruh server |
 | **Cek dari aplikasi** | `http://localhost:5000/api/health` → bagian `database` (server, edisi, jumlah baris tabel kunci) |
 
-Tabel aplikasi berawalan `px_` (23 tabel). Yang paling sering dilihat: `px_metrics`, `px_metric_targets`, `px_survey_uploaded_responses`, `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` (kolom `file_path` + `transcript`).
+Tabel aplikasi berawalan `px_` (24 tabel). Yang paling sering dilihat: `px_metrics`, `px_metric_targets`, `px_survey_uploaded_responses`, `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` (kolom `file_path` + `transcript`).
 
 > Jangan mengubah data langsung lewat SSMS tanpa alasan kuat — validasi dan perhitungan skor berjalan di aplikasi.
 
@@ -134,4 +135,8 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 | Pertanyaan survei tiap metric | `px_survey_questions` | menu Survey Templates / Question Settings (tombol "Reset" mengembalikan template default) |
 | Target PX Index (garis chart), opsi kategori & format event | `px_app_settings` | `PUT /api/admin/settings/:key` (mis. `{"value": 90}`) atau langsung di tabel |
 | Direktorat & divisi (filter Header, form check-in) | `px_directorates`, `px_divisions` | langsung di tabel; entri seed yang hilang ditambahkan otomatis saat server start |
+| Akun pengirim email reminder PIC (password terenkripsi) | `px_email_settings` | menu **Setting Email** di Header |
+| Daftar pilihan Parameter Admin & Survey Questions (tipe metrik, skala, responden, frekuensi, tipe pertanyaan) | `px_app_settings` | `PUT /api/admin/settings/:key` (hanya label) |
 | Parameter journey/checkpoint/metric/target/bobot | `px_journeys`, `px_checkpoints`, `px_metrics`, `px_metric_targets` | menu Parameter Admin |
+
+> **Perhatian:** `node server/db/migrate.js --reset` menghapus semua tabel `px_*` termasuk `px_email_settings` — pengaturan email harus diisi ulang setelahnya.

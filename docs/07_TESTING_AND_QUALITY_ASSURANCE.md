@@ -591,3 +591,22 @@ Catatan operasional: regression test menulis data uji (upload CSV) ke database a
 | Metric tak ada | Negatif | simpan/reset pertanyaan metric 9999 → 404 dan tidak membuat baris yatim |
 
 Paritas backend: 57/58 endpoint GET identik antara SQL dan JSON (selisih satu disengaja: JSON masih menyajikan set pertanyaan kode untuk metric 19/20 yang bukan metric SURVEY).
+
+---
+
+## 📧 13. Setting Email & Katalog Pilihan — v2.23.0 (2026-10-11)
+
+**Regression suite: 116 test** (108 + **Modul 30**, 8 test) → **116/116 PASS** di SQL Server (2×) dan di JSON.
+
+| Modul 30 | Jenis | Yang diuji |
+| :--- | :---: | :--- |
+| Settings tanpa field password | Positif | respons `GET /api/admin/email-settings` tidak memuat password apa pun |
+| Enkripsi | Positif | AES-256-GCM: IV acak (ciphertext berbeda tiap kali), round-trip benar, ciphertext yang diubah tidak bisa didekripsi |
+| Jalur lengkap dengan SMTP palsu | Positif | simpan → email test terkirim dengan password terdekripsi yang benar → `upload-reminders/send` memakai pengirim dari database dan jumlah SENT = pesan yang diterima server |
+| Belum dikonfigurasi | Positif | test email → 502 "belum dikonfigurasi", bukan crash |
+| Validasi | Negatif | provider salah, port 70000, format email, mengaktifkan tanpa password → 400 |
+| Penerima test tidak valid | Negatif | → 400 |
+| Katalog pilihan dari DB | Positif | 5 katalog (tipe metrik, skala, responden, frekuensi, tipe pertanyaan) |
+| Katalog hanya label | Negatif | mengubah/menambah *value* → 400; mengubah label → 200 lalu dipulihkan |
+
+Test jalur lengkap dan "belum dikonfigurasi" **dilewati otomatis** bila sudah ada konfigurasi email sungguhan (agar suite tidak menimpa akun yang diisi admin). Tidak ada email sungguhan yang dikirim oleh test — server SMTP palsu berjalan di dalam proses test.

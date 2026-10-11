@@ -19,13 +19,6 @@ import {
   ListOrdered
 } from 'lucide-react';
 
-const QUESTION_TYPES = [
-  { value: 'SCALE_1_5', label: '1. Scale 1 - 5 (Rating 1.0 to 5.0)', desc: 'Score rating 1 to 5, normalized as (score/5)*100' },
-  { value: 'SCALE_1_10', label: '2. Scale 1 - 10 (Rating 1.0 to 10.0)', desc: 'Score rating 1 to 10, normalized as (score/10)*100' },
-  { value: 'YES_NO', label: '3. Yes / No Binary (Score 100 / 0)', desc: 'Binary choice: Yes = 100%, No = 0%' },
-  { value: 'FREE_TEXT', label: '4. Free Text Response (Qualitative / Feedback)', desc: 'Open text feedback without numeric scale' }
-];
-
 export default function AdminSurveyQuestionsModal({
   isOpen,
   onClose,
@@ -33,6 +26,14 @@ export default function AdminSurveyQuestionsModal({
   calculationData,
   onSaveSuccess
 }) {
+  // Question types come from the database (px_app_settings.question_types).
+  const [QUESTION_TYPES, setQuestionTypes] = useState([]);
+  useEffect(() => {
+    fetch('/api/settings')
+      .then(res => res.json())
+      .then(s => setQuestionTypes(Array.isArray(s.question_types) ? s.question_types : []))
+      .catch(err => console.error('Error fetching question types:', err));
+  }, []);
   const [surveyMetrics, setSurveyMetrics] = useState([]);
   const [selectedMetricId, setSelectedMetricId] = useState(initialMetricId || 7);
   const [questions, setQuestions] = useState([]);

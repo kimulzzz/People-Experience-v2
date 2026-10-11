@@ -116,10 +116,17 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
   const [uploadReminders, setUploadReminders] = useState({ total_reminders: 0, overdue_count: 0, due_soon_count: 0, reminders: [] });
   const [sendingReminders, setSendingReminders] = useState(false);
 
+  // Option catalogs (metric type, scale, audience, update frequency) come from the database.
+  const [optionCatalogs, setOptionCatalogs] = useState({});
+
   useEffect(() => {
     if (isOpen) {
       fetchParameters();
       fetchUploadReminders();
+      fetch('/api/settings')
+        .then(res => res.json())
+        .then(setOptionCatalogs)
+        .catch(err => console.error('Error fetching option catalogs:', err));
     }
   }, [isOpen]);
 
@@ -766,8 +773,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                         onChange={(e) => setMetricFormData({ ...metricFormData, metric_type: e.target.value })}
                         className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 font-semibold"
                       >
-                        <option value="SURVEY">SURVEY (Koresponden Respon)</option>
-                        <option value="OUTCOME">OUTCOME (Operational HR Data)</option>
+                        {(optionCatalogs.metric_types || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                       </select>
                     </div>
 
@@ -778,9 +784,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                         onChange={(e) => setMetricFormData({ ...metricFormData, scale_type: e.target.value })}
                         className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500"
                       >
-                        <option value="RATING_5">Rating Skala 1.0 - 5.0</option>
-                        <option value="PERCENTAGE">Persentase (0 - 100%)</option>
-                        <option value="QUOTA_COUNT">Quota Count / Numerik</option>
+                        {(optionCatalogs.scale_types || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                       </select>
                     </div>
 
@@ -868,10 +872,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                         }}
                         className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 font-semibold"
                       >
-                        <option value="EMPLOYEE">Karyawan Internal CIMB Niaga</option>
-                        <option value="CAMPUS_STUDENTS">Mahasiswa Kampus (CIMB Goes to Campus)</option>
-                        <option value="JOB_APPLICANTS">Kandidat Pelamar Kerja (Candidate Exp)</option>
-                        <option value="EXTERNAL_MARKET">Eksternal Market / Public</option>
+                        {(optionCatalogs.target_audiences || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                       </select>
                     </div>
 
@@ -904,8 +905,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                         onChange={(e) => setMetricFormData({ ...metricFormData, update_frequency: e.target.value })}
                         className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 font-semibold"
                       >
-                        <option value="MONTHLY">Bulanan (Update Berkala Tiap Bulan)</option>
-                        <option value="ONE_TIME_ANNUAL">Tahunan (Sekali Upload untuk Full Year)</option>
+                        {(optionCatalogs.update_frequencies || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                       </select>
                       <p className="text-[10.5px] text-gray-400 mt-1">
                         Bulanan: data di-upload/diperbarui tiap bulan. Tahunan: cukup sekali upload, dipakai untuk kalkulasi sepanjang tahun (contoh: metrik ESS).

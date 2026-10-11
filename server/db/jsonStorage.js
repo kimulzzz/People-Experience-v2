@@ -12,7 +12,8 @@ const {
   sampleFeedbackResponses,
   initialSurveyUploadedResponses,
   initialOperationalRecords,
-  initialAppSettings
+  initialAppSettings,
+  initialEmailSettings
 } = require('./seedData');
 const { parseFilterOptions, normalizeDateString, todayDateString } = require('./filterUtils');
 const { buildInitialStore: loadInitialStore } = require('./initialStore');
@@ -147,6 +148,17 @@ const storage = {
     s.appSettings[key] = { ...s.appSettings[key], value };
     saveStore();
     return value;
+  },
+
+  // --- REMINDER E-MAIL SENDER SETTINGS (password is stored encrypted — see secretBox.js) ---
+  getEmailSettings() {
+    return { ...initialEmailSettings, ...(getStore().emailSettings || {}) };
+  },
+  saveEmailSettings(settings) {
+    const s = getStore();
+    s.emailSettings = { ...settings, updated_at: new Date().toISOString() };
+    saveStore();
+    return s.emailSettings;
   },
 
   // --- METRICS & JOURNEYS CRUD ---

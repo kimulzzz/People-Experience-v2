@@ -1319,6 +1319,48 @@ const initialOperationalRecords = {
 
 // Admin-managed UI values (px_app_settings). Seeded once, then read from the database only.
 const initialAppSettings = {
+  // Option catalogs for Parameter Admin / Survey Questions. Only the LABELS are editable: the
+  // values drive calculation logic (normalisation, reminders, who is an "employee" metric...).
+  metric_types: {
+    value: [
+      { value: 'SURVEY', label: 'SURVEY (Koresponden Respon)' },
+      { value: 'OUTCOME', label: 'OUTCOME (Operational HR Data)' }
+    ],
+    description: 'Pilihan Tipe Metrik di Parameter Admin'
+  },
+  scale_types: {
+    value: [
+      { value: 'RATING_5', label: 'Rating Skala 1.0 - 5.0' },
+      { value: 'PERCENTAGE', label: 'Persentase (0 - 100%)' },
+      { value: 'QUOTA_COUNT', label: 'Quota Count / Numerik' }
+    ],
+    description: 'Pilihan Skala Penilaian di Parameter Admin'
+  },
+  target_audiences: {
+    value: [
+      { value: 'EMPLOYEE', label: 'Karyawan Internal CIMB Niaga' },
+      { value: 'CAMPUS_STUDENTS', label: 'Mahasiswa Kampus (CIMB Goes to Campus)' },
+      { value: 'JOB_APPLICANTS', label: 'Kandidat Pelamar Kerja (Candidate Exp)' },
+      { value: 'EXTERNAL_MARKET', label: 'Eksternal Market / Public' }
+    ],
+    description: 'Pilihan Target Responden di Parameter Admin'
+  },
+  update_frequencies: {
+    value: [
+      { value: 'MONTHLY', label: 'Bulanan (Update Berkala Tiap Bulan)' },
+      { value: 'ONE_TIME_ANNUAL', label: 'Tahunan (Sekali Upload untuk Full Year)' }
+    ],
+    description: 'Pilihan Frekuensi Update Data di Parameter Admin'
+  },
+  question_types: {
+    value: [
+      { value: 'SCALE_1_5', label: '1. Scale 1 - 5 (Rating 1.0 to 5.0)', desc: 'Score rating 1 to 5, normalized as (score/5)*100' },
+      { value: 'SCALE_1_10', label: '2. Scale 1 - 10 (Rating 1.0 to 10.0)', desc: 'Score rating 1 to 10, normalized as (score/10)*100' },
+      { value: 'YES_NO', label: '3. Yes / No Binary (Score 100 / 0)', desc: 'Binary choice: Yes = 100%, No = 0%' },
+      { value: 'FREE_TEXT', label: '4. Free Text Response (Qualitative / Feedback)', desc: 'Open text feedback without numeric scale' }
+    ],
+    description: 'Pilihan Tipe Pertanyaan di Survey Questions'
+  },
   px_index_target: { value: 85, description: 'Target PX Index (%) — garis target pada Performance Trend chart' },
   event_program_categories: {
     value: [
@@ -1340,8 +1382,23 @@ const initialAppSettings = {
   }
 };
 
+// Default sender settings for the reminder e-mails (px_email_settings, single row). No account and
+// no password here — the admin fills those in the "Setting Email" menu.
+const initialEmailSettings = {
+  enabled: false,
+  provider: 'GMAIL',
+  smtp_host: 'smtp.gmail.com',
+  smtp_port: 465,
+  smtp_secure: true,
+  smtp_user: '',
+  smtp_password_enc: '',
+  from_name: 'People Experience CIMB Niaga',
+  from_email: ''
+};
+
 module.exports = {
   initialAppSettings,
+  initialEmailSettings,
   initialJourneys,
   initialCheckpoints,
   initialMetrics,

@@ -13,6 +13,7 @@ import MetricDetailModal from './components/MetricDetailModal';
 import AdminSettingsModal from './components/AdminSettingsModal';
 import AdminSurveyQuestionsModal from './components/AdminSurveyQuestionsModal';
 import AdminParametersModal from './components/AdminParametersModal';
+import EmailSettingsModal from './components/EmailSettingsModal';
 import PublicCheckInForm from './components/PublicCheckInForm';
 import PublicFeedbackForm from './components/PublicFeedbackForm';
 import GlossaryView from './components/GlossaryView';
@@ -51,6 +52,7 @@ export default function App() {
   const [isAdminSettingsOpen, setIsAdminSettingsOpen] = useState(false);
   const [isAdminSurveyQuestionsOpen, setIsAdminSurveyQuestionsOpen] = useState(false);
   const [isAdminParametersOpen, setIsAdminParametersOpen] = useState(false);
+  const [isEmailSettingsOpen, setIsEmailSettingsOpen] = useState(false);
   const [selectedMetricDetailId, setSelectedMetricDetailId] = useState(null);
   const [preSelectedSurveyMetricId, setPreSelectedSurveyMetricId] = useState(null);
   const [preSelectedQuestionMetricId, setPreSelectedQuestionMetricId] = useState(null);
@@ -226,6 +228,7 @@ export default function App() {
           setIsAdminSurveyQuestionsOpen(true);
         }}
         onOpenAdminParametersModal={() => setIsAdminParametersOpen(true)}
+        onOpenEmailSettingsModal={() => setIsEmailSettingsOpen(true)}
       />
 
       {/* Main App Body */}
@@ -370,6 +373,11 @@ export default function App() {
           setPreSelectedQuestionMetricId(metricId);
           setIsAdminSurveyQuestionsOpen(true);
         }}
+      />
+
+      <EmailSettingsModal
+        isOpen={isEmailSettingsOpen}
+        onClose={() => setIsEmailSettingsOpen(false)}
       />
 
       <AdminParametersModal

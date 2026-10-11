@@ -1574,6 +1574,147 @@ async function runRegressionSuite() {
     assert.ok(!all[9999], 'No orphan question rows may be created');
   });
 
+  // --- 30. REMINDER E-MAIL SENDER SETTINGS + OPTION CATALOGS (v2.23.0) ---
+  console.log('\n📦 MODULE 30: Setting Email (Reminder Sender) & Option Catalogs (Positive & Negative Testing)');
+
+  const net = require('net');
+  // Minimal in-process SMTP server (AUTH PLAIN) so the full send path is tested without any real
+  // mail account: it records who authenticated with which password and every delivered message.
+  function startFakeSmtp() {
+    const received = { messages: [], authPasswords: [] };
+    const server = net.createServer(sock => {
+      sock.write('220 fake ESMTP\r\n');
+      let buf = ''; let inData = false; let data = ''; let rcpts = [];
+      sock.on('data', chunk => {
+        buf += chunk.toString('utf8');
+        let idx;
+        while ((idx = buf.indexOf('\r\n')) !== -1) {
+          const line = buf.slice(0, idx); buf = buf.slice(idx + 2);
+          if (inData) {
+            if (line === '.') { inData = false; received.messages.push({ to: rcpts.slice(), data }); data = ''; rcpts = []; sock.write('250 OK queued\r\n'); }
+            else data += line + '\n';
+            continue;
+          }
+          const cmd = line.toUpperCase();
+          if (cmd.startsWith('EHLO') || cmd.startsWith('HELO')) sock.write('250-fake\r\n250 AUTH PLAIN\r\n');
+          else if (cmd.startsWith('AUTH PLAIN')) {
+            const parts = Buffer.from(line.split(' ')[2] || '', 'base64').toString().split('\0');
+            received.authPasswords.push(parts[2]);
+            sock.write('235 OK\r\n');
+          } else if (cmd.startsWith('RCPT TO')) { rcpts.push(line.slice(line.indexOf(':') + 1).replace(/[<>\s]/g, '')); sock.write('250 OK\r\n'); }
+          else if (cmd === 'DATA') { inData = true; sock.write('354 go\r\n'); }
+          else if (cmd === 'QUIT') { sock.write('221 bye\r\n'); sock.end(); }
+          else sock.write('250 OK\r\n');
+        }
+      });
+      sock.on('error', () => {});
+    });
+    return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve({ server, received, port: server.address().port })));
+  }
+
+  const getEmail = async () => getJson('/api/admin/email-settings');
+  const putEmail = (body) => putJson('/api/admin/email-settings', body);
+  const initialEmail = await getEmail();
+  const canWriteEmail = !initialEmail.has_password && !initialEmail.enabled; // never overwrite a real configuration
+  const resetEmail = () => putEmail({ enabled: false, provider: 'GMAIL', smtp_user: '', from_name: 'People Experience CIMB Niaga', from_email: '', clear_password: true });
+
+  await runTest('[POSITIVE] Email settings are served from the database WITHOUT any password field (write-only secret)', async () => {
+    const s = await getEmail();
+    assert.ok(['GMAIL', 'SMTP'].includes(s.provider));
+    assert.strictEqual(typeof s.has_password, 'boolean');
+    Object.keys(s).forEach(k => assert.ok(!/pass/i.test(k) || k === 'has_password', `Response must not expose "${k}"`));
+  });
+
+  await runTest('[POSITIVE] The SMTP password is stored encrypted (AES-256-GCM) and round-trips; ciphertext never equals the plain text', async () => {
+    const { encrypt, decrypt } = require('../server/services/secretBox');
+    const c1 = encrypt('Sup3r-secret!'); const c2 = encrypt('Sup3r-secret!');
+    assert.ok(c1.startsWith('v1:') && !c1.includes('Sup3r-secret!'));
+    assert.notStrictEqual(c1, c2, 'A random IV must make every ciphertext different');
+    assert.strictEqual(decrypt(c1), 'Sup3r-secret!');
+    assert.strictEqual(decrypt(c1.slice(0, -4) + 'AAAA'), '', 'A tampered ciphertext must not decrypt');
+  });
+
+  await runTest('[POSITIVE] Full path: save SMTP settings → test email is delivered with the decrypted password; reminders use the database sender', async () => {
+    if (!canWriteEmail) return; // a real configuration exists — do not touch it
+    const fake = await startFakeSmtp();
+    try {
+      const res = await putEmail({ enabled: true, provider: 'SMTP', smtp_host: '127.0.0.1', smtp_port: fake.port, smtp_secure: false,
+        smtp_user: 'regression@example.test', smtp_password: 'RegressionPw-123', from_name: 'PX Regression', from_email: '' });
+      const saved = await res.json();
+      assert.strictEqual(res.status, 200, JSON.stringify(saved));
+      assert.strictEqual(saved.has_password, true);
+      assert.ok(!JSON.stringify(saved).includes('RegressionPw-123'), 'The password must never be echoed back');
+
+      const testRes = await fetch(`${BASE_URL}/api/admin/email-settings/test`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: 'pic.test@example.test' })
+      });
+      const result = await testRes.json();
+      assert.strictEqual(result.sent, true, JSON.stringify(result));
+      assert.deepStrictEqual(fake.received.authPasswords.slice(-1), ['RegressionPw-123'], 'Server must authenticate with the decrypted password');
+      assert.ok(fake.received.messages.some(m => m.to.includes('pic.test@example.test')), 'Test message must reach the chosen recipient');
+
+      const before = fake.received.messages.length;
+      const rem = await (await fetch(`${BASE_URL}/api/admin/upload-reminders/send`, { method: 'POST' })).json();
+      assert.strictEqual(rem.sender_source, 'database');
+      const sent = rem.results.filter(r => r.email_status === 'SENT').length;
+      assert.strictEqual(fake.received.messages.length - before, sent, 'Every SENT reminder must have been delivered to the SMTP server');
+    } finally {
+      fake.server.close();
+      await resetEmail();
+    }
+  });
+
+  await runTest('[POSITIVE] Test email with no account configured fails cleanly (502 + explanation), not a crash', async () => {
+    if (!canWriteEmail) return;
+    const res = await fetch(`${BASE_URL}/api/admin/email-settings/test`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: 'someone@example.test' })
+    });
+    const body = await res.json();
+    assert.strictEqual(res.status, 502);
+    assert.strictEqual(body.sent, false);
+    assert.ok(body.error && /belum dikonfigurasi/i.test(body.error));
+  });
+
+  await runTest('[NEGATIVE] Invalid email settings are rejected with 400 (provider, port, address format, enabling without a password)', async () => {
+    assert.strictEqual((await putEmail({ provider: 'YAHOO' })).status, 400);
+    assert.strictEqual((await putEmail({ provider: 'SMTP', smtp_port: 70000 })).status, 400);
+    assert.strictEqual((await putEmail({ from_email: 'not-an-email' })).status, 400);
+    assert.strictEqual((await putEmail({ provider: 'GMAIL', smtp_user: 'not-an-email' })).status, 400);
+    if (canWriteEmail) {
+      assert.strictEqual((await putEmail({ enabled: true, provider: 'GMAIL', smtp_user: 'someone@gmail.com' })).status, 400, 'Enabling needs a password');
+    }
+  });
+
+  await runTest('[NEGATIVE] A test email to an invalid recipient is rejected with 400', async () => {
+    const res = await fetch(`${BASE_URL}/api/admin/email-settings/test`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: 'definitely not an address' })
+    });
+    assert.strictEqual(res.status, 400);
+  });
+
+  await runTest('[POSITIVE] Parameter Admin / Survey Question option catalogs (metric type, scale, audience, frequency, question type) come from the database', async () => {
+    const s = await getJson('/api/settings');
+    ['metric_types', 'scale_types', 'target_audiences', 'update_frequencies', 'question_types'].forEach(key => {
+      assert.ok(Array.isArray(s[key]) && s[key].length > 0, `${key} missing`);
+      s[key].forEach(o => assert.ok(o.value && o.label));
+    });
+    assert.ok(s.metric_types.some(o => o.value === 'SURVEY') && s.metric_types.some(o => o.value === 'OUTCOME'));
+  });
+
+  await runTest('[NEGATIVE] Catalog VALUES that drive calculation logic cannot be added or renamed — only labels are editable', async () => {
+    const original = (await getJson('/api/settings')).scale_types;
+    const renamedValue = original.map((o, i) => (i === 0 ? { ...o, value: 'HACKED' } : o));
+    assert.strictEqual((await putJson('/api/admin/settings/scale_types', { value: renamedValue })).status, 400);
+    assert.strictEqual((await putJson('/api/admin/settings/scale_types', { value: [...original, { value: 'EXTRA', label: 'Extra' }] })).status, 400);
+    try {
+      const relabelled = original.map((o, i) => (i === 0 ? { ...o, label: 'REGRESSION LABEL' } : o));
+      assert.strictEqual((await putJson('/api/admin/settings/scale_types', { value: relabelled })).status, 200);
+      assert.strictEqual((await getJson('/api/settings')).scale_types[0].label, 'REGRESSION LABEL');
+    } finally {
+      await putJson('/api/admin/settings/scale_types', { value: original });
+    }
+  });
+
   // --- SUMMARY ---
   console.log('\n================================================================');
   console.log(`📊 REGRESSION TEST SUMMARY: ${passedTests}/${totalTests} Tests Passed (${failedTests} Failed)`);

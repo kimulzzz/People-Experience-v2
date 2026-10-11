@@ -10,23 +10,13 @@
  * cloud email API is used — if SMTP_HOST is not configured, reminders are still computed and
  * returned/logged, but sending is skipped gracefully (never crashes the app).
  */
-const nodemailer = require('nodemailer');
 const storage = require('../db/storage');
+const { buildTransport } = require('./emailSettingsService');
 
 const REMINDER_LEAD_DAYS = 5; // start warning this many days before the deadline
 
-let cachedTransporter = null;
-function getTransporter() {
-  if (!process.env.SMTP_HOST) return null;
-  if (cachedTransporter) return cachedTransporter;
-  cachedTransporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: process.env.SMTP_SECURE === 'true',
-    auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined
-  });
-  return cachedTransporter;
-}
+// The sender account comes from the "Setting Email" menu (px_email_settings, password encrypted);
+// legacy SMTP_* values in .env are only a fallback. Re-read on every send, so a change applies at once.
 
 /**
  * Has this metric's survey already been uploaded for the current reporting cycle?
@@ -111,7 +101,7 @@ async function getPendingUploadReminders(referenceDate = new Date()) {
  */
 async function sendPendingUploadReminders(referenceDate = new Date()) {
   const reminders = await getPendingUploadReminders(referenceDate);
-  const transporter = getTransporter();
+  const { transporter, from, source } = await buildTransport();
 
   const results = [];
   for (const reminder of reminders) {
@@ -127,7 +117,7 @@ async function sendPendingUploadReminders(referenceDate = new Date()) {
     }
     try {
       await transporter.sendMail({
-        from: process.env.SMTP_FROM || 'people-experience@cimbniaga.co.id',
+        from,
         to: reminder.pic_email,
         subject: `[PX Reminder] Upload Survey "${reminder.metric_name}" — ${reminder.status === 'OVERDUE' ? 'Terlambat' : 'Segera Jatuh Tempo'}`,
         text: `Halo ${reminder.pic_name},\n\nMohon segera upload data survei untuk metrik "${reminder.metric_name}" pada sistem People Experience (PX).\nBatas waktu upload: ${reminder.deadline}\nStatus: ${reminder.status === 'OVERDUE' ? 'SUDAH LEWAT BATAS WAKTU' : `Jatuh tempo dalam ${reminder.days_until_deadline} hari`}\n\nTerima kasih.\nSistem People Experience CIMB Niaga`
@@ -141,6 +131,7 @@ async function sendPendingUploadReminders(referenceDate = new Date()) {
   return {
     total_reminders: reminders.length,
     smtp_configured: !!transporter,
+    sender_source: source,
     results
   };
 }

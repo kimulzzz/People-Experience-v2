@@ -148,6 +148,23 @@ GO
 IF OBJECT_ID(N'dbo.px_custom_survey_questions', N'U') IS NOT NULL DROP TABLE dbo.px_custom_survey_questions;
 GO
 
+-- ---------------------------------------------------------------- reminder e-mail sender ("Setting Email" menu)
+IF OBJECT_ID(N'dbo.px_email_settings', N'U') IS NULL
+CREATE TABLE dbo.px_email_settings (                -- exactly one row (setting_id = 1)
+  setting_id          INT            NOT NULL CONSTRAINT PK_px_email_settings PRIMARY KEY CONSTRAINT CK_px_email_single CHECK (setting_id = 1),
+  enabled             BIT            NOT NULL CONSTRAINT DF_px_email_enabled DEFAULT (0),
+  provider            VARCHAR(20)    NOT NULL CONSTRAINT DF_px_email_provider DEFAULT ('GMAIL'),   -- GMAIL | SMTP
+  smtp_host           NVARCHAR(200)  NOT NULL CONSTRAINT DF_px_email_host DEFAULT (N'smtp.gmail.com'),
+  smtp_port           INT            NOT NULL CONSTRAINT DF_px_email_port DEFAULT (465),
+  smtp_secure         BIT            NOT NULL CONSTRAINT DF_px_email_secure DEFAULT (1),
+  smtp_user           NVARCHAR(200)  NOT NULL CONSTRAINT DF_px_email_user DEFAULT (N''),
+  smtp_password_enc   NVARCHAR(MAX)  NOT NULL CONSTRAINT DF_px_email_pass DEFAULT (N''),            -- AES-256-GCM, never plain text
+  from_name           NVARCHAR(200)  NOT NULL CONSTRAINT DF_px_email_fname DEFAULT (N'People Experience CIMB Niaga'),
+  from_email          NVARCHAR(200)  NOT NULL CONSTRAINT DF_px_email_from DEFAULT (N''),
+  updated_at          DATETIME2(3)   NOT NULL CONSTRAINT DF_px_email_ts DEFAULT (SYSUTCDATETIME())
+);
+GO
+
 -- ---------------------------------------------------------------- application settings
 IF OBJECT_ID(N'dbo.px_app_settings', N'U') IS NULL
 CREATE TABLE dbo.px_app_settings (                  -- small admin-managed values shown in the UI (targets, dropdown options)

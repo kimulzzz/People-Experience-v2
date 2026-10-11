@@ -18,6 +18,7 @@ const { generateSurveyCsvTemplate } = require('./services/surveyTemplateService'
 const { processSurveyCsv } = require('./services/surveyImportService');
 const { generateSurveyEvidenceCsv } = require('./services/surveyEvidenceService');
 const { getPendingUploadReminders, sendPendingUploadReminders } = require('./services/reminderService');
+const emailSettingsService = require('./services/emailSettingsService');
 const { queueMediaTranscription, resumeInterruptedTranscriptions, resolveUploadPath } = require('./services/transcribeService');
 
 // Default year for YTD/unparseable period query params, derived from the real server clock
@@ -96,7 +97,7 @@ app.get('/api/health', async (req, res) => {
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.22.1',
+    version: '2.23.0',
     local_ai: {
       ollama_status: ollama ? 'connected' : 'offline (using local heuristic engine)',
       host: process.env.OLLAMA_HOST || 'http://localhost:11434'
@@ -104,6 +105,8 @@ app.get('/api/health', async (req, res) => {
     database
   });
 });
+
+const LABEL_ONLY_SETTINGS = new Set(['metric_types', 'scale_types', 'target_audiences', 'update_frequencies', 'question_types']);
 
 // 1a. Admin-managed UI settings (PX target line, event dropdown options) — stored in the database
 app.get('/api/settings', async (req, res) => {
@@ -128,9 +131,43 @@ app.put('/api/admin/settings/:key', async (req, res) => {
     const validList = Array.isArray(value) && value.length > 0 &&
       value.every(o => o && typeof o.value === 'string' && o.value.trim() && typeof o.label === 'string' && o.label.trim());
     if (!validList) return res.status(400).json({ error: 'Nilai harus berupa daftar { value, label } yang tidak kosong.' });
-    res.json({ key, value: await storage.setSetting(key, value.map(o => ({ value: o.value.trim(), label: o.label.trim() }))) });
+    // Option catalogs whose values drive calculation logic: only the labels may be edited.
+    if (LABEL_ONLY_SETTINGS.has(key)) {
+      const before = (current || []).map(o => o.value).sort().join('|');
+      const after = value.map(o => o.value.trim()).sort().join('|');
+      if (before !== after) return res.status(400).json({ error: `Nilai (value) pada "${key}" tidak boleh ditambah/diubah — hanya label yang dapat diedit.` });
+    }
+    res.json({ key, value: await storage.setSetting(key, value.map(o => ({ value: o.value.trim(), label: o.label.trim(), ...(typeof o.desc === 'string' ? { desc: o.desc } : {}) }))) });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// 1a-2. Reminder e-mail sender ("Setting Email" menu). The password is write-only: it is stored
+// encrypted and no endpoint ever returns it.
+app.get('/api/admin/email-settings', async (req, res) => {
+  try {
+    res.json(await emailSettingsService.getPublicSettings());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/admin/email-settings', async (req, res) => {
+  try {
+    res.json(await emailSettingsService.updateSettings(req.body || {}));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// Sends ONE test message to the given address (defaults to the sender's own address).
+app.post('/api/admin/email-settings/test', async (req, res) => {
+  try {
+    const result = await emailSettingsService.sendTestEmail((req.body || {}).to);
+    res.status(result.sent ? 200 : 502).json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ sent: false, error: err.message });
   }
 });
 

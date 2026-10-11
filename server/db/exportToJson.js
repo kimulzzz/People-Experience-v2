@@ -55,6 +55,7 @@ async function main() {
     customSurveyQuestions,
     acknowledgedAlerts: await storage.getAcknowledgedAlerts(),
     operationalRecords: await storage.getAllOperationalRecords(),
+    emailSettings: await storage.getEmailSettings(),
     appSettings: Object.fromEntries(Object.entries(await storage.getSettings()).map(([k, value]) => [k, { value }]))
   };
 

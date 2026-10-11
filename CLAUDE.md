@@ -15,9 +15,11 @@ experience ("Kejar Mimpi" framework: 70% Survey Index + 30% Outcome Index).
 - **Reporting**: PPTXgenJS (PowerPoint export), QR code generation, CSV import/export
 - **Local AI**: Ollama (`localAiService.js`) for dynamic narratives (Score Deficit Alerts,
   Event Summaries) — always has a deterministic rule-based fallback, never required
-- **Email**: `nodemailer` (`reminderService.js`) for Survey Upload Reminder emails to PICs —
-  on-premise SMTP relay only, configured via `SMTP_*` env vars (see `.env.example`); gracefully
-  no-ops (logs only) when unconfigured
+- **Email**: `nodemailer` (`reminderService.js`) for Survey Upload Reminder emails to PICs. The sender
+  account is configured in the **Setting Email** menu and stored in SQL Server (`px_email_settings`, password
+  AES-256-GCM encrypted, never returned by the API); legacy `SMTP_*` env vars are only a fallback. On-premise
+  SMTP is the target; Gmail was enabled only temporarily at the user's request (cloud — conflicts with the
+  100% on-premise rule); gracefully no-ops (logs only) when unconfigured
 
 ## Custom subagents (`.claude/agents/`)
 
@@ -41,7 +43,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(108-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(116-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -57,8 +59,8 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (108 cases) |
-| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (23 `px_*` tables), JSON→SQL migration, rollback |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (116 cases) |
+| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (24 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules |
 
 ## Compliance constraints (do not violate)
@@ -385,6 +387,20 @@ domain model, not just descriptive:
   cases (2/5/7/11/12), CSV importer default fillers, 15 old regression-test upload batches in the data, action library
   coverage. Tests: 108 (Module 29 added), 108/108 on SQL (x2) and JSON. Reminder: the regression suite dirties the
   active backend — on SQL run `node server/db/migrate.js --reset` afterwards.
+
+- **v2.23.0** (2026-10-11, see `CHANGELOG.md` [2.23.0], `docs/06`, `SQLServerDB.md`): User asked to (1) move any remaining
+  filter/parameter/survey data to SQL Server, (2) add a menu to configure the email that sends the PIC
+  manual-upload reminders, and (3) test it with the user's Gmail — they pasted their Gmail address AND
+  password in chat. Claude deliberately did NOT use or store that password (real credential for another
+  service; typing credentials is off-limits) — it built the whole feature and the user enters an App Password
+  themselves in the menu, then clicks "Kirim Email Test". New: `EmailSettingsModal.jsx` (Header "Setting Email"),
+  `px_email_settings`, `emailSettingsService.js`, `secretBox.js` (AES-256-GCM, key `SETTINGS_ENCRYPTION_KEY`
+  auto-added to `.env` — back it up with the DB), routes `/api/admin/email-settings[/test]`; `reminderService`
+  now builds its transporter per send from the DB. Option catalogs for Parameter Admin / Survey Questions
+  (`metric_types`, `scale_types`, `target_audiences`, `update_frequencies`, `question_types`) moved to
+  `px_app_settings` (labels editable only — values drive logic). Tests: Module 30 (8 tests, includes a fake
+  in-process SMTP server so the full send path is verified without a real account; auto-skips when a real
+  config exists) → 116/116 on SQL (x2) and JSON. `migrate --reset` wipes the email settings.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
