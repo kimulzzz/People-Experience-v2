@@ -29,6 +29,8 @@ function toPublic(s) {
     from_name: s.from_name,
     from_email: s.from_email,
     has_password: !!s.smtp_password_enc,
+    // false = a password is stored but cannot be decrypted (the encryption key changed/was lost) → must be re-entered
+    password_readable: !s.smtp_password_enc || !!decrypt(s.smtp_password_enc),
     updated_at: s.updated_at || null,
     env_fallback_available: !!process.env.SMTP_HOST
   };

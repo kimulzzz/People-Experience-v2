@@ -438,6 +438,20 @@ async function seedAppSettings(tx) {
   }
 }
 
+// ------------------------------------------------------------------ upload reminder log (px_reminder_log)
+const rowToReminderLog = r => ({
+  log_id: r.log_id,
+  metric_id: r.metric_id,
+  expected_period: r.expected_period,
+  sent_on: r.sent_on,
+  attempted_at: iso(r.attempted_at),
+  status: r.status,
+  pic_email: r.pic_email,
+  error_message: r.error_message
+});
+const REMINDER_LOG_SELECT = `SELECT log_id, metric_id, expected_period, CONVERT(char(10), sent_on, 23) AS sent_on, attempted_at,
+                              status, pic_email, error_message FROM dbo.px_reminder_log`;
+
 // ------------------------------------------------------------------ e-mail sender settings (px_email_settings)
 const rowToEmailSettings = r => ({
   enabled: !!r.enabled,
@@ -731,6 +745,13 @@ async function importStore(store, log = () => {}) {
       if (Array.isArray(questions) && questions.length) await replaceSurveyQuestions(tx, parseInt(metric_id, 10), questions, true);
     }
     counts.custom_survey_questions = Object.keys(store.customSurveyQuestions || {}).length;
+    for (const l of store.reminderLog || []) {
+      await run(`INSERT INTO dbo.px_reminder_log (metric_id, expected_period, sent_on, attempted_at, status, pic_email, error_message)
+                 VALUES (@metric_id, @period, @sent_on, @at, @status, @pic_email, @error)`, {
+        metric_id: l.metric_id, period: l.expected_period, sent_on: T.date(l.sent_on), at: toDateObj(l.attempted_at),
+        status: l.status, pic_email: l.pic_email || '', error: l.error_message || null
+      }, tx);
+    }
     for (const [key, def] of Object.entries(store.appSettings || {})) {
       await run('INSERT INTO dbo.px_app_settings (setting_key, setting_value, description) VALUES (@key, @value, @description)',
         { key, value: T.max(JSON.stringify(def.value)), description: def.description || '' }, tx);
@@ -881,9 +902,35 @@ const storage = {
     const tables = ['px_recruitment_sla_by_unit', 'px_approval_stage_compliance', 'px_hiring_channel_mix',
       'px_recognition_categories', 'px_attrition_by_tenure', 'px_acknowledged_alerts', 'px_survey_uploaded_responses',
       'px_survey_uploads', 'px_media', 'px_feedback_responses', 'px_attendances', 'px_event_questions', 'px_events',
-      'px_email_settings', 'px_app_settings', 'px_survey_questions', 'px_custom_survey_questions', 'px_master_survey_questions', 'px_divisions', 'px_directorates', 'px_action_library',
+      'px_reminder_log', 'px_email_settings', 'px_app_settings', 'px_survey_questions', 'px_custom_survey_questions', 'px_master_survey_questions', 'px_divisions', 'px_directorates', 'px_action_library',
       'px_metric_targets', 'px_metrics', 'px_checkpoints', 'px_journeys'];
     for (const t of tables) await run(`IF OBJECT_ID(N'dbo.${t}', N'U') IS NOT NULL DROP TABLE dbo.${t}`);
+  },
+
+  // ---- survey upload reminders
+  // Is there ANY survey response for this metric dated in [startDate, endDate)? (YYYY-MM-DD strings)
+  async hasSurveyDataInPeriod(metric_id, startDate, endDate) {
+    const rows = await run(`SELECT TOP 1 1 AS x FROM dbo.px_survey_uploaded_responses
+                            WHERE metric_id = @metric_id AND survey_date >= @start AND survey_date < @end`,
+      { metric_id: parseInt(metric_id, 10), start: T.date(startDate), end: T.date(endDate) });
+    return rows.length > 0;
+  },
+  async getReminderLog(limit = 50) {
+    const rows = await run(`${REMINDER_LOG_SELECT.replace('SELECT', 'SELECT TOP (@limit)')} ORDER BY log_id DESC`, { limit: parseInt(limit, 10) });
+    return rows.map(rowToReminderLog);
+  },
+  async getReminderLogFor(metric_id, expected_period) {
+    const rows = await run(`${REMINDER_LOG_SELECT} WHERE metric_id = @metric_id AND expected_period = @period ORDER BY log_id`,
+      { metric_id: parseInt(metric_id, 10), period: String(expected_period) });
+    return rows.map(rowToReminderLog);
+  },
+  async addReminderLog(entry) {
+    const rows = await run(`INSERT INTO dbo.px_reminder_log (metric_id, expected_period, sent_on, status, pic_email, error_message)
+                            OUTPUT INSERTED.log_id VALUES (@metric_id, @period, @sent_on, @status, @pic_email, @error)`, {
+      metric_id: parseInt(entry.metric_id, 10), period: String(entry.expected_period), sent_on: T.date(entry.sent_on),
+      status: entry.status, pic_email: entry.pic_email || '', error: entry.error_message ? String(entry.error_message).slice(0, 500) : null
+    });
+    return { log_id: rows[0].log_id, ...entry };
   },
 
   // ---- reminder e-mail sender settings
@@ -1124,7 +1171,10 @@ const storage = {
     const current = await this.getMetricById(id);
     if (!current) throw new Error(`Metric #${id} tidak ditemukan.`);
     await inTransaction(async tx => {
-      await run('DELETE FROM dbo.px_metric_targets WHERE metric_id = @id; DELETE FROM dbo.px_survey_questions WHERE metric_id = @id; DELETE FROM dbo.px_metrics WHERE metric_id = @id;', { id }, tx);
+      await run(`DELETE FROM dbo.px_metric_targets WHERE metric_id = @id; DELETE FROM dbo.px_survey_questions WHERE metric_id = @id; DELETE FROM dbo.px_reminder_log WHERE metric_id = @id;
+        DELETE FROM dbo.px_survey_uploaded_responses WHERE metric_id = @id;
+        DELETE FROM dbo.px_survey_uploads WHERE metric_id = @id;
+        DELETE FROM dbo.px_metrics WHERE metric_id = @id;`, { id }, tx);
     });
     return current;
   },

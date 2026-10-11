@@ -1361,6 +1361,8 @@ const initialAppSettings = {
     ],
     description: 'Pilihan Tipe Pertanyaan di Survey Questions'
   },
+  reminder_send_hour: { value: 8, description: 'Jam (0-23, waktu server) mulai pengiriman otomatis email reminder upload survei ke PIC' },
+  reminder_repeat_days: { value: 1, description: 'Ulangi reminder setiap N hari sampai data diupload (0 = hanya satu kali pada tanggal batas)' },
   px_index_target: { value: 85, description: 'Target PX Index (%) — garis target pada Performance Trend chart' },
   event_program_categories: {
     value: [

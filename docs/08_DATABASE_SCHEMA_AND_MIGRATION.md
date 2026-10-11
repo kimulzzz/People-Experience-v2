@@ -40,13 +40,14 @@ Script `scripts/sqlserver/Setup-SqlServer.ps1` (idempoten, log di `scripts/sqlse
 
 ---
 
-## 3. Skema (`server/db/schema.sql` — 24 tabel, prefix `px_`)
+## 3. Skema (`server/db/schema.sql` — 25 tabel, prefix `px_`)
 
 | Kelompok | Tabel | Catatan |
 | :--- | :--- | :--- |
 | Parameter | `px_journeys`, `px_checkpoints`, `px_metrics`, `px_metric_targets` | Target hanya ada di `px_metric_targets` (JSON menggandakannya di metric). Bobot hanya di `px_metrics.weight` — **tabel `weights` dihapus** (duplikat murni). Sengaja **tanpa FK** antar-tiga tabel ini (admin boleh menghapus journey tanpa menyentuh metric — sama seperti perilaku JSON). |
 | Referensi | `px_directorates`, `px_divisions`, `px_action_library` | Direktorat/divisi memakai surrogate key + `UNIQUE` nama. |
 | Pertanyaan | `px_master_survey_questions`, `px_event_questions`, `px_survey_questions` | Pertanyaan event = salinan (snapshot) per event. **`px_survey_questions`** = set pertanyaan setiap metric SURVEY (1 baris/pertanyaan, kolom `is_customized`); di-seed sekali dari template kode, setelahnya dibaca hanya dari SQL (v2.22.1). |
+| Reminder | `px_reminder_log` | Catatan tiap email reminder upload survei ke PIC (metrik, periode yang kosong, tanggal, SENT/FAILED) — dasar pencegah duplikat & pengulangan. Ikut terhapus bersama metriknya. |
 | Email | `px_email_settings` | 1 baris: akun pengirim reminder ke PIC (menu "Setting Email"). Password dienkripsi AES-256-GCM (`server/services/secretBox.js`); kunci `SETTINGS_ENCRYPTION_KEY` ada di `.env` dan harus ikut dibackup. |
 | Pengaturan | `px_app_settings` | Nilai yang ditampilkan di UI dan dikelola admin (JSON): `px_index_target` (garis target chart), `event_program_categories`, `event_types`, serta katalog pilihan `metric_types`, `scale_types`, `target_audiences`, `update_frequencies`, `question_types` (hanya label yang boleh diubah). API: `GET /api/settings`, `PUT /api/admin/settings/:key`. |
 | Signature Event | `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` | `UNIQUE(event_id, nip)` pada absensi & feedback (NIP tetap kunci utama responden). FK `ON DELETE CASCADE` ke `px_events`. **`px_media.file_path`** = path file di disk (mis. `/uploads/media-….mp4`) + `caption`, `ai_generated_description`, `transcript`, `transcript_segments` (JSON), `transcript_status`, `duration_seconds`. |

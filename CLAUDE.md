@@ -43,7 +43,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(116-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(127-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -59,8 +59,8 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (116 cases) |
-| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (24 `px_*` tables), JSON→SQL migration, rollback |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (127 cases) |
+| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (25 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules |
 
 ## Compliance constraints (do not violate)
@@ -401,6 +401,22 @@ domain model, not just descriptive:
   `px_app_settings` (labels editable only — values drive logic). Tests: Module 30 (8 tests, includes a fake
   in-process SMTP server so the full send path is verified without a real account; auto-skips when a real
   config exists) → 116/116 on SQL (x2) and JSON. `migrate --reset` wipes the email settings.
+
+- **v2.24.0** (2026-10-11, see `CHANGELOG.md` [2.24.0], `docs/06`): User asked to verify that the PIC reminder
+  emails go out automatically when, by the PIC's deadline day, last month's survey data is missing (deadline 10 +
+  Oct → check September; "just check the survey table of that metric for a row dated in September"). The old logic
+  did NOT match: it checked the CURRENT month, sent unrequested 5-day "due soon" warnings, used a boot-relative 24h
+  timer with no sent-log (duplicates on restart, unreliable timing) and lost reminders when email wasn't configured.
+  Rewrote `reminderService.js`: monthly → on/after the deadline day, no `survey_date` in month M-1 for that metric
+  (`storage.hasSurveyDataInPeriod`) → email; annual → from the deadline date if no data that year. Scheduler runs at
+  boot + every 30 min from `reminder_send_hour` (default 8), dedupe/follow-ups via new `px_reminder_log` +
+  `reminder_repeat_days` (default 1, 0 = once). Setting Email modal got the schedule + sent history. Found &
+  fixed while testing: deleting a metric left its survey responses (a new metric reusing the max+1 id inherited
+  them) → delete now cascades; `secretBox` minted a new SETTINGS_ENCRYPTION_KEY in every process that hadn't
+  loaded .env (tests → 9 keys in .env, stored password unreadable) → now reuses the existing key (+
+  `password_readable` flag). Verified: 127/127 on SQL (x2) and JSON, plus a no-simulation proof (real clock +
+  fake SMTP: scheduler emailed the PIC for "September 2026" by itself). Demo PIC emails are fictional
+  @cimbniaga.co.id addresses — replace them before enabling real email.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

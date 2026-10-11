@@ -225,3 +225,9 @@ ini (`MetricDetailModal.jsx`, `TrendChart.jsx`, `SurveyImportModal.jsx`, `Create
 ## 📧 Catatan v2.23.0 — `EmailSettingsModal.jsx` ("Setting Email")
 
 Tombol **Setting Email** di Header (sebelah Survey Templates) membuka modal: toggle aktif, provider (Gmail / SMTP internal), akun, password (write-only — placeholder menunjukkan apakah sudah ada password tersimpan; tombol "Hapus password tersimpan"), nama/email pengirim, banner peringatan Gmail (cloud, App Password), dan bagian **Kirim Email Test** (default ke email pengirim sendiri; opsi PIC dari metric manual-upload atau alamat lain). Modal dikelola `App.jsx` (`isEmailSettingsOpen`). `AdminParametersModal` dan `AdminSurveyQuestionsModal` kini mengambil daftar pilihan (tipe metrik, skala, responden, frekuensi, tipe pertanyaan) dari `GET /api/settings`.
+
+---
+
+## ⏰ Catatan v2.24.0
+
+`EmailSettingsModal` kini juga memuat **Jadwal Reminder Otomatis** (jam mulai kirim, ulangi tiap N hari → `PUT /api/admin/settings/:key`) dan **Riwayat Reminder Terkirim** (dari `GET /api/admin/upload-reminders`). Panel peringatan di `AdminParametersModal` menampilkan periode data yang kosong (`expected_period_label`) dan status `DUE_TODAY`/`OVERDUE`; teks bantu di bawah "Batas Tanggal Upload" menjelaskan aturan "bulan sebelumnya". Konfirmasi hapus metrik menyebut bahwa data surveinya ikut terhapus.

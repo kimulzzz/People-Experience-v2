@@ -19,6 +19,7 @@ const EMPTY_FORM = {
 export default function EmailSettingsModal({ isOpen, onClose }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [hasPassword, setHasPassword] = useState(false);
+  const [passwordReadable, setPasswordReadable] = useState(true);
   const [clearPassword, setClearPassword] = useState(false);
   const [updatedAt, setUpdatedAt] = useState(null);
   const [envFallback, setEnvFallback] = useState(false);
@@ -30,6 +31,9 @@ export default function EmailSettingsModal({ isOpen, onClose }) {
   const [testing, setTesting] = useState(false);
   const [message, setMessage] = useState(null); // { type: 'success' | 'error', text }
   const [testResult, setTestResult] = useState(null);
+  // Automatic reminder schedule (px_app_settings) + the log of what was actually emailed.
+  const [schedule, setSchedule] = useState({ reminder_send_hour: 8, reminder_repeat_days: 1 });
+  const [history, setHistory] = useState([]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -39,9 +43,16 @@ export default function EmailSettingsModal({ isOpen, onClose }) {
     setLoading(true);
     Promise.all([
       fetch('/api/admin/email-settings').then(r => r.json()),
-      fetch('/api/admin/parameters').then(r => r.json())
+      fetch('/api/admin/parameters').then(r => r.json()),
+      fetch('/api/settings').then(r => r.json()),
+      fetch('/api/admin/upload-reminders').then(r => r.json())
     ])
-      .then(([s, params]) => {
+      .then(([s, params, appSettings, reminders]) => {
+        setSchedule({
+          reminder_send_hour: appSettings.reminder_send_hour ?? 8,
+          reminder_repeat_days: appSettings.reminder_repeat_days ?? 1
+        });
+        setHistory(reminders.history || []);
         setForm({
           enabled: !!s.enabled,
           provider: s.provider || 'GMAIL',
@@ -54,6 +65,7 @@ export default function EmailSettingsModal({ isOpen, onClose }) {
           from_email: s.from_email || ''
         });
         setHasPassword(!!s.has_password);
+        setPasswordReadable(s.password_readable !== false);
         setUpdatedAt(s.updated_at);
         setEnvFallback(!!s.env_fallback_available);
         // PICs that actually receive reminders: manual-upload metrics with a PIC e-mail.
@@ -85,10 +97,17 @@ export default function EmailSettingsModal({ isOpen, onClose }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Gagal menyimpan');
       setHasPassword(!!data.has_password);
+      setPasswordReadable(data.password_readable !== false);
       setUpdatedAt(data.updated_at);
       setClearPassword(false);
       set({ smtp_password: '' });
-      setMessage({ type: 'success', text: 'Pengaturan email tersimpan di database.' });
+      for (const key of ['reminder_send_hour', 'reminder_repeat_days']) {
+        const r = await fetch(`/api/admin/settings/${key}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: Number(schedule[key]) })
+        });
+        if (!r.ok) throw new Error((await r.json()).error || 'Gagal menyimpan jadwal reminder');
+      }
+      setMessage({ type: 'success', text: 'Pengaturan email & jadwal reminder tersimpan di database.' });
     } catch (err) {
       setMessage({ type: 'error', text: err.message });
     } finally {
@@ -215,6 +234,11 @@ export default function EmailSettingsModal({ isOpen, onClose }) {
                     </button>
                   )}
                 </div>
+                {hasPassword && !passwordReadable && (
+                  <p className="text-[10.5px] text-red-600 mt-1 font-bold">
+                    Password tersimpan tidak dapat dibaca (kunci enkripsi berubah). Isi ulang password lalu Simpan.
+                  </p>
+                )}
                 {clearPassword && <p className="text-[10.5px] text-red-600 mt-1">Password akan dihapus saat Anda menekan Simpan.</p>}
               </div>
 
@@ -227,6 +251,30 @@ export default function EmailSettingsModal({ isOpen, onClose }) {
                 <label className="block font-bold text-gray-700 mb-1">Email Pengirim (opsional)</label>
                 <input type="text" value={form.from_email} onChange={e => set({ from_email: e.target.value })}
                   placeholder="kosong = sama dengan akun" className={inputCls} />
+              </div>
+            </div>
+
+            {/* Automatic reminder schedule */}
+            <div className="border-t border-gray-100 pt-4 space-y-3">
+              <div>
+                <h4 className="font-bold text-gray-800">Jadwal Reminder Otomatis</h4>
+                <p className="text-[11px] text-gray-500">
+                  Pada <b>Batas Tanggal Upload</b> tiap metrik (Parameter Admin), bila belum ada data survei bertanggal bulan sebelumnya
+                  (mis. tgl 10 Oktober → data September), PIC dikirimi email otomatis.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">Mulai kirim pada jam (0–23)</label>
+                  <input type="number" min="0" max="23" value={schedule.reminder_send_hour}
+                    onChange={e => setSchedule(prev => ({ ...prev, reminder_send_hour: e.target.value }))} className={inputCls} />
+                </div>
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">Ulangi setiap (hari)</label>
+                  <input type="number" min="0" max="31" value={schedule.reminder_repeat_days}
+                    onChange={e => setSchedule(prev => ({ ...prev, reminder_repeat_days: e.target.value }))} className={inputCls} />
+                  <p className="text-[10.5px] text-gray-400 mt-1">0 = hanya sekali pada tanggal batas; 1 = setiap hari sampai data diupload.</p>
+                </div>
               </div>
             </div>
 
@@ -248,6 +296,23 @@ export default function EmailSettingsModal({ isOpen, onClose }) {
                 {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                 <span>Simpan</span>
               </button>
+            </div>
+
+            {/* What was actually emailed */}
+            <div className="border-t border-gray-100 pt-4 space-y-2">
+              <h4 className="font-bold text-gray-800">Riwayat Reminder Terkirim</h4>
+              {history.length === 0 ? (
+                <p className="text-[11px] text-gray-500">Belum ada reminder yang dikirim.</p>
+              ) : (
+                <ul className="text-[11px] text-gray-700 space-y-1 max-h-32 overflow-y-auto">
+                  {history.map(h => (
+                    <li key={h.log_id} className="flex justify-between gap-2">
+                      <span>{h.sent_on} — metrik #{h.metric_id}, data {h.expected_period} → {h.pic_email}</span>
+                      <span className={h.status === 'SENT' ? 'text-emerald-600 font-bold' : 'text-red-600 font-bold'}>{h.status}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
 
             {/* Test e-mail */}

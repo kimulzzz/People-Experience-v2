@@ -610,3 +610,24 @@ Paritas backend: 57/58 endpoint GET identik antara SQL dan JSON (selisih satu di
 | Katalog hanya label | Negatif | mengubah/menambah *value* → 400; mengubah label → 200 lalu dipulihkan |
 
 Test jalur lengkap dan "belum dikonfigurasi" **dilewati otomatis** bila sudah ada konfigurasi email sungguhan (agar suite tidak menimpa akun yang diisi admin). Tidak ada email sungguhan yang dikirim oleh test — server SMTP palsu berjalan di dalam proses test.
+
+---
+
+## ⏰ 14. Reminder Upload Survei Otomatis — v2.24.0 (2026-10-11)
+
+**Regression suite: 127 test** (116 + **Modul 31**, 10 test, + 1 test kunci enkripsi di Modul 30) → **127/127 PASS** di SQL Server (2×) dan di JSON. Tanggal disimulasikan dengan `reference_date`; pengiriman diuji dengan server SMTP palsu di dalam test (otomatis dilewati bila sudah ada pengirim email sungguhan).
+
+| Modul 31 | Jenis | Yang diuji |
+| :--- | :---: | :--- |
+| Tanggal batas | Positif | tgl 9 Okt: tidak ada reminder; tgl 10 Okt: `DUE_TODAY`, periode `2026-09` ("September 2026") |
+| Setelah batas | Positif | tgl 14 Okt: `OVERDUE`, `days_overdue = 4`, periode tetap September; Januari → Desember tahun lalu |
+| Hanya bulan sebelumnya | Positif | data Oktober saja tidak cukup; data September menghentikan reminder |
+| Per metrik | Positif | data September metrik lain tidak dihitung |
+| Tahunan | Positif | tgl 24 Nov: tidak ada; tgl 25 Nov: `DUE_TODAY`, periode `2026` |
+| Siklus otomatis end-to-end | Positif | terkirim 1× di hari batas → tidak dobel di hari yang sama → tindak lanjut esoknya ("pengingat ke-2") → berhenti bila repeat=0 → berhenti saat data diupload; 2 baris `SENT` di log |
+| Hapus metrik | Positif | data survei ikut terhapus; metrik baru dengan ID yang sama tidak mewarisi "data September" |
+| Tanpa pengirim email | Positif | status `LOGGED_ONLY`, tidak dicatat sebagai terkirim |
+| PIC tanpa email / bukan upload manual | Negatif | `SKIPPED_NO_EMAIL`; metrik non-manual tidak pernah diingatkan |
+| Input salah | Negatif | `reference_date` salah format, jam 24 / -1, repeat 1.5 / 99 → 400 |
+
+**Bukti tanpa simulasi**: dengan jam server asli (11 Okt, lewat batas tgl 10) dan SMTP palsu, setelah restart, scheduler mengirim sendiri email "data September 2026 belum ada" ke PIC metrik uji (tercatat `SENT` di `px_reminder_log`).

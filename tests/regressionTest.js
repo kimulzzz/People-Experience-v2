@@ -853,10 +853,10 @@ async function runRegressionSuite() {
     const data = await res.json();
     assert(typeof data.total_reminders === 'number');
     assert(typeof data.overdue_count === 'number');
-    assert(typeof data.due_soon_count === 'number');
+    assert(typeof data.due_today_count === 'number');
     assert(Array.isArray(data.reminders));
     data.reminders.forEach(r => {
-      assert(['OVERDUE', 'DUE_SOON'].includes(r.status));
+      assert(['OVERDUE', 'DUE_TODAY'].includes(r.status));
     });
   });
 
@@ -1622,7 +1622,7 @@ async function runRegressionSuite() {
     const s = await getEmail();
     assert.ok(['GMAIL', 'SMTP'].includes(s.provider));
     assert.strictEqual(typeof s.has_password, 'boolean');
-    Object.keys(s).forEach(k => assert.ok(!/pass/i.test(k) || k === 'has_password', `Response must not expose "${k}"`));
+    Object.keys(s).forEach(k => assert.ok(!/pass/i.test(k) || ['has_password', 'password_readable'].includes(k), `Response must not expose "${k}"`));
   });
 
   await runTest('[POSITIVE] The SMTP password is stored encrypted (AES-256-GCM) and round-trips; ciphertext never equals the plain text', async () => {
@@ -1632,6 +1632,19 @@ async function runRegressionSuite() {
     assert.notStrictEqual(c1, c2, 'A random IV must make every ciphertext different');
     assert.strictEqual(decrypt(c1), 'Sup3r-secret!');
     assert.strictEqual(decrypt(c1.slice(0, -4) + 'AAAA'), '', 'A tampered ciphertext must not decrypt');
+  });
+
+  await runTest('[POSITIVE] The encryption key is never re-generated: a process that did not load .env reuses the existing key (previously every test run appended a new one)', async () => {
+    const fs = require('fs');
+    const envPath = require('path').join(__dirname, '..', '.env');
+    const countKeys = () => (fs.readFileSync(envPath, 'utf8').match(/^SETTINGS_ENCRYPTION_KEY=/gm) || []).length;
+    const { encrypt } = require('../server/services/secretBox');
+    encrypt('warm-up');
+    const before = countKeys();
+    delete process.env.SETTINGS_ENCRYPTION_KEY; // simulate a process that never loaded .env
+    encrypt('again'); encrypt('and again');
+    assert.strictEqual(countKeys(), before, 'No additional key may be written to .env');
+    assert.strictEqual(before, 1, 'Exactly one encryption key must exist in .env');
   });
 
   await runTest('[POSITIVE] Full path: save SMTP settings → test email is delivered with the decrypted password; reminders use the database sender', async () => {
@@ -1713,6 +1726,173 @@ async function runRegressionSuite() {
     } finally {
       await putJson('/api/admin/settings/scale_types', { value: original });
     }
+  });
+
+  // --- 31. AUTOMATIC UPLOAD REMINDERS TO PICs (v2.24.0) ---
+  console.log('\n📦 MODULE 31: Automatic Survey Upload Reminders to PIC (Positive & Negative Testing)');
+
+  const postJson = (p, body) => fetch(`${BASE_URL}${p}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {})
+  });
+  const remind = async (body) => (await postJson('/api/admin/upload-reminders/send', body)).json();
+  const createReminderMetric = async (overrides = {}) => {
+    const res = await postJson('/api/admin/metrics', {
+      metric_name: 'REGRESSION Reminder Metric', metric_type: 'SURVEY', scale_type: 'RATING_5',
+      requires_manual_upload: true, update_frequency: 'MONTHLY', upload_deadline_day: 10,
+      pic_name: 'PIC Regresi', pic_email: 'pic.regresi@example.test', ...overrides
+    });
+    assert.strictEqual(res.status, 201);
+    return (await res.json()).metric_id;
+  };
+  const uploadSurveyRow = async (metricId, surveyDate, nip = '7700001') => postJson('/api/surveys/upload', {
+    csvText: ['nip,employee_name,cimb_email,directorate,division,survey_date,q1_overall',
+      `${nip},Reminder Tester,reminder.tester@cimbniaga.co.id,Human Resources,People Experience & Culture,${surveyDate},4.5`].join('\r\n'),
+    fileName: 'reminder_test.csv', metric_id: metricId
+  });
+  const findIn = (summary, metricId) => summary.results.find(r => r.metric_id === metricId);
+  const deleteMetric = (id) => fetch(`${BASE_URL}/api/admin/metrics/${id}`, { method: 'DELETE' });
+
+  await runTest('[POSITIVE] Before the deadline day nothing is reminded; ON the deadline day (10 Oct) a PIC with no September data is reminded for September', async () => {
+    const id = await createReminderMetric();
+    try {
+      const before = await remind({ reference_date: '2026-10-09', dry_run: true });
+      assert.ok(!findIn(before, id), 'No reminder before the deadline day');
+      const onDay = findIn(await remind({ reference_date: '2026-10-10', dry_run: true }), id);
+      assert.ok(onDay, 'Reminder expected on the deadline day');
+      assert.strictEqual(onDay.status, 'DUE_TODAY');
+      assert.strictEqual(onDay.expected_period, '2026-09');
+      assert.strictEqual(onDay.expected_period_label, 'September 2026');
+      assert.strictEqual(onDay.email_status, 'WOULD_SEND');
+    } finally { await deleteMetric(id); }
+  });
+
+  await runTest('[POSITIVE] After the deadline the PIC stays pending for the same (previous) month with days_overdue counted; January rolls back to December', async () => {
+    const id = await createReminderMetric();
+    try {
+      const later = findIn(await remind({ reference_date: '2026-10-14', dry_run: true }), id);
+      assert.strictEqual(later.status, 'OVERDUE');
+      assert.strictEqual(later.days_overdue, 4);
+      assert.strictEqual(later.expected_period, '2026-09');
+      const jan = findIn(await remind({ reference_date: '2027-01-12', dry_run: true }), id);
+      assert.strictEqual(jan.expected_period, '2026-12');
+      assert.strictEqual(jan.expected_period_label, 'Desember 2026');
+    } finally { await deleteMetric(id); }
+  });
+
+  await runTest('[POSITIVE] Only the PREVIOUS month counts: September data stops the reminder, October data alone does not', async () => {
+    const id = await createReminderMetric();
+    try {
+      assert.strictEqual((await uploadSurveyRow(id, '2026-10-03')).status, 200);
+      assert.ok(findIn(await remind({ reference_date: '2026-10-10', dry_run: true }), id), 'October data must NOT satisfy the September check');
+      assert.strictEqual((await uploadSurveyRow(id, '2026-09-15', '7700002')).status, 200);
+      assert.ok(!findIn(await remind({ reference_date: '2026-10-10', dry_run: true }), id), 'September data present → no reminder');
+    } finally { await deleteMetric(id); }
+  });
+
+  await runTest('[POSITIVE] The check is per metric: another metric\'s September data does not satisfy this metric', async () => {
+    const a = await createReminderMetric({ metric_name: 'REGRESSION Reminder A' });
+    const b = await createReminderMetric({ metric_name: 'REGRESSION Reminder B', pic_email: 'pic.b@example.test' });
+    try {
+      await uploadSurveyRow(a, '2026-09-20');
+      const summary = await remind({ reference_date: '2026-10-10', dry_run: true });
+      assert.ok(!findIn(summary, a));
+      assert.ok(findIn(summary, b));
+    } finally { await deleteMetric(a); await deleteMetric(b); }
+  });
+
+  await runTest('[POSITIVE] Annual (Tahunan) metrics are reminded from their deadline date of the year if there is no data for that year', async () => {
+    const id = await createReminderMetric({ update_frequency: 'ONE_TIME_ANNUAL', upload_deadline_month: 11, upload_deadline_day: 25 });
+    try {
+      assert.ok(!findIn(await remind({ reference_date: '2026-11-24', dry_run: true }), id));
+      const due = findIn(await remind({ reference_date: '2026-11-25', dry_run: true }), id);
+      assert.strictEqual(due.status, 'DUE_TODAY');
+      assert.strictEqual(due.expected_period, '2026');
+    } finally { await deleteMetric(id); }
+  });
+
+  await runTest('[POSITIVE] Automatic cycle end-to-end: emailed once on the deadline day, not again the same day, follow-up next day, stops when repeat is 0 and when data arrives', async () => {
+    if (!canWriteEmail) return; // a real sender is configured — never send through it from a test
+    const fake = await startFakeSmtp();
+    const id = await createReminderMetric();
+    const originalRepeat = (await getJson('/api/settings')).reminder_repeat_days;
+    try {
+      await putEmail({ enabled: true, provider: 'SMTP', smtp_host: '127.0.0.1', smtp_port: fake.port, smtp_secure: false,
+        smtp_user: 'regression@example.test', smtp_password: 'RegressionPw-123' });
+      await putJson('/api/admin/settings/reminder_repeat_days', { value: 1 });
+      const mine = () => fake.received.messages.filter(m => m.to.includes('pic.regresi@example.test'));
+
+      let r = findIn(await remind({ reference_date: '2026-10-10', automatic: true, metric_id: id }), id);
+      assert.strictEqual(r.email_status, 'SENT');
+      assert.strictEqual(mine().length, 1);
+      assert.ok(/September 2026/.test(mine()[0].data), 'Email must name the missing month');
+
+      r = findIn(await remind({ reference_date: '2026-10-10', automatic: true, metric_id: id }), id);
+      assert.strictEqual(r.skip_reason, 'ALREADY_SENT_TODAY');
+      assert.strictEqual(mine().length, 1, 'No duplicate on the same day (e.g. after a restart)');
+
+      r = findIn(await remind({ reference_date: '2026-10-11', automatic: true, metric_id: id }), id);
+      assert.strictEqual(r.email_status, 'SENT');
+      assert.strictEqual(mine().length, 2);
+      assert.ok(/pengingat ke-2/.test(mine()[1].data), 'Follow-up must say it is the 2nd reminder');
+
+      await putJson('/api/admin/settings/reminder_repeat_days', { value: 0 });
+      r = findIn(await remind({ reference_date: '2026-10-12', automatic: true, metric_id: id }), id);
+      assert.strictEqual(r.skip_reason, 'REPEAT_DISABLED');
+      assert.strictEqual(mine().length, 2);
+
+      await putJson('/api/admin/settings/reminder_repeat_days', { value: 1 });
+      await uploadSurveyRow(id, '2026-09-30');
+      assert.ok(!findIn(await remind({ reference_date: '2026-10-13', automatic: true, metric_id: id }), id), 'Data uploaded → reminders stop');
+      assert.strictEqual(mine().length, 2);
+
+      const history = (await getJson('/api/admin/upload-reminders')).history.filter(h => h.metric_id === id);
+      assert.strictEqual(history.filter(h => h.status === 'SENT').length, 2, 'Both emails are recorded in the reminder log');
+    } finally {
+      fake.server.close();
+      await putJson('/api/admin/settings/reminder_repeat_days', { value: originalRepeat });
+      await deleteMetric(id);
+      await resetEmail();
+    }
+  });
+
+  await runTest('[NEGATIVE] A metric without a PIC email is skipped (not crashed), and metrics not flagged as manual upload are never reminded', async () => {
+    const noMail = await createReminderMetric({ pic_email: '' });
+    const notManual = await createReminderMetric({ requires_manual_upload: false });
+    try {
+      const summary = await remind({ reference_date: '2026-10-10', dry_run: true });
+      assert.strictEqual(findIn(summary, noMail).email_status, 'SKIPPED_NO_EMAIL');
+      assert.ok(!findIn(summary, notManual));
+    } finally { await deleteMetric(noMail); await deleteMetric(notManual); }
+  });
+
+  await runTest('[NEGATIVE] Bad input is rejected: malformed reference_date → 400; reminder schedule settings outside their range / non-integer → 400', async () => {
+    assert.strictEqual((await postJson('/api/admin/upload-reminders/send', { reference_date: '10-10-2026' })).status, 400);
+    assert.strictEqual((await putJson('/api/admin/settings/reminder_send_hour', { value: 24 })).status, 400);
+    assert.strictEqual((await putJson('/api/admin/settings/reminder_send_hour', { value: -1 })).status, 400);
+    assert.strictEqual((await putJson('/api/admin/settings/reminder_repeat_days', { value: 1.5 })).status, 400);
+    assert.strictEqual((await putJson('/api/admin/settings/reminder_repeat_days', { value: 99 })).status, 400);
+  });
+
+  await runTest('[POSITIVE] Deleting a metric also deletes its survey data, so a new metric that reuses the id starts empty (no inherited "September data")', async () => {
+    const first = await createReminderMetric();
+    await uploadSurveyRow(first, '2026-09-15');
+    await deleteMetric(first);
+    const second = await createReminderMetric();
+    try {
+      assert.strictEqual(second, first, 'Ids are max+1, so the freed id is reused');
+      assert.ok(findIn(await remind({ reference_date: '2026-10-10', dry_run: true }), second), 'New metric must NOT inherit the deleted metric\'s September data');
+    } finally { await deleteMetric(second); }
+  });
+
+  await runTest('[POSITIVE] Without any email sender configured the reminder is not lost: it is reported (LOGGED_ONLY) and nothing is recorded as sent', async () => {
+    if (!canWriteEmail) return;
+    const id = await createReminderMetric();
+    try {
+      const r = findIn(await remind({ reference_date: '2026-10-10', automatic: true, metric_id: id }), id);
+      assert.strictEqual(r.email_status, 'LOGGED_ONLY');
+      const history = (await getJson('/api/admin/upload-reminders')).history.filter(h => h.metric_id === id);
+      assert.strictEqual(history.length, 0, 'Nothing may be logged as sent, so it goes out once a sender is configured');
+    } finally { await deleteMetric(id); }
   });
 
   // --- SUMMARY ---

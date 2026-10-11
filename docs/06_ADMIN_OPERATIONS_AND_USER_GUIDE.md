@@ -160,3 +160,15 @@ mengubahnya; sudah diperbaiki di v2.12.0 (lihat `CHANGELOG.md`).
 3. **SMTP internal (target akhir, sesuai kebijakan on-premise)**: pilih provider *SMTP Server*, isi host, port, TLS, akun, dan password dari tim infrastruktur.
 4. Centang **Aktifkan**, klik **Simpan**, lalu **Kirim Email Test** (default ke email pengirim sendiri) dan periksa kotak masuk.
 5. Setelah aktif, reminder ke PIC (pengecekan harian otomatis + tombol *Kirim Reminder* di Parameter Admin) memakai akun ini. Password tersimpan terenkripsi di database dan tidak pernah ditampilkan kembali.
+
+---
+
+## ⏰ Cara Kerja Reminder Otomatis Upload Survei (v2.24.0)
+
+1. Di **Parameter Admin → Edit Metrik (SURVEY)**: aktifkan *upload manual*, isi **Batas Tanggal Upload** (mis. 10), **Nama PIC** dan **Email PIC**.
+2. Di **Setting Email**: isi akun pengirim & aktifkan; atur *jam mulai kirim* (default 08:00) dan *ulangi setiap N hari* (default 1; 0 = hanya sekali).
+3. Setiap hari, mulai tanggal batas, sistem memeriksa tabel survei metrik itu: **adakah data bertanggal survei di bulan SEBELUMNYA?** Contoh: tanggal batas 10, hari ini 10 Oktober → cari data September. Bila **tidak ada**, PIC otomatis diemail ("data survei September 2026 belum ada"); bila ada, tidak ada email.
+4. Email diulang sesuai pengaturan sampai data periode itu terunggah. Tidak ada email ganda pada hari yang sama meski server di-restart; bila server mati pada tanggal batas, email dikirim begitu server hidup kembali.
+5. Pantau di **Setting Email → Riwayat Reminder Terkirim** dan panel peringatan di Parameter Admin; tombol **Kirim Reminder Sekarang** mengirim manual ke semua PIC yang masih pending.
+
+> Metrik **Tahunan** diingatkan pada tanggal+bulan batas tahun itu bila belum ada data bertanggal tahun tersebut. Data bulan berjalan tidak dihitung untuk metrik bulanan.

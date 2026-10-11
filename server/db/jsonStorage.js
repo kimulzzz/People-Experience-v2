@@ -150,6 +150,40 @@ const storage = {
     return value;
   },
 
+  // --- SURVEY UPLOAD REMINDERS ---
+  // Is there ANY survey response for this metric dated in [startDate, endDate)? (YYYY-MM-DD strings)
+  hasSurveyDataInPeriod(metric_id, startDate, endDate) {
+    const id = parseInt(metric_id);
+    return (getStore().surveyUploadedResponses || []).some(r => {
+      if (r.metric_id !== id) return false;
+      const d = normalizeDateString(r.survey_date || r.created_at) || '';
+      return d >= startDate && d < endDate;
+    });
+  },
+  getReminderLog(limit = 50) {
+    return [...(getStore().reminderLog || [])].sort((a, b) => b.log_id - a.log_id).slice(0, limit);
+  },
+  getReminderLogFor(metric_id, expected_period) {
+    return (getStore().reminderLog || []).filter(l => l.metric_id === parseInt(metric_id) && l.expected_period === expected_period);
+  },
+  addReminderLog(entry) {
+    const s = getStore();
+    s.reminderLog = s.reminderLog || [];
+    const record = {
+      log_id: s.reminderLog.reduce((mx, l) => Math.max(mx, l.log_id || 0), 0) + 1,
+      metric_id: parseInt(entry.metric_id),
+      expected_period: String(entry.expected_period),
+      sent_on: entry.sent_on,
+      attempted_at: new Date().toISOString(),
+      status: entry.status,
+      pic_email: entry.pic_email,
+      error_message: entry.error_message || null
+    };
+    s.reminderLog.push(record);
+    saveStore();
+    return record;
+  },
+
   // --- REMINDER E-MAIL SENDER SETTINGS (password is stored encrypted — see secretBox.js) ---
   getEmailSettings() {
     return { ...initialEmailSettings, ...(getStore().emailSettings || {}) };
@@ -414,6 +448,11 @@ const storage = {
     }
 
     const deleted = s.metrics.splice(idx, 1)[0];
+    s.reminderLog = (s.reminderLog || []).filter(l => l.metric_id !== id);
+    // A metric's survey data goes with it: orphaned responses would otherwise attach themselves to
+    // whichever new metric later receives the same id (ids are max+1).
+    s.surveyUploadedResponses = (s.surveyUploadedResponses || []).filter(r => r.metric_id !== id);
+    s.surveyUploads = (s.surveyUploads || []).filter(u => u.metric_id !== id);
     
     // Remove from weights and targets
     s.weights = s.weights.filter(w => w.metric_id !== id);

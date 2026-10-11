@@ -2,15 +2,32 @@
 // Encrypts small secrets (e.g. the SMTP password) before they are written to the database, so
 // the password is never readable from a database dump / backup alone. AES-256-GCM; the key is
 // SETTINGS_ENCRYPTION_KEY in .env (gitignored) and is generated automatically on first use.
+//
+// The key is only ever GENERATED when none exists anywhere: the process environment is checked
+// first, then the .env file itself (a process that did not load .env — e.g. a script or a test —
+// must reuse the existing key, never mint a second one, or previously stored secrets would
+// become undecryptable).
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
 const ENV_FILE = path.join(__dirname, '..', '..', '.env');
+const KEY_RE = /^[0-9a-f]{64}$/i;
+
+function readKeyFromEnvFile() {
+  try {
+    if (!fs.existsSync(ENV_FILE)) return null;
+    const matches = [...fs.readFileSync(ENV_FILE, 'utf8').matchAll(/^SETTINGS_ENCRYPTION_KEY=([0-9a-f]{64})\s*$/gim)];
+    return matches.length ? matches[matches.length - 1][1] : null; // same precedence as dotenv: the last one wins
+  } catch (_) {
+    return null;
+  }
+}
 
 function getKey() {
   let hex = process.env.SETTINGS_ENCRYPTION_KEY;
-  if (!/^[0-9a-f]{64}$/i.test(hex || '')) {
+  if (!KEY_RE.test(hex || '')) hex = readKeyFromEnvFile();
+  if (!KEY_RE.test(hex || '')) {
     hex = crypto.randomBytes(32).toString('hex');
     try {
       const current = fs.existsSync(ENV_FILE) ? fs.readFileSync(ENV_FILE, 'utf8') : '';
@@ -20,8 +37,8 @@ function getKey() {
     } catch (err) {
       console.error('[secretBox] Could not persist SETTINGS_ENCRYPTION_KEY to .env:', err.message);
     }
-    process.env.SETTINGS_ENCRYPTION_KEY = hex;
   }
+  process.env.SETTINGS_ENCRYPTION_KEY = hex;
   return Buffer.from(hex, 'hex');
 }
 

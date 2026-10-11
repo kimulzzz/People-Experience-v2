@@ -56,6 +56,7 @@ async function main() {
     acknowledgedAlerts: await storage.getAcknowledgedAlerts(),
     operationalRecords: await storage.getAllOperationalRecords(),
     emailSettings: await storage.getEmailSettings(),
+    reminderLog: (await storage.getReminderLog(1000000)).reverse(),
     appSettings: Object.fromEntries(Object.entries(await storage.getSettings()).map(([k, value]) => [k, { value }]))
   };
 

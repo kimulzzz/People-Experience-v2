@@ -206,3 +206,14 @@ backend boot) tanpa perlu dipicu manual — lihat `server.js` bagian `app.listen
 - **`POST /api/admin/email-settings/test`** body `{ to }` (default: email pengirim) → 200 `{ sent: true, to, accepted }` atau 502 `{ sent: false, error }` dengan penjelasan (mis. Gmail menolak password biasa); alamat tujuan tidak valid → 400.
 - `POST /api/admin/upload-reminders/send` kini memakai pengirim dari database (`sender_source`: `database` | `env` | `none`). Storage baru: `getEmailSettings()`, `saveEmailSettings()`. Service baru: `emailSettingsService.js`, `secretBox.js` (AES-256-GCM).
 - `PUT /api/admin/settings/:key` untuk `metric_types`, `scale_types`, `target_audiences`, `update_frequencies`, `question_types`: hanya label yang boleh berubah.
+
+---
+
+## ⏰ Catatan v2.24.0 — Reminder Upload Survei Otomatis
+
+- **Aturan**: metrik SURVEY ber-flag `requires_manual_upload`; pada/sesudah `upload_deadline_day` bulan M, bila **tidak ada** baris di `px_survey_uploaded_responses` untuk metrik itu dengan `survey_date` di bulan M‑1 (`storage.hasSurveyDataInPeriod(metric_id, start, endExclusive)`) → email ke `pic_email`. Tahunan: dari tanggal batas tahun itu bila belum ada data tahun tsb. Sebelum tanggal batas tidak ada reminder.
+- **Scheduler**: `startReminderScheduler()` (dipanggil saat server listen) — siklus ±20 dtk setelah boot lalu tiap 30 menit; mulai kirim pada jam `reminder_send_hour` (default 8). Dedupe/ulang via `px_reminder_log` (`getReminderLog`, `getReminderLogFor`, `addReminderLog`) dan setting `reminder_repeat_days` (default 1; 0 = sekali). Gagal kirim maks 3×/hari; bila pengirim belum dikonfigurasi, tidak dicatat sebagai terkirim.
+- **`GET /api/admin/upload-reminders`** → `{ total_reminders, overdue_count, due_today_count, reminders[{ metric_id, metric_name, pic_name, pic_email, deadline, expected_period, expected_period_label, days_overdue, status: DUE_TODAY|OVERDUE }], history[] }`.
+- **`POST /api/admin/upload-reminders/send`** body (semua opsional): `reference_date` ('YYYY-MM-DD', simulasi hari lain; format salah → 400), `dry_run` (tidak kirim/catat; hasil `WOULD_SEND`/`SKIPPED`), `automatic` (jalankan seperti scheduler: dedupe + interval; tanpa ini = "kirim sekarang" untuk semua yang pending), `metric_id` (batasi satu metrik). Hasil per metrik: `email_status` ∈ SENT | FAILED | SKIPPED (+`skip_reason`) | SKIPPED_NO_EMAIL | LOGGED_ONLY | WOULD_SEND.
+- `PUT /api/admin/settings/reminder_send_hour` (bilangan bulat 0–23) dan `reminder_repeat_days` (0–31); di luar rentang / bukan bilangan bulat → 400.
+- **Penghapusan metrik** (`DELETE /api/admin/metrics/:id`) kini juga menghapus respons survei, riwayat upload, pertanyaan, dan log reminder metrik itu.

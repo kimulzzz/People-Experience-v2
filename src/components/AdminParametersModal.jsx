@@ -113,7 +113,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Survey Upload Reminders (Batas Waktu Upload Survei)
-  const [uploadReminders, setUploadReminders] = useState({ total_reminders: 0, overdue_count: 0, due_soon_count: 0, reminders: [] });
+  const [uploadReminders, setUploadReminders] = useState({ total_reminders: 0, overdue_count: 0, due_today_count: 0, reminders: [] });
   const [sendingReminders, setSendingReminders] = useState(false);
 
   // Option catalogs (metric type, scale, audience, update frequency) come from the database.
@@ -358,7 +358,9 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
   };
 
   const handleDeleteMetric = async (metricId, metricName) => {
-    if (!window.confirm(`Apakah Anda yakin ingin menghapus Metric ${metricId} - "${metricName}"?`)) return;
+    if (!window.confirm(`Apakah Anda yakin ingin menghapus Metric ${metricId} - "${metricName}"?
+
+Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan ikut terhapus.`)) return;
     setLoading(true);
     setErrorMessage('');
     try {
@@ -694,14 +696,14 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                     <div>
                       <h4 className="text-xs font-bold text-amber-900">
                         {uploadReminders.overdue_count > 0
-                          ? `${uploadReminders.overdue_count} Survei Terlambat Diupload`
-                          : 'Survei Mendekati Batas Waktu Upload'}
-                        {uploadReminders.due_soon_count > 0 && uploadReminders.overdue_count > 0 && ` & ${uploadReminders.due_soon_count} Segera Jatuh Tempo`}
+                          ? `${uploadReminders.overdue_count} Survei Belum Diupload (lewat batas waktu)`
+                          : 'Batas Waktu Upload Survei Hari Ini'}
+                        {uploadReminders.due_today_count > 0 && uploadReminders.overdue_count > 0 && ` & ${uploadReminders.due_today_count} jatuh tempo hari ini`}
                       </h4>
                       <ul className="text-[11px] text-amber-800 mt-1 space-y-0.5">
                         {uploadReminders.reminders.slice(0, 4).map(r => (
                           <li key={r.metric_id}>
-                            <strong>{r.metric_name}</strong> — PIC: {r.pic_name} ({r.pic_email || 'email belum diisi'}) — {r.status === 'OVERDUE' ? `Terlambat sejak ${r.deadline}` : `Jatuh tempo ${r.deadline} (${r.days_until_deadline} hari lagi)`}
+                            <strong>{r.metric_name}</strong> — PIC: {r.pic_name} ({r.pic_email || 'email belum diisi'}) — data survei <strong>{r.expected_period_label}</strong> belum ada {r.status === 'OVERDUE' ? `(batas ${r.deadline}, lewat ${r.days_overdue} hari)` : '(batas upload hari ini)'}
                           </li>
                         ))}
                         {uploadReminders.reminders.length > 4 && (
@@ -957,6 +959,11 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
                               ))}
                             </select>
                           </div>
+                          <p className="text-[10.5px] text-gray-400 mt-1">
+                            {metricFormData.update_frequency === 'ONE_TIME_ANNUAL'
+                              ? 'Pada tanggal ini setiap tahun, bila belum ada data survei bertanggal tahun berjalan, PIC otomatis diingatkan lewat email.'
+                              : 'Pada tanggal ini setiap bulan, bila belum ada data survei bertanggal bulan SEBELUMNYA (mis. tgl 10 Oktober → data September), PIC otomatis diingatkan lewat email.'}
+                          </p>
                         </div>
 
                         <div>

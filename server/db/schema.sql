@@ -165,6 +165,23 @@ CREATE TABLE dbo.px_email_settings (                -- exactly one row (setting_
 );
 GO
 
+-- ---------------------------------------------------------------- upload-reminder log (what was emailed to which PIC)
+IF OBJECT_ID(N'dbo.px_reminder_log', N'U') IS NULL
+CREATE TABLE dbo.px_reminder_log (
+  log_id           INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_px_reminder_log PRIMARY KEY,
+  metric_id        INT            NOT NULL,
+  expected_period  NVARCHAR(20)   NOT NULL,          -- the period that had no data: '2026-09' (monthly) or '2026' (annual)
+  sent_on          DATE           NOT NULL,          -- the run date the reminder belongs to
+  attempted_at     DATETIME2(3)   NOT NULL CONSTRAINT DF_px_remlog_ts DEFAULT (SYSUTCDATETIME()),
+  status           VARCHAR(10)    NOT NULL,          -- SENT | FAILED
+  pic_email        NVARCHAR(200)  NOT NULL,
+  error_message    NVARCHAR(500)  NULL
+);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_px_remlog_metric' AND object_id = OBJECT_ID(N'dbo.px_reminder_log'))
+  CREATE INDEX IX_px_remlog_metric ON dbo.px_reminder_log(metric_id, expected_period, sent_on);
+GO
+
 -- ---------------------------------------------------------------- application settings
 IF OBJECT_ID(N'dbo.px_app_settings', N'U') IS NULL
 CREATE TABLE dbo.px_app_settings (                  -- small admin-managed values shown in the UI (targets, dropdown options)

@@ -76,7 +76,7 @@ Lalu set `STORAGE_BACKEND=sql` di `.env` dan restart server.
 | **Windows Authentication** | di SSMS pilih *Windows Authentication* (akun Windows administrator) — akses penuh ke seluruh server |
 | **Cek dari aplikasi** | `http://localhost:5000/api/health` → bagian `database` (server, edisi, jumlah baris tabel kunci) |
 
-Tabel aplikasi berawalan `px_` (24 tabel). Yang paling sering dilihat: `px_metrics`, `px_metric_targets`, `px_survey_uploaded_responses`, `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` (kolom `file_path` + `transcript`).
+Tabel aplikasi berawalan `px_` (25 tabel). Yang paling sering dilihat: `px_metrics`, `px_metric_targets`, `px_survey_uploaded_responses`, `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` (kolom `file_path` + `transcript`).
 
 > Jangan mengubah data langsung lewat SSMS tanpa alasan kuat — validasi dan perhitungan skor berjalan di aplikasi.
 
@@ -135,6 +135,8 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 | Pertanyaan survei tiap metric | `px_survey_questions` | menu Survey Templates / Question Settings (tombol "Reset" mengembalikan template default) |
 | Target PX Index (garis chart), opsi kategori & format event | `px_app_settings` | `PUT /api/admin/settings/:key` (mis. `{"value": 90}`) atau langsung di tabel |
 | Direktorat & divisi (filter Header, form check-in) | `px_directorates`, `px_divisions` | langsung di tabel; entri seed yang hilang ditambahkan otomatis saat server start |
+| Jadwal reminder otomatis (jam kirim, ulangi tiap N hari) | `px_app_settings` (`reminder_send_hour`, `reminder_repeat_days`) | menu **Setting Email** |
+| Riwayat email reminder yang terkirim | `px_reminder_log` | otomatis; ditampilkan di menu Setting Email |
 | Akun pengirim email reminder PIC (password terenkripsi) | `px_email_settings` | menu **Setting Email** di Header |
 | Daftar pilihan Parameter Admin & Survey Questions (tipe metrik, skala, responden, frekuensi, tipe pertanyaan) | `px_app_settings` | `PUT /api/admin/settings/:key` (hanya label) |
 | Parameter journey/checkpoint/metric/target/bobot | `px_journeys`, `px_checkpoints`, `px_metrics`, `px_metric_targets` | menu Parameter Admin |

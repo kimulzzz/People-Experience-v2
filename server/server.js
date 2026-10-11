@@ -17,7 +17,7 @@ const { isOllamaAvailable, generateEventSummary } = require('./services/localAiS
 const { generateSurveyCsvTemplate } = require('./services/surveyTemplateService');
 const { processSurveyCsv } = require('./services/surveyImportService');
 const { generateSurveyEvidenceCsv } = require('./services/surveyEvidenceService');
-const { getPendingUploadReminders, sendPendingUploadReminders } = require('./services/reminderService');
+const { getPendingUploadReminders, sendPendingUploadReminders, startReminderScheduler } = require('./services/reminderService');
 const emailSettingsService = require('./services/emailSettingsService');
 const { queueMediaTranscription, resumeInterruptedTranscriptions, resolveUploadPath } = require('./services/transcribeService');
 
@@ -97,7 +97,7 @@ app.get('/api/health', async (req, res) => {
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.23.0',
+    version: '2.24.0',
     local_ai: {
       ollama_status: ollama ? 'connected' : 'offline (using local heuristic engine)',
       host: process.env.OLLAMA_HOST || 'http://localhost:11434'
@@ -106,6 +106,11 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
+const NUMERIC_SETTINGS = {
+  px_index_target: { min: 0, max: 100, integer: false, label: 'Target PX Index' },
+  reminder_send_hour: { min: 0, max: 23, integer: true, label: 'Jam pengiriman reminder' },
+  reminder_repeat_days: { min: 0, max: 31, integer: true, label: 'Interval pengulangan reminder (hari)' }
+};
 const LABEL_ONLY_SETTINGS = new Set(['metric_types', 'scale_types', 'target_audiences', 'update_frequencies', 'question_types']);
 
 // 1a. Admin-managed UI settings (PX target line, event dropdown options) — stored in the database
@@ -123,9 +128,12 @@ app.put('/api/admin/settings/:key', async (req, res) => {
     const { value } = req.body || {};
     const current = (await storage.getSettings())[key];
     if (current === undefined) return res.status(404).json({ error: `Setting "${key}" tidak ditemukan.` });
-    if (key === 'px_index_target') {
+    if (NUMERIC_SETTINGS[key]) {
+      const { min, max, integer, label } = NUMERIC_SETTINGS[key];
       const n = Number(value);
-      if (!Number.isFinite(n) || n < 0 || n > 100) return res.status(400).json({ error: 'Target PX Index harus angka 0 - 100.' });
+      if (value === '' || value === null || !Number.isFinite(n) || n < min || n > max || (integer && !Number.isInteger(n))) {
+        return res.status(400).json({ error: `${label} harus ${integer ? 'bilangan bulat' : 'angka'} ${min} - ${max}.` });
+      }
       return res.json({ key, value: await storage.setSetting(key, n) });
     }
     const validList = Array.isArray(value) && value.length > 0 &&
@@ -476,8 +484,9 @@ app.get('/api/admin/upload-reminders', async (req, res) => {
     res.json({
       total_reminders: reminders.length,
       overdue_count: reminders.filter(r => r.status === 'OVERDUE').length,
-      due_soon_count: reminders.filter(r => r.status === 'DUE_SOON').length,
-      reminders
+      due_today_count: reminders.filter(r => r.status === 'DUE_TODAY').length,
+      reminders,
+      history: await storage.getReminderLog(20)
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -486,7 +495,13 @@ app.get('/api/admin/upload-reminders', async (req, res) => {
 
 app.post('/api/admin/upload-reminders/send', async (req, res) => {
   try {
-    const result = await sendPendingUploadReminders();
+    // Optional: { reference_date: 'YYYY-MM-DD' } simulates another day, { dry_run: true } sends nothing.
+    // { automatic: true } runs it exactly like the scheduler would (dedupe + repeat interval) instead of "send now".
+    const { reference_date, dry_run, automatic, metric_id } = req.body || {};
+    if (reference_date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(String(reference_date))) {
+      return res.status(400).json({ error: 'reference_date harus berformat YYYY-MM-DD.' });
+    }
+    const result = await sendPendingUploadReminders({ referenceDate: reference_date, dryRun: !!dry_run, force: !automatic, metricId: metric_id !== undefined ? parseInt(metric_id, 10) : null });
     res.json({ success: true, ...result });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -980,17 +995,10 @@ storageReady.then(() => app.listen(PORT, () => {
   // Video transcripts interrupted by a restart would otherwise sit on PROCESSING forever.
   resumeInterruptedTranscriptions().catch(err => console.error('Resume transcriptions failed:', err.message));
 
-  // Daily automatic check for Survey Upload Reminders (Batas Waktu Upload Survei).
-  // Runs once shortly after boot, then every 24h — emails PICs whose metrics are
-  // DUE_SOON or OVERDUE. Safe to run repeatedly: metrics already uploaded this
-  // cycle are automatically skipped, so PICs aren't spammed once they've uploaded.
-  const DAILY_MS = 24 * 60 * 60 * 1000;
-  setTimeout(() => {
-    sendPendingUploadReminders().catch(err => console.error('[reminderService] daily check failed:', err.message));
-    setInterval(() => {
-      sendPendingUploadReminders().catch(err => console.error('[reminderService] daily check failed:', err.message));
-    }, DAILY_MS);
-  }, 15000);
+  // Automatic Survey Upload Reminders: on a metric's deadline day, if the PIC has not uploaded the
+  // previous month's survey data, the PIC is emailed (see services/reminderService.js). Runs at boot
+  // (catch-up) and every 30 minutes; px_reminder_log prevents duplicate emails.
+  startReminderScheduler();
 })).catch(err => {
   console.error('Storage backend failed to start:', err.message);
   console.error('Set STORAGE_BACKEND=json in .env to fall back to the JSON file store.');
