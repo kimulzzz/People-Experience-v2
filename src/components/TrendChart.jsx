@@ -43,6 +43,7 @@ export default function TrendChart({
   const [trendData, setTrendData] = useState([]);
   const [lastCompleteMonthByYear, setLastCompleteMonthByYear] = useState({}); // { '2025': '12', '2026': '08' }
   const [availableYears, setAvailableYears] = useState([]); // e.g. ['2025', '2026'], from the database
+  const [pxTarget, setPxTarget] = useState(null); // PX Index target (%) — px_app_settings.px_index_target
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -77,6 +78,7 @@ export default function TrendChart({
 
       setTrendData(data.trends || []);
       setAvailableYears(data.available_years || []);
+      if (typeof data.px_index_target === 'number') setPxTarget(data.px_index_target);
       setLastCompleteMonthByYear(prev => ({ ...prev, [data.year]: data.last_complete_month }));
 
       // Initialize the range selectors to the server's default range on first load /
@@ -221,10 +223,12 @@ export default function TrendChart({
             <span className="w-3 h-3 rounded-full bg-[#2563EB]" />
             <span className="text-[#2563EB] font-bold">Outcome (30%)</span>
           </div>
-          <div className="flex items-center space-x-1.5 border-l pl-3 border-gray-200">
-            <span className="w-3 h-0.5 border-t-2 border-dashed border-[#780000]" />
-            <span className="text-[#780000] font-bold">Target (85.0%)</span>
-          </div>
+          {pxTarget !== null && (
+            <div className="flex items-center space-x-1.5 border-l pl-3 border-gray-200">
+              <span className="w-3 h-0.5 border-t-2 border-dashed border-[#780000]" />
+              <span className="text-[#780000] font-bold">Target ({pxTarget.toFixed(1)}%)</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -316,10 +320,10 @@ export default function TrendChart({
       <div className="relative overflow-x-auto">
         <div className="min-w-[700px]">
           <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full h-56 overflow-visible">
-            {/* Grid Horizontal Lines (0%, 20%, 40%, 60%, 80%, 85% Target, 100%) */}
-            {[0, 20, 40, 60, 80, 85, 100].map(val => {
+            {/* Grid Horizontal Lines (0-100% every 20%, plus the PX Index target from the database) */}
+            {Array.from(new Set([0, 20, 40, 60, 80, 100, ...(pxTarget !== null ? [pxTarget] : [])])).sort((a, b) => a - b).map(val => {
               const yPos = getY(val);
-              const isTarget = val === 85;
+              const isTarget = pxTarget !== null && val === pxTarget;
               const isBase = val === 0;
 
               return (
@@ -342,7 +346,7 @@ export default function TrendChart({
                     fontWeight={isTarget ? 'bold' : '500'}
                     textAnchor="end"
                   >
-                    {isTarget ? '85%' : `${val}%`}
+                    {`${Number.isInteger(val) ? val : val.toFixed(1)}%`}
                   </text>
                 </g>
               );

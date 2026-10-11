@@ -94,6 +94,7 @@ export default function MetricDetailModal({
   onClose, 
   metricId, 
   period = 'YTD',
+  filterOptions = null,
   onOpenSurveyUpload,
   onOpenSurveyQuestionSettings
 }) {
@@ -109,12 +110,23 @@ export default function MetricDetailModal({
     if (isOpen && metricId) {
       fetchDetail();
     }
-  }, [isOpen, metricId, period]);
+  }, [isOpen, metricId, period, filterOptions?.mode, filterOptions?.year, filterOptions?.month, filterOptions?.directorate, filterOptions?.sub_directorate]);
 
   const fetchDetail = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/metrics/${metricId}/detail?period=${period}`);
+      // Same period + directorate scope as the dashboard scorecard, so the drilldown never disagrees with it.
+      const params = new URLSearchParams();
+      if (filterOptions) {
+        params.set('mode', filterOptions.mode || 'YTD');
+        if (filterOptions.year) params.set('year', filterOptions.year);
+        if (filterOptions.month) params.set('month', filterOptions.month);
+        if (filterOptions.directorate && filterOptions.directorate !== 'ALL') params.set('directorate', filterOptions.directorate);
+        if (filterOptions.sub_directorate && filterOptions.sub_directorate !== 'ALL') params.set('sub_directorate', filterOptions.sub_directorate);
+      } else {
+        params.set('period', period);
+      }
+      const res = await fetch(`/api/metrics/${metricId}/detail?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
         setDetailData(data);

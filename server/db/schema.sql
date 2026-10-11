@@ -120,10 +120,41 @@ CREATE TABLE dbo.px_master_survey_questions (
 );
 GO
 
-IF OBJECT_ID(N'dbo.px_custom_survey_questions', N'U') IS NULL
-CREATE TABLE dbo.px_custom_survey_questions (       -- Admin-edited question set per SURVEY metric
-  metric_id       INT            NOT NULL CONSTRAINT PK_px_custom_questions PRIMARY KEY,
-  questions_json  NVARCHAR(MAX)  NOT NULL
+IF OBJECT_ID(N'dbo.px_survey_questions', N'U') IS NULL
+CREATE TABLE dbo.px_survey_questions (              -- the question set of every SURVEY metric (one row per question)
+  question_row           INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_px_survey_questions PRIMARY KEY,
+  metric_id              INT            NOT NULL,
+  display_order          INT            NOT NULL,
+  question_key           NVARCHAR(100)  NOT NULL,          -- key used inside ratings_json of the responses
+  label                  NVARCHAR(300)  NOT NULL CONSTRAINT DF_px_sq_label DEFAULT (N''),
+  question_text          NVARCHAR(MAX)  NOT NULL CONSTRAINT DF_px_sq_text DEFAULT (N''),
+  question_type          VARCHAR(20)    NOT NULL,          -- SCALE_1_5 | SCALE_1_10 | YES_NO | FREE_TEXT
+  mandatory              BIT            NOT NULL CONSTRAINT DF_px_sq_mand DEFAULT (0),
+  dimension              NVARCHAR(200)  NULL,              -- ESS dimension
+  visible_based_on       NVARCHAR(200)  NULL,
+  required_based_on      NVARCHAR(200)  NULL,
+  percent_favorable      FLOAT          NULL,              -- ESS official distribution (optional)
+  percent_neutral        FLOAT          NULL,
+  percent_unfavorable    FLOAT          NULL,
+  extra_json             NVARCHAR(MAX)  NULL,              -- any other field a question carries
+  is_customized          BIT            NOT NULL CONSTRAINT DF_px_sq_cust DEFAULT (0),  -- 0 = default set, 1 = edited by an admin
+  CONSTRAINT UQ_px_sq_metric_key UNIQUE (metric_id, question_key)
+);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_px_sq_metric' AND object_id = OBJECT_ID(N'dbo.px_survey_questions'))
+  CREATE INDEX IX_px_sq_metric ON dbo.px_survey_questions(metric_id, display_order);
+GO
+-- v2.22.1: replaced by px_survey_questions (it was always empty - defaults were served from code)
+IF OBJECT_ID(N'dbo.px_custom_survey_questions', N'U') IS NOT NULL DROP TABLE dbo.px_custom_survey_questions;
+GO
+
+-- ---------------------------------------------------------------- application settings
+IF OBJECT_ID(N'dbo.px_app_settings', N'U') IS NULL
+CREATE TABLE dbo.px_app_settings (                  -- small admin-managed values shown in the UI (targets, dropdown options)
+  setting_key    NVARCHAR(100)  NOT NULL CONSTRAINT PK_px_app_settings PRIMARY KEY,
+  setting_value  NVARCHAR(MAX)  NOT NULL,            -- JSON
+  description    NVARCHAR(300)  NOT NULL CONSTRAINT DF_px_settings_desc DEFAULT (N''),
+  updated_at     DATETIME2(3)   NOT NULL CONSTRAINT DF_px_settings_ts DEFAULT (SYSUTCDATETIME())
 );
 GO
 

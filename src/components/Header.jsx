@@ -64,7 +64,7 @@ export default function Header({
     : [filterOptions.year || CURRENT_YEAR];
 
   // Current selected directorate object
-  const currentDirectorateObj = directoratesList.find(d => d.id === filterOptions.directorate);
+  const currentDirectorateObj = directoratesList.find(d => d.name === filterOptions.directorate);
   const availableSubDirectorates = currentDirectorateObj ? currentDirectorateObj.divisions : [];
 
   const handleModeChange = (newMode) => {
@@ -222,7 +222,7 @@ export default function Header({
               >
                 <option value="ALL">Direktorat: All (Bankwide)</option>
                 {directoratesList.map(d => (
-                  <option key={d.id} value={d.id}>
+                  <option key={d.name} value={d.name}>
                     {d.name}
                   </option>
                 ))}

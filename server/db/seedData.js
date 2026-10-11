@@ -956,6 +956,34 @@ const initialDirectorates = [
   }
 ];
 
+// Organisation units the demo respondents (survey responses + event attendance) actually belong
+// to. They are part of the directory so that every respondent can be reached through the
+// Directorate / Sub-Directorate filters (previously these units existed only as free text on
+// the responses, e.g. the whole "Digital Banking" directorate and ~15 divisions were unreachable).
+const respondentOrgUnits = [
+  ['Commercial & Corporate Banking', 'Corporate Banking'],
+  ['Consumer Banking', 'Branch Banking Region 1'],
+  ['Consumer Banking', 'Branch Banking Region 2'],
+  ['Finance & Operations', 'Financial Planning & Analysis'],
+  ['Human Resources', 'Talent Acquisition'],
+  ['Human Resources', 'People Experience & Culture'],
+  ['Information Technology', 'Core Banking Solution'],
+  ['Information Technology', 'IT Infrastructure & Security'],
+  ['Internal Audit & Legal', 'Legal & Compliance'],
+  ['Risk Management', 'Market Risk'],
+  ['Risk Management', 'Credit Risk Operations'],
+  ['Digital Banking', 'OCTO Mobile Product'],
+  ['Digital Banking', 'OCTO Mobile'],
+  ['Information Technology', 'App Dev'],
+  ['Information Technology', 'Core Banking'],
+  ['Human Resources', 'People Experience']
+];
+respondentOrgUnits.forEach(([directorate_name, division]) => {
+  let d = initialDirectorates.find(x => x.directorate_name === directorate_name);
+  if (!d) { d = { directorate_name, divisions: [] }; initialDirectorates.push(d); }
+  if (!d.divisions.includes(division)) d.divisions.push(division);
+});
+
 // Helper to generate seed multi-month survey responses with question-level breakdown
 function generateInitialSurveyResponses() {
   const { DEFAULT_METRIC_QUESTIONS } = require('../services/metricQuestionService');
@@ -1289,7 +1317,31 @@ const initialOperationalRecords = {
   ]
 };
 
+// Admin-managed UI values (px_app_settings). Seeded once, then read from the database only.
+const initialAppSettings = {
+  px_index_target: { value: 85, description: 'Target PX Index (%) — garis target pada Performance Trend chart' },
+  event_program_categories: {
+    value: [
+      { value: 'Perspektif', label: 'Perspektif' },
+      { value: 'D&I', label: 'D&I (Diversity & Inclusion)' },
+      { value: 'Young', label: 'Young CIMB' },
+      { value: 'EVD', label: 'EVD (Employee Value & Development)' },
+      { value: 'Special Program', label: 'Special Program' }
+    ],
+    description: 'Pilihan kategori program pada form Create Signature Event'
+  },
+  event_types: {
+    value: [
+      { value: 'HYBRID', label: 'Hybrid (Onsite + Online)' },
+      { value: 'OFFLINE', label: 'Offline / In-Person' },
+      { value: 'ONLINE', label: 'Online Streaming (Zoom / Teams)' }
+    ],
+    description: 'Pilihan format pelaksanaan pada form Create Signature Event'
+  }
+};
+
 module.exports = {
+  initialAppSettings,
   initialJourneys,
   initialCheckpoints,
   initialMetrics,

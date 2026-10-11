@@ -204,7 +204,7 @@ export default function SurveyImportModal({
                 onChange={(e) => setSelectedMetricId(e.target.value)}
                 className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-[#ED1C24]"
               >
-                <option value="ALL">🌟 Master Template: All 20 Survey Metrics (Complete)</option>
+                <option value="ALL">🌟 Master Template: All {surveyMetrics.length} Survey Metrics (Complete)</option>
                 {surveyMetrics.map(m => (
                   <option key={m.metric_id} value={m.metric_id}>
                     {m.metric_id} - {m.metric_name} ({m.scale_type})

@@ -41,7 +41,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(99-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(108-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -57,8 +57,8 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (99 cases) |
-| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (22 `px_*` tables), JSON→SQL migration, rollback |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (108 cases) |
+| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (23 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules |
 
 ## Compliance constraints (do not violate)
@@ -368,6 +368,23 @@ domain model, not just descriptive:
   Gotchas: the regression suite dirties whichever backend is active (on SQL, reset with
   `node server/db/migrate.js --reset`); `.env` now holds `STORAGE_BACKEND=sql` + `DB_*` (gitignored);
   `server/data/store.json` is no longer written while on SQL, so it goes stale until exported.
+
+- **v2.22.1** (2026-10-11, see `CHANGELOG.md` [2.22.1], `SQLServerDB.md`, `docs/08` §8): User asked the `auditor`
+  subagent to verify that EVERYTHING on the dashboard comes from SQL Server and to move whatever doesn't, and for the
+  SQL Server settings to live in a separate .md (`SQLServerDB.md` at the project root). Audit verdict: no server code
+  bypasses SQL for operational data; findings fixed: survey question catalogue (was ~730 lines of code in
+  `metricQuestionService.js`, `px_custom_survey_questions` was empty) → new `px_survey_questions` table seeded once, read
+  only from SQL (code template kept solely for seed + admin "Reset"); respondent org units missing from the directory
+  (whole "Digital Banking" directorate + ~15 divisions unreachable by the Header filters) added to
+  `initialDirectorates`/`px_directorates`/`px_divisions` via a non-destructive boot top-up; new `px_app_settings`
+  (PX target line, event category/type options; `GET /api/settings`, `PUT /api/admin/settings/:key`); public check-in
+  form uses directorate/division dropdowns (no more silent "Information Technology" default); Dashboard counts and
+  journey icons from the DB; `SEED_DEMO_DATA` flag. Bugs found: Metric 11 drilldown wrong field names, WARNING alerts
+  compared against the raw (not normalized) target, Header Sub-Dir dropdown always empty (`d.id` doesn't exist),
+  MetricDetailModal ignoring the selected period/directorate. Deliberately NOT changed: hardcoded metric IDs for special
+  cases (2/5/7/11/12), CSV importer default fillers, 15 old regression-test upload batches in the data, action library
+  coverage. Tests: 108 (Module 29 added), 108/108 on SQL (x2) and JSON. Reminder: the regression suite dirties the
+  active backend — on SQL run `node server/db/migrate.js --reset` afterwards.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

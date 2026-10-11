@@ -1472,6 +1472,108 @@ async function runRegressionSuite() {
     assert.ok(code.status >= 400 && code.status < 500, `Expected 4xx, got ${code.status}`);
   });
 
+  // --- 29. DASHBOARD DATA SOURCED FROM THE DATABASE (auditor follow-up, v2.22.1) ---
+  console.log('\n📦 MODULE 29: Dashboard Data Sourced From the Database (Positive & Negative Testing)');
+
+  const getJson = async (p) => (await fetch(`${BASE_URL}${p}`)).json();
+  const putJson = (p, body) => fetch(`${BASE_URL}${p}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  });
+
+  await runTest('[POSITIVE] GET /api/settings serves the PX target and the Create-Event dropdown options from the database', async () => {
+    const s = await getJson('/api/settings');
+    assert.strictEqual(typeof s.px_index_target, 'number');
+    assert.ok(Array.isArray(s.event_program_categories) && s.event_program_categories.length > 0);
+    assert.ok(Array.isArray(s.event_types) && s.event_types.every(o => o.value && o.label));
+  });
+
+  await runTest('[POSITIVE] Changing px_index_target is stored and reflected by the trend endpoint (chart target line), then restored', async () => {
+    const original = (await getJson('/api/settings')).px_index_target;
+    try {
+      const res = await putJson('/api/admin/settings/px_index_target', { value: 90 });
+      assert.strictEqual(res.status, 200);
+      const trends = await getJson('/api/metrics/trends?mode=YTD');
+      assert.strictEqual(trends.px_index_target, 90);
+    } finally {
+      await putJson('/api/admin/settings/px_index_target', { value: original });
+    }
+    assert.strictEqual((await getJson('/api/settings')).px_index_target, original);
+  });
+
+  await runTest('[NEGATIVE] Invalid settings are rejected (target outside 0-100 → 400, unknown key → 404, empty option list → 400)', async () => {
+    assert.strictEqual((await putJson('/api/admin/settings/px_index_target', { value: 150 })).status, 400);
+    assert.strictEqual((await putJson('/api/admin/settings/px_index_target', { value: 'abc' })).status, 400);
+    assert.strictEqual((await putJson('/api/admin/settings/no_such_key', { value: 1 })).status, 404);
+    assert.strictEqual((await putJson('/api/admin/settings/event_types', { value: [] })).status, 400);
+  });
+
+  await runTest('[POSITIVE] Every SURVEY metric has its question set in the database (not only in code)', async () => {
+    const surveyMetrics = await getJson('/api/surveys/metrics');
+    const all = (await getJson('/api/admin/survey-questions')).questions;
+    surveyMetrics.forEach(m => {
+      assert.ok(Array.isArray(all[m.metric_id]) && all[m.metric_id].length > 0, `Metric ${m.metric_id} has no question set`);
+    });
+  });
+
+  await runTest('[POSITIVE] Editing a metric\'s questions persists and "Reset to default" restores the original set', async () => {
+    const before = (await getJson('/api/admin/survey-questions/2')).questions;
+    const edited = before.map((q, i) => (i === 0 ? { ...q, text: 'REGRESSION-EDITED QUESTION TEXT' } : q));
+    try {
+      const saveRes = await fetch(`${BASE_URL}/api/admin/survey-questions/2`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questions: edited })
+      });
+      assert.ok(saveRes.ok, `save failed: ${saveRes.status}`);
+      const after = (await getJson('/api/admin/survey-questions/2')).questions;
+      assert.strictEqual(after[0].text, 'REGRESSION-EDITED QUESTION TEXT');
+      assert.strictEqual(after.length, before.length);
+    } finally {
+      await fetch(`${BASE_URL}/api/admin/survey-questions/2/reset`, { method: 'POST' });
+    }
+    const restored = (await getJson('/api/admin/survey-questions/2')).questions;
+    assert.strictEqual(restored[0].text, before[0].text);
+  });
+
+  await runTest('[POSITIVE] Every directorate/division respondents belong to exists in the directory, so the Header filters can reach them', async () => {
+    const directory = await getJson('/api/directorates');
+    for (const metricId of [7, 8, 9]) {
+      const detail = await getJson(`/api/metrics/${metricId}/detail?mode=YTD&year=${new Date().getFullYear()}`);
+      (detail.responses || []).forEach(r => {
+        const dir = directory.find(d => d.name === r.directorate);
+        assert.ok(dir, `Directorate "${r.directorate}" (metric ${metricId}) is missing from the directory`);
+        assert.ok(dir.divisions.includes(r.division), `Division "${r.division}" is missing under "${r.directorate}"`);
+      });
+    }
+  });
+
+  await runTest('[POSITIVE] Metric #11 drilldown rows carry the real event name and registration time (not blank)', async () => {
+    const detail = await getJson('/api/metrics/11/detail');
+    assert.ok(detail.operational_records.length > 0, 'Seed event has attendances');
+    detail.operational_records.forEach(r => {
+      assert.ok(r.event_title && r.event_title !== 'Signature Program Event', `event_title missing: ${r.event_title}`);
+      assert.ok(r.registered_at, 'registered_at missing');
+    });
+  });
+
+  await runTest('[POSITIVE] Every WARNING or CRITICAL metric on the scorecard has an alert (WARNING uses the normalized target, same as the status)', async () => {
+    const calc = await getJson('/api/metrics/calculate');
+    const alerts = await getJson('/api/alerts');
+    const alertIds = new Set(alerts.alerts.map(a => a.metric_id));
+    calc.metrics.filter(m => !m.is_disabled && (m.status === 'WARNING' || m.status === 'CRITICAL')).forEach(m => {
+      assert.ok(alertIds.has(m.metric_id), `Metric ${m.metric_id} is ${m.status} but has no alert`);
+    });
+  });
+
+  await runTest('[NEGATIVE] Saving or resetting questions of a non-existent metric returns 404 and writes nothing', async () => {
+    const reset = await fetch(`${BASE_URL}/api/admin/survey-questions/9999/reset`, { method: 'POST' });
+    assert.strictEqual(reset.status, 404);
+    const save = await fetch(`${BASE_URL}/api/admin/survey-questions/9999`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questions: [{ key: 'q1', label: 'x', text: 'x', type: 'SCALE_1_5' }] })
+    });
+    assert.strictEqual(save.status, 404);
+    const all = (await getJson('/api/admin/survey-questions')).questions;
+    assert.ok(!all[9999], 'No orphan question rows may be created');
+  });
+
   // --- SUMMARY ---
   console.log('\n================================================================');
   console.log(`📊 REGRESSION TEST SUMMARY: ${passedTests}/${totalTests} Tests Passed (${failedTests} Failed)`);

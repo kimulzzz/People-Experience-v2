@@ -22,7 +22,9 @@ async function getAlertsAndRecommendations() {
 
   const deficientMetrics = calculation.metrics.filter(metric => {
     const isCritical = metric.normalized_score < metric.min_threshold;
-    const isWarning = metric.normalized_score < metric.target_value && !isCritical;
+    // Compare against the target on the same 0-100 scale as normalized_score (RATING_5 / QUOTA_COUNT
+    // targets are stored in their native scale) — same rule as the metric status in calculatePEIndex().
+    const isWarning = metric.normalized_score < (metric.target_value_normalized ?? metric.target_value) && !isCritical;
     return isCritical || isWarning;
   });
 

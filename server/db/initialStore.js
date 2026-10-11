@@ -12,7 +12,8 @@ const {
   sampleAttendances,
   sampleFeedbackResponses,
   initialSurveyUploadedResponses,
-  initialOperationalRecords
+  initialOperationalRecords,
+  initialAppSettings
 } = require('./seedData');
 
 function buildInitialStore() {
@@ -92,7 +93,8 @@ function buildInitialStore() {
     ],
     customSurveyQuestions: {},
     acknowledgedAlerts: [],
-    operationalRecords: JSON.parse(JSON.stringify(initialOperationalRecords))
+    operationalRecords: JSON.parse(JSON.stringify(initialOperationalRecords)),
+    appSettings: JSON.parse(JSON.stringify(initialAppSettings))
   };
 }
 

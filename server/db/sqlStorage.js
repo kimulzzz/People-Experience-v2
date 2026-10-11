@@ -343,6 +343,101 @@ async function bulkInsertResponses(tx, uploadId, rows) {
   await new sql.Request(tx).bulk(table);
 }
 
+// ------------------------------------------------------------------ survey question catalogue (px_survey_questions)
+const SQ_FIELDS = ['key', 'label', 'text', 'type', 'mandatory', 'dimension', 'visible_based_on', 'required_based_on',
+  'percent_favorable', 'percent_neutral', 'percent_unfavorable'];
+const numOrNull = v => (v === undefined || v === null || v === '' || !Number.isFinite(parseFloat(v)) ? null : parseFloat(v));
+const textOrNull = v => (v === undefined || v === null ? null : String(v));
+
+function rowToSurveyQuestion(r) {
+  const q = { key: r.question_key, label: r.label, text: r.question_text, type: r.question_type, mandatory: !!r.mandatory };
+  if (r.dimension !== null) q.dimension = r.dimension;
+  if (r.visible_based_on !== null) q.visible_based_on = r.visible_based_on;
+  if (r.required_based_on !== null) q.required_based_on = r.required_based_on;
+  if (r.percent_favorable !== null) q.percent_favorable = r.percent_favorable;
+  if (r.percent_neutral !== null) q.percent_neutral = r.percent_neutral;
+  if (r.percent_unfavorable !== null) q.percent_unfavorable = r.percent_unfavorable;
+  const extra = parseJson(r.extra_json, null);
+  return extra ? { ...extra, ...q } : q;
+}
+
+// Replaces the whole question set of one metric.
+async function replaceSurveyQuestions(tx, metric_id, questions, customized) {
+  await run('DELETE FROM dbo.px_survey_questions WHERE metric_id = @metric_id', { metric_id }, tx);
+  const seen = new Set();
+  for (let i = 0; i < questions.length; i++) {
+    const q = questions[i] || {};
+    let key = String(q.key || `q${i + 1}`);
+    while (seen.has(key)) key += '_';                         // (metric_id, question_key) is unique
+    seen.add(key);
+    const extra = {};
+    Object.keys(q).forEach(k => { if (!SQ_FIELDS.includes(k)) extra[k] = q[k]; });
+    await run(`INSERT INTO dbo.px_survey_questions (metric_id, display_order, question_key, label, question_text, question_type,
+                 mandatory, dimension, visible_based_on, required_based_on, percent_favorable, percent_neutral, percent_unfavorable,
+                 extra_json, is_customized)
+               VALUES (@metric_id, @display_order, @question_key, @label, @question_text, @question_type, @mandatory, @dimension,
+                 @visible_based_on, @required_based_on, @pf, @pn, @pu, @extra_json, @is_customized)`, {
+      metric_id, display_order: i + 1, question_key: key, label: q.label === undefined || q.label === null ? '' : String(q.label),
+      question_text: T.max(q.text === undefined || q.text === null ? '' : String(q.text)),
+      question_type: String(q.type || 'SCALE_1_5'), mandatory: !!q.mandatory,
+      dimension: textOrNull(q.dimension), visible_based_on: textOrNull(q.visible_based_on), required_based_on: textOrNull(q.required_based_on),
+      pf: numOrNull(q.percent_favorable), pn: numOrNull(q.percent_neutral), pu: numOrNull(q.percent_unfavorable),
+      extra_json: Object.keys(extra).length ? T.max(JSON.stringify(extra)) : null, is_customized: !!customized
+    }, tx);
+  }
+}
+
+// Code-defined starting set (metricQuestionService) - used ONLY to seed the table and for the
+// explicit admin "Reset to default" action; every read goes to px_survey_questions.
+function defaultQuestionsFor(metric_id) {
+  const { DEFAULT_METRIC_QUESTIONS, getGenericQuestions } = require('../services/metricQuestionService');
+  return DEFAULT_METRIC_QUESTIONS[metric_id] || getGenericQuestions();
+}
+
+// Gives every SURVEY metric that has no question rows yet its default set (idempotent).
+async function seedSurveyQuestions(tx) {
+  const missing = await run(`SELECT m.metric_id FROM dbo.px_metrics m
+                             WHERE m.metric_type = 'SURVEY' AND NOT EXISTS (SELECT 1 FROM dbo.px_survey_questions q WHERE q.metric_id = m.metric_id)
+                             ORDER BY m.metric_id`, {}, tx);
+  for (const { metric_id } of missing) await replaceSurveyQuestions(tx, metric_id, defaultQuestionsFor(metric_id), false);
+  return missing.length;
+}
+
+// Adds any directorate / division of the seed directory that is missing (never removes or renames
+// anything an admin changed). Keeps the directory in step with the units respondents belong to.
+async function topUpDirectory() {
+  const have = await run(`SELECT d.directorate_name, v.division_name FROM dbo.px_directorates d
+                          LEFT JOIN dbo.px_divisions v ON v.directorate_id = d.directorate_id`);
+  const dirs = new Set(have.map(r => r.directorate_name));
+  const pairs = new Set(have.filter(r => r.division_name !== null).map(r => r.directorate_name + '|' + r.division_name));
+  const todo = [];
+  for (const d of seed.initialDirectorates) {
+    for (const div of d.divisions) if (!pairs.has(d.directorate_name + '|' + div)) todo.push([d.directorate_name, div]);
+    if (!dirs.has(d.directorate_name) && !d.divisions.length) todo.push([d.directorate_name, null]);
+  }
+  if (!todo.length) return;
+  await inTransaction(async tx => {
+    for (const [name, division_name] of todo) {
+      await run(`IF NOT EXISTS (SELECT 1 FROM dbo.px_directorates WHERE directorate_name = @name) INSERT INTO dbo.px_directorates (directorate_name) VALUES (@name)`, { name }, tx);
+      if (division_name) {
+        await run(`INSERT INTO dbo.px_divisions (directorate_id, division_name)
+                   SELECT directorate_id, @division_name FROM dbo.px_directorates WHERE directorate_name = @name`, { name, division_name }, tx);
+      }
+    }
+  });
+  console.log(`[sqlStorage] Added ${todo.length} missing directory entries.`);
+}
+
+// ------------------------------------------------------------------ app settings (px_app_settings)
+// Inserts any default setting that is not in the table yet (never overwrites an admin's value).
+async function seedAppSettings(tx) {
+  for (const [key, def] of Object.entries(seed.initialAppSettings || {})) {
+    await run(`IF NOT EXISTS (SELECT 1 FROM dbo.px_app_settings WHERE setting_key = @key)
+                 INSERT INTO dbo.px_app_settings (setting_key, setting_value, description) VALUES (@key, @value, @description)`,
+      { key, value: T.max(JSON.stringify(def.value)), description: def.description || '' }, tx);
+  }
+}
+
 // ------------------------------------------------------------------ parameter writers
 // Shared by importStore() and resetParametersToDefault().
 async function insertJourney(tx, j) {
@@ -430,7 +525,7 @@ async function insertDirectorate(tx, d) {
 
 async function clearParameters(tx) {
   await run(`DELETE FROM dbo.px_metric_targets;
-             DELETE FROM dbo.px_custom_survey_questions;
+             DELETE FROM dbo.px_survey_questions;
              DELETE FROM dbo.px_metrics;
              DELETE FROM dbo.px_checkpoints;
              DELETE FROM dbo.px_journeys;
@@ -446,6 +541,7 @@ async function insertDefaultParameters(tx) {
     await upsertTarget(tx, m.metric_id, { target_value: m.target_value, target_display: m.target_display, min_threshold: m.min_threshold });
   }
   for (const d of seed.initialDirectorates) await insertDirectorate(tx, d);
+  await seedSurveyQuestions(tx);
 }
 
 // ------------------------------------------------------------------ operational record tables
@@ -596,11 +692,19 @@ async function importStore(store, log = () => {}) {
     await bulkInsertResponses(tx, null, responseRows);
     counts.survey_responses = responseRows.length;
 
+    // Admin-customised sets from the JSON store are kept as customised; every other SURVEY metric
+    // gets the default set (seedSurveyQuestions).
     for (const [metric_id, questions] of Object.entries(store.customSurveyQuestions || {})) {
-      await run(`INSERT INTO dbo.px_custom_survey_questions (metric_id, questions_json) VALUES (@metric_id, @q)`,
-        { metric_id: parseInt(metric_id, 10), q: T.max(JSON.stringify(questions)) }, tx);
+      if (Array.isArray(questions) && questions.length) await replaceSurveyQuestions(tx, parseInt(metric_id, 10), questions, true);
     }
     counts.custom_survey_questions = Object.keys(store.customSurveyQuestions || {}).length;
+    for (const [key, def] of Object.entries(store.appSettings || {})) {
+      await run('INSERT INTO dbo.px_app_settings (setting_key, setting_value, description) VALUES (@key, @value, @description)',
+        { key, value: T.max(JSON.stringify(def.value)), description: def.description || '' }, tx);
+    }
+    await seedAppSettings(tx);
+    await seedSurveyQuestions(tx);
+    counts.survey_questions = (await run('SELECT COUNT(*) AS c FROM dbo.px_survey_questions', {}, tx))[0].c;
 
     for (const metric_id of store.acknowledgedAlerts || []) {
       await run(`INSERT INTO dbo.px_acknowledged_alerts (metric_id) VALUES (@metric_id)`, { metric_id: parseInt(metric_id, 10) }, tx);
@@ -709,7 +813,11 @@ const storage = {
     await getPool();
     await applySchema();
     await seedIfEmpty();
-    await topUpSeedResponses();
+    await inTransaction(async tx => { await seedSurveyQuestions(tx); await seedAppSettings(tx); });
+    await topUpDirectory();
+    // Demo survey responses for newly elapsed months. Set SEED_DEMO_DATA=false on a real
+    // production database so no synthetic responses are ever generated.
+    if (String(process.env.SEED_DEMO_DATA || 'true').toLowerCase() !== 'false') await topUpSeedResponses();
     const info = await this.health();
     console.log(`[sqlStorage] Connected to ${info.server} / ${info.database} (${info.edition})`);
   },
@@ -732,14 +840,28 @@ const storage = {
   },
   importStore,
   applySchema,
+  seedSurveyQuestions: () => inTransaction(tx => seedSurveyQuestions(tx)),
   // Drops every px_* table (children first). Used only by migrate.js --reset.
   async dropAllTables() {
     const tables = ['px_recruitment_sla_by_unit', 'px_approval_stage_compliance', 'px_hiring_channel_mix',
       'px_recognition_categories', 'px_attrition_by_tenure', 'px_acknowledged_alerts', 'px_survey_uploaded_responses',
       'px_survey_uploads', 'px_media', 'px_feedback_responses', 'px_attendances', 'px_event_questions', 'px_events',
-      'px_custom_survey_questions', 'px_master_survey_questions', 'px_divisions', 'px_directorates', 'px_action_library',
+      'px_app_settings', 'px_survey_questions', 'px_custom_survey_questions', 'px_master_survey_questions', 'px_divisions', 'px_directorates', 'px_action_library',
       'px_metric_targets', 'px_metrics', 'px_checkpoints', 'px_journeys'];
     for (const t of tables) await run(`IF OBJECT_ID(N'dbo.${t}', N'U') IS NOT NULL DROP TABLE dbo.${t}`);
+  },
+
+  // ---- app settings
+  async getSettings() {
+    const out = {};
+    (await run('SELECT setting_key, setting_value FROM dbo.px_app_settings ORDER BY setting_key')).forEach(r => { out[r.setting_key] = parseJson(r.setting_value, null); });
+    return out;
+  },
+  async setSetting(key, value) {
+    const rows = await run(`UPDATE dbo.px_app_settings SET setting_value = @value, updated_at = SYSUTCDATETIME()
+                            OUTPUT INSERTED.setting_key WHERE setting_key = @key`, { key: String(key), value: T.max(JSON.stringify(value)) });
+    if (!rows.length) throw new Error(`Setting "${key}" tidak ditemukan.`);
+    return value;
   },
 
   // ---- journeys
@@ -899,6 +1021,7 @@ const storage = {
       };
       await insertMetric(tx, metric);
       await upsertTarget(tx, newId, metric);
+      if (metric.metric_type === 'SURVEY') await replaceSurveyQuestions(tx, newId, defaultQuestionsFor(newId), false);
       return { ...metric, metric_weight: metric.weight };
     });
   },
@@ -956,7 +1079,7 @@ const storage = {
     const current = await this.getMetricById(id);
     if (!current) throw new Error(`Metric #${id} tidak ditemukan.`);
     await inTransaction(async tx => {
-      await run('DELETE FROM dbo.px_metric_targets WHERE metric_id = @id; DELETE FROM dbo.px_custom_survey_questions WHERE metric_id = @id; DELETE FROM dbo.px_metrics WHERE metric_id = @id;', { id }, tx);
+      await run('DELETE FROM dbo.px_metric_targets WHERE metric_id = @id; DELETE FROM dbo.px_survey_questions WHERE metric_id = @id; DELETE FROM dbo.px_metrics WHERE metric_id = @id;', { id }, tx);
     });
     return current;
   },
@@ -1314,35 +1437,38 @@ const storage = {
     return this.getMetricTargets();
   },
 
-  // ---- survey questions admin settings
-  async _customQuestions() {
-    const rows = await run('SELECT metric_id, questions_json FROM dbo.px_custom_survey_questions');
-    const out = {};
-    rows.forEach(r => { out[r.metric_id] = parseJson(r.questions_json, []); });
-    return out;
+  // ---- survey questions admin settings (rows of px_survey_questions)
+  async _questionRows(where, params) {
+    return run(`SELECT * FROM dbo.px_survey_questions ${where || ''} ORDER BY metric_id, display_order`, params || {});
   },
   async getSurveyQuestions(metric_id) {
-    const { getQuestionsForMetric } = require('../services/metricQuestionService');
-    return getQuestionsForMetric(metric_id, await this._customQuestions());
+    const id = parseInt(metric_id, 10);
+    const rows = await this._questionRows('WHERE metric_id = @id', { id });
+    if (rows.length) return rows.map(rowToSurveyQuestion);
+    // Only a metric with NO rows at all (e.g. a non-survey metric id) falls back to the generic question.
+    return require('../services/metricQuestionService').getGenericQuestions();
   },
   async getAllSurveyQuestions() {
-    const { getAllDefaultSurveyQuestions } = require('../services/metricQuestionService');
-    return { ...getAllDefaultSurveyQuestions(), ...(await this._customQuestions()) };
+    const out = {};
+    (await this._questionRows()).forEach(r => { (out[r.metric_id] = out[r.metric_id] || []).push(rowToSurveyQuestion(r)); });
+    return out;
+  },
+  // Question sets an admin has edited (used by the JSON export / rollback path).
+  async _customizedQuestions() {
+    const out = {};
+    (await this._questionRows('WHERE is_customized = 1')).forEach(r => { (out[r.metric_id] = out[r.metric_id] || []).push(rowToSurveyQuestion(r)); });
+    return out;
   },
   async saveSurveyQuestions(metric_id, questions) {
     const id = parseInt(metric_id, 10);
     if (!Array.isArray(questions)) throw new Error('Format pertanyaan harus berupa array.');
-    await run(`MERGE dbo.px_custom_survey_questions AS t USING (SELECT @id AS metric_id) AS s ON t.metric_id = s.metric_id
-               WHEN MATCHED THEN UPDATE SET questions_json = @q
-               WHEN NOT MATCHED THEN INSERT (metric_id, questions_json) VALUES (@id, @q);`,
-      { id, q: T.max(JSON.stringify(questions)) });
-    return questions;
+    await inTransaction(tx => replaceSurveyQuestions(tx, id, questions, true));
+    return this.getSurveyQuestions(id);
   },
   async resetSurveyQuestions(metric_id) {
     const id = parseInt(metric_id, 10);
-    await run('DELETE FROM dbo.px_custom_survey_questions WHERE metric_id = @id', { id });
-    const { getQuestionsForMetric } = require('../services/metricQuestionService');
-    return getQuestionsForMetric(id);
+    await inTransaction(tx => replaceSurveyQuestions(tx, id, defaultQuestionsFor(id), false));
+    return this.getSurveyQuestions(id);
   },
 
   // Distinct years that actually have survey response data (always including the current year).

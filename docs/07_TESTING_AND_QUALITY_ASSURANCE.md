@@ -571,3 +571,23 @@ setiap kali (85 test sebelumnya + 3 test Modul 26 baru), dengan jumlah event tet
 **Verifikasi paritas backend (di luar suite)**: dua server (SQL :5000 dan JSON :5001) dijalankan atas data identik, 58 endpoint GET dibandingkan field-demi-field → **58/58 identik** (setelah memperbaiki satu temuan: migrasi awal mengelompokkan respons per upload sehingga urutan baris berubah dan "respons terakhir" per metric berbeda; kini satu bulk insert berurutan). Jalur rollback juga diuji: ekspor SQL → `store.json` → dilayani backend JSON → **58/58 identik** dengan SQL.
 
 Catatan operasional: regression test menulis data uji (upload CSV) ke database aktif, sama seperti dulu ke `store.json`. Setelah menjalankannya di backend SQL, kembalikan data bersih dengan `node server/db/migrate.js --reset`.
+
+---
+
+## 🕵️ 12. Audit Sumber Data SQL Server — v2.22.1 (2026-10-11)
+
+**Regression suite: 108 test** (99 + **Modul 29**, 9 test), **108/108 PASS** di SQL Server (2× berturut-turut) dan di backend JSON.
+
+| Modul 29 | Jenis | Yang diuji |
+| :--- | :---: | :--- |
+| Settings dari database | Positif | `GET /api/settings` memuat target PX & opsi dropdown event |
+| Target PX tersimpan | Positif | `PUT` target → `/api/metrics/trends.px_index_target` ikut berubah, lalu dipulihkan |
+| Settings tidak valid | Negatif | target 150 / "abc" → 400; key tak dikenal → 404; daftar opsi kosong → 400 |
+| Pertanyaan tiap metric SURVEY ada di DB | Positif | seluruh metric SURVEY punya set pertanyaan |
+| Edit & reset pertanyaan | Positif | simpan perubahan teks → terbaca; reset → kembali ke teks asli |
+| Responden terjangkau filter | Positif | setiap direktorat/divisi responden (metric 7/8/9) ada di `/api/directorates` |
+| Drilldown Metric 11 | Positif | `event_title` & `registered_at` terisi |
+| Alert vs status | Positif | setiap metric WARNING/CRITICAL punya alert |
+| Metric tak ada | Negatif | simpan/reset pertanyaan metric 9999 → 404 dan tidak membuat baris yatim |
+
+Paritas backend: 57/58 endpoint GET identik antara SQL dan JSON (selisih satu disengaja: JSON masih menyajikan set pertanyaan kode untuk metric 19/20 yang bukan metric SURVEY).

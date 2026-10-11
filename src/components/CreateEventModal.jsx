@@ -2,11 +2,34 @@ import React, { useState, useEffect } from 'react';
 import { X, Plus, Trash2, Calendar, MapPin, Users, HelpCircle } from 'lucide-react';
 
 export default function CreateEventModal({ isOpen, onClose, onCreateEvent }) {
+  useEffect(() => {
+    if (!isOpen) return;
+    fetch('/api/settings')
+      .then(res => res.json())
+      .then(settings => {
+        const cats = Array.isArray(settings.event_program_categories) ? settings.event_program_categories : [];
+        const types = Array.isArray(settings.event_types) ? settings.event_types : [];
+        setCategoryOptions(cats);
+        setTypeOptions(types);
+        // Pre-select the first option when nothing is chosen yet.
+        setFormData(prev => ({
+          ...prev,
+          program_category: prev.program_category || (cats[0] && cats[0].value) || '',
+          event_type: prev.event_type || (types[0] && types[0].value) || ''
+        }));
+      })
+      .catch(err => console.error('Error fetching event options:', err));
+  }, [isOpen]);
+
+  // Dropdown options come from the database (px_app_settings via GET /api/settings).
+  const [categoryOptions, setCategoryOptions] = useState([]);
+  const [typeOptions, setTypeOptions] = useState([]);
+
   const [formData, setFormData] = useState({
     event_name: '',
-    program_category: 'Perspektif',
+    program_category: '',
     event_date: new Date().toISOString().slice(0, 16),
-    event_type: 'HYBRID',
+    event_type: '',
     location: 'Auditorium Menara CIMB Niaga',
     target_participants: 500,
     pre_event_code: '',
@@ -106,11 +129,9 @@ export default function CreateEventModal({ isOpen, onClose, onCreateEvent }) {
                 onChange={(e) => setFormData({ ...formData, program_category: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#ED1C24] text-xs font-semibold"
               >
-                <option value="Perspektif">Perspektif</option>
-                <option value="D&I">D&I (Diversity & Inclusion)</option>
-                <option value="Young">Young CIMB</option>
-                <option value="EVD">EVD (Employee Value & Development)</option>
-                <option value="Special Program">Special Program</option>
+                {categoryOptions.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
               </select>
             </div>
 
@@ -121,9 +142,9 @@ export default function CreateEventModal({ isOpen, onClose, onCreateEvent }) {
                 onChange={(e) => setFormData({ ...formData, event_type: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#ED1C24] text-xs font-semibold"
               >
-                <option value="HYBRID">Hybrid (Onsite + Online)</option>
-                <option value="OFFLINE">Offline / In-Person</option>
-                <option value="ONLINE">Online Streaming (Zoom / Teams)</option>
+                {typeOptions.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
               </select>
             </div>
           </div>

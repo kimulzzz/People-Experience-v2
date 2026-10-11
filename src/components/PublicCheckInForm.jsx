@@ -12,9 +12,19 @@ export default function PublicCheckInForm({ eventCode, onBackToAdmin }) {
     nip: '',
     employee_name: '',
     cimb_email: '',
-    directorate: 'Information Technology',
-    division: 'Core Banking Solution'
+    directorate: '',
+    division: ''
   });
+  // Directorate / division catalogue from the database (GET /api/directorates) — no default
+  // pre-selection, so nobody is silently attributed to a unit they didn't choose.
+  const [directorates, setDirectorates] = useState([]);
+  useEffect(() => {
+    fetch('/api/directorates')
+      .then(res => res.json())
+      .then(data => { if (Array.isArray(data)) setDirectorates(data); })
+      .catch(err => console.error('Error fetching directorates:', err));
+  }, []);
+  const divisionOptions = (directorates.find(d => d.name === formData.directorate) || {}).divisions || [];
 
   useEffect(() => {
     fetch(`/api/events/by-code/${eventCode}`)
@@ -165,24 +175,33 @@ export default function PublicCheckInForm({ eventCode, onBackToAdmin }) {
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="text-gray-700 font-bold">Directorate</label>
-                  <input
-                    type="text"
+                  <select
                     required
                     value={formData.directorate}
-                    onChange={(e) => setFormData({ ...formData, directorate: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs"
-                  />
+                    onChange={(e) => setFormData({ ...formData, directorate: e.target.value, division: '' })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs bg-white"
+                  >
+                    <option value="">Pilih Directorate</option>
+                    {directorates.map(d => (
+                      <option key={d.name} value={d.name}>{d.name}</option>
+                    ))}
+                  </select>
                 </div>
 
                 <div className="space-y-1">
                   <label className="text-gray-700 font-bold">Division / Unit</label>
-                  <input
-                    type="text"
+                  <select
                     required
                     value={formData.division}
+                    disabled={!formData.directorate}
                     onChange={(e) => setFormData({ ...formData, division: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs"
-                  />
+                    className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs bg-white disabled:bg-gray-100"
+                  >
+                    <option value="">{formData.directorate ? 'Pilih Division / Unit' : 'Pilih Directorate dulu'}</option>
+                    {divisionOptions.map(div => (
+                      <option key={div} value={div}>{div}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 

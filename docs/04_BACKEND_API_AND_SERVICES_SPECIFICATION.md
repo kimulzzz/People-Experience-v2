@@ -187,3 +187,12 @@ backend boot) tanpa perlu dipicu manual — lihat `server.js` bagian `app.listen
 - `GET /api/health` → field `database`: `{ mode, backend: 'json'|'sql', ... }`; untuk SQL ditambah `server`, `database`, `edisi`, `version`, `tables` (jumlah baris live). `version` = `2.22.0`.
 - Method tambahan khusus SQL: `init()`, `health()`, `close()`, `importStore()`, `applySchema()`, `dropAllTables()`, `getAllOperationalRecords()`. Utilitas bersama kedua backend: `server/db/filterUtils.js` (`parseFilterOptions`, `normalizeDateString`), `server/db/initialStore.js` (dataset awal).
 - Script: `npm run db:migrate` (`server/db/migrate.js`), `npm run db:export` (`server/db/exportToJson.js`). Detail di `docs/08`.
+
+---
+
+## ⚙️ Catatan v2.22.1 — Endpoint Pengaturan & Sumber Data
+
+- **`GET /api/settings`** → `{ px_index_target, event_program_categories, event_types }` dari `px_app_settings`. **`PUT /api/admin/settings/:key`** body `{ value }`: `px_index_target` harus angka 0–100; daftar opsi harus array `{ value, label }` tidak kosong; key tidak dikenal → 404. `GET /api/metrics/trends` kini menyertakan `px_index_target`.
+- **Pertanyaan survei** (`/api/admin/survey-questions[...]`) kini dibaca/ditulis ke `px_survey_questions` (SQL) — `POST` dan `POST .../reset` mengembalikan **404** bila metric tidak ada. Template kode (`metricQuestionService.js`) hanya dipakai untuk seed awal dan aksi Reset.
+- Storage method baru: `getSettings()`, `setSetting(key, value)` (kedua backend); khusus SQL `seedSurveyQuestions()`, `_customizedQuestions()`.
+- Perbaikan logika: alert WARNING membandingkan terhadap `target_value_normalized`; drilldown Metric 11 memakai `event_name` & `attendance_timestamp`.

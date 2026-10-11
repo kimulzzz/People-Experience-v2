@@ -358,7 +358,7 @@ export default function App() {
       <MetricDetailModal
         isOpen={Boolean(selectedMetricDetailId)}
         metricId={selectedMetricDetailId}
-        selectedPeriod={filterOptions.mode === 'YTD' ? 'YTD' : `${filterOptions.year}-${filterOptions.month}`}
+        filterOptions={filterOptions}
         onClose={() => setSelectedMetricDetailId(null)}
         onOpenSurveyUpload={(metricId) => {
           setSelectedMetricDetailId(null);

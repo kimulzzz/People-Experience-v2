@@ -664,8 +664,8 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
           cimb_email: a.cimb_email,
           directorate: a.directorate,
           division: a.division,
-          event_title: ev ? ev.title : 'Signature Program Event',
-          registered_at: a.checkin_time || a.created_at
+          event_title: ev ? ev.event_name : 'Signature Program Event',
+          registered_at: a.attendance_timestamp
         };
       });
     } else {

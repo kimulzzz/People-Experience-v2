@@ -25,6 +25,9 @@ import TrendChart from './TrendChart';
 // fallback when App.jsx hasn't passed filterOptions yet.
 const CURRENT_YEAR = String(new Date().getFullYear());
 
+// px_journeys.icon (admin-editable in Parameter Admin) is the source of truth; the journey code is
+// only a fallback for journeys saved without an icon.
+const iconComponents = { UserPlus, Users, HeartHandshake, TrendingUp, LogOut };
 const journeyIcons = {
   ARRIVAL: UserPlus,
   CONNECT: Users,
@@ -131,7 +134,7 @@ export default function Dashboard({
                   <h4 className="text-base font-bold text-white">Survey Results</h4>
                 </div>
                 <span className="px-2 py-0.5 bg-[#16C0B7]/20 text-[#16C0B7] border border-[#16C0B7]/40 rounded text-[11px] font-semibold">
-                  20 Metrics
+                  {calculationData?.survey_metrics_count ?? 0} Metrics
                 </span>
               </div>
 
@@ -159,7 +162,7 @@ export default function Dashboard({
                   <h4 className="text-base font-bold text-white">Outcome Metrics</h4>
                 </div>
                 <span className="px-2 py-0.5 bg-blue-500/20 text-blue-300 border border-blue-500/40 rounded text-[11px] font-semibold">
-                  7 Metrics
+                  {calculationData?.outcome_metrics_count ?? 0} Metrics
                 </span>
               </div>
 
@@ -325,7 +328,7 @@ export default function Dashboard({
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {journeys.map((j) => {
-            const Icon = journeyIcons[j.journey_code] || Users;
+            const Icon = iconComponents[j.icon] || journeyIcons[j.journey_code] || Users;
             return (
               <div
                 key={j.journey_id}

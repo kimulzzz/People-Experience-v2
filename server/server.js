@@ -96,13 +96,42 @@ app.get('/api/health', async (req, res) => {
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.22.0',
+    version: '2.22.1',
     local_ai: {
       ollama_status: ollama ? 'connected' : 'offline (using local heuristic engine)',
       host: process.env.OLLAMA_HOST || 'http://localhost:11434'
     },
     database
   });
+});
+
+// 1a. Admin-managed UI settings (PX target line, event dropdown options) — stored in the database
+app.get('/api/settings', async (req, res) => {
+  try {
+    res.json(await storage.getSettings());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/admin/settings/:key', async (req, res) => {
+  try {
+    const { key } = req.params;
+    const { value } = req.body || {};
+    const current = (await storage.getSettings())[key];
+    if (current === undefined) return res.status(404).json({ error: `Setting "${key}" tidak ditemukan.` });
+    if (key === 'px_index_target') {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0 || n > 100) return res.status(400).json({ error: 'Target PX Index harus angka 0 - 100.' });
+      return res.json({ key, value: await storage.setSetting(key, n) });
+    }
+    const validList = Array.isArray(value) && value.length > 0 &&
+      value.every(o => o && typeof o.value === 'string' && o.value.trim() && typeof o.label === 'string' && o.label.trim());
+    if (!validList) return res.status(400).json({ error: 'Nilai harus berupa daftar { value, label } yang tidak kosong.' });
+    res.json({ key, value: await storage.setSetting(key, value.map(o => ({ value: o.value.trim(), label: o.label.trim() }))) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // 1b. Directorates & Divisions List
@@ -188,7 +217,8 @@ app.get('/api/metrics/trends', async (req, res) => {
       mode: filterOptions.mode,
       year: targetYear,
       last_complete_month: lastCompleteMonth > 0 ? String(lastCompleteMonth).padStart(2, '0') : null,
-      available_years: await storage.getAvailableSurveyYears()
+      available_years: await storage.getAvailableSurveyYears(),
+      px_index_target: (await storage.getSettings()).px_index_target
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -375,6 +405,7 @@ app.post('/api/admin/survey-questions/:metric_id', async (req, res) => {
     if (!Array.isArray(questions)) {
       return res.status(400).json({ error: 'questions must be an array' });
     }
+    if (!(await storage.getMetricById(metric_id))) return res.status(404).json({ error: `Metric #${metric_id} tidak ditemukan.` });
     const saved = await storage.saveSurveyQuestions(metric_id, questions);
     res.json({
       success: true,
@@ -389,6 +420,7 @@ app.post('/api/admin/survey-questions/:metric_id', async (req, res) => {
 app.post('/api/admin/survey-questions/:metric_id/reset', async (req, res) => {
   try {
     const metric_id = parseInt(req.params.metric_id);
+    if (!(await storage.getMetricById(metric_id))) return res.status(404).json({ error: `Metric #${metric_id} tidak ditemukan.` });
     const reset = await storage.resetSurveyQuestions(metric_id);
     res.json({
       success: true,

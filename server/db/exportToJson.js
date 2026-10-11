@@ -33,10 +33,8 @@ async function main() {
   }
 
   // surveyUploads is newest-first in the JSON store (getSurveyUploads already returns that order).
-  const customSurveyQuestions = {};
-  const allQuestions = await storage.getAllSurveyQuestions();
-  const customs = await storage._customQuestions();
-  Object.keys(customs).forEach(k => { customSurveyQuestions[k] = allQuestions[k]; });
+  // Only admin-customised sets go into the JSON store; defaults come from code there.
+  const customSurveyQuestions = await storage._customizedQuestions();
 
   const store = {
     journeys: await storage.getJourneys(),
@@ -56,7 +54,8 @@ async function main() {
     media: await storage.getAllMedia(),
     customSurveyQuestions,
     acknowledgedAlerts: await storage.getAcknowledgedAlerts(),
-    operationalRecords: await storage.getAllOperationalRecords()
+    operationalRecords: await storage.getAllOperationalRecords(),
+    appSettings: Object.fromEntries(Object.entries(await storage.getSettings()).map(([k, value]) => [k, { value }]))
   };
 
   let target = outFile;

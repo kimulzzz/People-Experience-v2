@@ -11,7 +11,8 @@ const {
   sampleAttendances,
   sampleFeedbackResponses,
   initialSurveyUploadedResponses,
-  initialOperationalRecords
+  initialOperationalRecords,
+  initialAppSettings
 } = require('./seedData');
 const { parseFilterOptions, normalizeDateString, todayDateString } = require('./filterUtils');
 const { buildInitialStore: loadInitialStore } = require('./initialStore');
@@ -68,6 +69,15 @@ function getStore() {
         if (!store.weights || store.weights.length === 0) {
           store.weights = store.metrics.map(m => ({ metric_id: m.metric_id, weight: m.weight || 1.0 }));
         }
+        // Add org units that exist in the seed directory but not yet in this store (non-destructive).
+        initialDirectorates.forEach(sd => {
+          let d = store.directorates.find(x => (x.directorate_name || x.name) === sd.directorate_name);
+          if (!d) { d = { directorate_name: sd.directorate_name, divisions: [] }; store.directorates.push(d); }
+          const list = d.divisions || d.sub_directorates || (d.divisions = []);
+          sd.divisions.forEach(div => { if (!list.includes(div)) list.push(div); });
+        });
+        // Backfill any admin setting that was added after this store.json was created.
+        store.appSettings = { ...JSON.parse(JSON.stringify(initialAppSettings)), ...(store.appSettings || {}) };
         if (!store.operationalRecords) {
           store.operationalRecords = JSON.parse(JSON.stringify(initialOperationalRecords));
         }
@@ -125,6 +135,20 @@ function saveStore() {
 
 // Database / Storage Adapter API
 const storage = {
+  // --- APP SETTINGS (admin-managed UI values: PX target line, event dropdown options) ---
+  getSettings() {
+    const out = {};
+    Object.entries(getStore().appSettings || {}).forEach(([k, v]) => { out[k] = v.value; });
+    return out;
+  },
+  setSetting(key, value) {
+    const s = getStore();
+    if (!s.appSettings || !s.appSettings[key]) throw new Error(`Setting "${key}" tidak ditemukan.`);
+    s.appSettings[key] = { ...s.appSettings[key], value };
+    saveStore();
+    return value;
+  },
+
   // --- METRICS & JOURNEYS CRUD ---
   getJourneys() {
     return getStore().journeys;

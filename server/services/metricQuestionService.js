@@ -757,14 +757,19 @@ const DEFAULT_METRIC_QUESTIONS = {
  * Returns active survey questions for a specific metric ID.
  * Merges with any persisted custom questions if available.
  */
+// The single generic question used only for a SURVEY metric that has no question rows at all.
+function getGenericQuestions() {
+  return [
+    { key: 'q1_overall', label: 'Nilai Keseluruhan', text: 'Evaluasi parameter metrik secara menyeluruh', type: 'SCALE_1_5', mandatory: true }
+  ];
+}
+
 function getQuestionsForMetric(metricId, customQuestionsMap = null) {
   const id = parseInt(metricId);
   if (customQuestionsMap && customQuestionsMap[id] && Array.isArray(customQuestionsMap[id]) && customQuestionsMap[id].length > 0) {
     return customQuestionsMap[id];
   }
-  return DEFAULT_METRIC_QUESTIONS[id] || [
-    { key: 'q1_overall', label: 'Nilai Keseluruhan', text: 'Evaluasi parameter metrik secara menyeluruh', type: 'SCALE_1_5', mandatory: true }
-  ];
+  return DEFAULT_METRIC_QUESTIONS[id] || getGenericQuestions();
 }
 
 function getAllDefaultSurveyQuestions() {
@@ -776,5 +781,6 @@ module.exports = {
   QUESTION_TYPE_LABELS,
   DEFAULT_METRIC_QUESTIONS,
   getQuestionsForMetric,
+  getGenericQuestions,
   getAllDefaultSurveyQuestions
 };
