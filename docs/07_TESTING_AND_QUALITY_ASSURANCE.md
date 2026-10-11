@@ -553,3 +553,21 @@ di web yang hardcode, dengan harapan eksplisit semua data berasal dari database.
 **Verifikasi**: `node tests/regressionTest.js` dijalankan **2x berturut-turut** → **88/88 PASS**
 setiap kali (85 test sebelumnya + 3 test Modul 26 baru), dengan jumlah event tetap stabil di 2
 (tidak ada kebocoran data test) di setiap run.
+
+---
+
+## 🗄️ 11. Backend Storage JSON / SQL Server — v2.22.0 (2026-10-11)
+
+**Regression suite: 99 test** (94 sebelumnya + **Modul 28**, 5 test). Dijalankan terhadap **kedua backend**: JSON (default) dan SQL Server (`STORAGE_BACKEND=sql`) — hasil **99/99 PASS** di SQL 2× berturut-turut dan di JSON.
+
+| Modul 28 | Jenis | Yang diuji |
+| :--- | :---: | :--- |
+| Health melaporkan backend nyata | Positif | `/api/health` → `database.backend` ∈ {json, sql}; mode SQL menyebut server & database |
+| Jumlah baris live dari SQL | Positif | (hanya SQL) metrics ≥ 27, respons > 0, events ≥ 1 |
+| Media = path, bukan isi file | Positif | semua `file_path` diawali `/uploads/`; tidak ada field konten biner |
+| Duplikat NIP ditolak | Negatif | pesan "sudah tercatat" sama di JSON (cek array) dan SQL (constraint `UNIQUE`) |
+| Lookup tak ada → 404 | Negatif | event / kode event tak dikenal tidak menghasilkan 500 |
+
+**Verifikasi paritas backend (di luar suite)**: dua server (SQL :5000 dan JSON :5001) dijalankan atas data identik, 58 endpoint GET dibandingkan field-demi-field → **58/58 identik** (setelah memperbaiki satu temuan: migrasi awal mengelompokkan respons per upload sehingga urutan baris berubah dan "respons terakhir" per metric berbeda; kini satu bulk insert berurutan). Jalur rollback juga diuji: ekspor SQL → `store.json` → dilayani backend JSON → **58/58 identik** dengan SQL.
+
+Catatan operasional: regression test menulis data uji (upload CSV) ke database aktif, sama seperti dulu ke `store.json`. Setelah menjalankannya di backend SQL, kembalikan data bersih dengan `node server/db/migrate.js --reset`.

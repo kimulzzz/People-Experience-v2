@@ -1418,6 +1418,60 @@ async function runRegressionSuite() {
     assert.strictEqual(res.status, 404);
   });
 
+  // --- 28. STORAGE BACKEND (JSON file store or Microsoft SQL Server) ---
+  console.log('\n📦 MODULE 28: Storage Backend — JSON Store or SQL Server (Positive & Negative Testing)');
+
+  let healthDb = null;
+  await runTest('[POSITIVE] /api/health reports the REAL active storage backend (json or sql), not a label guessed from env vars', async () => {
+    const res = await fetch(`${BASE_URL}/api/health`);
+    const body = await res.json();
+    healthDb = body.database;
+    assert.ok(['json', 'sql'].includes(healthDb.backend), `Unexpected backend: ${healthDb.backend}`);
+    if (healthDb.backend === 'sql') {
+      assert.strictEqual(healthDb.mode, 'MS SQL Server (Connected)');
+      assert.ok(healthDb.server && healthDb.database, 'SQL health must name the server and database');
+    } else {
+      assert.strictEqual(healthDb.mode, 'Local File Store (Active)');
+    }
+  });
+
+  await runTest('[POSITIVE] SQL backend only: health shows live row counts read from the database (survey responses, metrics, events, media)', async () => {
+    if (healthDb.backend !== 'sql') return; // JSON store: nothing to check
+    assert.ok(healthDb.tables.metrics >= 27, 'metrics table must be populated');
+    assert.ok(healthDb.tables.survey_responses > 0, 'survey responses must be populated');
+    assert.ok(healthDb.tables.events >= 1, 'events table must be populated');
+  });
+
+  await runTest('[POSITIVE] Event photos/videos are referenced by their file PATH (/uploads/...) — the file itself is never stored in the database', async () => {
+    const res = await fetch(`${BASE_URL}/api/events/ev-perspektif-2024-q1`);
+    const body = await res.json();
+    assert.ok(Array.isArray(body.media) && body.media.length > 0, 'Seed event must have media records');
+    body.media.forEach(m => {
+      assert.ok(typeof m.file_path === 'string' && m.file_path.startsWith('/uploads/'), `file_path must be a /uploads path, got ${m.file_path}`);
+      assert.ok(!('file_data' in m) && !('file_content' in m), 'Binary content must not be part of the record');
+    });
+  });
+
+  await runTest('[NEGATIVE] A duplicate NIP attendance is still rejected with the same clean error (DB unique constraint on SQL, array check on JSON)', async () => {
+    const eventRes = await fetch(`${BASE_URL}/api/events/ev-perspektif-2024-q1`);
+    const first = (await eventRes.json()).attendances[0];
+    const res = await fetch(`${BASE_URL}/api/events/ev-perspektif-2024-q1/attendance`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nip: first.nip, employee_name: first.employee_name, cimb_email: first.cimb_email })
+    });
+    assert.ok(res.status >= 400 && res.status < 500, `Expected a 4xx rejection, got ${res.status}`);
+    const body = await res.json();
+    assert.ok(/sudah/i.test(body.error || ''), `Expected the "sudah tercatat" message, got: ${body.error}`);
+  });
+
+  await runTest('[NEGATIVE] Lookups of non-existent records return clean 404/empty results on either backend (no crash, no 500)', async () => {
+    const ev = await fetch(`${BASE_URL}/api/events/ev-does-not-exist`);
+    assert.strictEqual(ev.status, 404);
+    const code = await fetch(`${BASE_URL}/api/events/by-code/NO-SUCH-CODE`);
+    assert.ok(code.status >= 400 && code.status < 500, `Expected 4xx, got ${code.status}`);
+  });
+
   // --- SUMMARY ---
   console.log('\n================================================================');
   console.log(`📊 REGRESSION TEST SUMMARY: ${passedTests}/${totalTests} Tests Passed (${failedTests} Failed)`);

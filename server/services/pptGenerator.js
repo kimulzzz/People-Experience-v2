@@ -20,26 +20,26 @@ const CIMB_COLORS = {
  * Builds a corporate CIMB Niaga PPTX presentation for an event.
  */
 async function generateEventPPT(event_id, options = {}) {
-  const event = storage.getEventById(event_id);
+  const event = await storage.getEventById(event_id);
   if (!event) throw new Error(`Event not found: ${event_id}`);
 
-  const attendances = storage.getAttendancesByEvent(event_id);
-  const feedbacks = storage.getFeedbackByEvent(event_id);
-  const mediaList = storage.getMediaByEvent(event_id);
+  const attendances = await storage.getAttendancesByEvent(event_id);
+  const feedbacks = await storage.getFeedbackByEvent(event_id);
+  const mediaList = await storage.getMediaByEvent(event_id);
 
   // Metric 12 (Signature Program event satisfaction) config — read from storage so the
   // target, journey/checkpoint labels and per-aspect breakdown always reflect the real
   // admin-configured metric instead of being frozen in this generator.
-  const metric12 = storage.getMetricById(12);
-  const metric12Target = storage.getMetricTargetById(12) || {};
-  const metric12Journey = metric12 ? storage.getJourneyById(metric12.journey_id) : null;
-  const metric12Checkpoint = metric12 ? storage.getCheckpointById(metric12.checkpoint_id) : null;
-  const metric12Questions = storage.getSurveyQuestions(12).filter(q => q.type !== 'FREE_TEXT');
+  const metric12 = await storage.getMetricById(12);
+  const metric12Target = (await storage.getMetricTargetById(12)) || {};
+  const metric12Journey = metric12 ? await storage.getJourneyById(metric12.journey_id) : null;
+  const metric12Checkpoint = metric12 ? await storage.getCheckpointById(metric12.checkpoint_id) : null;
+  const metric12Questions = (await storage.getSurveyQuestions(12)).filter(q => q.type !== 'FREE_TEXT');
 
   // Metric 11 (Signature Program participation rate) — used for the "Pencapaian Kuota" stat's
   // sub-label so it reflects the real metric/journey instead of a frozen "Metric 11 (Belong)" string.
-  const metric11 = storage.getMetricById(11);
-  const metric11Journey = metric11 ? storage.getJourneyById(metric11.journey_id) : null;
+  const metric11 = await storage.getMetricById(11);
+  const metric11Journey = metric11 ? await storage.getJourneyById(metric11.journey_id) : null;
 
   // Generate AI narratives (Local On-Premise)
   const executiveNarrative = await generateEventSummary(event, attendances, feedbacks, mediaList);

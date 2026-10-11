@@ -76,13 +76,13 @@ const inFlight = new Set();
 
 // Fire-and-forget: marks the media PROCESSING, runs the transcription, then stores the
 // result (DONE) or the failure reason (FAILED). The UI polls the event detail for the status.
-function queueMediaTranscription(media_id) {
+async function queueMediaTranscription(media_id) {
   if (inFlight.has(media_id)) return false;
-  const media = storage.getMediaById(media_id);
+  const media = await storage.getMediaById(media_id);
   if (!media) return false;
 
   inFlight.add(media_id);
-  storage.updateMedia(media_id, { transcript_status: 'PROCESSING', transcript_error: '' });
+  await storage.updateMedia(media_id, { transcript_status: 'PROCESSING', transcript_error: '' });
 
   (async () => {
     try {
@@ -91,7 +91,7 @@ function queueMediaTranscription(media_id) {
 
       const result = await transcribeLocalFile(abs);
       const text = (result.text || '').trim();
-      storage.updateMedia(media_id, {
+      await storage.updateMedia(media_id, {
         transcript_status: 'DONE',
         transcript_error: '',
         transcript: text,
@@ -103,8 +103,12 @@ function queueMediaTranscription(media_id) {
     } catch (err) {
       console.error(`Transcription failed for ${media_id}:`, err.message);
       // Media may have been deleted while it was processing — don't resurrect it.
-      if (storage.getMediaById(media_id)) {
-        storage.updateMedia(media_id, { transcript_status: 'FAILED', transcript_error: err.message });
+      try {
+        if (await storage.getMediaById(media_id)) {
+          await storage.updateMedia(media_id, { transcript_status: 'FAILED', transcript_error: err.message });
+        }
+      } catch (storeErr) {
+        console.error(`Could not record transcription failure for ${media_id}:`, storeErr.message);
       }
     } finally {
       inFlight.delete(media_id);
@@ -115,8 +119,8 @@ function queueMediaTranscription(media_id) {
 }
 
 // A server restart kills in-flight jobs, which would leave media stuck on PROCESSING forever.
-function resumeInterruptedTranscriptions() {
-  storage.getAllMedia()
+async function resumeInterruptedTranscriptions() {
+  (await storage.getAllMedia())
     .filter(m => m.transcript_status === 'PROCESSING')
     .forEach(m => queueMediaTranscription(m.media_id));
 }

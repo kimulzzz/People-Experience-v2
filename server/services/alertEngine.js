@@ -9,15 +9,16 @@ const { generateAlertNarrative } = require('./localAiService');
  * deterministic rule-based sentence when Ollama is offline, so this always works on-premise).
  */
 async function getAlertsAndRecommendations() {
-  const calculation = calculatePEIndex();
-  const actionLibrary = storage.getActionLibrary();
+  const calculation = await calculatePEIndex();
+  const actionLibrary = await storage.getActionLibrary();
   // Aggregate verbatim feedback across ALL signature events in the database, not just one
   // fixed event ID — any new event created via the admin UI (see docs/06) automatically
   // contributes its feedback here too, instead of being silently excluded.
-  const feedbackList = storage.getEvents()
-    .flatMap(ev => storage.getFeedbackByEvent(ev.event_id) || []);
-  const uploadedVerbatims = storage.getAllUploadedVerbatims() || [];
-  const acknowledgedList = storage.getAcknowledgedAlerts() || [];
+  const allEvents = (await storage.getEvents()) || [];
+  const feedbackList = (await Promise.all(allEvents.map(ev => storage.getFeedbackByEvent(ev.event_id))))
+    .flatMap(list => list || []);
+  const uploadedVerbatims = (await storage.getAllUploadedVerbatims()) || [];
+  const acknowledgedList = (await storage.getAcknowledgedAlerts()) || [];
 
   const deficientMetrics = calculation.metrics.filter(metric => {
     const isCritical = metric.normalized_score < metric.min_threshold;

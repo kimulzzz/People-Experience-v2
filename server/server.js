@@ -71,25 +71,44 @@ const mediaUpload = multer({
 // 1. Health & Status
 app.get('/api/health', async (req, res) => {
   const ollama = await isOllamaAvailable();
+
+  // Report the REAL state of the active storage backend (for SQL Server: a live query).
+  let database;
+  if (storage.backend === 'sql') {
+    try {
+      const h = await storage.health();
+      database = {
+        mode: 'MS SQL Server (Connected)',
+        backend: 'sql',
+        server: h.server,
+        database: h.database,
+        edition: h.edition,
+        version: h.version,
+        tables: h.tables
+      };
+    } catch (err) {
+      database = { mode: 'MS SQL Server (ERROR)', backend: 'sql', error: err.message };
+    }
+  } else {
+    database = { mode: 'Local File Store (Active)', backend: 'json', store_file: 'server/data/store.json' };
+  }
+
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.21.0',
+    version: '2.22.0',
     local_ai: {
       ollama_status: ollama ? 'connected' : 'offline (using local heuristic engine)',
       host: process.env.OLLAMA_HOST || 'http://localhost:11434'
     },
-    database: {
-      mode: process.env.DB_SERVER ? 'MS SQL Server (Connected)' : 'Local File Store (Active)',
-      store_file: 'server/data/store.json'
-    }
+    database
   });
 });
 
 // 1b. Directorates & Divisions List
-app.get('/api/directorates', (req, res) => {
+app.get('/api/directorates', async (req, res) => {
   try {
-    const directorates = storage.getDirectorates();
+    const directorates = await storage.getDirectorates();
     res.json(directorates);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -97,7 +116,7 @@ app.get('/api/directorates', (req, res) => {
 });
 
 // 2. Metrics & PE Index Calculation (Supports ?mode=YTD|MTD&year=2026&month=03&directorate=...&sub_directorate=...)
-app.get('/api/metrics/calculate', (req, res) => {
+app.get('/api/metrics/calculate', async (req, res) => {
   try {
     const { period, mode, year, month, endMonth, directorate, sub_directorate, subDirectorate } = req.query;
     const filterOptions = {
@@ -112,7 +131,7 @@ app.get('/api/metrics/calculate', (req, res) => {
       directorate: directorate || 'ALL',
       sub_directorate: sub_directorate || subDirectorate || 'ALL'
     };
-    const calculation = calculatePEIndex(filterOptions);
+    const calculation = await calculatePEIndex(filterOptions);
     res.json(calculation);
   } catch (err) {
     console.error('Error calculating PE Index:', err);
@@ -121,7 +140,7 @@ app.get('/api/metrics/calculate', (req, res) => {
 });
 
 // 2b. Metric Drilldown Detail with Questions Breakdown & Responses
-app.get('/api/metrics/:id/detail', (req, res) => {
+app.get('/api/metrics/:id/detail', async (req, res) => {
   try {
     const { period, mode, year, month, directorate, sub_directorate, subDirectorate } = req.query;
     const filterOptions = {
@@ -132,7 +151,7 @@ app.get('/api/metrics/:id/detail', (req, res) => {
       directorate: directorate || 'ALL',
       sub_directorate: sub_directorate || subDirectorate || 'ALL'
     };
-    const detail = getMetricDetail(req.params.id, filterOptions);
+    const detail = await getMetricDetail(req.params.id, filterOptions);
     if (!detail) {
       return res.status(404).json({ error: `Metric #${req.params.id} not found` });
     }
@@ -143,7 +162,7 @@ app.get('/api/metrics/:id/detail', (req, res) => {
 });
 
 // 2c. Monthly Trend Series
-app.get('/api/metrics/trends', (req, res) => {
+app.get('/api/metrics/trends', async (req, res) => {
   try {
     const { mode, year, startYear, startMonth, endYear, endMonth, directorate, sub_directorate, subDirectorate } = req.query;
     const targetYear = year || CURRENT_YEAR;
@@ -157,7 +176,7 @@ app.get('/api/metrics/trends', (req, res) => {
       directorate: directorate || 'ALL',
       sub_directorate: sub_directorate || subDirectorate || 'ALL'
     };
-    const trends = computeMonthlyTrends(filterOptions);
+    const trends = await computeMonthlyTrends(filterOptions);
     // last_complete_month tells the frontend range picker which months of `year` are even
     // selectable — the chart can never be pushed into showing the in-progress current month
     // or beyond. available_years lists every year that actually has survey data (plus the
@@ -169,7 +188,7 @@ app.get('/api/metrics/trends', (req, res) => {
       mode: filterOptions.mode,
       year: targetYear,
       last_complete_month: lastCompleteMonth > 0 ? String(lastCompleteMonth).padStart(2, '0') : null,
-      available_years: storage.getAvailableSurveyYears()
+      available_years: await storage.getAvailableSurveyYears()
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -179,15 +198,15 @@ app.get('/api/metrics/trends', (req, res) => {
 // ==========================================
 // ADMIN PARAMETERS: JOURNEYS & METRICS CRUD
 // ==========================================
-app.get('/api/admin/parameters', (req, res) => {
+app.get('/api/admin/parameters', async (req, res) => {
   try {
-    const journeys = storage.getJourneys();
-    const checkpoints = storage.getCheckpoints();
-    const directorates = storage.getDirectorates();
+    const journeys = await storage.getJourneys();
+    const checkpoints = await storage.getCheckpoints();
+    const directorates = await storage.getDirectorates();
     // target_value_normalized converts each metric's raw target (e.g. 4.00 on a 1-5
     // Likert scale) into the same 0-100 scale as min_threshold, so Admin Parameters can
     // display Target and Threshold using one consistent unit instead of mixing scales.
-    const metrics = storage.getMetrics().map(m => ({
+    const metrics = (await storage.getMetrics()).map(m => ({
       ...m,
       target_value_normalized: parseFloat(normalizeTarget(m, m).toFixed(2))
     }));
@@ -204,10 +223,10 @@ app.get('/api/admin/parameters', (req, res) => {
 });
 
 // Add Journey
-app.post('/api/admin/journeys', (req, res) => {
+app.post('/api/admin/journeys', async (req, res) => {
   try {
-    const journey = storage.addJourney(req.body);
-    const calculation = calculatePEIndex();
+    const journey = await storage.addJourney(req.body);
+    const calculation = await calculatePEIndex();
     res.status(201).json({ success: true, journey, calculation });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -215,10 +234,10 @@ app.post('/api/admin/journeys', (req, res) => {
 });
 
 // Update Journey
-app.put('/api/admin/journeys/:id', (req, res) => {
+app.put('/api/admin/journeys/:id', async (req, res) => {
   try {
-    const journey = storage.updateJourney(req.params.id, req.body);
-    const calculation = calculatePEIndex();
+    const journey = await storage.updateJourney(req.params.id, req.body);
+    const calculation = await calculatePEIndex();
     res.json({ success: true, journey, calculation });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -226,10 +245,10 @@ app.put('/api/admin/journeys/:id', (req, res) => {
 });
 
 // Delete Journey
-app.delete('/api/admin/journeys/:id', (req, res) => {
+app.delete('/api/admin/journeys/:id', async (req, res) => {
   try {
-    const result = storage.deleteJourney(req.params.id);
-    const calculation = calculatePEIndex();
+    const result = await storage.deleteJourney(req.params.id);
+    const calculation = await calculatePEIndex();
     res.json({ success: true, ...result, calculation });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -237,10 +256,10 @@ app.delete('/api/admin/journeys/:id', (req, res) => {
 });
 
 // Add Metric
-app.post('/api/admin/metrics', (req, res) => {
+app.post('/api/admin/metrics', async (req, res) => {
   try {
-    const metric = storage.addMetric(req.body);
-    const calculation = calculatePEIndex();
+    const metric = await storage.addMetric(req.body);
+    const calculation = await calculatePEIndex();
     res.status(201).json({ success: true, metric, calculation, ...metric });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -248,10 +267,10 @@ app.post('/api/admin/metrics', (req, res) => {
 });
 
 // Update Metric (Parameters: Name, Journey, Checkpoint, Weight, Target, Threshold, Audience, etc.)
-app.put('/api/admin/metrics/:id', (req, res) => {
+app.put('/api/admin/metrics/:id', async (req, res) => {
   try {
-    const metric = storage.updateMetric(req.params.id, req.body);
-    const calculation = calculatePEIndex();
+    const metric = await storage.updateMetric(req.params.id, req.body);
+    const calculation = await calculatePEIndex();
     res.json({ success: true, metric, calculation, ...metric });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -259,10 +278,10 @@ app.put('/api/admin/metrics/:id', (req, res) => {
 });
 
 // Delete Metric
-app.delete('/api/admin/metrics/:id', (req, res) => {
+app.delete('/api/admin/metrics/:id', async (req, res) => {
   try {
-    const result = storage.deleteMetric(req.params.id);
-    const calculation = calculatePEIndex();
+    const result = await storage.deleteMetric(req.params.id);
+    const calculation = await calculatePEIndex();
     res.json({ success: true, ...result, calculation });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -270,10 +289,10 @@ app.delete('/api/admin/metrics/:id', (req, res) => {
 });
 
 // Reset All Parameters (Journeys, Checkpoints, Metrics, Targets) to Seed Defaults
-app.post('/api/admin/parameters/reset', (req, res) => {
+app.post('/api/admin/parameters/reset', async (req, res) => {
   try {
-    const resetData = storage.resetParametersToDefault();
-    const calculation = calculatePEIndex('YTD');
+    const resetData = await storage.resetParametersToDefault();
+    const calculation = await calculatePEIndex('YTD');
     res.json({
       success: true,
       message: 'Seluruh parameter Journey, Checkpoint, dan Metric berhasil direset ke konfigurasi default!',
@@ -286,32 +305,32 @@ app.post('/api/admin/parameters/reset', (req, res) => {
 });
 
 // Admin Metric Target & Threshold Settings (Backward Compatible)
-app.get('/api/admin/targets', (req, res) => {
+app.get('/api/admin/targets', async (req, res) => {
   try {
-    const targets = storage.getMetricTargets();
+    const targets = await storage.getMetricTargets();
     res.json({ targets });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/admin/targets', (req, res) => {
+app.post('/api/admin/targets', async (req, res) => {
   try {
     const { targets } = req.body;
     if (!targets) return res.status(400).json({ error: 'targets is required' });
-    const saved = storage.saveMetricTargets(targets);
+    const saved = await storage.saveMetricTargets(targets);
     const period = req.query.period || 'YTD';
-    const newCalculation = calculatePEIndex(period);
+    const newCalculation = await calculatePEIndex(period);
     res.json({ success: true, targets: saved, calculation: newCalculation });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/admin/targets/reset', (req, res) => {
+app.post('/api/admin/targets/reset', async (req, res) => {
   try {
-    const reset = storage.resetMetricTargets();
-    const newCalculation = calculatePEIndex('YTD');
+    const reset = await storage.resetMetricTargets();
+    const newCalculation = await calculatePEIndex('YTD');
     res.json({ success: true, targets: reset, calculation: newCalculation });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -319,10 +338,10 @@ app.post('/api/admin/targets/reset', (req, res) => {
 });
 
 // Survey Questions Admin Settings
-app.get('/api/admin/survey-questions', (req, res) => {
+app.get('/api/admin/survey-questions', async (req, res) => {
   try {
-    const allQuestions = storage.getAllSurveyQuestions();
-    const metrics = storage.getMetrics().filter(m => m.metric_type === 'SURVEY');
+    const allQuestions = await storage.getAllSurveyQuestions();
+    const metrics = (await storage.getMetrics()).filter(m => m.metric_type === 'SURVEY');
     res.json({
       success: true,
       questions: allQuestions,
@@ -333,11 +352,11 @@ app.get('/api/admin/survey-questions', (req, res) => {
   }
 });
 
-app.get('/api/admin/survey-questions/:metric_id', (req, res) => {
+app.get('/api/admin/survey-questions/:metric_id', async (req, res) => {
   try {
     const metric_id = parseInt(req.params.metric_id);
-    const questions = storage.getSurveyQuestions(metric_id);
-    const metric = storage.getMetrics().find(m => m.metric_id === metric_id);
+    const questions = await storage.getSurveyQuestions(metric_id);
+    const metric = (await storage.getMetrics()).find(m => m.metric_id === metric_id);
     res.json({
       success: true,
       metric_id,
@@ -349,14 +368,14 @@ app.get('/api/admin/survey-questions/:metric_id', (req, res) => {
   }
 });
 
-app.post('/api/admin/survey-questions/:metric_id', (req, res) => {
+app.post('/api/admin/survey-questions/:metric_id', async (req, res) => {
   try {
     const metric_id = parseInt(req.params.metric_id);
     const { questions } = req.body;
     if (!Array.isArray(questions)) {
       return res.status(400).json({ error: 'questions must be an array' });
     }
-    const saved = storage.saveSurveyQuestions(metric_id, questions);
+    const saved = await storage.saveSurveyQuestions(metric_id, questions);
     res.json({
       success: true,
       message: `Pertanyaan survei untuk Metric ID ${metric_id} berhasil disimpan`,
@@ -367,10 +386,10 @@ app.post('/api/admin/survey-questions/:metric_id', (req, res) => {
   }
 });
 
-app.post('/api/admin/survey-questions/:metric_id/reset', (req, res) => {
+app.post('/api/admin/survey-questions/:metric_id/reset', async (req, res) => {
   try {
     const metric_id = parseInt(req.params.metric_id);
-    const reset = storage.resetSurveyQuestions(metric_id);
+    const reset = await storage.resetSurveyQuestions(metric_id);
     res.json({
       success: true,
       message: `Pertanyaan survei untuk Metric ID ${metric_id} berhasil direset ke template default`,
@@ -382,9 +401,9 @@ app.post('/api/admin/survey-questions/:metric_id/reset', (req, res) => {
 });
 
 // Survey Upload Reminders — Periodic Data Update / Manual Survey Upload Deadline tracking
-app.get('/api/admin/upload-reminders', (req, res) => {
+app.get('/api/admin/upload-reminders', async (req, res) => {
   try {
-    const reminders = getPendingUploadReminders();
+    const reminders = await getPendingUploadReminders();
     res.json({
       total_reminders: reminders.length,
       overdue_count: reminders.filter(r => r.status === 'OVERDUE').length,
@@ -405,26 +424,26 @@ app.post('/api/admin/upload-reminders/send', async (req, res) => {
   }
 });
 
-app.post('/api/metrics/score', (req, res) => {
+app.post('/api/metrics/score', async (req, res) => {
   try {
     const { metric_id, raw_value, normalized_score, notes } = req.body;
     if (!metric_id) return res.status(400).json({ error: 'metric_id is required' });
 
-    const updated = storage.updateMetricScore(metric_id, raw_value, normalized_score, notes);
-    const newCalculation = calculatePEIndex();
+    const updated = await storage.updateMetricScore(metric_id, raw_value, normalized_score, notes);
+    const newCalculation = await calculatePEIndex();
     res.json({ success: true, updated_metric: updated, calculation: newCalculation });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/metrics/weights', (req, res) => {
+app.post('/api/metrics/weights', async (req, res) => {
   try {
     const { weights } = req.body; // Array of { metric_id, weight }
     if (!Array.isArray(weights)) return res.status(400).json({ error: 'weights must be an array' });
 
-    storage.updateMetricWeights(weights);
-    const newCalculation = calculatePEIndex();
+    await storage.updateMetricWeights(weights);
+    const newCalculation = await calculatePEIndex();
     res.json({ success: true, calculation: newCalculation });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -441,24 +460,24 @@ app.get('/api/alerts', async (req, res) => {
   }
 });
 
-app.post('/api/alerts/acknowledge', (req, res) => {
+app.post('/api/alerts/acknowledge', async (req, res) => {
   try {
     const { metric_id } = req.body;
-    storage.acknowledgeAlert(parseInt(metric_id));
+    await storage.acknowledgeAlert(parseInt(metric_id));
     res.json({ success: true, message: `Alert for metric ${metric_id} acknowledged` });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.get('/api/action-library', (req, res) => {
-  res.json(storage.getActionLibrary());
+app.get('/api/action-library', async (req, res) => {
+  res.json(await storage.getActionLibrary());
 });
 
-app.post('/api/action-library', (req, res) => {
+app.post('/api/action-library', async (req, res) => {
   try {
     const { items } = req.body;
-    const updated = storage.updateActionLibrary(items);
+    const updated = await storage.updateActionLibrary(items);
     res.json({ success: true, items: updated });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -466,19 +485,19 @@ app.post('/api/action-library', (req, res) => {
 });
 
 // 4. Manual Survey Data Upload & Template Generation
-app.get('/api/surveys/metrics', (req, res) => {
+app.get('/api/surveys/metrics', async (req, res) => {
   try {
-    const metrics = storage.getMetrics().filter(m => m.metric_type === 'SURVEY');
+    const metrics = (await storage.getMetrics()).filter(m => m.metric_type === 'SURVEY');
     res.json(metrics);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.get('/api/surveys/template', (req, res) => {
+app.get('/api/surveys/template', async (req, res) => {
   try {
     const metric_id = req.query.metric_id || 'ALL';
-    const csvContent = generateSurveyCsvTemplate(metric_id);
+    const csvContent = await generateSurveyCsvTemplate(metric_id);
     
     const filename = metric_id === 'ALL' 
       ? 'Template_Survey_Master_All_Metrics.csv' 
@@ -493,10 +512,10 @@ app.get('/api/surveys/template', (req, res) => {
 });
 
 // 4b. Download Raw Survey Evidence CSV (Audit Trail & Proof of Assessment)
-app.get('/api/surveys/evidence', (req, res) => {
+app.get('/api/surveys/evidence', async (req, res) => {
   try {
     const { metric_id = 'ALL', period = 'YTD' } = req.query;
-    const csvContent = generateSurveyEvidenceCsv(metric_id, period);
+    const csvContent = await generateSurveyEvidenceCsv(metric_id, period);
     const filename = metric_id === 'ALL'
       ? `Evidence_Survey_Master_All_Metrics_${period}.csv`
       : `Evidence_Survey_Metric_${metric_id}_${period}.csv`;
@@ -509,7 +528,7 @@ app.get('/api/surveys/evidence', (req, res) => {
   }
 });
 
-app.post('/api/surveys/upload', upload.single('csvFile'), (req, res) => {
+app.post('/api/surveys/upload', upload.single('csvFile'), async (req, res) => {
   try {
     let csvText = '';
     let fileName = 'manual_survey_data.csv';
@@ -525,7 +544,7 @@ app.post('/api/surveys/upload', upload.single('csvFile'), (req, res) => {
     }
 
     const targetMetricId = req.body.metric_id ? parseInt(req.body.metric_id) : null;
-    const result = processSurveyCsv(csvText, fileName, targetMetricId);
+    const result = await processSurveyCsv(csvText, fileName, targetMetricId);
 
     res.json(result);
   } catch (err) {
@@ -534,17 +553,17 @@ app.post('/api/surveys/upload', upload.single('csvFile'), (req, res) => {
   }
 });
 
-app.get('/api/surveys/history', (req, res) => {
+app.get('/api/surveys/history', async (req, res) => {
   try {
-    res.json(storage.getSurveyUploads());
+    res.json(await storage.getSurveyUploads());
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.get('/api/surveys/responses/:metric_id', (req, res) => {
+app.get('/api/surveys/responses/:metric_id', async (req, res) => {
   try {
-    const responses = storage.getUploadedResponsesByMetric(req.params.metric_id);
+    const responses = await storage.getUploadedResponsesByMetric(req.params.metric_id);
     res.json(responses);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -552,12 +571,12 @@ app.get('/api/surveys/responses/:metric_id', (req, res) => {
 });
 
 // 5. Events Management (Signature Programs)
-app.get('/api/events', (req, res) => {
+app.get('/api/events', async (req, res) => {
   try {
-    const events = storage.getEvents();
-    const enriched = events.map(e => {
-      const atts = storage.getAttendancesByEvent(e.event_id);
-      const feedbacks = storage.getFeedbackByEvent(e.event_id);
+    const events = await storage.getEvents();
+    const enriched = await Promise.all(events.map(async e => {
+      const atts = await storage.getAttendancesByEvent(e.event_id);
+      const feedbacks = await storage.getFeedbackByEvent(e.event_id);
 
       let totalRating = 0;
       let count = 0;
@@ -580,22 +599,22 @@ app.get('/api/events', (req, res) => {
         average_rating: avgScore,
         satisfaction_percentage: ((parseFloat(avgScore) / 5.0) * 100).toFixed(1)
       };
-    });
+    }));
     res.json(enriched);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.get('/api/events/:id', (req, res) => {
+app.get('/api/events/:id', async (req, res) => {
   try {
-    const event = storage.getEventById(req.params.id);
+    const event = await storage.getEventById(req.params.id);
     if (!event) return res.status(404).json({ error: 'Event not found' });
 
-    const questions = storage.getEventQuestions(event.event_id);
-    const attendances = storage.getAttendancesByEvent(event.event_id);
-    const feedbacks = storage.getFeedbackByEvent(event.event_id);
-    const media = storage.getMediaByEvent(event.event_id);
+    const questions = await storage.getEventQuestions(event.event_id);
+    const attendances = await storage.getAttendancesByEvent(event.event_id);
+    const feedbacks = await storage.getFeedbackByEvent(event.event_id);
+    const media = await storage.getMediaByEvent(event.event_id);
 
     res.json({
       event,
@@ -609,58 +628,58 @@ app.get('/api/events/:id', (req, res) => {
   }
 });
 
-app.post('/api/events', (req, res) => {
+app.post('/api/events', async (req, res) => {
   try {
-    const newEvent = storage.createEvent(req.body);
+    const newEvent = await storage.createEvent(req.body);
     // Recalculate metrics
-    calculatePEIndex();
+    await calculatePEIndex();
     res.status(201).json({ success: true, event: newEvent });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.delete('/api/events/:id', (req, res) => {
+app.delete('/api/events/:id', async (req, res) => {
   try {
-    const removed = storage.deleteEvent(req.params.id);
-    calculatePEIndex();
+    const removed = await storage.deleteEvent(req.params.id);
+    await calculatePEIndex();
     res.json({ success: true, event: removed });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-app.get('/api/events/by-code/:code', (req, res) => {
+app.get('/api/events/by-code/:code', async (req, res) => {
   const code = req.params.code.toUpperCase();
-  const preEvent = storage.getEventByPreCode(code);
+  const preEvent = await storage.getEventByPreCode(code);
   if (preEvent) {
     return res.json({ type: 'PRE_EVENT', event: preEvent });
   }
-  const postEvent = storage.getEventByPostCode(code);
+  const postEvent = await storage.getEventByPostCode(code);
   if (postEvent) {
-    const questions = storage.getEventQuestions(postEvent.event_id);
+    const questions = await storage.getEventQuestions(postEvent.event_id);
     return res.json({ type: 'POST_EVENT', event: postEvent, questions });
   }
   res.status(404).json({ error: 'Invalid event access code' });
 });
 
 // Master & Event Questions
-app.get('/api/questions/master', (req, res) => {
-  res.json(storage.getMasterQuestions());
+app.get('/api/questions/master', async (req, res) => {
+  res.json(await storage.getMasterQuestions());
 });
 
-app.post('/api/questions/master', (req, res) => {
+app.post('/api/questions/master', async (req, res) => {
   try {
-    const updated = storage.updateMasterQuestions(req.body.questions);
+    const updated = await storage.updateMasterQuestions(req.body.questions);
     res.json({ success: true, questions: updated });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/events/:id/questions', (req, res) => {
+app.post('/api/events/:id/questions', async (req, res) => {
   try {
-    const updated = storage.saveEventQuestions(req.params.id, req.body.questions);
+    const updated = await storage.saveEventQuestions(req.params.id, req.body.questions);
     res.json({ success: true, questions: updated });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -668,7 +687,7 @@ app.post('/api/events/:id/questions', (req, res) => {
 });
 
 // 5. Public Form Submissions (Attendance & Post-Event Evaluation)
-app.post('/api/events/:id/attendance', (req, res) => {
+app.post('/api/events/:id/attendance', async (req, res) => {
   try {
     const { nip, employee_name, cimb_email, directorate, division } = req.body;
     if (!nip || !employee_name || !cimb_email) {
@@ -685,7 +704,7 @@ app.post('/api/events/:id/attendance', (req, res) => {
       return res.status(400).json({ error: 'Format email tidak valid.' });
     }
 
-    const record = storage.addAttendance({
+    const record = await storage.addAttendance({
       event_id: req.params.id,
       nip,
       employee_name,
@@ -695,7 +714,7 @@ app.post('/api/events/:id/attendance', (req, res) => {
     });
 
     // Auto-recalculate PE Index in real-time
-    calculatePEIndex();
+    await calculatePEIndex();
 
     res.status(201).json({ success: true, message: 'Absensi berhasil tercatat!', attendance: record });
   } catch (err) {
@@ -703,14 +722,14 @@ app.post('/api/events/:id/attendance', (req, res) => {
   }
 });
 
-app.post('/api/events/:id/feedback', (req, res) => {
+app.post('/api/events/:id/feedback', async (req, res) => {
   try {
     const { nip, ratings, verbatim } = req.body;
     if (!nip) {
       return res.status(400).json({ error: 'NIP wajib diisi untuk verifikasi partisipasi.' });
     }
 
-    const record = storage.addFeedbackResponse({
+    const record = await storage.addFeedbackResponse({
       event_id: req.params.id,
       nip,
       ratings,
@@ -718,7 +737,7 @@ app.post('/api/events/:id/feedback', (req, res) => {
     });
 
     // Auto-recalculate PE Index in real-time
-    calculatePEIndex();
+    await calculatePEIndex();
 
     res.status(201).json({ success: true, message: 'Terima kasih, evaluasi kepuasan Anda telah berhasil dikirim!', response: record });
   } catch (err) {
@@ -726,20 +745,20 @@ app.post('/api/events/:id/feedback', (req, res) => {
   }
 });
 
-app.delete('/api/events/:id/attendance/:nip', (req, res) => {
+app.delete('/api/events/:id/attendance/:nip', async (req, res) => {
   try {
-    const removed = storage.deleteAttendance(req.params.id, req.params.nip);
-    calculatePEIndex();
+    const removed = await storage.deleteAttendance(req.params.id, req.params.nip);
+    await calculatePEIndex();
     res.json({ success: true, attendance: removed });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-app.delete('/api/events/:id/feedback/:nip', (req, res) => {
+app.delete('/api/events/:id/feedback/:nip', async (req, res) => {
   try {
-    const removed = storage.deleteFeedbackResponse(req.params.id, req.params.nip);
-    calculatePEIndex();
+    const removed = await storage.deleteFeedbackResponse(req.params.id, req.params.nip);
+    await calculatePEIndex();
     res.json({ success: true, feedback: removed });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -763,7 +782,7 @@ app.post('/api/events/:id/media', (req, res, next) => {
     const { caption, file_type } = req.body;
     const file = req.file;
 
-    const event = storage.getEventById(req.params.id);
+    const event = await storage.getEventById(req.params.id);
     const mediaPath = file ? `/uploads/${file.filename}` : '/uploads/sample.jpg';
     const originalName = file ? file.originalname : 'media_upload.jpg';
     // The browser-reported MIME type is more trustworthy than the client's file_type field.
@@ -771,7 +790,7 @@ app.post('/api/events/:id/media', (req, res, next) => {
       ? (file.mimetype.startsWith('video/') ? 'VIDEO' : 'IMAGE')
       : (file_type || 'IMAGE');
 
-    const newMedia = storage.addMedia({
+    const newMedia = await storage.addMedia({
       event_id: req.params.id,
       file_name: originalName,
       file_path: mediaPath,
@@ -783,7 +802,7 @@ app.post('/api/events/:id/media', (req, res, next) => {
     // Transcription can take minutes (Whisper on CPU) — answer the upload right away and let
     // the UI poll the event detail for the transcript.
     if (newMedia.transcript_status === 'PROCESSING') {
-      setImmediate(() => queueMediaTranscription(newMedia.media_id));
+      setImmediate(() => queueMediaTranscription(newMedia.media_id).catch(err => console.error('Transcription queue failed:', err.message)));
     }
 
     res.status(201).json({ success: true, media: newMedia });
@@ -794,9 +813,9 @@ app.post('/api/events/:id/media', (req, res, next) => {
 
 // (Re)run the AI transcript for an uploaded video — used by the "Coba lagi" button after a
 // failure, e.g. when the local transcribe API wasn't running at upload time.
-app.post('/api/media/:id/transcribe', (req, res) => {
+app.post('/api/media/:id/transcribe', async (req, res) => {
   try {
-    const media = storage.getMediaById(req.params.id);
+    const media = await storage.getMediaById(req.params.id);
     if (!media) return res.status(404).json({ error: 'Media tidak ditemukan.' });
     if (media.file_type !== 'VIDEO') {
       return res.status(400).json({ error: 'Transkrip AI hanya tersedia untuk file video.' });
@@ -804,16 +823,16 @@ app.post('/api/media/:id/transcribe', (req, res) => {
     if (media.transcript_status === 'PROCESSING') {
       return res.status(409).json({ error: 'Transkrip sedang diproses.' });
     }
-    queueMediaTranscription(media.media_id);
-    res.status(202).json({ success: true, media: storage.getMediaById(media.media_id) });
+    await queueMediaTranscription(media.media_id);
+    res.status(202).json({ success: true, media: await storage.getMediaById(media.media_id) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.delete('/api/media/:id', (req, res) => {
+app.delete('/api/media/:id', async (req, res) => {
   try {
-    const removed = storage.deleteMedia(req.params.id);
+    const removed = await storage.deleteMedia(req.params.id);
     // Uploaded videos are large — don't leave the file behind once its record is gone.
     const abs = removed && resolveUploadPath(removed.file_path);
     if (abs) fs.unlink(abs, () => {});
@@ -839,7 +858,7 @@ app.post('/api/events/:id/generate-ppt', async (req, res) => {
   }
 });
 
-app.get('/api/reports/download/:fileName', (req, res) => {
+app.get('/api/reports/download/:fileName', async (req, res) => {
   const filePath = path.join(EXPORTS_DIR, req.params.fileName);
   if (fs.existsSync(filePath)) {
     res.download(filePath);
@@ -879,8 +898,10 @@ if (fs.existsSync(DIST_DIR)) {
   });
 }
 
-// Start Server
-app.listen(PORT, () => {
+// Start Server — after the storage backend is ready (a no-op for the JSON file store; for SQL
+// Server it opens the connection pool, verifies the schema and tops up the seed data).
+const storageReady = Promise.resolve(typeof storage.init === 'function' ? storage.init() : null);
+storageReady.then(() => app.listen(PORT, () => {
   console.log(`=======================================================`);
   console.log(`🚀 CIMB Niaga People Experience Backend is running`);
   console.log(`📡 URL: http://localhost:${PORT}`);
@@ -888,7 +909,7 @@ app.listen(PORT, () => {
   console.log(`=======================================================`);
 
   // Video transcripts interrupted by a restart would otherwise sit on PROCESSING forever.
-  resumeInterruptedTranscriptions();
+  resumeInterruptedTranscriptions().catch(err => console.error('Resume transcriptions failed:', err.message));
 
   // Daily automatic check for Survey Upload Reminders (Batas Waktu Upload Survei).
   // Runs once shortly after boot, then every 24h — emails PICs whose metrics are
@@ -901,4 +922,8 @@ app.listen(PORT, () => {
       sendPendingUploadReminders().catch(err => console.error('[reminderService] daily check failed:', err.message));
     }, DAILY_MS);
   }, 15000);
+})).catch(err => {
+  console.error('Storage backend failed to start:', err.message);
+  console.error('Set STORAGE_BACKEND=json in .env to fall back to the JSON file store.');
+  process.exit(1);
 });

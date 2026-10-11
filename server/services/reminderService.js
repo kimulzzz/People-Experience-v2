@@ -33,8 +33,8 @@ function getTransporter() {
  * - MONTHLY metrics: checks the current calendar month.
  * - ONE_TIME_ANNUAL metrics: checks the whole current year (uploaded once is enough).
  */
-function hasUploadedForCurrentCycle(metric, today) {
-  const responses = storage.getUploadedResponsesByMetric(metric.metric_id) || [];
+async function hasUploadedForCurrentCycle(metric, today) {
+  const responses = (await storage.getUploadedResponsesByMetric(metric.metric_id)) || [];
   if (responses.length === 0) return false;
 
   const year = String(today.getFullYear());
@@ -70,13 +70,13 @@ function computeDeadline(metric, today) {
  * DUE_SOON (within REMINDER_LEAD_DAYS of the deadline) or OVERDUE (past deadline),
  * excluding any metric whose current cycle has already been uploaded.
  */
-function getPendingUploadReminders(referenceDate = new Date()) {
+async function getPendingUploadReminders(referenceDate = new Date()) {
   const today = new Date(referenceDate);
-  const metrics = storage.getMetrics().filter(m => m.metric_type === 'SURVEY' && m.requires_manual_upload);
+  const metrics = (await storage.getMetrics()).filter(m => m.metric_type === 'SURVEY' && m.requires_manual_upload);
 
   const reminders = [];
-  metrics.forEach(metric => {
-    if (hasUploadedForCurrentCycle(metric, today)) return;
+  for (const metric of metrics) {
+    if (await hasUploadedForCurrentCycle(metric, today)) continue;
 
     const deadline = computeDeadline(metric, today);
     const msPerDay = 24 * 60 * 60 * 1000;
@@ -98,7 +98,7 @@ function getPendingUploadReminders(referenceDate = new Date()) {
         status
       });
     }
-  });
+  }
 
   reminders.sort((a, b) => a.days_until_deadline - b.days_until_deadline);
   return reminders;
@@ -110,7 +110,7 @@ function getPendingUploadReminders(referenceDate = new Date()) {
  * down the rest of the app (mirrors the graceful-fallback pattern used for Ollama).
  */
 async function sendPendingUploadReminders(referenceDate = new Date()) {
-  const reminders = getPendingUploadReminders(referenceDate);
+  const reminders = await getPendingUploadReminders(referenceDate);
   const transporter = getTransporter();
 
   const results = [];

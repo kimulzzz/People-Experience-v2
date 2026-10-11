@@ -178,3 +178,12 @@ backend boot) tanpa perlu dipicu manual — lihat `server.js` bagian `app.listen
   ]
 }
 ```
+
+---
+
+## 🗄️ Catatan v2.22.0 — Storage Layer Kini Async & Dua Backend
+
+- `server/db/storage.js` = dispatcher (`STORAGE_BACKEND=json|sql`) → `jsonStorage.js` atau `sqlStorage.js`. **Semua method storage adalah async** (`await storage.getMetrics()` dst.); begitu pula `calculatePEIndex()`, `getMetricDetail()`, `computeMonthlyTrends()`, `generateSurveyCsvTemplate()`, `generateSurveyEvidenceCsv()`, `processSurveyCsv()`, `getPendingUploadReminders()`, `queueMediaTranscription()`, `resumeInterruptedTranscriptions()`. Semua route handler di `server.js` kini `async`. Server baru mulai `listen` setelah `storage.init()` (no-op untuk JSON; untuk SQL: connect + skema + seed) dan berhenti dengan pesan jelas bila SQL Server tak terjangkau.
+- `GET /api/health` → field `database`: `{ mode, backend: 'json'|'sql', ... }`; untuk SQL ditambah `server`, `database`, `edisi`, `version`, `tables` (jumlah baris live). `version` = `2.22.0`.
+- Method tambahan khusus SQL: `init()`, `health()`, `close()`, `importStore()`, `applySchema()`, `dropAllTables()`, `getAllOperationalRecords()`. Utilitas bersama kedua backend: `server/db/filterUtils.js` (`parseFilterOptions`, `normalizeDateString`), `server/db/initialStore.js` (dataset awal).
+- Script: `npm run db:migrate` (`server/db/migrate.js`), `npm run db:export` (`server/db/exportToJson.js`). Detail di `docs/08`.

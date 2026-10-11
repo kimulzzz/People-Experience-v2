@@ -56,19 +56,24 @@ function normalizeTarget(metric, targetConfig) {
 /**
  * Syncs event live participation & satisfaction scores into Metric 11 & Metric 12.
  */
-function syncLiveEventMetrics() {
-  const events = storage.getEvents();
+async function syncLiveEventMetrics() {
+  const events = await storage.getEvents();
   if (!events || events.length === 0) return;
 
   let totalAttendees = 0;
   let totalRatingSum = 0;
   let totalRatingCount = 0;
 
-  events.forEach(event => {
-    const atts = storage.getAttendancesByEvent(event.event_id);
+  // Per-event reads are independent, so fetch them together (matters for the SQL backend,
+  // where each read is a round trip).
+  const perEvent = await Promise.all(events.map(async event => ({
+    atts: (await storage.getAttendancesByEvent(event.event_id)) || [],
+    feedbacks: (await storage.getFeedbackByEvent(event.event_id)) || []
+  })));
+
+  perEvent.forEach(({ atts, feedbacks }) => {
     totalAttendees += atts.length;
 
-    const feedbacks = storage.getFeedbackByEvent(event.event_id);
     feedbacks.forEach(f => {
       if (f.ratings) {
         Object.values(f.ratings).forEach(val => {
@@ -87,16 +92,16 @@ function syncLiveEventMetrics() {
     // Target Nilai), not a frozen literal — so editing the target there immediately changes
     // how live event attendance is normalized, instead of silently comparing against a stale
     // hardcoded quota.
-    const metric11Target = storage.getMetricTargetById(11) || storage.getMetricById(11);
+    const metric11Target = (await storage.getMetricTargetById(11)) || (await storage.getMetricById(11));
     const quotaTarget = parseFloat((metric11Target && metric11Target.target_value) || 500);
     const normScore = quotaTarget > 0 ? Math.min((avgAttendance / quotaTarget) * 100, 100) : 0;
-    storage.updateMetricScore(11, avgAttendance, normScore, 'Calculated from live event registrations');
+    await storage.updateMetricScore(11, avgAttendance, normScore, 'Calculated from live event registrations');
   }
 
   if (totalRatingCount > 0) {
     const avgRating = totalRatingSum / totalRatingCount;
     const normScore = (avgRating / 5.0) * 100;
-    storage.updateMetricScore(12, avgRating.toFixed(2), normScore.toFixed(2), 'Calculated from live event evaluations');
+    await storage.updateMetricScore(12, avgRating.toFixed(2), normScore.toFixed(2), 'Calculated from live event evaluations');
   }
 }
 
@@ -242,7 +247,7 @@ function buildMonthRange(startYear, startMonth, endYear, endMonth) {
  *   (which remains the scorecard's own primary year) — this is what enables a genuinely
  *   cross-year range from the chart's period-range filter.
  */
-function computeMonthlyTrends(filterOptions = {}) {
+async function computeMonthlyTrends(filterOptions = {}) {
   const directorate = filterOptions.directorate || 'ALL';
   const subDirectorate = filterOptions.sub_directorate || filterOptions.subDirectorate || 'ALL';
   const trendMode = (filterOptions.mode || 'YTD').toUpperCase() === 'MTD' ? 'MTD' : 'YTD';
@@ -268,7 +273,12 @@ function computeMonthlyTrends(filterOptions = {}) {
 
   const pairs = buildMonthRange(start.year, start.month, end.year, end.month);
 
-  return pairs.map(({ year, month }) => {
+  // Live-event metrics (11 & 12) are synced once here; the per-month calls below skip it.
+  await syncLiveEventMetrics();
+
+  // Months are independent of each other, so they are computed together (Promise.all keeps
+  // the original month order in its result).
+  return Promise.all(pairs.map(async ({ year, month }) => {
     const idx = month - 1; // 0-based, for month-name lookup
     const monthNum = String(month).padStart(2, '0');
     const yearStr = String(year);
@@ -284,7 +294,7 @@ function computeMonthlyTrends(filterOptions = {}) {
     const periodFilter = trendMode === 'MTD'
       ? { mode: 'MTD', year: yearStr, month: monthNum, directorate, sub_directorate: subDirectorate }
       : { mode: 'YTD', year: yearStr, endMonth: monthNum, directorate, sub_directorate: subDirectorate };
-    const periodResult = calculatePEIndex(periodFilter, { skipTrends: true });
+    const periodResult = await calculatePEIndex(periodFilter, { skipTrends: true });
 
     const responseCount = periodResult.metrics
       .filter(mt => mt.metric_type === 'SURVEY' && !mt.is_disabled)
@@ -301,7 +311,7 @@ function computeMonthlyTrends(filterOptions = {}) {
       px_index: periodResult.px_index,
       pe_index: periodResult.px_index // backward compatibility
     };
-  });
+  }));
 }
 
 /**
@@ -311,8 +321,9 @@ function computeMonthlyTrends(filterOptions = {}) {
  * - Directorate / Sub-Directorate: When selected, non-employee metrics (#1-#5) are disabled
  *   and excluded from journey & bankwide PX calculations.
  */
-function calculatePEIndex(filterInput = 'YTD', options = {}) {
-  syncLiveEventMetrics();
+async function calculatePEIndex(filterInput = 'YTD', options = {}) {
+  // The per-month inner calls from computeMonthlyTrends() skip this (it syncs once up front).
+  if (!options.skipTrends) await syncLiveEventMetrics();
 
   let mode = 'YTD';
   let year = CURRENT_YEAR;
@@ -354,13 +365,15 @@ function calculatePEIndex(filterInput = 'YTD', options = {}) {
   const isDirectorateFiltered = directorate && directorate !== 'ALL';
   const queryFilter = { mode, year, month, directorate, sub_directorate: subDirectorate, period: periodString, endMonth };
 
-  const metrics = storage.getMetrics();
-  const journeys = storage.getJourneys();
-  const checkpoints = storage.getCheckpoints();
-  const targets = storage.getMetricTargets();
+  const [metrics, journeys, checkpoints, targets] = await Promise.all([
+    storage.getMetrics(),
+    storage.getJourneys(),
+    storage.getCheckpoints(),
+    storage.getMetricTargets()
+  ]);
 
   // 1. Enrich each metric with normalized score, status, and period/directorate data
-  const enrichedMetrics = metrics.map(m => {
+  const enrichedMetrics = await Promise.all(metrics.map(async m => {
     const targetConfig = (targets && targets[m.metric_id]) 
       || (Array.isArray(targets) ? targets.find(t => t.metric_id === m.metric_id) : null) 
       || {
@@ -379,7 +392,7 @@ function calculatePEIndex(filterInput = 'YTD', options = {}) {
     let lastSurveyDate = null;
 
     if (m.metric_type === 'SURVEY') {
-      const responses = storage.getResponsesByMetricAndPeriod(m.metric_id, queryFilter);
+      const responses = await storage.getResponsesByMetricAndPeriod(m.metric_id, queryFilter);
       sampleSize = responses.length;
 
       if (responses.length > 0) {
@@ -437,7 +450,7 @@ function calculatePEIndex(filterInput = 'YTD', options = {}) {
       is_disabled: isDisabled,
       disabled_reason: disabledReason
     };
-  });
+  }));
 
   // 2. Separate Active Survey vs Outcome metrics (Excluding Disabled non-employee metrics when directorate is selected)
   const activeMetrics = enrichedMetrics.filter(m => !m.is_disabled);
@@ -534,7 +547,7 @@ function calculatePEIndex(filterInput = 'YTD', options = {}) {
   // skipTrends: true) to guarantee the trend chart's numbers are computed via the exact
   // same per-metric weighted-normalization logic as this scorecard. Skip re-computing
   // trends on those 12 inner calls, or this would recurse indefinitely.
-  const monthlyTrends = options.skipTrends ? [] : computeMonthlyTrends(queryFilter);
+  const monthlyTrends = options.skipTrends ? [] : await computeMonthlyTrends(queryFilter);
 
   return {
     period: periodString,
@@ -562,7 +575,7 @@ function calculatePEIndex(filterInput = 'YTD', options = {}) {
     survey_metrics_count: activeSurveyMetrics.length,
     outcome_metrics_count: activeOutcomeMetrics.length,
     monthly_trends: monthlyTrends,
-    available_years: storage.getAvailableSurveyYears(),
+    available_years: await storage.getAvailableSurveyYears(),
     journeys: journeySummaries,
     checkpoints: checkpointSummaries,
     metrics: enrichedMetrics
@@ -576,9 +589,9 @@ function calculatePEIndex(filterInput = 'YTD', options = {}) {
  * - List of all survey responses with verbatim comments
  * - ESS sentiment summary and dimension statistics if source is ESS
  */
-function getMetricDetail(metricId, filterInput = 'YTD') {
+async function getMetricDetail(metricId, filterInput = 'YTD') {
   const id = parseInt(metricId);
-  const metrics = storage.getMetrics();
+  const metrics = await storage.getMetrics();
   const metric = metrics.find(m => m.metric_id === id);
   if (!metric) return null;
 
@@ -622,14 +635,14 @@ function getMetricDetail(metricId, filterInput = 'YTD') {
   const isDisabled = isDirectorateFiltered && !isEmployeeMetric;
   const disabledReason = isDisabled ? 'Bankwide External / Non-Employee Metric (Exempted from Directorate Calculation)' : null;
 
-  const targetConfig = storage.getMetricTargetById(id) || {
+  const targetConfig = (await storage.getMetricTargetById(id)) || {
     target_value: metric.target_value,
     target_display: metric.target_display,
     min_threshold: metric.min_threshold
   };
 
-  const journeys = storage.getJourneys();
-  const checkpoints = storage.getCheckpoints();
+  const journeys = await storage.getJourneys();
+  const checkpoints = await storage.getCheckpoints();
   const journey = journeys.find(j => j.journey_id === metric.journey_id);
   const checkpoint = checkpoints.find(c => c.checkpoint_id === metric.checkpoint_id);
 
@@ -641,8 +654,8 @@ function getMetricDetail(metricId, filterInput = 'YTD') {
     let operationalRecords = [];
     if (id === 11) {
       // Live event attendance registrations from PXCWB
-      const attendances = storage.getAttendances();
-      const events = storage.getEvents();
+      const attendances = await storage.getAttendances();
+      const events = await storage.getEvents();
       operationalRecords = attendances.map(a => {
         const ev = events.find(e => e.event_id === a.event_id);
         return {
@@ -660,7 +673,7 @@ function getMetricDetail(metricId, filterInput = 'YTD') {
       // stage compliance, hiring channel mix, recognition categories, attrition by tenure) —
       // sourced from the database (server/data/store.json via storage.getOperationalRecords()),
       // not frozen inline here. Metrics without a seeded breakdown table simply return [].
-      operationalRecords = storage.getOperationalRecords(id);
+      operationalRecords = await storage.getOperationalRecords(id);
     }
 
     const rawVal = parseFloat(metric.raw_value || 0);
@@ -718,8 +731,8 @@ function getMetricDetail(metricId, filterInput = 'YTD') {
   }
 
   // Survey metric logic
-  const questions = storage.getSurveyQuestions(id);
-  const responses = storage.getResponsesByMetricAndPeriod(id, queryFilter);
+  const questions = await storage.getSurveyQuestions(id);
+  const responses = await storage.getResponsesByMetricAndPeriod(id, queryFilter);
 
   const questionBreakdown = questions.map(q => {
     const qType = q.type || 'SCALE_1_5';

@@ -8,8 +8,10 @@ experience ("Kejar Mimpi" framework: 70% Survey Index + 30% Outcome Index).
 
 - **Frontend**: React 19 + Vite 8 + Tailwind CSS v4, Recharts, Lucide icons — `src/`
 - **Backend**: Node.js + Express 5 REST API — `server/server.js`
-- **Storage**: Local JSON file store (`server/data/store.json`) by default; can connect
-  to MS SQL Server via `mssql` if `DB_SERVER` env var is set (see `server/db/`)
+- **Storage**: two interchangeable backends behind the `server/db/storage.js` dispatcher,
+  chosen by `STORAGE_BACKEND` in `.env`: `sql` = local **Microsoft SQL Server** (`PeopleExperiencePX`,
+  active since v2.22.0) or `json` = `server/data/store.json` (default if unset; the rollback path).
+  All storage calls are async (`await storage.x()`). See `docs/08`
 - **Reporting**: PPTXgenJS (PowerPoint export), QR code generation, CSV import/export
 - **Local AI**: Ollama (`localAiService.js`) for dynamic narratives (Score Deficit Alerts,
   Event Summaries) — always has a deterministic rule-based fallback, never required
@@ -39,7 +41,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(94-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`).
+(99-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -55,7 +57,8 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (94 cases) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (99 cases) |
+| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (22 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules |
 
 ## Compliance constraints (do not violate)
@@ -346,6 +349,25 @@ domain model, not just descriptive:
   exist). `tests/regressionTest.js` gained Module 27 (6 tests) -> 94/94 PASS. Verified end-to-end with the
   user's test video via the real UI. Known gap left alone: `deleteEvent()` still doesn't remove that event's
   media records/files (pre-existing).
+
+- **v2.22.0** (2026-10-11, see `CHANGELOG.md` and `docs/08_DATABASE_SCHEMA_AND_MIGRATION.md`):
+  User asked to install SQL Server locally, move all dashboard data into it (photos/videos stay on
+  disk, only their paths + AI transcripts go in SQL Server) and prepare a rollback. Done: SQL Server
+  **Express** (Standard is paid-only; 2022 Express installer links are dead → Express 2025 via winget,
+  instance `SQLEXPRESS`, TCP 1433, Mixed Mode, `sa` disabled, app login `px_app` = `db_owner` of
+  `PeopleExperiencePX` only) installed by `scripts/sqlserver/Setup-SqlServer.ps1` (run elevated; UAC
+  can't be clicked by Claude). `server/db/storage.js` is now a dispatcher (`STORAGE_BACKEND=sql|json`)
+  over `jsonStorage.js` (old behavior) and the new `sqlStorage.js`; every caller (`server.js` + 8
+  services) was converted to `async/await` first and regression-tested on JSON, then SQL. Schema is a
+  normalized rewrite (`schema.sql`, 22 tables: no `weights` table, respondent aliases collapsed into
+  `respondent_type`+canonical columns re-derived on read, `operationalRecords` split into 5 tables,
+  `px_media.file_path` for media). `server/db/migrate.js` loaded the existing `store.json`
+  (5,040 responses etc., all counts verified). Rollback = `STORAGE_BACKEND=json`; with new edits kept:
+  `npm run db:export -- --replace`; code: tag `pre-sqlserver-v2.21.0`. Verified: 99/99 on SQL (twice)
+  and JSON, and 58/58 GET endpoints identical between a SQL and a JSON server on the same data.
+  Gotchas: the regression suite dirties whichever backend is active (on SQL, reset with
+  `node server/db/migrate.js --reset`); `.env` now holds `STORAGE_BACKEND=sql` + `DB_*` (gitignored);
+  `server/data/store.json` is no longer written while on SQL, so it goes stale until exported.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

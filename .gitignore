@@ -4,3 +4,5 @@ server/uploads/
 server/exports/
 .env
 *.log
+
+server/data/backups/

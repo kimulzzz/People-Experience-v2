@@ -56,8 +56,8 @@ function normalizeDateString(dateVal) {
  * Generates an Audit Evidence CSV file containing full respondent submissions,
  * question-level scores, survey dates, and verbatim feedback for a given metric and period.
  */
-function generateSurveyEvidenceCsv(metric_id, period = 'YTD') {
-  const metrics = storage.getMetrics();
+async function generateSurveyEvidenceCsv(metric_id, period = 'YTD') {
+  const metrics = await storage.getMetrics();
   
   const escapeCsv = (val) => {
     if (val === null || val === undefined) return '';
@@ -74,8 +74,8 @@ function generateSurveyEvidenceCsv(metric_id, period = 'YTD') {
       throw new Error(`Metric with ID ${metric_id} tidak ditemukan.`);
     }
 
-    const questions = storage.getSurveyQuestions(targetMetric.metric_id);
-    const responses = storage.getResponsesByMetricAndPeriod(targetMetric.metric_id, period);
+    const questions = await storage.getSurveyQuestions(targetMetric.metric_id);
+    const responses = await storage.getResponsesByMetricAndPeriod(targetMetric.metric_id, period);
     const isScale5 = targetMetric.scale_type === 'RATING_5';
     const mId = targetMetric.metric_id;
 
@@ -156,7 +156,7 @@ function generateSurveyEvidenceCsv(metric_id, period = 'YTD') {
   } else {
     // Evidence for ALL Survey Metrics
     const surveyMetrics = metrics.filter(m => m.metric_type === 'SURVEY');
-    const allResponses = storage.getAllResponsesByPeriod(period);
+    const allResponses = await storage.getAllResponsesByPeriod(period);
 
     const headers = [
       'NIP_or_ID',

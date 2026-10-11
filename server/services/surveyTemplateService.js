@@ -5,8 +5,8 @@ const storage = require('../db/storage');
  * Generates CSV template string for a specific survey metric with question-level columns
  * or a Master all-surveys template.
  */
-function generateSurveyCsvTemplate(metric_id = 'ALL') {
-  const metrics = storage.getMetrics().filter(m => m.metric_type === 'SURVEY');
+async function generateSurveyCsvTemplate(metric_id = 'ALL') {
+  const metrics = (await storage.getMetrics()).filter(m => m.metric_type === 'SURVEY');
   
   const escapeCsv = (val) => {
     if (val === null || val === undefined) return '';
@@ -23,7 +23,7 @@ function generateSurveyCsvTemplate(metric_id = 'ALL') {
       throw new Error(`Survey metric with ID ${metric_id} tidak ditemukan.`);
     }
 
-    const questions = storage.getSurveyQuestions(targetMetric.metric_id);
+    const questions = await storage.getSurveyQuestions(targetMetric.metric_id);
     const mId = targetMetric.metric_id;
 
     let headers = [];

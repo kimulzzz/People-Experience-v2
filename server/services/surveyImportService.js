@@ -110,7 +110,7 @@ function parseCsvContent(content) {
 /**
  * Validates and processes survey CSV upload with support for question-level columns.
  */
-function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetMetricId = null) {
+async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetMetricId = null) {
   const rawLines = parseCsvContent(csvText);
   if (rawLines.length < 2) {
     throw new Error('File CSV kosong atau tidak memiliki baris data.');
@@ -151,8 +151,11 @@ function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetMetricI
     throw new Error('Kolom nilai rating (atau kolom pertanyaan q1, q2, ...) tidak ditemukan dalam header CSV.');
   }
 
-  const allMetrics = storage.getMetrics();
+  const allMetrics = await storage.getMetrics();
   const surveyMetrics = allMetrics.filter(m => m.metric_type === 'SURVEY');
+  // Fetched once per metric up front (the per-row loop below is synchronous).
+  const questionsByMetric = {};
+  for (const m of surveyMetrics) questionsByMetric[m.metric_id] = await storage.getSurveyQuestions(m.metric_id);
 
   const validRows = [];
   const invalidRows = [];
@@ -197,7 +200,7 @@ function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetMetricI
     }
 
     const isScale5 = metricObj.scale_type === 'RATING_5';
-    const activeQuestions = storage.getSurveyQuestions(metricId);
+    const activeQuestions = questionsByMetric[metricId] || [];
     const ratingsMap = {};
     let scorableNormalizedSum = 0;
     let scorableCount = 0;
@@ -369,7 +372,7 @@ function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetMetricI
   const batchAvgScore = parseFloat((batchScoreSum / validRows.length).toFixed(2));
 
   // Save to persistence
-  const uploadRecord = storage.saveSurveyUploadBatch({
+  const uploadRecord = await storage.saveSurveyUploadBatch({
     metric_id: targetMetricId ? parseInt(targetMetricId) : null,
     file_name: fileName,
     total_rows: dataRows.length,
@@ -380,7 +383,7 @@ function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetMetricI
   }, validRows);
 
   // Trigger recalculation of PE Index
-  const updatedPE = calculatePEIndex('YTD');
+  const updatedPE = await calculatePEIndex('YTD');
 
   // Compute affected metrics summary
   const affectedMetricIds = [...new Set(validRows.map(r => r.metric_id))];
