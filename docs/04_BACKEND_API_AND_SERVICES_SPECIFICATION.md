@@ -217,3 +217,10 @@ backend boot) tanpa perlu dipicu manual — lihat `server.js` bagian `app.listen
 - **`POST /api/admin/upload-reminders/send`** body (semua opsional): `reference_date` ('YYYY-MM-DD', simulasi hari lain; format salah → 400), `dry_run` (tidak kirim/catat; hasil `WOULD_SEND`/`SKIPPED`), `automatic` (jalankan seperti scheduler: dedupe + interval; tanpa ini = "kirim sekarang" untuk semua yang pending), `metric_id` (batasi satu metrik). Hasil per metrik: `email_status` ∈ SENT | FAILED | SKIPPED (+`skip_reason`) | SKIPPED_NO_EMAIL | LOGGED_ONLY | WOULD_SEND.
 - `PUT /api/admin/settings/reminder_send_hour` (bilangan bulat 0–23) dan `reminder_repeat_days` (0–31); di luar rentang / bukan bilangan bulat → 400.
 - **Penghapusan metrik** (`DELETE /api/admin/metrics/:id`) kini juga menghapus respons survei, riwayat upload, pertanyaan, dan log reminder metrik itu.
+
+---
+
+## 🎞️ Catatan v2.24.1 — Transkrip Video
+
+- `POST /api/media/:id/transcribe` ("Coba lagi"): 404 media tak ada; 400 bukan video; 409 masih PROCESSING; **503** bila API transkrip tidak aktif (status media tidak diubah); 202 `{ media }` dengan `transcript_status: PROCESSING` bila pekerjaan dimulai.
+- Hasil transkrip: `transcript` = field `text` respons API (di-trim; bila tidak ada `text` → gabungan teks segmen), `transcript_segments` = array `segments` apa adanya (`start`, `end`, `text`), `transcript_language`, `duration_seconds`, `ai_generated_description` = kutipan awal `text`.

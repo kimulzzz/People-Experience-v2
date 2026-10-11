@@ -231,3 +231,9 @@ Tombol **Setting Email** di Header (sebelah Survey Templates) membuka modal: tog
 ## ⏰ Catatan v2.24.0
 
 `EmailSettingsModal` kini juga memuat **Jadwal Reminder Otomatis** (jam mulai kirim, ulangi tiap N hari → `PUT /api/admin/settings/:key`) dan **Riwayat Reminder Terkirim** (dari `GET /api/admin/upload-reminders`). Panel peringatan di `AdminParametersModal` menampilkan periode data yang kosong (`expected_period_label`) dan status `DUE_TODAY`/`OVERDUE`; teks bantu di bawah "Batas Tanggal Upload" menjelaskan aturan "bulan sebelumnya". Konfirmasi hapus metrik menyebut bahwa data surveinya ikut terhapus.
+
+---
+
+## 🎞️ Catatan v2.24.1 — `EventManager.jsx` (kartu video)
+
+"Coba lagi" kini memberi umpan balik: tombol berputar/disabled ("Memproses ulang…"), balasan 202 langsung dipasang ke state (kartu "sedang diproses"), dan penolakan (mis. 503 layanan mati) tampil di kartu bersama jam percobaan. Bagian "Transkrip AI lengkap" menampilkan **TEKS LENGKAP** (`transcript`, dari `text` API) lalu daftar **PER SEGMEN** (klik = putar dari detik itu).

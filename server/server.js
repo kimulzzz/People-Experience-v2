@@ -19,7 +19,7 @@ const { processSurveyCsv } = require('./services/surveyImportService');
 const { generateSurveyEvidenceCsv } = require('./services/surveyEvidenceService');
 const { getPendingUploadReminders, sendPendingUploadReminders, startReminderScheduler } = require('./services/reminderService');
 const emailSettingsService = require('./services/emailSettingsService');
-const { queueMediaTranscription, resumeInterruptedTranscriptions, resolveUploadPath } = require('./services/transcribeService');
+const { queueMediaTranscription, resumeInterruptedTranscriptions, resolveUploadPath, isTranscribeApiReachable, unreachableMessage } = require('./services/transcribeService');
 
 // Default year for YTD/unparseable period query params, derived from the real server clock
 // instead of a hardcoded literal (mirrors CURRENT_YEAR in calculationEngine.js).
@@ -97,7 +97,7 @@ app.get('/api/health', async (req, res) => {
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.24.0',
+    version: '2.24.1',
     local_ai: {
       ollama_status: ollama ? 'connected' : 'offline (using local heuristic engine)',
       host: process.env.OLLAMA_HOST || 'http://localhost:11434'
@@ -906,6 +906,11 @@ app.post('/api/media/:id/transcribe', async (req, res) => {
     }
     if (media.transcript_status === 'PROCESSING') {
       return res.status(409).json({ error: 'Transkrip sedang diproses.' });
+    }
+    // Tell the user right away (instead of flipping PROCESSING → FAILED in a few milliseconds) when the
+    // Video Extractor is not running.
+    if (!(await isTranscribeApiReachable())) {
+      return res.status(503).json({ error: unreachableMessage() });
     }
     await queueMediaTranscription(media.media_id);
     res.status(202).json({ success: true, media: await storage.getMediaById(media.media_id) });

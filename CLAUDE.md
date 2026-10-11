@@ -43,7 +43,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(127-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(130-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -59,7 +59,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (127 cases) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (130 cases) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (25 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules |
 
@@ -417,6 +417,19 @@ domain model, not just descriptive:
   `password_readable` flag). Verified: 127/127 on SQL (x2) and JSON, plus a no-simulation proof (real clock +
   fake SMTP: scheduler emailed the PIC for "September 2026" by itself). Demo PIC emails are fictional
   @cimbniaga.co.id addresses — replace them before enabling real email.
+
+- **v2.24.1** (2026-10-11, see `CHANGELOG.md` [2.24.1]): User reported the video transcript "Coba lagi" button "doesn't work" (screenshot
+  showed "Layanan transkrip tidak aktif di http://127.0.0.1:8000") and asked for the full transcript to come from the API's
+  `text` field while keeping per-segment results. Root cause of the button complaint: the endpoint worked, but the UI
+  refetched the event right after the POST — with the Video Extractor down the job failed again within milliseconds, so the
+  card showed the identical error (no feedback at all). Fixed: backend pre-checks the API (`isTranscribeApiReachable`) →
+  503 + unchanged state; UI shows spinner/disabled, takes the 202 reply as "processing", and shows refusals with the attempt
+  time. Full transcript = `text` verbatim (fallback: joined segments); UI now shows TEKS LENGKAP + PER SEGMEN (before, the
+  `text` was never shown when segments existed). Verified with the real Video Extractor (user had started it): 411-char
+  text, 4 segments, DONE. Module 32 (3 tests) → 130/130 on SQL and JSON; the module skips itself when a real service is on
+  :8000 — run it via a 2nd backend (`TEST_BASE_URL` / `TEST_TRANSCRIBE_PORT`, see docs/07 §15). The user's real video
+  record (med-1791719574927-rd10q + its file in server/uploads) is preserved in SQL; do NOT `migrate --reset` without
+  re-adding it (store.json only knows an older, deleted video record).
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

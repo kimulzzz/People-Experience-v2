@@ -631,3 +631,15 @@ Test jalur lengkap dan "belum dikonfigurasi" **dilewati otomatis** bila sudah ad
 | Input salah | Negatif | `reference_date` salah format, jam 24 / -1, repeat 1.5 / 99 → 400 |
 
 **Bukti tanpa simulasi**: dengan jam server asli (11 Okt, lewat batas tgl 10) dan SMTP palsu, setelah restart, scheduler mengirim sendiri email "data September 2026 belum ada" ke PIC metrik uji (tercatat `SENT` di `px_reminder_log`).
+
+---
+
+## 🎞️ 15. Transkrip Video — "Coba Lagi" & Teks Lengkap — v2.24.1 (2026-10-11)
+
+**Regression suite: 130 test** (127 + **Modul 32**, 3 test) → **130/130 PASS** di SQL Server dan di JSON. Modul 32 memakai API transkrip palsu (port 8000 atau `TEST_TRANSCRIBE_PORT`) dan **dilewati bila Video Extractor asli sedang berjalan** di port itu. Untuk menjalankannya saat layanan asli hidup: jalankan backend kedua dengan `TRANSCRIBE_API_URL=http://127.0.0.1:8123 PORT=5002`, lalu `TEST_BASE_URL=http://localhost:5002 TEST_TRANSCRIBE_PORT=8123 node tests/regressionTest.js`.
+
+| Modul 32 | Jenis | Yang diuji |
+| :--- | :---: | :--- |
+| Retry end-to-end | Positif | layanan mati → upload FAILED; retry → **503** "tidak aktif" & status tetap FAILED; layanan hidup → 202 PROCESSING → DONE; `transcript` = `text` API persis; 2 segmen utuh (start/end/text); bahasa & durasi |
+| Tanpa `text` | Positif | teks lengkap dirakit dari segmen, segmen tidak berubah |
+| Input salah | Negatif | PROCESSING → 409; media tak ada → 404 (foto → 400 di Modul 27) |

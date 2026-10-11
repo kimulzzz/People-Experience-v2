@@ -1,7 +1,9 @@
 // tests/regressionTest.js
 const assert = require('assert');
 
-const BASE_URL = 'http://localhost:5000';
+// Overridable so the suite can run against a second backend (e.g. one pointed at a fake transcribe API).
+const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:5000';
+const TRANSCRIBE_PORT = parseInt(process.env.TEST_TRANSCRIBE_PORT || '8000', 10);
 
 let totalTests = 0;
 let passedTests = 0;
@@ -1893,6 +1895,121 @@ async function runRegressionSuite() {
       const history = (await getJson('/api/admin/upload-reminders')).history.filter(h => h.metric_id === id);
       assert.strictEqual(history.length, 0, 'Nothing may be logged as sent, so it goes out once a sender is configured');
     } finally { await deleteMetric(id); }
+  });
+
+  // --- 32. VIDEO TRANSCRIPT: "COBA LAGI" + FULL TEXT FROM `text` (v2.24.1) ---
+  console.log('\n📦 MODULE 32: Video Transcript — Retry Button & Full Text (Positive & Negative Testing)');
+
+  const http = require('http');
+  const FULL_TEXT = 'Halo semuanya, ini adalah transkrip lengkap dari variabel text.';
+  const FAKE_SEGMENTS = [
+    { start: 0, end: 4, text: ' Halo semuanya,' },
+    { start: 4, end: 12.5, text: ' ini segmen kedua yang berbeda' } // deliberately different from FULL_TEXT
+  ];
+  // Fake "Video Extractor" (default port 8000, or TEST_TRANSCRIBE_PORT) — only when nothing real is listening there.
+  function startFakeTranscribeApi(mode) {
+    return new Promise(resolve => {
+      const server = http.createServer((req, res) => {
+        if (req.method === 'POST' && req.url === '/transcribe') {
+          req.resume();
+          req.on('end', () => {
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify(mode.value === 'segments-only'
+              ? { language: 'id', duration: 12.5, segments: FAKE_SEGMENTS }
+              : { text: FULL_TEXT, language: 'id', duration: 12.5, segments: FAKE_SEGMENTS }));
+          });
+        } else { res.setHeader('Content-Type', 'application/json'); res.end('{"status":"ok"}'); }
+      });
+      server.on('error', () => resolve(null)); // port taken → the real service is running
+      server.listen(TRANSCRIBE_PORT, '127.0.0.1', () => resolve(server));
+    });
+  }
+  const apiReachable = async () => { try { await fetch(`http://127.0.0.1:${TRANSCRIBE_PORT}/`, { signal: AbortSignal.timeout(2000) }); return true; } catch (_) { return false; } };
+  const getMedia = async (id) => (await (await fetch(`${BASE_URL}/api/events/${MEDIA_EVENT_ID}`)).json()).media.find(m => m.media_id === id);
+  const waitSettled = async (id) => {
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 500));
+      const m = await getMedia(id);
+      if (m && m.transcript_status !== 'PROCESSING') return m;
+    }
+    return null;
+  };
+
+  await runTest('[POSITIVE] "Coba lagi": refused with 503 + clear message while the Video Extractor is down; once it is up the retry runs and the transcript is stored — full text from `text`, segments kept', async () => {
+    if (await apiReachable()) return; // a real Video Extractor is running — don't impersonate it
+    const mode = { value: 'full' };
+    let fake = null;
+    const up = await uploadMedia(Buffer.from('fake video bytes'), 'regression-retry.mp4', 'video/mp4');
+    assert.strictEqual(up.status, 201);
+    const media = (await up.json()).media;
+    try {
+      const failed = await waitSettled(media.media_id);
+      assert.strictEqual(failed.transcript_status, 'FAILED', 'API is down → first attempt FAILED');
+      assert.ok(/tidak aktif/i.test(failed.transcript_error));
+
+      const down = await fetch(`${BASE_URL}/api/media/${media.media_id}/transcribe`, { method: 'POST' });
+      assert.strictEqual(down.status, 503, 'Retry while the service is down must say so immediately');
+      assert.ok(/tidak aktif/i.test((await down.json()).error));
+      assert.strictEqual((await getMedia(media.media_id)).transcript_status, 'FAILED', 'A refused retry must not change the state');
+
+      fake = await startFakeTranscribeApi(mode);
+      assert.ok(fake, 'Could not start the fake transcribe API on :8000');
+      const retry = await fetch(`${BASE_URL}/api/media/${media.media_id}/transcribe`, { method: 'POST' });
+      assert.strictEqual(retry.status, 202);
+      assert.strictEqual((await retry.json()).media.transcript_status, 'PROCESSING');
+
+      const done = await waitSettled(media.media_id);
+      assert.strictEqual(done.transcript_status, 'DONE', done.transcript_error);
+      assert.strictEqual(done.transcript, FULL_TEXT, 'Full transcript must be exactly the API `text`');
+      assert.strictEqual(done.transcript_segments.length, 2, 'Per-segment results are kept');
+      assert.deepStrictEqual(done.transcript_segments.map(s => [s.start, s.end]), [[0, 4], [4, 12.5]]);
+      assert.strictEqual(done.transcript_segments[1].text, FAKE_SEGMENTS[1].text);
+      assert.strictEqual(done.transcript_language, 'id');
+      assert.strictEqual(done.duration_seconds, 12.5);
+      assert.ok(done.ai_generated_description.includes('Halo semuanya'));
+    } finally {
+      if (fake) fake.close();
+      await fetch(`${BASE_URL}/api/media/${media.media_id}`, { method: 'DELETE' });
+    }
+  });
+
+  await runTest('[POSITIVE] If the API returns no `text`, the full transcript is rebuilt from the segments (segments unchanged)', async () => {
+    if (await apiReachable()) return;
+    const mode = { value: 'segments-only' };
+    const fake = await startFakeTranscribeApi(mode);
+    assert.ok(fake, 'Could not start the fake transcribe API on :8000');
+    const up = await uploadMedia(Buffer.from('fake video bytes'), 'regression-segments-only.mp4', 'video/mp4');
+    const media = (await up.json()).media;
+    try {
+      const done = await waitSettled(media.media_id);
+      assert.strictEqual(done.transcript_status, 'DONE', done.transcript_error);
+      assert.strictEqual(done.transcript, 'Halo semuanya, ini segmen kedua yang berbeda');
+      assert.strictEqual(done.transcript_segments.length, 2);
+    } finally {
+      fake.close();
+      await fetch(`${BASE_URL}/api/media/${media.media_id}`, { method: 'DELETE' });
+    }
+  });
+
+  await runTest('[NEGATIVE] Retrying a transcript that is already PROCESSING returns 409; an unknown media → 404', async () => {
+    if (await apiReachable()) return;
+    const mode = { value: 'full' };
+    const fake = await startFakeTranscribeApi(mode);
+    assert.ok(fake);
+    // make the fake API slow so the job stays PROCESSING while we poke it
+    fake.removeAllListeners('request');
+    fake.on('request', (req, res) => { req.resume(); setTimeout(() => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ text: FULL_TEXT, segments: [] })); }, 2500); });
+    const up = await uploadMedia(Buffer.from('fake video bytes'), 'regression-busy.mp4', 'video/mp4');
+    const media = (await up.json()).media;
+    try {
+      const busy = await fetch(`${BASE_URL}/api/media/${media.media_id}/transcribe`, { method: 'POST' });
+      assert.strictEqual(busy.status, 409);
+      assert.strictEqual((await fetch(`${BASE_URL}/api/media/no-such-media/transcribe`, { method: 'POST' })).status, 404);
+      await waitSettled(media.media_id);
+    } finally {
+      fake.close();
+      await fetch(`${BASE_URL}/api/media/${media.media_id}`, { method: 'DELETE' });
+    }
   });
 
   // --- SUMMARY ---

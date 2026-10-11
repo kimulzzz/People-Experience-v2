@@ -58,6 +58,27 @@ async function transcribeLocalFile(absolutePath, language = DEFAULT_LANGUAGE) {
   }, TIMEOUT_MS);
 }
 
+// Is the transcribe API answering at all? Any HTTP response (even 404) counts as "up"; a refused
+// connection or a timeout means the Video Extractor is not running.
+function isTranscribeApiReachable(timeoutMs = 3000) {
+  return new Promise(resolve => {
+    let done = false;
+    const finish = ok => { if (!done) { done = true; resolve(ok); } };
+    try {
+      const url = new URL(API_URL);
+      const client = url.protocol === 'https:' ? https : http;
+      const req = client.request(url, { method: 'GET' }, res => { res.resume(); finish(true); });
+      req.setTimeout(timeoutMs, () => { req.destroy(); finish(false); });
+      req.on('error', () => finish(false));
+      req.end();
+    } catch (_) {
+      finish(false);
+    }
+  });
+}
+
+const unreachableMessage = () => `Layanan transkrip tidak aktif di ${API_URL}. Jalankan API Video Extractor lalu coba lagi.`;
+
 function excerpt(text) {
   const clean = (text || '').replace(/\s+/g, ' ').trim();
   if (!clean) return '';
@@ -90,12 +111,17 @@ async function queueMediaTranscription(media_id) {
       if (!abs || !fs.existsSync(abs)) throw new Error('File video tidak ditemukan di server');
 
       const result = await transcribeLocalFile(abs);
-      const text = (result.text || '').trim();
+      const segments = Array.isArray(result.segments) ? result.segments : [];
+      // The complete transcript is the API's `text` field, exactly as returned (only trimmed).
+      // Only if the API sent no `text` at all is it rebuilt from the segments; the per-segment
+      // timestamps are always kept as-is.
+      let text = typeof result.text === 'string' ? result.text.trim() : '';
+      if (!text && segments.length) text = segments.map(s => String(s.text || '').trim()).filter(Boolean).join(' ');
       await storage.updateMedia(media_id, {
         transcript_status: 'DONE',
         transcript_error: '',
         transcript: text,
-        transcript_segments: Array.isArray(result.segments) ? result.segments : [],
+        transcript_segments: segments,
         transcript_language: result.language || DEFAULT_LANGUAGE,
         duration_seconds: result.duration || null,
         ai_generated_description: text ? `Transkrip otomatis: ${excerpt(text)}` : 'Tidak ada ucapan yang terdeteksi pada video ini.'
@@ -127,6 +153,8 @@ async function resumeInterruptedTranscriptions() {
 
 module.exports = {
   transcribeLocalFile,
+  isTranscribeApiReachable,
+  unreachableMessage,
   queueMediaTranscription,
   resumeInterruptedTranscriptions,
   resolveUploadPath,

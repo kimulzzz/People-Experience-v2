@@ -73,7 +73,7 @@ function MediaLightbox({ media, onClose }) {
 }
 
 // One gallery item: viewable photo / playable video, plus (videos only) the AI transcript.
-function MediaCard({ med, onDelete, onOpen, onRetryTranscript }) {
+function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false, retryNotice = null }) {
   const videoRef = useRef(null);
   const [broken, setBroken] = useState(false);
   const isVideo = med.file_type === 'VIDEO';
@@ -157,11 +157,17 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript }) {
           </div>
           <button
             onClick={() => onRetryTranscript(med.media_id)}
-            className="inline-flex items-center space-x-1 px-2 py-0.5 bg-white border border-red-200 rounded font-bold hover:bg-red-100 transition"
+            disabled={retrying}
+            className="inline-flex items-center space-x-1 px-2 py-0.5 bg-white border border-red-200 rounded font-bold hover:bg-red-100 transition disabled:opacity-60 disabled:cursor-wait"
           >
-            <RefreshCw className="w-3 h-3" />
-            <span>Coba lagi</span>
+            <RefreshCw className={`w-3 h-3 ${retrying ? 'animate-spin' : ''}`} />
+            <span>{retrying ? 'Memproses ulang…' : 'Coba lagi'}</span>
           </button>
+          {retryNotice && (
+            <p className="text-[9.5px] text-red-600 font-semibold">
+              Dicoba ulang pukul {retryNotice.at}: {retryNotice.text}
+            </p>
+          )}
         </div>
       )}
 
@@ -187,8 +193,14 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript }) {
               {med.transcript_language ? ` • ${med.transcript_language.toUpperCase()}` : ''}
             </span>
           </summary>
-          <div className="px-2 pb-2 max-h-44 overflow-y-auto space-y-1">
-            {Array.isArray(med.transcript_segments) && med.transcript_segments.length > 0 ? (
+          <div className="px-2 pb-2 max-h-56 overflow-y-auto space-y-1.5">
+            {/* Full transcript = the API's `text` field */}
+            <div className="font-bold text-gray-500 uppercase tracking-wide text-[9px]">Teks lengkap</div>
+            <p className="whitespace-pre-line text-gray-700 leading-snug">{med.transcript}</p>
+            {Array.isArray(med.transcript_segments) && med.transcript_segments.length > 0 && (
+              <div className="font-bold text-gray-500 uppercase tracking-wide text-[9px] pt-1">Per segmen (klik untuk memutar dari bagian ini)</div>
+            )}
+            {Array.isArray(med.transcript_segments) && med.transcript_segments.length > 0 && (
               med.transcript_segments.map((seg, i) => (
                 <button
                   key={i}
@@ -200,8 +212,6 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript }) {
                   <span>{seg.text}</span>
                 </button>
               ))
-            ) : (
-              <p>{med.transcript}</p>
             )}
           </div>
         </details>
@@ -299,16 +309,31 @@ export default function EventManager({
     }
   };
 
+  // "Coba lagi" for a failed transcript. Gives visible feedback on every click: the button spins,
+  // a started job is shown as "sedang diproses" immediately (taken from the server's reply, not a
+  // refetch that could already see a second failure), and a refusal — e.g. the Video Extractor
+  // is not running — is shown on the card together with the time of the attempt.
+  const [retryingIds, setRetryingIds] = useState({});
+  const [retryNotices, setRetryNotices] = useState({});
   const handleRetryTranscript = async (mediaId) => {
+    const started = Date.now();
+    const nowLabel = () => new Date().toLocaleTimeString('id-ID');
+    setRetryingIds(prev => ({ ...prev, [mediaId]: true }));
+    setRetryNotices(prev => ({ ...prev, [mediaId]: null }));
     try {
       const res = await fetch(`/api/media/${mediaId}/transcribe`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        alert(data.error || `Gagal memulai transkrip (HTTP ${res.status}).`);
+        setRetryNotices(prev => ({ ...prev, [mediaId]: { at: nowLabel(), text: data.error || `Gagal memulai transkrip (HTTP ${res.status}).` } }));
+      } else if (data.media) {
+        setEventDetail(prev => (prev ? { ...prev, media: (prev.media || []).map(m => (m.media_id === mediaId ? data.media : m)) } : prev));
       }
-      if (selectedEvent) fetchEventDetail(selectedEvent.event_id);
     } catch (err) {
-      alert('Gagal memulai transkrip: ' + err.message);
+      setRetryNotices(prev => ({ ...prev, [mediaId]: { at: nowLabel(), text: 'Gagal memulai transkrip: ' + err.message } }));
+    } finally {
+      // keep the spinner visible long enough to be noticed
+      const wait = Math.max(0, 700 - (Date.now() - started));
+      setTimeout(() => setRetryingIds(prev => ({ ...prev, [mediaId]: false })), wait);
     }
   };
 
@@ -591,6 +616,8 @@ export default function EventManager({
                       onDelete={handleDeleteMedia}
                       onOpen={setLightboxMedia}
                       onRetryTranscript={handleRetryTranscript}
+                      retrying={!!retryingIds[med.media_id]}
+                      retryNotice={retryNotices[med.media_id] || null}
                     />
                   ))}
 

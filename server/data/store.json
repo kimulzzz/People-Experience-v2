@@ -110937,6 +110937,44 @@
       "ai_generated_description": "Sesi live polling & Q&A interaktif yang diikuti oleh ratusan karyawan online dan onsite.",
       "highlight_order": 3,
       "created_at": "2026-09-03T06:35:28.604Z"
+    },
+    {
+      "media_id": "med-1791713415210-t9zwt",
+      "event_id": "ev-perspektif-2024-q1",
+      "file_name": "Tentang WAKTU (Video Narasi) - molypond (1080p, h264).mp4",
+      "file_path": "/uploads/media-1791713415110-3p8xjr.mp4",
+      "file_type": "VIDEO",
+      "caption": "Documentation Tentang WAKTU (Video Narasi) - molypond (1080p, h264).mp4",
+      "ai_generated_description": "Transkrip otomatis: Orang yang pasif, banyak dihabiskan untuk menyendiri, sibuk dengan diri sendiri, mencari sebuah ketenangan, tapi sembuh. Pelan-pelan aku sadar, semua ini terasa hampak, lebih lagi saat ku ingat, demi masa, sesungguhnya manusia berada dalam kerugian. hingga akhirnya aku memberanik…",
+      "highlight_order": 4,
+      "created_at": "2026-10-11T10:10:15.210Z",
+      "transcript_status": "DONE",
+      "transcript_error": "",
+      "transcript": "Orang yang pasif, banyak dihabiskan untuk menyendiri, sibuk dengan diri sendiri, mencari sebuah ketenangan, tapi sembuh. Pelan-pelan aku sadar, semua ini terasa hampak, lebih lagi saat ku ingat, demi masa, sesungguhnya manusia berada dalam kerugian. hingga akhirnya aku memberanikan diri untuk beranjak keluar mencoba jadi bagian dari hidup ini bagian yang berarti kalau tidak waktuku tidak habis dengan sia-sia",
+      "transcript_segments": [
+        {
+          "start": 0.58,
+          "end": 27.74,
+          "text": "Orang yang pasif, banyak dihabiskan untuk menyendiri, sibuk dengan diri sendiri, mencari sebuah ketenangan, tapi sembuh."
+        },
+        {
+          "start": 29.88,
+          "end": 41.08,
+          "text": "Pelan-pelan aku sadar, semua ini terasa hampak, lebih lagi saat ku ingat, demi masa, sesungguhnya manusia berada dalam kerugian."
+        },
+        {
+          "start": 41.08,
+          "end": 51.22,
+          "text": "hingga akhirnya aku memberanikan diri untuk beranjak keluar mencoba jadi bagian dari hidup"
+        },
+        {
+          "start": 51.22,
+          "end": 63.95,
+          "text": "ini bagian yang berarti kalau tidak waktuku tidak habis dengan sia-sia"
+        }
+      ],
+      "transcript_language": "id",
+      "duration_seconds": 72.12
     }
   ],
   "customSurveyQuestions": {},
