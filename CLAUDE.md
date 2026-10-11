@@ -30,6 +30,19 @@ experience ("Kejar Mimpi" framework: 70% Survey Index + 30% Outcome Index).
   `alertEngine.js`, or `seedData.js`. See `.claude/agents/auditor.md` for its full brief and
   `CHANGELOG.md` **[2.12.0]** for its first run's findings (all fixed).
 
+- **`developer`** — implements a change (backend, frontend, SQL schema, services). Keeps both storage backends
+  (`sqlStorage.js` + `jsonStorage.js`) in step, runs the regression suite itself, bumps the version; never commits,
+  never edits `.env`/`store.json`, never touches credentials. See `.claude/agents/developer.md`.
+- **`qc`** — read-only quality control: runs the suite (SQL ×2, JSON when relevant), probes API/negative cases,
+  checks SQL↔JSON parity, data leakage, and verifies the UI in the Browser pane; returns a LULUS/GAGAL verdict with
+  evidence. Never fixes. See `.claude/agents/qc.md`.
+- **`technical-writer`** — documents a finished change (CHANGELOG, `docs/*.md`, `SQLServerDB.md`, these Notes) in the
+  project's Indonesian style, verifying claims against the code; docs only, CRLF-safe, never writes secrets. See
+  `.claude/agents/technical-writer.md`.
+
+Suggested flow for a change: `developer` → `qc` → `technical-writer` → (main session) commit & push with explicit
+`git add <files>` (never `git add server`/`.` — it would sweep in `server/data/store.json`).
+
 ## Running locally
 
 ```bash
