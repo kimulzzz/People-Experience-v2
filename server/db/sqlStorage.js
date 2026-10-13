@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const sql = require('mssql');
 const seed = require('./seedData');
+const { defaultUnitForScale, parseUnit } = require('./metricUnit');
 const { buildInitialStore } = require('./initialStore');
 const { parseFilterOptions, normalizeDateString, CURRENT_YEAR } = require('./filterUtils');
 
@@ -141,6 +142,7 @@ function rowToMetric(r) {
     upload_deadline_month: r.upload_deadline_month,
     pic_name: r.pic_name,
     pic_email: r.pic_email,
+    unit: r.unit === null || r.unit === undefined ? defaultUnitForScale(r.scale_type) : r.unit,
     metric_weight: r.weight
   };
   if (r.last_data_date_str) m.last_data_date = r.last_data_date_str;
@@ -428,6 +430,21 @@ async function topUpDirectory() {
   console.log(`[sqlStorage] Added ${todo.length} missing directory entries.`);
 }
 
+// Fills px_metrics.unit where it is still NULL (a database created before v2.25.0): the seed's unit for
+// the seed metrics, otherwise the default of the metric's scale. Never touches a unit that is already set,
+// so an admin's edit survives every restart.
+async function topUpMetricUnits() {
+  const rows = await run('SELECT metric_id, scale_type FROM dbo.px_metrics WHERE unit IS NULL');
+  if (!rows.length) return;
+  await inTransaction(async tx => {
+    for (const r of rows) {
+      await run('UPDATE dbo.px_metrics SET unit = @unit WHERE metric_id = @id AND unit IS NULL',
+        { id: r.metric_id, unit: initialUnitFor({ metric_id: r.metric_id, scale_type: r.scale_type }) }, tx);
+    }
+  });
+  console.log(`[sqlStorage] Filled the display unit of ${rows.length} metrics.`);
+}
+
 // ------------------------------------------------------------------ app settings (px_app_settings)
 // Inserts any default setting that is not in the table yet (never overwrites an admin's value).
 async function seedAppSettings(tx) {
@@ -504,6 +521,14 @@ async function insertCheckpoint(tx, c) {
   }, tx);
 }
 
+// Satuan yang disimpan untuk sebuah metrik: yang sudah diisi, kalau tidak nilai awal metrik seed
+// (id sama), kalau tidak default per jenis skala. Dipakai saat import store.json lama (tanpa satuan).
+function initialUnitFor(m) {
+  if (typeof m.unit === 'string' && m.unit.trim()) return m.unit.trim().slice(0, 30);
+  const seeded = seed.initialMetrics.find(sm => sm.metric_id === m.metric_id);
+  return (seeded && seeded.unit) || defaultUnitForScale(m.scale_type);
+}
+
 function metricParams(m) {
   return {
     metric_id: m.metric_id,
@@ -528,6 +553,7 @@ function metricParams(m) {
     pic_name: m.pic_name || '',
     pic_email: m.pic_email || '',
     last_data_date: toSqlDate(m.last_data_date) ? T.date(toSqlDate(m.last_data_date)) : null,
+    unit: initialUnitFor(m),
     notes: m.notes === undefined || m.notes === null ? null : T.max(String(m.notes))
   };
 }
@@ -535,7 +561,7 @@ function metricParams(m) {
 const METRIC_COLUMNS = ['metric_id', 'journey_id', 'checkpoint_id', 'metric_name', 'metric_type', 'scale_type',
   'source_of_data', 'experience_owner', 'raw_value', 'normalized_score', 'weight', 'is_indicative',
   'is_employee_metric', 'target_audience', 'underlying_questions', 'update_frequency', 'requires_manual_upload',
-  'upload_deadline_day', 'upload_deadline_month', 'pic_name', 'pic_email', 'last_data_date', 'notes'];
+  'upload_deadline_day', 'upload_deadline_month', 'pic_name', 'pic_email', 'last_data_date', 'notes', 'unit'];
 
 async function insertMetric(tx, m) {
   await run(`INSERT INTO dbo.px_metrics (${METRIC_COLUMNS.join(', ')})
@@ -871,6 +897,7 @@ const storage = {
     await seedIfEmpty();
     await inTransaction(async tx => { await seedSurveyQuestions(tx); await seedAppSettings(tx); await seedEmailSettings(tx); });
     await topUpDirectory();
+    await topUpMetricUnits();
     // Demo survey responses for newly elapsed months. Set SEED_DEMO_DATA=false on a real
     // production database so no synthetic responses are ever generated.
     if (String(process.env.SEED_DEMO_DATA || 'true').toLowerCase() !== 'false') await topUpSeedResponses();
@@ -1109,7 +1136,8 @@ const storage = {
         upload_deadline_day: metricData.upload_deadline_day !== undefined && metricData.upload_deadline_day !== '' ? parseInt(metricData.upload_deadline_day) : 25,
         upload_deadline_month: metricData.upload_deadline_month !== undefined && metricData.upload_deadline_month !== '' ? parseInt(metricData.upload_deadline_month) : 11,
         pic_name: metricData.pic_name ? String(metricData.pic_name).trim() : (metricData.experience_owner || ''),
-        pic_email: metricData.pic_email ? String(metricData.pic_email).trim() : ''
+        pic_email: metricData.pic_email ? String(metricData.pic_email).trim() : '',
+        unit: metricData.unit !== undefined && metricData.unit !== null ? parseUnit(metricData.unit) : defaultUnitForScale(metricData.scale_type || (metricData.metric_type === 'SURVEY' ? 'RATING_5' : 'PERCENTAGE'))
       };
       await insertMetric(tx, metric);
       await upsertTarget(tx, newId, metric);
@@ -1157,7 +1185,8 @@ const storage = {
         ? parseInt(metricData.upload_deadline_month) : (current.upload_deadline_month !== undefined ? current.upload_deadline_month : 11),
       pic_name: metricData.pic_name !== undefined ? String(metricData.pic_name).trim() : (current.pic_name || current.experience_owner || ''),
       pic_email: metricData.pic_email !== undefined ? String(metricData.pic_email).trim() : (current.pic_email || ''),
-      last_data_date: metricData.last_data_date !== undefined ? String(metricData.last_data_date).trim() : current.last_data_date
+      last_data_date: metricData.last_data_date !== undefined ? String(metricData.last_data_date).trim() : current.last_data_date,
+      unit: metricData.unit !== undefined ? parseUnit(metricData.unit) : current.unit
     };
 
     await inTransaction(async tx => {

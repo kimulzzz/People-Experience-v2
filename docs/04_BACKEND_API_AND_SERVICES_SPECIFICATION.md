@@ -224,3 +224,10 @@ backend boot) tanpa perlu dipicu manual — lihat `server.js` bagian `app.listen
 
 - `POST /api/media/:id/transcribe` ("Coba lagi"): 404 media tak ada; 400 bukan video; 409 masih PROCESSING; **503** bila API transkrip tidak aktif (status media tidak diubah); 202 `{ media }` dengan `transcript_status: PROCESSING` bila pekerjaan dimulai.
 - Hasil transkrip: `transcript` = field `text` respons API (di-trim; bila tidak ada `text` → gabungan teks segmen), `transcript_segments` = array `segments` apa adanya (`start`, `end`, `text`), `transcript_language`, `duration_seconds`, `ai_generated_description` = kutipan awal `text`.
+
+---
+
+## 🏷️ Catatan v2.25.0 — Satuan Nilai Aktual Metrik (`unit`)
+
+- Field **`unit`** (teks, mis. `orang/tahun`, `pax`, `/ 5`, `%`) ada di tiap metrik pada `GET /api/metrics/calculate`, `GET /api/metrics/:id/detail` (di level atas dan `metric.unit`), dan `GET /api/admin/parameters`.
+- `POST`/`PUT /api/admin/metrics` menerima `unit`: wajib, di-trim, 1–30 karakter, kosong/terlalu panjang → **400** ("Satuan nilai tidak boleh kosong." / "Satuan nilai maksimal 30 karakter."). `PUT` tanpa `unit` mempertahankan nilai lama; `POST` tanpa `unit` memakai default skala (`RATING_5` → `/ 5`, `QUOTA_COUNT` → `pax`, lainnya `%`). Hanya label tampilan — tidak memengaruhi skor/status.

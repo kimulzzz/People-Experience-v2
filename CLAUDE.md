@@ -65,7 +65,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(130-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(138-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -81,7 +81,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (130 cases) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (138 cases) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (25 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules |
 
@@ -452,6 +452,18 @@ domain model, not just descriptive:
   :8000 — run it via a 2nd backend (`TEST_BASE_URL` / `TEST_TRANSCRIBE_PORT`, see docs/07 §15). The user's real video
   record (med-1791719574927-rd10q + its file in server/uploads) is preserved in SQL; do NOT `migrate --reset` without
   re-adding it (store.json only knows an older, deleted video record).
+
+- **v2.25.0** (2026-10-13, see `CHANGELOG.md` [2.25.0]): User noticed Explore Metrics showed metric #14 ("% employees receiving
+  recognition / year") as "4330%" (it is a head-count: 2,840+980+510 recipients vs target 5,000/yr) and asked to fix only that.
+  Root cause: `Calculator.jsx`/`MetricDetailModal.jsx` hardcoded the unit (`RATING_5 → "/ 5"`, `metric_id === 11 → "pax"`, everything else
+  "%"), and metrics had no unit in the DB. Fix (built by the `nia` agent): new `px_metrics.unit` column (idempotent ALTER + boot top-up
+  that only fills NULLs, so admin edits are never overwritten; JSON backfill too), seeded (`/ 5`, `pax`, `orang/tahun` for #14, `%`),
+  editable in Parameter Admin, exposed as `unit` by calculate/detail/parameters, rendered via `src/utils/formatMetricValue.js`.
+  Scores/status untouched. Proof nothing else moved: previous commit (temp git worktree, other port, same DB) vs new code → 58/58
+  GET endpoints identical except `unit`; displayed raw-value text for 27 metrics: 26 identical, only #14 changed. Module 33 (8 tests)
+  → 138/138 on SQL (x2) and JSON. NOT changed (reported): #14's name still has "%", #1 keeps "%", #11 shows "2.5 pax" vs target 500.
+  Gotcha: the regression suite adds ~16 survey rows per run to the active DB; cleaned with `migrate --reset` + re-adding the user's real
+  video record (see v2.24.1) and deleting the stale old video record that store.json resurrects.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

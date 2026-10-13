@@ -1,6 +1,8 @@
 // server/db/seedData.js
 // Master Data for CIMB Niaga People Experience Framework
 
+const { defaultUnitForScale } = require('./metricUnit');
+
 const initialJourneys = [
   {
     journey_id: 1,
@@ -88,6 +90,15 @@ const OUTCOME_INGESTION_DATES = {
   11: '2026-03-15', // Signature program attendance
   16: '2026-03-24', // Medical check-up & wellness
   27: '2026-03-25'  // Exit interview completion & turnover
+};
+
+// Satuan tampilan nilai aktual per metrik (px_metrics.unit) — default awal, bisa diubah admin di
+// Parameter Admin. Hanya memengaruhi tampilan, bukan perhitungan skor. Ditentukan dari nama metrik,
+// target_display dan data operasionalnya (skala RATING_5 -> "/ 5", PERCENTAGE -> "%", hitungan -> satuan hitungnya).
+const METRIC_UNITS = {
+  1: '%',            // NUMERIC indeks 0-100 (follower/reach/engagement growth); target "> 85" tanpa satuan eksplisit
+  11: 'pax',         // rata-rata peserta per event, target "min 500 pax"
+  14: 'orang/tahun'  // jumlah karyawan penerima recognition per tahun (2.840 + 980 + 510 = 4.330), target "min 5,000 / yr"
 };
 
 const initialMetrics = [
@@ -730,6 +741,7 @@ const initialMetrics = [
 
   return {
     ...m,
+    unit: METRIC_UNITS[m.metric_id] || defaultUnitForScale(m.scale_type),
     update_frequency,
     requires_manual_upload,
     // Monthly metrics: due by the 25th of every month. Annual (ESS) metrics: due by

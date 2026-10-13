@@ -139,6 +139,7 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 | Riwayat email reminder yang terkirim | `px_reminder_log` | otomatis; ditampilkan di menu Setting Email |
 | Akun pengirim email reminder PIC (password terenkripsi) | `px_email_settings` | menu **Setting Email** di Header |
 | Daftar pilihan Parameter Admin & Survey Questions (tipe metrik, skala, responden, frekuensi, tipe pertanyaan) | `px_app_settings` | `PUT /api/admin/settings/:key` (hanya label) |
+| Satuan nilai aktual tiap metrik (`px_metrics.unit`) | `px_metrics` | Parameter Admin → field "Satuan Nilai Aktual" |
 | Parameter journey/checkpoint/metric/target/bobot | `px_journeys`, `px_checkpoints`, `px_metrics`, `px_metric_targets` | menu Parameter Admin |
 
 > **Perhatian:** `node server/db/migrate.js --reset` menghapus semua tabel `px_*` termasuk `px_email_settings` — pengaturan email harus diisi ulang setelahnya.

@@ -4,6 +4,18 @@ Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Managemen
 
 ---
 
+## [2.25.0] - 2026-10-13
+
+### 🏷️ Fix: Satuan Nilai Aktual Metrik #14 Salah ("4330%") — Kini Satuan Berasal dari Database (Fixed / Added)
+- **Laporan pengguna**: di Explore Metrics, metrik #14 "% employees receiving recognition / year" menampilkan "4330%" dengan target "min 5,000 / yr"; satuannya seharusnya bukan %.
+- **Akar masalah**: `Calculator.jsx` (dan `MetricDetailModal.jsx`) memakai rumus yang ditulis langsung di kode: `RATING_5 → "x / 5"`, `metric_id === 11 → "x pax"`, **selain itu otomatis "x%"**. Metrik tidak punya konsep satuan di database. Nilai 4330 adalah jumlah penerima recognition (2.840 + 980 + 510 pada data operasional) terhadap target 5.000 per tahun — hitungan orang, bukan persentase.
+- **Perbaikan**: kolom baru **`px_metrics.unit`** (NVARCHAR(30)), dibaca dari database dan dipakai di semua tampilan nilai aktual lewat util `src/utils/formatMetricValue.js` (menggantikan rumus hardcoded). Seed: `/ 5` untuk metrik skala 1–5, `pax` untuk #11, **`orang/tahun` untuk #14**, `%` untuk sisanya. Admin dapat mengubah satuan di Parameter Admin (field "Satuan Nilai Aktual" + pratinjau; wajib, 1–30 karakter; metrik baru terisi otomatis sesuai skala). Database lama ter-upgrade otomatis saat boot (`ALTER TABLE` idempoten + `topUpMetricUnits()` yang hanya mengisi baris `unit IS NULL` — edit admin tidak pernah ditimpa); backend JSON punya backfill setara. Field `unit` ditambahkan ke `/api/metrics/calculate`, `/api/metrics/:id/detail`, dan `/api/admin/parameters`.
+- **Cakupan sengaja sempit**: hanya label satuan. Perhitungan skor, normalisasi, threshold, dan status tidak diubah — #14 tetap 86,6% / WARNING.
+- **Bukti "tidak menyenggol yang lain"**: (1) kode lama (commit sebelumnya, di git worktree sementara) dan kode baru dijalankan berdampingan atas database yang sama, lalu **58 endpoint GET dibandingkan → 58/58 identik** (satu-satunya selisih: field baru `unit`); (2) teks nilai aktual yang tampil untuk 27 metrik dihitung dengan rumus lama vs fungsi baru → **26 identik, hanya #14 berubah** ("4330%" → "4.330 orang/tahun"). Ketidakkonsistenan yang ditemukan tetapi **tidak diubah**: nama #14 masih memuat "%" padahal datanya hitungan; #1 (NUMERIC) tetap `%`; #11 menampilkan "2.5 pax" melawan target 500; sebagian data operasional tidak cocok dengan nama metriknya (sudah ada sebelumnya).
+- **Verifikasi**: Modul 33 (8 test; total **138**) → **138/138 PASS di SQL Server (2×) dan di JSON**; UI diperiksa di Browser pane (baris #14 menampilkan "4.330 orang/tahun", "Tgt: min 5,000 / yr", 86.6%, Warning). Sisa data tes dibersihkan (reset database + rekaman video asli dipulihkan; 5.040 respons, 2 event, 4 media). Versi → **2.25.0**.
+
+---
+
 ## [2.24.1] - 2026-10-11
 
 ### 🎞️ Fix: Tombol "Coba Lagi" Transkrip Video Tidak Terlihat Bekerja + Teks Lengkap dari `text` (Fixed / Changed)

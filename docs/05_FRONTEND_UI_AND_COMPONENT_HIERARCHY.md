@@ -237,3 +237,9 @@ Tombol **Setting Email** di Header (sebelah Survey Templates) membuka modal: tog
 ## 🎞️ Catatan v2.24.1 — `EventManager.jsx` (kartu video)
 
 "Coba lagi" kini memberi umpan balik: tombol berputar/disabled ("Memproses ulang…"), balasan 202 langsung dipasang ke state (kartu "sedang diproses"), dan penolakan (mis. 503 layanan mati) tampil di kartu bersama jam percobaan. Bagian "Transkrip AI lengkap" menampilkan **TEKS LENGKAP** (`transcript`, dari `text` API) lalu daftar **PER SEGMEN** (klik = putar dari detik itu).
+
+---
+
+## 🏷️ Catatan v2.25.0 — Satuan Nilai Aktual
+
+`src/utils/formatMetricValue.js` (`formatMetricValue(raw, unit, scale_type)`) memformat nilai aktual di `Calculator.jsx` (Explore Metrics) dan `MetricDetailModal.jsx` (kartu "Actual Value & Target") — bilangan bulat QUOTA_COUNT diberi pemisah ribuan (4.330), "%" ditempel tanpa spasi, satuan lain dengan spasi. `AdminParametersModal.jsx` punya input "Satuan Nilai Aktual" (maks 30 karakter, wajib, pratinjau langsung; terisi otomatis saat skala diganti pada metrik baru) dan subjudul "satuan: …" pada tabel metrik.

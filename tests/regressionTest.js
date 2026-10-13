@@ -2012,6 +2012,119 @@ async function runRegressionSuite() {
     }
   });
 
+  // --- 33. METRIC DISPLAY UNIT (px_metrics.unit) ---
+  console.log('\n📦 MODULE 33: Metric Display Unit — "4330%" Bug (Positive & Negative Testing)');
+
+  const unitJson = (method, p, body) => fetch(`${BASE_URL}${p}`, {
+    method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body)
+  });
+  const unitCalcMetric = async (id) => (await (await fetch(`${BASE_URL}/api/metrics/calculate?period=YTD`)).json()).metrics.find(m => m.metric_id === id);
+  const unitAdminMetric = async (id) => (await (await fetch(`${BASE_URL}/api/admin/parameters`)).json()).metrics.find(m => m.metric_id === id);
+  const unitTempMetric = (overrides = {}) => unitJson('POST', '/api/admin/metrics', {
+    metric_name: 'REGRESSION Unit Metric', metric_type: 'OUTCOME', scale_type: 'QUOTA_COUNT',
+    target_value: 100, target_display: 'min 100', raw_value: 40, requires_manual_upload: false, ...overrides
+  });
+  const unitDeleteMetric = (id) => fetch(`${BASE_URL}/api/admin/metrics/${id}`, { method: 'DELETE' });
+
+  await runTest('[POSITIVE] Every one of the 27 metrics exposes a non-empty unit (calculate + admin parameters) and RATING_5 metrics read "/ 5"', async () => {
+    const calc = await (await fetch(`${BASE_URL}/api/metrics/calculate?period=YTD`)).json();
+    const admin = (await (await fetch(`${BASE_URL}/api/admin/parameters`)).json()).metrics;
+    assert.strictEqual(calc.metrics.length, 27);
+    for (const m of [...calc.metrics, ...admin]) {
+      assert.ok(typeof m.unit === 'string' && m.unit.trim().length > 0 && m.unit.length <= 30, `Metric ${m.metric_id} has no valid unit: ${JSON.stringify(m.unit)}`);
+    }
+    calc.metrics.filter(m => m.scale_type === 'RATING_5').forEach(m => assert.strictEqual(m.unit, '/ 5', `Metric ${m.metric_id}`));
+  });
+
+  await runTest('[POSITIVE] Metric 14 (recognition recipients per year) is a count — its unit is not "%" and its score/status/bar are untouched', async () => {
+    const m = await unitCalcMetric(14);
+    assert.ok(m.unit && m.unit !== '%', `Metric 14 unit must not be "%", got "${m.unit}"`);
+    assert.strictEqual(m.scale_type, 'QUOTA_COUNT');
+    // the unit is display-only: normalized score is still raw / target * 100 (capped at 100)
+    const expected = Math.min(m.raw_value / m.target_value * 100, 100);
+    assert.ok(Math.abs(m.normalized_score - expected) < 0.01, `normalized ${m.normalized_score} vs ${expected}`);
+    const detail = await (await fetch(`${BASE_URL}/api/metrics/14/detail`)).json();
+    assert.strictEqual(detail.unit, m.unit);
+    assert.strictEqual(detail.metric.unit, m.unit);
+    assert.strictEqual(detail.status, m.status);
+  });
+
+  await runTest('[POSITIVE] The detail endpoint returns the unit for a SURVEY metric as well', async () => {
+    const detail = await (await fetch(`${BASE_URL}/api/metrics/2/detail`)).json();
+    assert.strictEqual(detail.unit, '/ 5');
+    assert.strictEqual(detail.metric.unit, '/ 5');
+  });
+
+  await runTest('[POSITIVE] A new metric created without a unit gets the default of its scale; an explicit unit is kept (and trimmed)', async () => {
+    const ids = [];
+    try {
+      for (const [scale, expected] of [['RATING_5', '/ 5'], ['PERCENTAGE', '%'], ['QUOTA_COUNT', 'pax']]) {
+        const res = await unitTempMetric({ scale_type: scale });
+        assert.strictEqual(res.status, 201);
+        const body = await res.json();
+        ids.push(body.metric_id);
+        assert.strictEqual(body.metric.unit, expected, scale);
+      }
+      const res = await unitTempMetric({ unit: '  orang/bulan  ' });
+      const body = await res.json();
+      ids.push(body.metric_id);
+      assert.strictEqual(body.metric.unit, 'orang/bulan', 'unit must be trimmed');
+      assert.strictEqual((await unitAdminMetric(body.metric_id)).unit, 'orang/bulan');
+    } finally {
+      for (const id of ids) await unitDeleteMetric(id);
+    }
+  });
+
+  await runTest('[POSITIVE] Admin can edit a unit; it shows in calculate / parameters / detail, a later edit of another field keeps it, and the score is unchanged', async () => {
+    const id = (await (await unitTempMetric()).json()).metric_id;
+    try {
+      const before = await unitCalcMetric(id);
+      const put = await unitJson('PUT', `/api/admin/metrics/${id}`, { unit: 'peserta/tahun' });
+      assert.strictEqual(put.status, 200);
+      assert.strictEqual((await put.json()).metric.unit, 'peserta/tahun');
+      const after = await unitCalcMetric(id);
+      assert.strictEqual(after.unit, 'peserta/tahun');
+      assert.strictEqual((await unitAdminMetric(id)).unit, 'peserta/tahun');
+      assert.strictEqual((await (await fetch(`${BASE_URL}/api/metrics/${id}/detail`)).json()).unit, 'peserta/tahun');
+      assert.strictEqual(after.normalized_score, before.normalized_score, 'changing the unit must not change the score');
+      assert.strictEqual(after.status, before.status);
+      // an update that does not mention the unit must not wipe it
+      await unitJson('PUT', `/api/admin/metrics/${id}`, { experience_owner: 'REGRESSION Owner' });
+      assert.strictEqual((await unitAdminMetric(id)).unit, 'peserta/tahun');
+    } finally {
+      await unitDeleteMetric(id);
+    }
+  });
+
+  await runTest('[NEGATIVE] A blank or over-long unit is rejected with 400 and the stored unit is unchanged (30 characters is the maximum)', async () => {
+    const id = (await (await unitTempMetric({ unit: 'orang' })).json()).metric_id;
+    try {
+      for (const bad of ['', '    ', 'x'.repeat(31)]) {
+        const put = await unitJson('PUT', `/api/admin/metrics/${id}`, { unit: bad });
+        assert.strictEqual(put.status, 400, `unit ${JSON.stringify(bad)} must be rejected`);
+        assert.ok((await put.json()).error);
+        assert.strictEqual((await unitAdminMetric(id)).unit, 'orang');
+      }
+      const edge = await unitJson('PUT', `/api/admin/metrics/${id}`, { unit: 'y'.repeat(30) });
+      assert.strictEqual(edge.status, 200, 'exactly 30 characters is allowed');
+    } finally {
+      await unitDeleteMetric(id);
+    }
+  });
+
+  await runTest('[NEGATIVE] Creating a metric with a blank or over-long unit is rejected with 400 and no metric is stored', async () => {
+    const countBefore = (await (await fetch(`${BASE_URL}/api/admin/parameters`)).json()).metrics.length;
+    assert.strictEqual((await unitTempMetric({ unit: '   ' })).status, 400);
+    assert.strictEqual((await unitTempMetric({ unit: 'z'.repeat(31) })).status, 400);
+    const countAfter = (await (await fetch(`${BASE_URL}/api/admin/parameters`)).json()).metrics.length;
+    assert.strictEqual(countAfter, countBefore, 'a rejected metric must not be stored');
+  });
+
+  await runTest('[NEGATIVE] Updating the unit of a non-existent metric returns 400 (not a crash)', async () => {
+    const put = await unitJson('PUT', '/api/admin/metrics/99999', { unit: 'pax' });
+    assert.strictEqual(put.status, 400);
+  });
+
   // --- SUMMARY ---
   console.log('\n================================================================');
   console.log(`📊 REGRESSION TEST SUMMARY: ${passedTests}/${totalTests} Tests Passed (${failedTests} Failed)`);

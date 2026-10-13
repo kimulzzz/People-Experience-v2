@@ -643,3 +643,11 @@ Test jalur lengkap dan "belum dikonfigurasi" **dilewati otomatis** bila sudah ad
 | Retry end-to-end | Positif | layanan mati → upload FAILED; retry → **503** "tidak aktif" & status tetap FAILED; layanan hidup → 202 PROCESSING → DONE; `transcript` = `text` API persis; 2 segmen utuh (start/end/text); bahasa & durasi |
 | Tanpa `text` | Positif | teks lengkap dirakit dari segmen, segmen tidak berubah |
 | Input salah | Negatif | PROCESSING → 409; media tak ada → 404 (foto → 400 di Modul 27) |
+
+---
+
+## 🏷️ 16. Satuan Nilai Aktual Metrik — v2.25.0 (2026-10-13)
+
+**Regression suite: 138 test** (130 + **Modul 33**, 8 test) → **138/138 PASS** di SQL Server (2×) dan JSON. Modul 33: setiap metrik punya `unit` (calculate & admin); #14 bukan `%` dan skor/status tidak berubah; endpoint detail memuat `unit`; default per skala + trim; edit `unit` terlihat di semua endpoint tanpa mengubah skor; `unit` kosong / 31 karakter → 400 (30 karakter diterima); POST `unit` kosong ditolak dan tidak menyimpan metrik; PUT metrik tak ada → 400.
+
+**Bukti tidak ada regresi (di luar suite)**: kode commit sebelumnya (git worktree sementara, port terpisah) vs kode baru, database sama → **58/58 endpoint GET identik** selain field `unit`; teks nilai aktual 27 metrik rumus lama vs `formatMetricValue` → 26 identik, hanya #14 berubah.

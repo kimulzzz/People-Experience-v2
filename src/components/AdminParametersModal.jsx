@@ -23,6 +23,7 @@ import {
   Bell,
   Send
 } from 'lucide-react';
+import { formatMetricValue, defaultUnitForScale } from '../utils/formatMetricValue';
 
 const MONTH_NAMES_ID = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -98,6 +99,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
     weight: 1.0,
     target_value: 4.5,
     target_display: '4.50 / 5.0',
+    unit: '/ 5',
     min_threshold: 75.0,
     is_employee_metric: true,
     target_audience: 'EMPLOYEE',
@@ -279,6 +281,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
       weight: 1.0,
       target_value: 4.5,
       target_display: '4.50 / 5.0',
+      unit: '/ 5',
       min_threshold: 75.0,
       is_employee_metric: true,
       target_audience: 'EMPLOYEE',
@@ -306,6 +309,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
       weight: m.weight !== undefined ? m.weight : 1.0,
       target_value: m.target_value !== undefined ? m.target_value : 4.5,
       target_display: m.target_display || '',
+      unit: m.unit || '',
       min_threshold: m.min_threshold !== undefined ? m.min_threshold : 75.0,
       is_employee_metric: m.is_employee_metric !== undefined ? m.is_employee_metric : true,
       target_audience: m.target_audience || (m.is_employee_metric ? 'EMPLOYEE' : 'EXTERNAL_MARKET'),
@@ -783,7 +787,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                       <label className="block text-xs font-bold text-gray-700 mb-1">Skala Penilaian</label>
                       <select
                         value={metricFormData.scale_type}
-                        onChange={(e) => setMetricFormData({ ...metricFormData, scale_type: e.target.value })}
+                        onChange={(e) => setMetricFormData({ ...metricFormData, scale_type: e.target.value, ...(isAddingMetric ? { unit: defaultUnitForScale(e.target.value) } : {}) })}
                         className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500"
                       >
                         {(optionCatalogs.scale_types || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -846,6 +850,24 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                         placeholder="Contoh: 4.50 / 5.0 atau > 90%"
                         className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500"
                       />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">
+                        Satuan Nilai Aktual <span className="font-normal text-gray-400">(contoh: %, / 5, pax, orang/tahun)</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        maxLength={30}
+                        value={metricFormData.unit}
+                        onChange={(e) => setMetricFormData({ ...metricFormData, unit: e.target.value })}
+                        placeholder="Contoh: orang/tahun"
+                        className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500"
+                      />
+                      <div className="text-[10px] text-gray-500 mt-1">
+                        Tampil di Explore Metrics &amp; detail metrik, mis. <span className="font-bold text-gray-700">{formatMetricValue(editingMetric ? editingMetric.raw_value : 4330, metricFormData.unit, metricFormData.scale_type)}</span>. Hanya label — tidak mengubah perhitungan skor.
+                      </div>
                     </div>
 
                     <div>
@@ -1081,7 +1103,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                           </td>
                           <td className="py-2.5 px-3">
                             <div className="font-bold text-gray-900">{m.metric_name}</div>
-                            <div className="text-[11px] text-gray-500">{m.experience_owner} • {m.scale_type}</div>
+                            <div className="text-[11px] text-gray-500">{m.experience_owner} • {m.scale_type} • satuan: {m.unit || '-'}</div>
                           </td>
                           <td className="py-2.5 px-3">
                             <span 

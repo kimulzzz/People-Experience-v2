@@ -24,6 +24,7 @@ import {
   MousePointerClick,
   Sparkles
 } from 'lucide-react';
+import { formatMetricValue } from '../utils/formatMetricValue';
 
 function normalizeDateString(dateVal) {
   if (!dateVal) return null;
@@ -508,7 +509,7 @@ export default function Calculator({
                         ) : (
                           <>
                             <div className="text-xs font-black text-gray-900">
-                              {m.scale_type === 'RATING_5' ? `${m.raw_value} / 5` : (m.metric_id === 11 ? `${m.raw_value} pax` : `${m.raw_value}%`)}
+                              {formatMetricValue(m.raw_value, m.unit, m.scale_type)}
                             </div>
                             <span className="text-[9.5px] text-gray-400 block leading-tight">Tgt: {m.target_display}</span>
                           </>

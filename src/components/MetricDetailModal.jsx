@@ -30,6 +30,7 @@ import {
   Table,
   LayoutGrid
 } from 'lucide-react';
+import { formatMetricValue } from '../utils/formatMetricValue';
 
 function normalizeDateString(dateVal) {
   if (!dateVal) return null;
@@ -245,9 +246,7 @@ export default function MetricDetailModal({
                   <div className="text-[11px] font-bold text-gray-500 uppercase">Actual Value & Target</div>
                   <div className="flex items-baseline space-x-2 mt-1">
                     <span className="text-2xl font-black text-gray-900">
-                      {detailData.scale_type === 'RATING_5' 
-                        ? `${detailData.current_raw_value} / 5` 
-                        : (detailData.metric_id === 11 ? `${detailData.current_raw_value} pax` : `${detailData.current_raw_value}%`)}
+                      {formatMetricValue(detailData.current_raw_value, detailData.unit, detailData.scale_type)}
                     </span>
                     <span className="text-xs font-semibold text-gray-500">
                       ({detailData.target_display})

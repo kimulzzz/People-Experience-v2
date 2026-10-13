@@ -16,6 +16,7 @@ const {
   initialEmailSettings
 } = require('./seedData');
 const { parseFilterOptions, normalizeDateString, todayDateString } = require('./filterUtils');
+const { defaultUnitForScale, parseUnit } = require('./metricUnit');
 const { buildInitialStore: loadInitialStore } = require('./initialStore');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -61,6 +62,8 @@ function getStore() {
             if (m.upload_deadline_month === undefined) m.upload_deadline_month = (seed && seed.upload_deadline_month) || 11;
             if (m.pic_name === undefined) m.pic_name = (seed && seed.pic_name) || m.experience_owner || '';
             if (m.pic_email === undefined) m.pic_email = (seed && seed.pic_email) || '';
+            // Satuan tampilan nilai aktual (v2.25.0): isi hanya yang belum ada — edit admin tidak ditimpa.
+            if (typeof m.unit !== 'string' || !m.unit.trim()) m.unit = (seed && seed.unit) || defaultUnitForScale(m.scale_type);
             if (m.metric_type === 'OUTCOME' && m.last_data_date === undefined) m.last_data_date = (seed && seed.last_data_date) || todayDateString();
           });
         }
@@ -346,7 +349,8 @@ const storage = {
       upload_deadline_day: metricData.upload_deadline_day !== undefined && metricData.upload_deadline_day !== '' ? parseInt(metricData.upload_deadline_day) : 25,
       upload_deadline_month: metricData.upload_deadline_month !== undefined && metricData.upload_deadline_month !== '' ? parseInt(metricData.upload_deadline_month) : 11,
       pic_name: metricData.pic_name ? String(metricData.pic_name).trim() : (metricData.experience_owner || ''),
-      pic_email: metricData.pic_email ? String(metricData.pic_email).trim() : ''
+      pic_email: metricData.pic_email ? String(metricData.pic_email).trim() : '',
+      unit: metricData.unit !== undefined && metricData.unit !== null ? parseUnit(metricData.unit) : defaultUnitForScale(metricData.scale_type || (metricData.metric_type === 'SURVEY' ? 'RATING_5' : 'PERCENTAGE'))
     };
 
     s.metrics.push(newMetric);
@@ -417,7 +421,8 @@ const storage = {
       // Last HR-system ingestion date (OUTCOME metrics) — must be explicitly whitelisted here
       // too, or admin edits via PUT /api/admin/metrics/:id would silently be dropped and the
       // metric would keep falling back to its seeded/previous value forever.
-      last_data_date: metricData.last_data_date !== undefined ? String(metricData.last_data_date).trim() : current.last_data_date
+      last_data_date: metricData.last_data_date !== undefined ? String(metricData.last_data_date).trim() : current.last_data_date,
+      unit: metricData.unit !== undefined ? parseUnit(metricData.unit) : current.unit
     };
 
     s.metrics[idx] = updated;
