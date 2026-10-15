@@ -69,6 +69,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
   const [journeys, setJourneys] = useState([]);
   const [checkpoints, setCheckpoints] = useState([]);
   const [metrics, setMetrics] = useState([]);
+  const [activeAccountEmails, setActiveAccountEmails] = useState([]); // e-mails of active login accounts (from the server)
   
   // Filter state for metrics table
   const [selectedJourneyFilter, setSelectedJourneyFilter] = useState('ALL');
@@ -142,6 +143,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
       setJourneys(data.journeys || []);
       setCheckpoints(data.checkpoints || []);
       setMetrics(data.metrics || []);
+      setActiveAccountEmails(data.active_account_emails || []);
     } catch (err) {
       setErrorMessage(err.message);
     } finally {
@@ -1011,6 +1013,11 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                             placeholder="pic.team@cimbniaga.co.id"
                             className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500"
                           />
+                          {metricFormData.pic_email && metricFormData.pic_email.trim() && !activeAccountEmails.includes(metricFormData.pic_email.trim().toLowerCase()) && (
+                            <p className="text-[10.5px] text-amber-700 font-semibold mt-1">
+                              PIC belum punya akun login: belum ada akun aktif dengan email ini (Kelola User), jadi PIC belum dapat mengunggah data sendiri.
+                            </p>
+                          )}
                         </div>
                       </>
                     )}

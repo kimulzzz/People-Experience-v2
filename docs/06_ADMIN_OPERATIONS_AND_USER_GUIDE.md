@@ -199,3 +199,13 @@ mengubahnya; sudah diperbaiki di v2.12.0 (lihat `CHANGELOG.md`).
 Yang dilihat User: pilihan filter "Semua cakupan saya" menampilkan **data gabungan** seluruh cakupan (sampel digabung, bukan rata-rata dari rata-rata). Skor, trend, detail metrik, alert, dan absensi/feedback event dibatasi ke cakupan; metrik non-karyawan/OUTCOME tetap tampil sebagai angka bankwide read-only. User yang cakupannya memuat direktorat pengelola event (setting `event_manager_directorates`, default Human Resources) dapat mengelola Signature Event. Mengubah role ke Admin menghapus cakupan; menurunkan ke User wajib mengisi cakupan.
 
 **Deployment**: sebaiknya di belakang reverse proxy HTTPS on-premise dengan `TRUST_PROXY` di `.env` (cookie sesi menjadi `Secure`). Sesi berlaku 8 jam (`session_hours`).
+
+## 🧑‍💼 Menjadikan Akun User sebagai PIC Metrik (v2.27.1)
+
+1. Buat akun **User** di **Kelola User** dan **isi emailnya** (opsional di form, tetapi wajib agar akun bisa menjadi PIC).
+2. Buka **Parameter Admin** → metrik SURVEY yang diupload manual → isi **Email PIC** dengan email akun tadi (huruf besar/kecil tidak berpengaruh). Penetapan PIC tetap lewat sini; tidak ada pengaturan PIC di Kelola User. Bila tidak ada akun aktif ber-email itu, muncul peringatan "PIC belum punya akun login".
+3. Berlaku **langsung** pada request berikutnya — tanpa login ulang. Mengubah Email PIC, email akun, atau menonaktifkan akun mencabut/memberi hak dengan cara yang sama. Kelola User menampilkan "PIC metrik" tiap akun.
+
+Yang bisa dilakukan PIC, hanya untuk metrik miliknya: unduh template, **upload CSV** (metrik ditentukan dari form; kolom `metric_id` di CSV diabaikan), lihat riwayat upload, unduh evidence, dan lihat identitas responden. Untuk metrik karyawan, identitas/evidence hanya responden dalam **cakupan direktorat/divisi akun PIC**. Hasil upload PIC tidak menampilkan PE Index bankwide. Setiap upload tercatat di riwayat audit (`SURVEY_UPLOAD`) dan di riwayat batch sebagai `Nama (username)`. Reminder email tetap ke Email PIC.
+
+Perhatian (belum diputuskan): importer belum menolak NIP kembar dalam satu CSV atau antar-batch, dan PIC dapat mengunggah baris di luar cakupannya (tersimpan, terlihat oleh Admin, tidak oleh PIC); tanggal survei tidak valid disimpan sebagai hari ini.

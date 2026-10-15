@@ -267,8 +267,8 @@ Aturan password baru: 10-128 karakter, mengandung huruf dan angka, tidak sama de
 | :--- | :--- | :--- |
 | `GET /api/metrics/calculate`, `/api/metrics/trends` | hanya cakupannya (v2.27.0: kosong/`ALL` → semua cakupan saya; direktorat/divisi di luar cakupan → 403). `calculate`: metrik non-karyawan = agregat bankwide read-only, `excluded_from_index` | semua |
 | `GET /api/metrics/:id/detail` | idem; payload di-`redactRespondent()` + `respondent_data_hidden: true` | lengkap |
-| `GET /api/surveys/evidence`, `GET /api/surveys/responses/:metric_id` | 403 | ya |
-| `GET /api/surveys/metrics`, `/template`, `/history`; `POST /api/surveys/upload` | 403 | ya |
+| `GET /api/surveys/evidence`, `GET /api/surveys/responses/:metric_id` | 403, kecuali PIC metrik itu (v2.27.1, lihat tabel di bawah) | ya |
+| `GET /api/surveys/metrics`, `/template`, `/history`; `POST /api/surveys/upload` | 403, kecuali PIC (v2.27.1) | ya |
 | `POST /api/metrics/score`, `/api/metrics/weights`, `/api/alerts/acknowledge`, `/api/action-library`, `/api/questions/master` | 403 | ya |
 | `GET /api/alerts`, `/api/action-library`, `/api/questions/master`, `/api/settings`, `/api/directorates` | ya (v2.27.0: `/api/alerts` dihitung dari data dalam cakupan) | ya |
 | `/api/admin/*` (parameter, journeys, metrics, targets, survey-questions, upload-reminders, email-settings, settings, users, audit-log) | 403 | ya |
@@ -296,3 +296,26 @@ Respons 403 tambahan: `PASSWORD_CHANGE_REQUIRED` (akun belum ganti password seme
 | Rute tulis event, media, transkrip, PPT | Pengelola event = Admin, atau User yang cakupannya memuat direktorat di setting `event_manager_directorates` (`permissions.can_manage_events`) |
 
 Catatan: User dengan "semua divisi" yang meminta `sub_directorate` tak dikenal mendapat 200 dengan data kosong (bukan 403), tanpa kebocoran. Kode: `server/db/scopeUtils.js` (`normalizeScopes`, `scopeAllows`, `rowInScopes`, `legacyUserScopes`), `authService.js` (`resolveScope`, `isInScope`, `scopeFilter`, `describeScopes`), `filterUtils.js` dan `calculationEngine.js` (filter gabungan), `alertEngine.js` (parameter `scope`), storage SQL/JSON (`createUser`/`updateUser`/`getUser*` memuat `scopes`).
+
+## 🧑‍💼 Catatan v2.27.1 — PIC Metrik Terhubung ke Akun
+
+Akun `USER` aktif = PIC metrik M bila emailnya == `pic_email` M (case-insensitive, `trim`; M harus SURVEY dengan `requires_manual_upload`). Penetapan tetap di Parameter Admin; hak dibaca dari DB tiap request. Helper di `authService.js`: `picMetrics`, `picMetricIds`, `getPicMetric`, `isPicOfMetric`, `canSeeRespondentData` (async), `requirePicMetric`, `respondentScopeFor`, `rowsForViewer`. Admin tidak dianggap PIC (selalu lolos).
+
+| Rute | Admin | PIC (metrik miliknya) | PIC (metrik lain / `ALL` / kosong) | User non-PIC |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET /api/surveys/metrics` | semua metrik SURVEY | hanya metrik miliknya | — | 403 |
+| `GET /api/surveys/template?metric_id=` | semua, termasuk `ALL` | ya | metrik lain 403; `ALL`/kosong/tidak valid 400 | 403 |
+| `POST /api/surveys/upload` (`metric_id` dari form) | semua, termasuk `ALL`/auto-detect | ya; `metric_id` di dalam CSV diabaikan | metrik lain 403; `ALL`/kosong 400 | 403 |
+| `GET /api/surveys/history` | semua batch | batch metrik miliknya | — | 403 |
+| `GET /api/surveys/evidence` | semua / `ALL` | CSV hanya responden dalam cakupan akun | metrik lain 403 | 403 |
+| `GET /api/surveys/responses/:metric_id` | semua baris | baris dalam cakupan akun | metrik lain 403 | 403 |
+| `GET /api/metrics/:id/detail` | identitas lengkap | identitas hanya untuk metrik PIC (data sudah dalam cakupan) | tersamar, `respondent_data_hidden: true` | tersamar |
+
+Perubahan perilaku:
+- **Field baru**: `can_upload` (boolean, dihitung server) pada tiap metrik di `GET /api/metrics/calculate` dan pada `GET /api/metrics/:id/detail` — true untuk metrik SURVEY bila Admin/PIC-nya; `active_account_emails` di `GET /api/admin/parameters` (email akun aktif, huruf kecil, untuk peringatan "PIC belum punya akun"); `pic_metrics` (read-only) per akun di `GET /api/admin/users`.
+- **Upload**: `uploaded_by` = `Nama (username)` (maks 200 karakter; dulu "HR Admin") lewat `options.uploadedBy` pada `processSurveyCsv()`; audit **`SURVEY_UPLOAD`** (`metrik <id>; <n> baris valid, <m> ditolak; batch <id>`, tanpa data responden) hanya bila impor berhasil; respons untuk non-Admin **tanpa** `calculation`/`updated_pe_index`/`updated_survey_index`, dan `affected_metrics[].normalized_score = null`. File CSV sementara di `server/uploads/` dihapus (blok `finally`).
+- **Evidence**: `generateSurveyEvidenceCsv(metric_id, period, { scopes })` menyaring responden ke cakupan PIC; `escapeCsv` memberi apostrof di depan teks berawalan `= + - @` / tab / CR (angka biasa tidak diubah).
+- **Validasi id & error**: `evidence` dan `responses/:metric_id` untuk Admin dengan id tidak valid → 400, tidak ada → 404 (dulu 500). Handler error JSON terakhir: upload melewati batas 50 MB → 413 `Ukuran file CSV melebihi batas 50 MB.`; body JSON rusak → 400 JSON; tidak ada lagi halaman HTML/stack trace.
+- **Reminder**: tetap ke `pic_email` (tidak diubah).
+
+Tidak diubah / belum diputuskan: importer tidak menolak NIP kembar (dalam satu CSV atau antar-batch; juga untuk Admin); tanggal survei tidak valid disimpan sebagai hari ini; PIC dapat mengunggah baris di luar cakupannya; unduh template/evidence tidak diaudit.

@@ -1,5 +1,6 @@
 // server/services/surveyEvidenceService.js
 const storage = require('../db/storage');
+const { rowInScopes } = require('../db/scopeUtils');
 
 function normalizeDateString(dateVal) {
   if (!dateVal) return null;
@@ -56,12 +57,15 @@ function normalizeDateString(dateVal) {
  * Generates an Audit Evidence CSV file containing full respondent submissions,
  * question-level scores, survey dates, and verbatim feedback for a given metric and period.
  */
-async function generateSurveyEvidenceCsv(metric_id, period = 'YTD') {
+async function generateSurveyEvidenceCsv(metric_id, period = 'YTD', options = {}) {
   const metrics = await storage.getMetrics();
   
+  // CSV injection guard: a text cell starting with = + - @ (or tab/CR) would run as a formula when the file is
+  // opened in Excel, so it gets a leading apostrophe. Plain numbers (e.g. a negative score) are left untouched.
   const escapeCsv = (val) => {
     if (val === null || val === undefined) return '';
-    const str = val.toString();
+    let str = val.toString();
+    if (typeof val === 'string' && str !== '-' && /^[=+\-@\t\r]/.test(str) && !/^[+-]?\d+([.,]\d+)?$/.test(str)) str = `'${str}`;
     if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
       return `"${str.replace(/"/g, '""')}"`;
     }
@@ -75,7 +79,9 @@ async function generateSurveyEvidenceCsv(metric_id, period = 'YTD') {
     }
 
     const questions = await storage.getSurveyQuestions(targetMetric.metric_id);
-    const responses = await storage.getResponsesByMetricAndPeriod(targetMetric.metric_id, period);
+    let responses = await storage.getResponsesByMetricAndPeriod(targetMetric.metric_id, period);
+    // A PIC's file only holds respondents of the PIC's own data scope (options.scopes, null = everybody).
+    if (options.scopes) responses = responses.filter(r => rowInScopes(options.scopes, r.directorate || r.university || r.applied_position || '', r.division || r.major || r.recruitment_channel || ''));
     const isScale5 = targetMetric.scale_type === 'RATING_5';
     const mId = targetMetric.metric_id;
 

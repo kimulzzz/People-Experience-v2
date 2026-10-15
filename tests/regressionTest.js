@@ -2614,9 +2614,9 @@ async function runRegressionSuite() {
       assert.notStrictEqual(auth.generateTempPassword(), auth.generateTempPassword());
       assert.strictEqual(auth.validateNewPassword(auth.generateTempPassword(), { username: 'x' }), null);
       const user = { role: 'USER', scopes: [{ directorate: 'D1', divisions: null }] };
-      assert.strictEqual(auth.canSeeRespondentData(user, { metric_id: 1 }), false);
-      assert.strictEqual(auth.canSeeRespondentData({ role: 'ADMIN' }, { metric_id: 1 }), true);
-      assert.strictEqual(auth.canSeeRespondentData(null, { metric_id: 1 }), false);
+      assert.strictEqual(await auth.canSeeRespondentData(user, { metric_id: 1 }), false);
+      assert.strictEqual(await auth.canSeeRespondentData({ role: 'ADMIN' }, { metric_id: 1 }), true);
+      assert.strictEqual(await auth.canSeeRespondentData(null, { metric_id: 1 }), false);
       const one = { role: 'USER', scopes: [{ directorate: 'D1', divisions: null }] };
       assert.strictEqual(auth.resolveScope(one, undefined).directorate, 'D1');
       assert.strictEqual(auth.resolveScope(one, 'ALL').directorate, 'D1');
@@ -2967,6 +2967,308 @@ async function runRegressionSuite() {
         if (typeof storage.close === 'function' && !tempAdmin) await storage.close();
       }
     });
+    // --- 36. PIC OF A METRIC (v2.27.1) ---
+    console.log('\n📦 MODULE 36: PIC of a metric - upload / template / evidence / respondent identity limited to own metrics and own scope (Positive & Negative Testing)');
+
+    const fs36 = require('fs');
+    const path36 = require('path');
+    const UPLOADS_DIR36 = path36.join(__dirname, '..', 'server', 'uploads');
+    const tempMetricIds36 = [];
+    const mkMetric36 = async (name, overrides = {}) => {
+      const res = await adminJson('POST', '/api/admin/metrics', {
+        metric_name: name, metric_type: 'SURVEY', scale_type: 'RATING_5', requires_manual_upload: true, update_frequency: 'MONTHLY',
+        upload_deadline_day: 10, pic_name: 'PIC Regresi', pic_email: 'nobody.pic@example.test', ...overrides
+      });
+      assert.strictEqual(res.status, 201, `create metric: ${res.status}`);
+      const id = (await res.json()).metric_id;
+      tempMetricIds36.push(id);
+      return id;
+    };
+    const csv36 = rows => ['nip,employee_name,cimb_email,directorate,division,survey_date,q1_overall', ...rows].join('\r\n');
+    const adminUpload36 = async (metricId, rows) => {
+      const res = await adminJson('POST', '/api/surveys/upload', { csvText: csv36(rows), fileName: 'rt36.csv', metric_id: metricId });
+      assert.strictEqual(res.status, 200);
+      return res.json();
+    };
+    const post36 = (u, body) => rawFetch(`${BASE_URL}/api/surveys/upload`, jsonBody('POST', body, u.cookie));
+    const csvFor = (u, metricId) => rawFetch(`${BASE_URL}/api/surveys/template?metric_id=${metricId}`, asUser(u.cookie));
+
+    try {
+      const uMail = n => `rt${n}${stamp}@example.test`;
+      const picUser = await scopeUser('p1', [{ directorate: A, divisions: [divX] }]);
+      const plainUser = await scopeUser('p2', [{ directorate: A, divisions: null }]);
+      // pic_email is typed in a different letter case on purpose: the match is case-insensitive
+      const P = await mkMetric36('REGRESSION PIC Own Metric', { pic_email: uMail('p1').toUpperCase() });
+      const Q = await mkMetric36('REGRESSION PIC Other Metric', { pic_email: 'someone.else@example.test' });
+      const R = await mkMetric36('REGRESSION PIC Not Manual', { pic_email: uMail('p1'), requires_manual_upload: false });
+      const day = new Date().toISOString().slice(0, 10);
+      const rowsFor = tag => [
+        `9${tag}001,Nama In ${tag},in${tag}@cimbniaga.co.id,${A},${divX},${day},4`,
+        `9${tag}002,Nama Div Lain ${tag},y${tag}@cimbniaga.co.id,${A},${divY},${day},3`,
+        `9${tag}003,Nama Dir Lain ${tag},b${tag}@cimbniaga.co.id,${B},${dirB.divisions[0]},${day},5`
+      ];
+      await adminUpload36(P, rowsFor('1'));
+      await adminUpload36(Q, rowsFor('2'));
+
+      await runTest('[POSITIVE] A User whose e-mail equals a metric\'s pic_email (any letter case) is its PIC: own metric list, template, history; the flags come from the server', async () => {
+        const list = await uj(picUser, '/api/surveys/metrics');
+        assert.deepStrictEqual(list.map(m => m.metric_id), [P], 'only the metrics the account is PIC of (R is not a manual-upload metric)');
+        const t = await csvFor(picUser, P);
+        assert.strictEqual(t.status, 200);
+        assert.ok((t.headers.get('content-type') || '').includes('text/csv'));
+        const hist = await uj(picUser, '/api/surveys/history');
+        assert.ok(hist.length >= 1 && hist.every(h => h.metric_id === P), 'history = batches of own metric only');
+        const calc = await uj(picUser, '/api/metrics/calculate?period=YTD');
+        assert.strictEqual(calc.metrics.find(m => m.metric_id === P).can_upload, true);
+        assert.strictEqual(calc.metrics.find(m => m.metric_id === Q).can_upload, false);
+        assert.strictEqual(calc.metrics.find(m => m.metric_id === R).can_upload, false);
+        assert.strictEqual(calc.metrics.find(m => m.metric_id === 8).can_upload, false);
+        assert.ok(calc.metrics.filter(m => m.metric_type === 'OUTCOME').every(m => m.can_upload === false));
+        assert.strictEqual((await uj(picUser, `/api/metrics/${P}/detail?period=YTD`)).can_upload, true);
+        assert.strictEqual((await uj(picUser, `/api/metrics/${Q}/detail?period=YTD`)).can_upload, false);
+        const adm = await aj('/api/metrics/calculate?period=YTD');
+        assert.ok(adm.metrics.filter(m => m.metric_type === 'SURVEY').every(m => m.can_upload === true), 'Admin may upload every SURVEY metric');
+        assert.ok(adm.metrics.filter(m => m.metric_type === 'OUTCOME').every(m => m.can_upload === false));
+        const plainCalc = await uj(plainUser, '/api/metrics/calculate?period=YTD');
+        assert.ok(plainCalc.metrics.every(m => m.can_upload === false), 'a non-PIC never gets can_upload');
+      });
+
+      await runTest('[POSITIVE] The PIC uploads for own metric (text and multipart file): uploaded_by is the login account, SURVEY_UPLOAD is audited with the metric and row counts but no respondent data, no bankwide calculation is returned, the temp CSV is not left in /uploads, and a metric_id column inside the CSV cannot redirect the data', async () => {
+        const csvFiles = () => fs36.readdirSync(UPLOADS_DIR36).filter(f => /\.csv$/i.test(f)).length; // (media files come and go on their own)
+        const before = csvFiles();
+        const nipTag = `9${Date.now().toString().slice(-5)}`;
+        const bodyCsv = ['nip,employee_name,cimb_email,directorate,division,survey_date,q1_overall,metric_id',
+          `${nipTag}1,Nama Audit Rahasia,rahasia@cimbniaga.co.id,${A},${divX},${day},4,${Q}`].join('\r\n');
+        const qBefore = (await aj(`/api/surveys/responses/${Q}`)).length;
+        const pBefore = (await aj(`/api/surveys/responses/${P}`)).length;
+        const r1 = await post36(picUser, { csvText: bodyCsv, fileName: 'pic.csv', metric_id: String(P) });
+        assert.strictEqual(r1.status, 200);
+        const b1 = await r1.json();
+        assert.strictEqual(b1.success, true);
+        assert.strictEqual(b1.valid_rows_count, 1);
+        assert.strictEqual(b1.calculation, undefined, 'no bankwide calculation for a PIC');
+        assert.strictEqual(b1.updated_pe_index, undefined);
+        assert.ok(b1.affected_metrics.every(a => a.normalized_score === null));
+        assert.strictEqual((await aj(`/api/surveys/responses/${Q}`)).length, qBefore, 'the metric_id column inside the CSV must not write into another metric');
+        assert.strictEqual((await aj(`/api/surveys/responses/${P}`)).length, pBefore + 1);
+        // multipart file
+        const fd = new FormData();
+        fd.append('csvFile', new Blob([csv36([`${nipTag}2,Nama File Rahasia,file@cimbniaga.co.id,${A},${divX},${day},5`])], { type: 'text/csv' }), 'pic-file.csv');
+        fd.append('metric_id', String(P));
+        const r2 = await rawFetch(`${BASE_URL}/api/surveys/upload`, { method: 'POST', headers: { Cookie: picUser.cookie }, body: fd });
+        assert.strictEqual(r2.status, 200);
+        assert.strictEqual((await r2.json()).valid_rows_count, 1);
+        assert.strictEqual(csvFiles(), before, 'the temporary CSV (it holds identities) is deleted after import');
+        const hist = await aj('/api/surveys/history');
+        const mine = hist.filter(h => h.metric_id === P && h.uploaded_by.includes(picUser.username));
+        assert.ok(mine.length >= 2, 'uploaded_by records the login account');
+        const log = await aj('/api/admin/audit-log?limit=100');
+        const entry = log.find(e => e.action === 'SURVEY_UPLOAD' && e.username === picUser.username && e.target.includes(`metrik ${P};`));
+        assert.ok(entry, 'SURVEY_UPLOAD audited');
+        assert.ok(/1 baris valid/.test(entry.target));
+        const logText = JSON.stringify(log);
+        for (const secret of ['Nama Audit Rahasia', 'Nama File Rahasia', 'rahasia@cimbniaga', `${nipTag}1`]) assert.ok(!logText.includes(secret), `audit log must not hold respondent data (${secret})`);
+      });
+
+      await runTest('[NEGATIVE] A PIC is refused (403) for every other metric on template, upload, evidence, responses; a non-PIC User for all; "ALL"/missing/malformed metric ids never open anything', async () => {
+        const probe = async (u, metric) => {
+          const out = {};
+          out.template = (await csvFor(u, metric)).status;
+          out.upload = (await post36(u, { csvText: csv36([`9990001,X,x@cimbniaga.co.id,${A},${divX},${day},4`]), metric_id: metric })).status;
+          out.evidence = (await uget(u, `/api/surveys/evidence?metric_id=${metric}&period=YTD`)).status;
+          out.responses = (await uget(u, `/api/surveys/responses/${metric}`)).status;
+          return out;
+        };
+        const qBefore = (await aj(`/api/surveys/responses/${Q}`)).length;
+        for (const m of [Q, R, 8, 99999]) {
+          const o = await probe(picUser, m);
+          Object.entries(o).forEach(([k, v]) => assert.strictEqual(v, 403, `PIC ${k} of metric ${m} -> ${v}`));
+        }
+        for (const m of [P, Q]) {
+          const o = await probe(plainUser, m);
+          Object.entries(o).forEach(([k, v]) => assert.strictEqual(v, 403, `non-PIC ${k} of metric ${m} -> ${v}`));
+        }
+        for (const bad of [`${P}abc`, `${P}.0`, '-1', '1;2']) {
+          assert.strictEqual((await csvFor(picUser, encodeURIComponent(bad))).status, 403, `template ${bad}`);
+          assert.strictEqual((await uget(picUser, `/api/surveys/evidence?metric_id=${encodeURIComponent(bad)}&period=YTD`)).status, 403, `evidence ${bad}`);
+          assert.strictEqual((await post36(picUser, { csvText: csv36([`9990002,X,x@cimbniaga.co.id,${A},${divX},${day},4`]), metric_id: bad })).status, 403, `upload ${bad}`);
+        }
+        assert.strictEqual((await uget(picUser, `/api/surveys/evidence?metric_id=${P}&metric_id=${Q}&period=YTD`)).status, 403, 'repeated metric_id');
+        assert.strictEqual((await uget(picUser, '/api/surveys/evidence?metric_id=ALL&period=YTD')).status, 403, 'no master evidence for a PIC');
+        assert.strictEqual((await uget(picUser, '/api/surveys/evidence?period=YTD')).status, 403, 'evidence without metric_id defaults to ALL');
+        for (const m of ['ALL', '']) {
+          assert.strictEqual((await csvFor(picUser, m)).status, 400, 'a PIC must name a metric (no master template)');
+          assert.strictEqual((await post36(picUser, { csvText: csv36([`9990003,X,x@cimbniaga.co.id,${A},${divX},${day},4`]), metric_id: m })).status, 400);
+        }
+        assert.strictEqual((await post36(picUser, { csvText: csv36([`9990004,X,x@cimbniaga.co.id,${A},${divX},${day},4`]) })).status, 400, 'no metric_id');
+        assert.strictEqual((await uget(plainUser, '/api/surveys/metrics')).status, 403);
+        assert.strictEqual((await uget(plainUser, '/api/surveys/history')).status, 403);
+        assert.strictEqual((await post36(plainUser, {})).status, 403);
+        assert.strictEqual((await aj(`/api/surveys/responses/${Q}`)).length, qBefore, 'nothing was written into the other metric');
+        const log = await aj('/api/admin/audit-log?limit=100');
+        assert.ok(!log.some(e => e.action === 'SURVEY_UPLOAD' && (e.username === plainUser.username)), 'refused uploads are not audited as uploads');
+      });
+
+      await runTest('[NEGATIVE] Upload keeps its validation for a PIC: empty NIP and an out-of-range rating are rejected row by row and nothing invalid is stored; a CSV with no valid row stores no batch', async () => {
+        const pBefore = (await aj(`/api/surveys/responses/${P}`)).length;
+        const hBefore = (await uj(picUser, '/api/surveys/history')).length;
+        const res = await post36(picUser, { metric_id: String(P), csvText: csv36([
+          `,Tanpa NIP,t@cimbniaga.co.id,${A},${divX},${day},4`,
+          `9880001,Nilai Salah,n@cimbniaga.co.id,${A},${divX},${day},9`,
+          `9880002,Valid,v@cimbniaga.co.id,${A},${divX},${day},4`]) });
+        assert.strictEqual(res.status, 200);
+        const body = await res.json();
+        assert.strictEqual(body.valid_rows_count, 1);
+        assert.strictEqual(body.invalid_rows_count, 2);
+        assert.ok(body.errors.some(e => /NIP/.test(e.reason)) && body.errors.some(e => /rentang/.test(e.reason)));
+        assert.strictEqual((await aj(`/api/surveys/responses/${P}`)).length, pBefore + 1);
+        const allBad = await post36(picUser, { metric_id: String(P), csvText: csv36([`,Tanpa NIP,t@cimbniaga.co.id,${A},${divX},${day},4`]) });
+        assert.strictEqual((await allBad.json()).success, false);
+        assert.strictEqual((await uj(picUser, '/api/surveys/history')).length, hBefore + 1, 'only the batch with a valid row was recorded');
+        assert.strictEqual((await post36(picUser, { metric_id: String(P) })).status, 400, 'no CSV at all');
+      });
+
+      await runTest('[POSITIVE/NEGATIVE] The PIC sees respondent identity ONLY for own metric and ONLY inside own scope (detail, responses, evidence CSV); other metrics stay masked; a non-PIC stays masked on the same metric', async () => {
+        const d = await uj(picUser, `/api/metrics/${P}/detail?period=YTD`);
+        assert.strictEqual(d.respondent_data_hidden, undefined, 'identity is not hidden from the PIC');
+        const named = d.responses.filter(r => r.nip && r.employee_name);
+        assert.ok(named.length > 0 && named.length === d.responses.length, 'all rows are named');
+        assert.ok(d.responses.every(r => r.directorate === A && r.division === divX), 'only rows inside the PIC scope (detail)');
+        const dQ = await uj(picUser, `/api/metrics/${Q}/detail?period=YTD`);
+        assert.strictEqual(dQ.respondent_data_hidden, true);
+        dQ.responses.forEach(r => ['nip', 'employee_name', 'cimb_email', 'email'].forEach(f => assert.ok(r[f] === null || r[f] === undefined)));
+        const d8 = await uj(picUser, '/api/metrics/8/detail?period=YTD');
+        assert.strictEqual(d8.respondent_data_hidden, true, 'a metric the account is not PIC of stays masked');
+        const dPlain = await uj(plainUser, `/api/metrics/${P}/detail?period=YTD`);
+        assert.strictEqual(dPlain.respondent_data_hidden, true, 'a non-PIC is masked on the very same metric');
+        dPlain.responses.forEach(r => assert.ok(!r.nip && !r.employee_name && !r.cimb_email));
+        // the masked payload leaks no name anywhere (recursive redaction still applies)
+        const plainText = JSON.stringify(dPlain);
+        for (const n of ['Nama In 1', 'Nama Div Lain 1', 'Nama Dir Lain 1']) assert.ok(!plainText.includes(n), `${n} leaked to a non-PIC`);
+        // responses list + evidence CSV: same scope rule
+        const rows = await uj(picUser, `/api/surveys/responses/${P}`);
+        assert.ok(rows.length > 0 && rows.every(r => r.directorate === A && r.division === divX), 'responses limited to the PIC scope');
+        const adminRows = await aj(`/api/surveys/responses/${P}`);
+        assert.ok(adminRows.some(r => r.division === divY) && adminRows.some(r => r.directorate === B), 'guard: the Admin sees the out-of-scope rows');
+        const ev = await (await uget(picUser, `/api/surveys/evidence?metric_id=${P}&period=YTD`)).text();
+        assert.ok(ev.includes('Nama In 1'), 'in-scope identity is in the evidence CSV');
+        assert.ok(!ev.includes('Nama Div Lain 1') && !ev.includes('Nama Dir Lain 1'), 'out-of-scope respondents are not in the PIC\'s evidence');
+        const evAdmin = await (await adminJson('GET', `/api/surveys/evidence?metric_id=${P}&period=YTD`)).text();
+        assert.ok(evAdmin.includes('Nama Div Lain 1') && evAdmin.includes('Nama Dir Lain 1'), 'Admin evidence is complete');
+        // another metric's identities never show in this PIC's responses/evidence
+        assert.ok(!ev.includes('Nama In 2'));
+      });
+
+      await runTest('[POSITIVE/NEGATIVE] Changing pic_email (or the account e-mail) takes effect on the very next request: access is revoked and granted again with no re-login; a deactivated PIC is locked out; Admin is unaffected', async () => {
+        assert.strictEqual((await csvFor(picUser, P)).status, 200);
+        assert.strictEqual((await adminJson('PUT', `/api/admin/metrics/${P}`, { pic_email: 'another.person@example.test' })).status, 200);
+        assert.strictEqual((await csvFor(picUser, P)).status, 403, 'revoked at once');
+        assert.strictEqual((await post36(picUser, { csvText: csv36([`9990005,X,x@cimbniaga.co.id,${A},${divX},${day},4`]), metric_id: String(P) })).status, 403);
+        assert.strictEqual((await uget(picUser, `/api/surveys/responses/${P}`)).status, 403);
+        assert.strictEqual((await uj(picUser, `/api/metrics/${P}/detail?period=YTD`)).respondent_data_hidden, true);
+        assert.strictEqual((await uj(picUser, '/api/metrics/calculate?period=YTD')).metrics.find(m => m.metric_id === P).can_upload, false);
+        assert.strictEqual((await uget(picUser, '/api/surveys/metrics')).status, 403, 'no longer a PIC of anything');
+        assert.strictEqual((await adminJson('PUT', `/api/admin/metrics/${P}`, { pic_email: uMail('p1') })).status, 200);
+        assert.strictEqual((await csvFor(picUser, P)).status, 200, 'granted again at once');
+        // the account e-mail is the other half of the match
+        assert.strictEqual((await adminJson('PUT', `/api/admin/users/${picUser.id}`, { email: 'moved@example.test' })).status, 200);
+        assert.strictEqual((await csvFor(picUser, P)).status, 403, 'e-mail no longer matches');
+        assert.strictEqual((await adminJson('PUT', `/api/admin/users/${picUser.id}`, { email: uMail('p1').toUpperCase() })).status, 200);
+        assert.strictEqual((await csvFor(picUser, P)).status, 200, 'case does not matter');
+        // helpers: inactive / admin / strict id parsing
+        const auth = require('../server/services/authService');
+        const asObj = { role: 'USER', email: uMail('p1'), is_active: true };
+        assert.deepStrictEqual(await auth.picMetricIds(asObj), [P]);
+        assert.deepStrictEqual(await auth.picMetricIds({ ...asObj, is_active: false }), [], 'inactive account has no PIC rights');
+        assert.deepStrictEqual(await auth.picMetricIds({ ...asObj, email: '' }), []);
+        assert.deepStrictEqual(await auth.picMetricIds({ role: 'ADMIN', email: uMail('p1') }), [], 'Admin is not "a PIC" (needs no PIC right)');
+        assert.strictEqual(await auth.canSeeRespondentData({ role: 'ADMIN' }, 12345), true);
+        assert.strictEqual(await auth.isPicOfMetric(asObj, P), true);
+        assert.strictEqual(await auth.isPicOfMetric(asObj, { metric_id: P }), true);
+        assert.strictEqual(await auth.isPicOfMetric(asObj, String(P)), true);
+        for (const bad of [`${P}x`, [P], null, undefined, 'ALL', '', Q, {}]) assert.strictEqual(await auth.isPicOfMetric(asObj, bad), false, `isPicOfMetric(${JSON.stringify(bad)})`);
+        // Admin keeps full access regardless of pic_email
+        assert.strictEqual((await adminJson('GET', `/api/surveys/template?metric_id=${Q}`)).status, 200);
+        assert.strictEqual((await adminJson('GET', '/api/surveys/template?metric_id=ALL')).status, 200);
+        // deactivating the PIC ends their access
+        assert.strictEqual((await adminJson('PUT', `/api/admin/users/${picUser.id}`, { is_active: false })).status, 200);
+        assert.strictEqual((await csvFor(picUser, P)).status, 401);
+        assert.strictEqual((await adminJson('PUT', `/api/admin/users/${picUser.id}`, { is_active: true })).status, 200);
+        picUser.cookie = (await loginAs(picUser.username, STRONG)).cookie; // deactivation ended the old session
+      });
+
+      await runTest('[POSITIVE] Admin screens get the PIC data from the server: Parameter Admin lists the active account e-mails (for the "PIC belum punya akun" hint) and Kelola User lists each account\'s PIC metrics; a PIC gets no Admin screens', async () => {
+        const params = await aj('/api/admin/parameters');
+        assert.ok(Array.isArray(params.active_account_emails));
+        assert.ok(params.active_account_emails.includes(uMail('p1')), 'lower-cased e-mail of an active account');
+        assert.ok(!params.active_account_emails.includes('nobody.pic@example.test'));
+        assert.ok(params.active_account_emails.every(e => e === e.toLowerCase()));
+        const users = await aj('/api/admin/users');
+        const mine = users.find(x => x.user_id === picUser.id);
+        assert.deepStrictEqual(mine.pic_metrics.map(m => m.metric_id), [P]);
+        assert.ok(users.find(x => x.user_id === plainUser.id).pic_metrics.length === 0);
+        assert.ok(users.filter(x => x.role === 'ADMIN').every(x => x.pic_metrics.length === 0));
+        // a deactivated account is not a match for the hint
+        await adminJson('PUT', `/api/admin/users/${plainUser.id}`, { is_active: false });
+        assert.ok(!(await aj('/api/admin/parameters')).active_account_emails.includes(uMail('p2')));
+        await adminJson('PUT', `/api/admin/users/${plainUser.id}`, { is_active: true });
+        assert.strictEqual((await uget(picUser, '/api/admin/parameters')).status, 403, 'PIC still has no Admin screens');
+        assert.strictEqual((await uget(picUser, '/api/admin/users')).status, 403);
+        assert.strictEqual((await uget(picUser, '/api/admin/upload-reminders')).status, 403);
+      });
+
+      await runTest('[NEGATIVE] CSV injection: respondent text starting with = + - @ is written with a leading apostrophe in the evidence CSV (never as a formula); plain values and numbers are untouched', async () => {
+        await adminUpload36(P, [
+          `=1+1,=cmd|x,e@cimbniaga.co.id,${A},${divX},${day},4`,
+          `+SUM(1),@name,f@cimbniaga.co.id,${A},${divX},${day},3`]);
+        const csv = await (await adminJson('GET', `/api/surveys/evidence?metric_id=${P}&period=YTD`)).text();
+        assert.ok(csv.includes("'=1+1") && csv.includes("'=cmd|x") && csv.includes("'+SUM(1)") && csv.includes("'@name"));
+        assert.ok(!/(^|,)=1\+1/m.test(csv) && !/(^|,)=cmd/m.test(csv) && !/(^|,)\+SUM/m.test(csv) && !/(^|,)@name/m.test(csv), 'no cell may start with a formula character');
+        const normal = csv.split(/\r\n/).find(l => l.includes('Nama In 1'));
+        assert.ok(normal && normal.includes(',4,'), 'a numeric rating is not altered');
+        const picCsv = await (await uget(picUser, `/api/surveys/evidence?metric_id=${P}&period=YTD`)).text();
+        assert.ok(picCsv.includes("'=1+1"), 'same guard on the PIC download');
+      });
+
+      await runTest('[NEGATIVE] Admin evidence/responses with a malformed or unknown metric id answer a clean 400/404 (not 500); the master evidence still works', async () => {
+        for (const bad of ['abc', '7abc', '-3', '1e3']) {
+          assert.strictEqual((await adminJson('GET', `/api/surveys/evidence?metric_id=${bad}&period=YTD`)).status, 400, `evidence ${bad}`);
+          assert.strictEqual((await adminJson('GET', `/api/surveys/responses/${bad}`)).status, 400, `responses ${bad}`);
+        }
+        for (const gone of ['99999', '123456789']) {
+          assert.strictEqual((await adminJson('GET', `/api/surveys/evidence?metric_id=${gone}&period=YTD`)).status, 404, `evidence ${gone}`);
+          assert.strictEqual((await adminJson('GET', `/api/surveys/responses/${gone}`)).status, 404, `responses ${gone}`);
+        }
+        const bad = await adminJson('GET', '/api/surveys/evidence?metric_id=abc&period=YTD');
+        assert.ok((await bad.json()).error);
+        assert.strictEqual((await adminJson('GET', '/api/surveys/evidence?metric_id=ALL&period=YTD')).status, 200);
+      });
+
+      await runTest('[NEGATIVE] An oversize CSV upload gets a clean JSON 413 and a malformed JSON body a clean JSON 400 - no HTML page and no stack trace', async () => {
+        const fd = new FormData();
+        fd.append('csvFile', new Blob([Buffer.alloc(51 * 1024 * 1024, 97)], { type: 'text/csv' }), 'big.csv');
+        fd.append('metric_id', String(P));
+        const r = await rawFetch(`${BASE_URL}/api/surveys/upload`, { method: 'POST', headers: { Cookie: picUser.cookie }, body: fd });
+        assert.strictEqual(r.status, 413);
+        assert.ok((r.headers.get('content-type') || '').includes('application/json'));
+        const body = await r.json();
+        assert.ok(body.error && !/\bat \S+\.js|node_modules/.test(JSON.stringify(body)));
+        const garbage = await rawFetch(`${BASE_URL}/api/surveys/upload`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: picUser.cookie }, body: '{"metric_id": ' });
+        assert.strictEqual(garbage.status, 400);
+        const gt = await garbage.text();
+        assert.ok(gt.startsWith('{') && !/SyntaxError|node_modules|<pre>|\bat \S+\.js/.test(gt), `clean error body, got: ${gt.slice(0, 120)}`);
+      });
+
+      await runTest('[POSITIVE] The reminder list is unchanged by PIC rights (still addressed to the metric\'s pic_email, no secrets)', async () => {
+        const rem = await aj('/api/admin/upload-reminders');
+        assert.ok(Array.isArray(rem.reminders));
+        assert.ok(!JSON.stringify(rem).toLowerCase().includes('password'));
+      });
+    } finally {
+      for (const id of tempMetricIds36) await adminJson('DELETE', `/api/admin/metrics/${id}`);
+      const left = (await aj('/api/admin/parameters')).metrics.filter(m => m.metric_name.startsWith('REGRESSION PIC'));
+      if (left.length) console.error(`     cleanup: ${left.length} PIC test metrics remain`);
+    }
   } finally {
     for (const id of createdUserIds) await adminJson('DELETE', `/api/admin/users/${id}`);
     const left = (await (await adminJson('GET', '/api/admin/users')).json()).filter(x => x.username.endsWith(stamp) && x.username.startsWith('rt'));

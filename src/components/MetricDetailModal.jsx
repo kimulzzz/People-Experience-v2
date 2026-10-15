@@ -292,8 +292,8 @@ export default function MetricDetailModal({
                       </div>
                     </div>
 
-                    {/* Survey: Quick Actions (template / evidence / upload = Admin only) */}
-                    {isAdmin && <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-xl">
+                    {/* Survey: Quick Actions (template / evidence / upload = Admin or the PIC of this metric; can_upload comes from the server) */}
+                    {(isAdmin || detailData.can_upload) && <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-xl">
                       <div className="text-[11px] font-bold text-gray-500 uppercase flex items-center justify-between">
                         <span>Survey Data Operations</span>
                       </div>

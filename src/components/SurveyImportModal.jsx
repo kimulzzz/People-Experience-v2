@@ -14,6 +14,7 @@ import {
   HelpCircle,
   FileText
 } from 'lucide-react';
+import { useAuth } from '../utils/AuthContext';
 
 export default function SurveyImportModal({ 
   isOpen, 
@@ -21,6 +22,7 @@ export default function SurveyImportModal({
   preSelectedMetricId = null,
   onImportSuccess 
 }) {
+  const { isAdmin } = useAuth(); // a PIC (non-Admin) only sees and uploads to their own metrics: the server lists only those
   const [activeTab, setActiveTab] = useState('template'); // 'template' | 'upload' | 'history'
   const [surveyMetrics, setSurveyMetrics] = useState([]);
   const [selectedMetricId, setSelectedMetricId] = useState(preSelectedMetricId ? preSelectedMetricId.toString() : 'ALL');
@@ -38,13 +40,18 @@ export default function SurveyImportModal({
       // Fetch list of survey metrics
       fetch('/api/surveys/metrics')
         .then(res => res.json())
-        .then(data => setSurveyMetrics(data))
+        .then(data => {
+          const list = Array.isArray(data) ? data : [];
+          setSurveyMetrics(list);
+          // no 'ALL' for a PIC: start on the pre-selected metric, else their first one
+          if (!isAdmin && !preSelectedMetricId && list.length) setSelectedMetricId(String(list[0].metric_id));
+        })
         .catch(err => console.error(err));
 
       // Fetch upload history
       fetch('/api/surveys/history')
         .then(res => res.json())
-        .then(data => setHistoryList(data))
+        .then(data => setHistoryList(Array.isArray(data) ? data : []))
         .catch(err => console.error(err));
 
       if (preSelectedMetricId) {
@@ -204,7 +211,7 @@ export default function SurveyImportModal({
                 onChange={(e) => setSelectedMetricId(e.target.value)}
                 className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-[#ED1C24]"
               >
-                <option value="ALL">🌟 Master Template: All {surveyMetrics.length} Survey Metrics (Complete)</option>
+                {isAdmin && <option value="ALL">🌟 Master Template: All {surveyMetrics.length} Survey Metrics (Complete)</option>}
                 {surveyMetrics.map(m => (
                   <option key={m.metric_id} value={m.metric_id}>
                     {m.metric_id} - {m.metric_name} ({m.scale_type})
@@ -284,7 +291,7 @@ export default function SurveyImportModal({
                 onChange={(e) => setSelectedMetricId(e.target.value)}
                 className="flex-1 px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-[#ED1C24]"
               >
-                <option value="ALL">Auto-detect from `metric_id` column inside CSV</option>
+                {isAdmin && <option value="ALL">Auto-detect from `metric_id` column inside CSV</option>}
                 {surveyMetrics.map(m => (
                   <option key={m.metric_id} value={m.metric_id}>
                     {m.metric_id} - {m.metric_name} ({m.scale_type})
@@ -331,7 +338,7 @@ export default function SurveyImportModal({
               <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-3">
                 <div className="flex items-center space-x-2 text-emerald-900 font-extrabold text-sm">
                   <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                  <span>Upload Successful & PX Index Recalculated!</span>
+                  <span>{uploadResult.calculation || uploadResult.updated_pe_index !== undefined ? 'Upload Successful & PX Index Recalculated!' : 'Upload berhasil!'}</span>
                 </div>
 
                 <div className="grid grid-cols-3 gap-2 text-xs">
@@ -363,7 +370,7 @@ export default function SurveyImportModal({
                             <span className="text-gray-400 block">{af.respondent_count} respondents</span>
                           </div>
                           <div className="text-right">
-                            <span className="font-black text-[#ED1C24] text-xs">{af.normalized_score}%</span>
+                            {af.normalized_score !== null && af.normalized_score !== undefined && <span className="font-black text-[#ED1C24] text-xs">{af.normalized_score}%</span>}
                             <span className="text-[10px] text-gray-400 block">Raw: {af.calculated_raw_avg}</span>
                           </div>
                         </div>
@@ -385,7 +392,7 @@ export default function SurveyImportModal({
               </button>
               <button
                 type="button"
-                disabled={isProcessing || (!file && !csvTextPreview)}
+                disabled={isProcessing || (!file && !csvTextPreview) || (!isAdmin && selectedMetricId === 'ALL')}
                 onClick={handleUploadSubmit}
                 className="px-5 py-2.5 bg-[#ED1C24] hover:bg-[#D91B23] text-white rounded-xl font-bold text-xs shadow-sm flex items-center space-x-2 disabled:opacity-50"
               >

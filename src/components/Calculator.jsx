@@ -575,8 +575,8 @@ export default function Calculator({
                             </span>
                           ) : isSurvey ? (
                             <>
-                              {isAdmin && (<>
-                              {/* 1. Download Template */}
+                              {(isAdmin || m.can_upload) && (<>
+                              {/* 1. Download Template (Admin, or the PIC of this metric - m.can_upload comes from the server) */}
                               <a
                                 href={`/api/surveys/template?metric_id=${m.metric_id}`}
                                 download={`Template_Survey_Metric_${m.metric_id}.csv`}

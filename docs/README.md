@@ -18,7 +18,7 @@ Dokumentasi ini disusun secara sistematis mulai dari fondasi konsep (*Brains & M
 ├── 📄 04_BACKEND_API_AND_SERVICES_SPECIFICATION.md# [Backend] Spesifikasi REST API, Service Engines & Storage
 ├── 📄 05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md  # [Frontend] Hirarki React Components, State & Desain UI
 ├── 📄 06_ADMIN_OPERATIONS_AND_USER_GUIDE.md      # [Panduan User] Manual Operasional HR & Konfigurasi Admin
-├── 📄 07_TESTING_AND_QUALITY_ASSURANCE.md        # [QA & Testing] Regression Test Suite (166 Test Cases)
+├── 📄 07_TESTING_AND_QUALITY_ASSURANCE.md        # [QA & Testing] Regression Test Suite (177 Test Cases)
 ├── 📄 08_DATABASE_SCHEMA_AND_MIGRATION.md        # [Database] Skema SQL Server, Migrasi JSON→SQL & Rollback
 └── 📄 SURVEY_IMPORT_GUIDE.md                     # [Panduan Impor] Tata Cara Pengisian & Impor CSV Survei
 ```

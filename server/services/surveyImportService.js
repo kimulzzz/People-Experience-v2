@@ -110,7 +110,7 @@ function parseCsvContent(content) {
 /**
  * Validates and processes survey CSV upload with support for question-level columns.
  */
-async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetMetricId = null) {
+async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetMetricId = null, options = {}) {
   const rawLines = parseCsvContent(csvText);
   if (rawLines.length < 2) {
     throw new Error('File CSV kosong atau tidak memiliki baris data.');
@@ -379,7 +379,7 @@ async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetM
     valid_rows: validRows.length,
     invalid_rows: invalidRows.length,
     calculated_avg_score: batchAvgScore,
-    uploaded_by: 'HR Admin'
+    uploaded_by: options.uploadedBy || 'HR Admin'
   }, validRows);
 
   // Trigger recalculation of PE Index

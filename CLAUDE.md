@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(166-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(177-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (166 cases) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (177 cases) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (29 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules |
 
@@ -488,6 +488,19 @@ domain model, not just descriptive:
   divisions" user asking an unknown `sub_directorate` gets 200 + empty data (no leak); SQL-vs-JSON numbers not compared (old store.json), mobile UI untested,
   `/api/settings` 401 noise on the public form remains. Version 2.28.0 is reserved for the AI feature kept in `git stash`. Next = stage 2b: PIC -> account,
   survey upload by PIC, respondent data visible to the PIC.
+
+- **v2.27.1** (2026-10-15, see `CHANGELOG.md` [2.27.1], `docs/04`, `docs/06`): login stage 2b - a metric's PIC is linked to a login account. The PIC is
+  still assigned in Parameter Admin (`pic_name`/`pic_email`); a USER account is PIC of SURVEY metric M (`requires_manual_upload`) when its e-mail equals
+  M's `pic_email` (case-insensitive, trimmed), read from the DB on every request (effective immediately, no cache). A PIC may use template/upload/history/
+  evidence/responses/respondent identity ONLY for own metrics (`authService.requirePicMetric/getPicMetric/canSeeRespondentData` - now async - `rowsForViewer`/
+  `respondentScopeFor`); employee-metric identities only for rows in the account's own directorate/division scope, non-employee metrics bankwide. `metric_id`
+  inside the CSV is ignored when the form names the metric; upload for non-Admin returns no `calculation`; `uploaded_by` = `Name (username)`; audit
+  `SURVEY_UPLOAD`; temp CSV deleted; JSON error handler (413/400); evidence CSV formula-escape; Admin evidence/responses with bad id -> 400/404. New fields
+  `can_upload`, `active_account_emails`, `pic_metrics`; no DB change. Tests: Module 36 (11) -> 177/177 on SQL; JSON 174/174 BEFORE the last small fix, not
+  re-run. QC LULUS DENGAN CATATAN. Open, undecided: importer does NOT reject duplicate NIPs (within a CSV or across batches - old gap, also for Admin, conflicts
+  with the unique-NIP rule); invalid survey dates stored as today; PIC can upload rows outside own scope; only upload is audited; User e-mail optional;
+  "PIC belum punya akun" checks any active account incl. Admin; leftover `px_survey_uploads` test batches (null `metric_id`) survive metric delete; real
+  reminder e-mail untested; `/api/settings` 401 noise remains. Version 2.28.0 stays reserved for the AI feature in `git stash`.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

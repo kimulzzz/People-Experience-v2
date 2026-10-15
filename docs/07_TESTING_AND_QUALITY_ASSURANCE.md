@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    35 MODUL PENGUJIAN    │     166 AUTOMATED TESTS     │       100% PASS RATE          │
+│    36 MODUL PENGUJIAN    │     177 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -698,3 +698,25 @@ Cakupan yang **tidak** diuji otomatis: tampilan UI per role (diperiksa QC di Bro
 | Migrasi & unit | Positif/Negatif | `legacyUserScopes`, `normalizeScopes`, `scopeAllows`, `rowInScopes`, `resolveScope`, `isInScope`; di SQL: baris v2.26.0 dikonversi `migrateLegacyUserScopes()` (idempoten, tidak menimpa, cascade saat hapus akun); bagian SQL dilewati di JSON |
 
 **Tidak diuji / tidak terverifikasi**: tampilan mobile; daftar cakupan panjang yang membuat kolom `target` audit terpotong; User "semua divisi" dengan `sub_directorate` tak dikenal (hasil 200 data kosong, bukan 403 — diketahui).
+
+---
+
+## 🧑‍💼 19. PIC Metrik Terhubung ke Akun — v2.27.1 (2026-10-15)
+
+**Regression suite: 177 test** (166 + **Modul 36**, 11 test) → **177/177 PASS di SQL Server**. Di JSON 174/174 dijalankan **sebelum perbaikan kecil terakhir** dan **belum diulang**. QC: LULUS DENGAN CATATAN.
+
+| Modul 36 (11 test) | Jenis | Yang diuji |
+| :--- | :---: | :--- |
+| Identitas PIC | Positif | email akun == `pic_email` (beda huruf) → daftar metrik, template, riwayat miliknya; `can_upload` benar di calculate/detail (Admin semua SURVEY; non-PIC tidak pernah) |
+| Upload PIC | Positif | teks dan multipart; `uploaded_by` = akun; `SURVEY_UPLOAD` tercatat tanpa data responden; tanpa `calculation`; CSV sementara terhapus; kolom `metric_id` di CSV tidak menulis ke metrik lain |
+| Penolakan | Negatif | PIC → 403 untuk metrik lain di template/upload/evidence/responses; non-PIC 403; `ALL`/kosong/malformed tidak membuka apa pun |
+| Validasi upload | Negatif | NIP kosong dan rating di luar rentang ditolak per baris; CSV tanpa baris valid tidak menyimpan batch |
+| Identitas responden | Positif/Negatif | PIC melihat identitas hanya untuk metrik dan cakupannya sendiri (detail, responses, evidence); metrik lain dan non-PIC tetap tersamar |
+| Hak berlaku langsung | Positif/Negatif | ubah `pic_email`/email akun mencabut dan memberi hak tanpa login ulang; akun nonaktif terkunci; Admin tidak terpengaruh |
+| Layar Admin | Positif | `active_account_emails` di Parameter Admin dan `pic_metrics` di Kelola User; PIC tidak mendapat layar Admin |
+| CSV injection | Negatif | teks berawalan `= + - @` ditulis dengan apostrof di evidence; nilai biasa/angka tidak berubah |
+| ID evidence/responses | Negatif | Admin dengan id salah/tak ada → 400/404; evidence master tetap jalan |
+| Error JSON | Negatif | upload melebihi batas → 413 JSON; body JSON rusak → 400 JSON, tanpa HTML/stack trace |
+| Reminder | Positif | daftar reminder tidak berubah oleh hak PIC (tetap ke `pic_email`, tanpa secret) |
+
+**Tidak diuji / tidak terverifikasi**: NIP kembar (importer tidak menolaknya — celah lama, belum diputuskan), tanggal survei tidak valid, pengiriman email reminder asli, tampilan UI (hanya diperiksa QC di Browser pane), JSON setelah perbaikan terakhir.

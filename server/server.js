@@ -108,12 +108,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.27.0' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.27.1' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.27.0',
+    version: '2.27.1',
     local_ai: {
       ollama_status: ollama ? 'connected' : 'offline (using local heuristic engine)',
       host: process.env.OLLAMA_HOST || 'http://localhost:11434'
@@ -233,6 +233,10 @@ app.get('/api/metrics/calculate', async (req, res) => {
     // A USER reads non-employee metrics (#1-#5 ...) as read-only bankwide values instead of "exempted";
     // they stay out of the directorate's index so the total equals what the Admin sees for that directorate.
     const calculation = await calculatePEIndex(filterOptions, { bankwideReadOnly: req.user.role !== 'ADMIN' });
+    // can_upload (computed here, never by the client): the Template / Evidence / Upload buttons of a SURVEY metric
+    // are for the Admin and for that metric's PIC (v2.27.1).
+    const picIds = new Set(await auth.picMetricIds(req.user));
+    calculation.metrics = (calculation.metrics || []).map(m => ({ ...m, can_upload: m.metric_type === 'SURVEY' && (req.user.role === 'ADMIN' || picIds.has(m.metric_id)) }));
     res.json(calculation);
   } catch (err) {
     console.error('Error calculating PE Index:', err);
@@ -266,11 +270,14 @@ app.get('/api/metrics/:id/detail', async (req, res) => {
     if (!detail) {
       return res.status(404).json({ error: `Metric #${req.params.id} not found` });
     }
-    // Per-respondent identity (name / NIP / e-mail) only for those allowed to see it (Admin; the metric's PIC in stage 2).
-    if (!auth.canSeeRespondentData(req.user, { metric_id: detail.metric_id })) {
-      return res.json({ ...auth.redactRespondent(detail), respondent_data_hidden: true });
+    // Per-respondent identity (name / NIP / e-mail) only for those allowed to see it: the Admin and the metric's PIC
+    // (the PIC's detail is already limited to the PIC's own data scope by the filter above).
+    const seesIdentity = await auth.canSeeRespondentData(req.user, detail.metric_id);
+    const canUpload = detail.metric_type === 'SURVEY' && seesIdentity;
+    if (!seesIdentity) {
+      return res.json({ ...auth.redactRespondent(detail), respondent_data_hidden: true, can_upload: false });
     }
-    res.json(detail);
+    res.json({ ...detail, can_upload: canUpload });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -334,7 +341,10 @@ app.get('/api/admin/parameters', async (req, res) => {
       journeys,
       checkpoints,
       metrics,
-      directorates
+      directorates,
+      // E-mails of the active login accounts: Parameter Admin warns when a PIC e-mail matches none of them
+      // (that PIC could not log in to upload). Admin-only route.
+      active_account_emails: [...new Set((await storage.listUsers()).filter(u => u.is_active && u.email).map(u => String(u.email).trim().toLowerCase()))]
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -617,17 +627,42 @@ app.post('/api/action-library', ADMIN_ONLY, async (req, res) => {
 });
 
 // 4. Manual Survey Data Upload & Template Generation
-app.get('/api/surveys/metrics', ADMIN_ONLY, async (req, res) => {
+// Open to the Admin and (v2.27.1) to the PIC of a metric - an account whose e-mail equals the metric's pic_email set in
+// Parameter Admin - for THAT metric only (auth.requirePicMetric answers 403 for everything else). A PIC always has to
+// name the metric; "ALL" / master files stay Admin-only.
+// Clean 400 / 404 for a malformed or unknown metric id (reached by the Admin; a PIC is refused earlier with 403).
+async function checkMetricRef(res, ref, { allowAll = false } = {}) {
+  if (allowAll && ref === 'ALL') return true;
+  if (typeof ref !== 'string' || !/^\d{1,9}$/.test(ref)) { res.status(400).json({ error: 'metric_id tidak valid.' }); return false; }
+  if (!(await storage.getMetrics()).some(m => String(m.metric_id) === String(parseInt(ref, 10)))) { res.status(404).json({ error: `Metrik ${ref} tidak ditemukan.` }); return false; }
+  return true;
+}
+
+// Cheap pre-check before multer touches the disk: only the Admin and accounts that are PIC of some metric go on.
+const PIC_OR_ADMIN = async (req, res, next) => {
   try {
+    if (req.user.role === 'ADMIN' || (await auth.picMetrics(req.user)).length) return next();
+    res.status(403).json({ error: 'Hanya Admin atau PIC metrik yang dapat menggunakan fitur ini.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+app.get('/api/surveys/metrics', async (req, res) => {
+  try {
+    const gate = await auth.requirePicMetric(req, res, null, { required: false });
+    if (!gate) return;
     const metrics = (await storage.getMetrics()).filter(m => m.metric_type === 'SURVEY');
-    res.json(metrics);
+    res.json(req.user.role === 'ADMIN' ? metrics : metrics.filter(m => gate.mine.some(p => p.metric_id === m.metric_id)));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.get('/api/surveys/template', ADMIN_ONLY, async (req, res) => {
+app.get('/api/surveys/template', async (req, res) => {
   try {
+    const gate = await auth.requirePicMetric(req, res, req.query.metric_id);
+    if (!gate) return;
     const metric_id = req.query.metric_id || 'ALL';
     const csvContent = await generateSurveyCsvTemplate(metric_id);
     
@@ -644,11 +679,14 @@ app.get('/api/surveys/template', ADMIN_ONLY, async (req, res) => {
 });
 
 // 4b. Download Raw Survey Evidence CSV (Audit Trail & Proof of Assessment)
+// Admin: any metric or ALL. PIC: only own metric, and only respondents inside the PIC's own data scope.
 app.get('/api/surveys/evidence', async (req, res) => {
   try {
     const { metric_id = 'ALL', period = 'YTD' } = req.query;
-    if (!auth.canSeeRespondentData(req.user, { metric_id })) return res.status(403).json({ error: 'Evidence survei memuat data pribadi responden dan hanya dapat diunduh oleh Admin.' });
-    const csvContent = await generateSurveyEvidenceCsv(metric_id, period);
+    if (!(await auth.canSeeRespondentData(req.user, metric_id))) return res.status(403).json({ error: 'Evidence survei memuat data pribadi responden dan hanya dapat diunduh oleh Admin atau PIC metrik tersebut.' });
+    if (!(await checkMetricRef(res, metric_id, { allowAll: true }))) return;
+    const picMetric = req.user.role === 'ADMIN' ? null : await auth.getPicMetric(req.user, metric_id);
+    const csvContent = await generateSurveyEvidenceCsv(metric_id, period, { scopes: picMetric ? auth.respondentScopeFor(req.user, picMetric) : null });
     const filename = metric_id === 'ALL'
       ? `Evidence_Survey_Master_All_Metrics_${period}.csv`
       : `Evidence_Survey_Metric_${metric_id}_${period}.csv`;
@@ -661,8 +699,21 @@ app.get('/api/surveys/evidence', async (req, res) => {
   }
 });
 
-app.post('/api/surveys/upload', ADMIN_ONLY, upload.single('csvFile'), async (req, res) => {
+const csvUploadSingle = (req, res, next) => upload.single('csvFile')(req, res, err => {
+  if (!err) return next();
+  if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'Ukuran file CSV melebihi batas 50 MB.' });
+  return res.status(400).json({ error: 'File upload tidak dapat diproses.' });
+});
+
+app.post('/api/surveys/upload', PIC_OR_ADMIN, csvUploadSingle, async (req, res) => {
+  const tempFile = req.file ? req.file.path : null;
   try {
+    // The target metric comes ONLY from the form field for a PIC (a metric_id column inside the CSV is ignored
+    // by the importer whenever a target metric is given), so a PIC cannot write into somebody else's metric.
+    const metricField = req.body ? req.body.metric_id : undefined;
+    const gate = await auth.requirePicMetric(req, res, metricField);
+    if (!gate) return;
+
     let csvText = '';
     let fileName = 'manual_survey_data.csv';
 
@@ -676,19 +727,33 @@ app.post('/api/surveys/upload', ADMIN_ONLY, upload.single('csvFile'), async (req
       return res.status(400).json({ error: 'File CSV atau data teks CSV wajib disertakan.' });
     }
 
-    const targetMetricId = req.body.metric_id ? parseInt(req.body.metric_id) : null;
-    const result = await processSurveyCsv(csvText, fileName, targetMetricId);
+    const targetMetricId = gate.metric ? gate.metric.metric_id : (metricField ? parseInt(metricField) : null);
+    const uploadedBy = `${req.user.full_name} (${req.user.username})`.slice(0, 200);
+    const result = await processSurveyCsv(csvText, fileName, targetMetricId, { uploadedBy });
 
+    // Audit trail: who uploaded into which metric and how many rows - never the respondents' data.
+    if (result.success) await auth.audit(req, 'SURVEY_UPLOAD', { target: `metrik ${targetMetricId === null ? '(dari kolom metric_id)' : targetMetricId}; ${result.valid_rows_count} baris valid, ${result.invalid_rows_count} ditolak; batch ${result.upload_id}` });
+    // The PE Index recalculation below the import is bankwide; a PIC only gets what concerns the upload itself.
+    if (req.user.role !== 'ADMIN') {
+      delete result.calculation; delete result.updated_pe_index; delete result.updated_survey_index;
+      result.affected_metrics = (result.affected_metrics || []).map(a => ({ ...a, normalized_score: null }));
+    }
     res.json(result);
   } catch (err) {
     console.error('Survey upload error:', err);
     res.status(400).json({ error: err.message });
+  } finally {
+    // the uploaded CSV holds respondent identities and /uploads is readable by every logged-in user: never keep it
+    if (tempFile) fs.unlink(tempFile, () => {});
   }
 });
 
-app.get('/api/surveys/history', ADMIN_ONLY, async (req, res) => {
+app.get('/api/surveys/history', async (req, res) => {
   try {
-    res.json(await storage.getSurveyUploads());
+    const gate = await auth.requirePicMetric(req, res, null, { required: false });
+    if (!gate) return;
+    const history = await storage.getSurveyUploads();
+    res.json(req.user.role === 'ADMIN' ? history : history.filter(h => h.metric_id !== null && gate.mine.some(p => p.metric_id === h.metric_id)));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -696,9 +761,11 @@ app.get('/api/surveys/history', ADMIN_ONLY, async (req, res) => {
 
 app.get('/api/surveys/responses/:metric_id', async (req, res) => {
   try {
-    if (!auth.canSeeRespondentData(req.user, { metric_id: req.params.metric_id })) return res.status(403).json({ error: 'Data responden hanya dapat dilihat oleh Admin.' });
+    if (!(await auth.canSeeRespondentData(req.user, req.params.metric_id))) return res.status(403).json({ error: 'Data responden hanya dapat dilihat oleh Admin atau PIC metrik tersebut.' });
+    if (!(await checkMetricRef(res, req.params.metric_id))) return;
     const responses = await storage.getUploadedResponsesByMetric(req.params.metric_id);
-    res.json(responses);
+    if (req.user.role === 'ADMIN') return res.json(responses);
+    res.json(auth.rowsForViewer(req.user, await auth.getPicMetric(req.user, req.params.metric_id), responses));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1043,6 +1110,15 @@ app.get('/api/qrcode', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to generate QR code' });
   }
+});
+
+// Last-resort error handler: a clean JSON answer, never an HTML page with a stack trace.
+app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
+  if (res.headersSent) return next(err);
+  const status = err && Number.isInteger(err.status) && err.status >= 400 && err.status < 600 ? err.status : 500;
+  if (status === 500) console.error('Unhandled error:', err && err.message);
+  const messages = { 400: 'Permintaan tidak valid.', 413: 'Ukuran permintaan melebihi batas.' };
+  res.status(status).json({ error: err && err.code === 'LIMIT_FILE_SIZE' ? 'Ukuran file melebihi batas.' : (messages[status] || 'Terjadi kesalahan pada server.') });
 });
 
 // Serve frontend dist assets for production

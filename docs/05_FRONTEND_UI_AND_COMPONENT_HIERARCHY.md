@@ -272,3 +272,11 @@ Menu per role (penegakan sebenarnya di server, lihat `docs/04`):
 - **`UserManagementModal.jsx` — editor cakupan**: untuk role User, bagian "Cakupan Data" menampilkan satu kartu per direktorat dengan pilihan radio **Semua divisi** / **Divisi tertentu** (daftar centang divisi), tombol hapus per direktorat, dan dropdown "+ Tambah direktorat ke cakupan ..." (direktorat yang sudah dipakai tidak muncul lagi). Simpan ditolak di UI bila tidak ada direktorat atau "Divisi tertentu" tanpa satu pun divisi dicentang. Untuk Admin, bagian ini diganti keterangan "Admin membaca semua data" dan cakupan dikirim kosong. Tabel user menampilkan ringkasan cakupan (`ScopeSummary`).
 - **`Header.jsx` — filter**: untuk User, dropdown Direktorat hanya menawarkan direktorat dalam `user.scopes`, opsi pertama berlabel **"Semua cakupan saya"** (Admin: "Direktorat: All (Bankwide)"), dan dropdown divisi hanya menawarkan divisi yang diizinkan pada direktorat terpilih. Label akun: "User - <direktorat>" bila satu direktorat, "User - N direktorat" bila lebih (tooltip memuat daftar lengkap). Penegakan tetap di server.
 - Tidak diuji: tampilan mobile.
+
+## 🧑‍💼 Catatan v2.27.1 — PIC Metrik di UI
+
+- **`Calculator.jsx` (Explore Metrics) dan `MetricDetailModal.jsx`**: tombol Template / Evidence / Upload sebuah metrik SURVEY tampil bila Admin atau `can_upload` (flag dari server, bukan hitungan klien). User non-PIC tidak melihat tombol itu.
+- **`SurveyImportModal.jsx`**: untuk PIC daftar metrik hanya milik PIC (server yang menyaring), opsi `ALL` / "Auto-detect dari kolom `metric_id`" disembunyikan, dimulai di metrik terpilih atau metrik pertama miliknya, dan tombol unggah dinonaktifkan bila metrik `ALL`.
+- **`AdminParametersModal.jsx`**: di bawah field **Email PIC** muncul peringatan "PIC belum punya akun login" bila tidak ada akun aktif ber-email sama (`active_account_emails`; dicek terhadap akun aktif apa pun, termasuk Admin).
+- **`UserManagementModal.jsx`**: baris akun menampilkan **PIC metrik** (`pic_metrics`, read-only; ditandai nonaktif bila akun nonaktif); field email diberi saran untuk diisi karena menentukan status PIC.
+- Tidak diuji otomatis: tampilan UI (diperiksa QC di Browser pane); tampilan mobile.

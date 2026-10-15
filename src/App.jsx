@@ -430,11 +430,11 @@ function AppContent() {
         metricId={selectedMetricDetailId}
         filterOptions={filterOptions}
         onClose={() => setSelectedMetricDetailId(null)}
-        onOpenSurveyUpload={isAdmin ? (metricId) => {
+        onOpenSurveyUpload={(metricId) => {
           setSelectedMetricDetailId(null);
           setPreSelectedSurveyMetricId(metricId);
           setIsSurveyImportOpen(true);
-        } : undefined}
+        }}
         onOpenSurveyQuestionSettings={isAdmin ? (metricId) => {
           setSelectedMetricDetailId(null);
           setPreSelectedQuestionMetricId(metricId);

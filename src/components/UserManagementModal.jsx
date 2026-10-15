@@ -197,6 +197,9 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId }) 
             </label>
             <label className="space-y-1"><span className="font-bold text-gray-600">Email</span>
               <input className={inputCls} type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+              {form.role === 'USER' && !form.email.trim() && (
+                <span className="block text-[10.5px] text-amber-700">Disarankan diisi: akun menjadi PIC sebuah metrik bila emailnya sama dengan Email PIC metrik itu (Parameter Admin).</span>
+              )}
             </label>
             <label className="space-y-1"><span className="font-bold text-gray-600">Role</span>
               <select className={inputCls} value={form.role} onChange={e => setForm({ ...form, role: e.target.value, scopes: e.target.value === 'USER' ? form.scopes : [] })}>
@@ -263,7 +266,13 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId }) 
               <tbody className="divide-y divide-gray-100">
                 {users.map(u => (
                   <tr key={u.user_id} className={u.is_active ? '' : 'bg-gray-50 text-gray-400'}>
-                    <td className="px-3 py-2"><div className="font-bold text-gray-900">{u.full_name}</div><div className="font-mono text-[10px] text-gray-500">{u.username}{u.email ? ` • ${u.email}` : ''}</div></td>
+                    <td className="px-3 py-2"><div className="font-bold text-gray-900">{u.full_name}</div><div className="font-mono text-[10px] text-gray-500">{u.username}{u.email ? ` • ${u.email}` : ''}</div>
+                      {(u.pic_metrics || []).length > 0 && (
+                        <div className={`text-[10px] mt-0.5 ${u.is_active ? 'text-slate-600' : 'text-gray-400'}`} title="Ditetapkan lewat Email PIC di Parameter Admin">
+                          <b>PIC metrik:</b> {u.pic_metrics.map(m => `${m.metric_id} - ${m.metric_name}`).join('; ')}{!u.is_active && <span className="italic"> (nonaktif - tidak berlaku)</span>}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${u.role === 'ADMIN' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-700'}`}>{u.role}</span></td>
                     <td className="px-3 py-2">{u.role === 'ADMIN' ? <span className="text-gray-400 italic">Semua (tidak terikat)</span> : <ScopeSummary scopes={u.scopes} />}</td>
                     <td className="px-3 py-2 space-y-0.5">

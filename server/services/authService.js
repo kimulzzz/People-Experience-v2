@@ -8,7 +8,7 @@
 const crypto = require('crypto');
 const storage = require('../db/storage');
 const { createRateLimiter } = require('./rateLimiter');
-const { normalizeScopes, scopeAllows } = require('../db/scopeUtils');
+const { normalizeScopes, scopeAllows, rowInScopes } = require('../db/scopeUtils');
 
 const COOKIE_NAME = 'px_session';
 const ROLES = ['ADMIN', 'USER'];
@@ -111,10 +111,73 @@ async function isEventManager(user) {
   return scopes.some(s => eventManagerDirectorates.includes(s.directorate.toLowerCase()));
 }
 
-// Per-respondent data (name / NIP / e-mail in metric detail and the evidence CSV). Stage 1: only
-// Admin. Stage 2 will also return true for the PIC of that metric.
-function canSeeRespondentData(user, metric) { // eslint-disable-line no-unused-vars
-  return !!user && user.role === 'ADMIN';
+// ---- PIC of a metric (v2.27.1). The PIC is still assigned in Parameter Admin (pic_name / pic_email of a SURVEY
+// metric that needs a manual upload); a USER account is that metric's PIC when its e-mail equals the metric's
+// pic_email (case-insensitive, trimmed). Read from the database on every call - nothing is cached, so editing
+// pic_email (or the account's e-mail / active flag) changes the rights from the very next request. A metric
+// can have one PIC e-mail; one account can be PIC of many metrics. An ADMIN is not "a PIC": Admin may do
+// everything anyway, so these helpers return nothing for an Admin.
+const normEmail = v => String(v === undefined || v === null ? '' : v).trim().toLowerCase();
+const isPicMetric = m => !!m && m.metric_type === 'SURVEY' && !!m.requires_manual_upload;
+
+// The metrics this account is PIC of (metric objects). [] for an Admin, a missing/inactive account or one without e-mail.
+async function picMetrics(user) {
+  if (!user || user.role !== 'USER' || user.is_active === false) return [];
+  const mine = normEmail(user.email);
+  if (!mine) return [];
+  return (await storage.getMetrics()).filter(m => isPicMetric(m) && normEmail(m.pic_email) === mine);
+}
+async function picMetricIds(user) {
+  return (await picMetrics(user)).map(m => m.metric_id);
+}
+// metricRef = a metric object ({ metric_id }) or an id. The id must be a plain integer ("7abc", arrays, "ALL" -> false).
+async function getPicMetric(user, metricRef) {
+  const raw = metricRef && typeof metricRef === 'object' ? metricRef.metric_id : metricRef;
+  if (typeof raw !== 'number' && typeof raw !== 'string') return null;
+  if (!/^\d{1,9}$/.test(String(raw))) return null;
+  const id = parseInt(String(raw), 10);
+  return (await picMetrics(user)).find(m => m.metric_id === id) || null;
+}
+async function isPicOfMetric(user, metricRef) {
+  return !!(await getPicMetric(user, metricRef));
+}
+
+// Per-respondent data (name / NIP / e-mail in metric detail, the evidence CSV, the responses list): the Admin,
+// or the PIC of that metric (and then only for rows inside the PIC's own data scope - see rowsForViewer).
+async function canSeeRespondentData(user, metricRef) {
+  if (!user) return false;
+  if (user.role === 'ADMIN') return true;
+  return isPicOfMetric(user, metricRef);
+}
+
+// The scope list to apply to a PIC's respondent rows of `metric`: null = no restriction (Admin, or a non-employee
+// metric such as campus / candidates, which has no directorate and is already read bankwide by every User).
+function respondentScopeFor(user, metric) {
+  if (!user || user.role === 'ADMIN') return null;
+  if (metric && metric.is_employee_metric === false) return null;
+  return normalizeScopes(user.scopes);
+}
+// Keeps only the respondent rows the viewer may see (same row test as the calculation engine's scope filter).
+function rowsForViewer(user, metric, rows) {
+  const scopes = respondentScopeFor(user, metric);
+  if (scopes === null) return rows;
+  return rows.filter(r => rowInScopes(scopes, r.directorate || r.university || r.applied_position || '', r.division || r.major || r.recruitment_channel || ''));
+}
+
+// Gate for the manual-upload family of routes. Admin passes (any metric). A USER must be PIC: not a PIC at all or
+// not of THIS metric -> 403; metric missing/malformed -> 400 (only reported to somebody who is a PIC).
+// Returns { metric } (metric = null for an Admin without a metric_id) or answers and returns null.
+async function requirePicMetric(req, res, metricRef, { required = true } = {}) {
+  if (req.user.role === 'ADMIN') return { metric: null };
+  const mine = await picMetrics(req.user);
+  if (!mine.length) { res.status(403).json({ error: 'Hanya Admin atau PIC metrik yang dapat menggunakan fitur ini.' }); return null; }
+  if (metricRef === undefined || metricRef === null || metricRef === '' || metricRef === 'ALL') {
+    if (required) { res.status(400).json({ error: 'metric_id wajib diisi (pilih salah satu metrik PIC Anda).' }); return null; }
+    return { metric: null, mine };
+  }
+  const metric = await getPicMetric(req.user, metricRef);
+  if (!metric) { res.status(403).json({ error: 'Anda bukan PIC metrik tersebut.' }); return null; }
+  return { metric, mine };
 }
 
 const IDENTITY_FIELDS = ['nip', 'employee_name', 'cimb_email', 'email', 'participant_id', 'participant_name', 'candidate_id', 'candidate_name'];
@@ -459,7 +522,15 @@ function registerAuthRoutes(app) {
 
   app.get('/api/admin/users', async (req, res) => {
     try {
-      res.json((await storage.listUsers()).map(toPublicUser));
+      // pic_metrics (read-only): the metrics each account is PIC of, i.e. whose pic_email equals the account's e-mail
+      const users = await storage.listUsers();
+      const metrics = (await storage.getMetrics()).filter(isPicMetric);
+      res.json(users.map(u => ({
+        ...toPublicUser(u),
+        pic_metrics: u.role === 'USER' && u.email
+          ? metrics.filter(m => normEmail(m.pic_email) === normEmail(u.email)).map(m => ({ metric_id: m.metric_id, metric_name: m.metric_name }))
+          : []
+      })));
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -610,6 +681,7 @@ async function warnIfNoUsers() {
 module.exports = {
   COOKIE_NAME, ROLES, PUBLIC_ROUTES,
   hashPassword, verifyPassword, generateTempPassword, validateNewPassword,
-  getAuthSettings, toPublicUser, isEventManager, canSeeRespondentData, redactRespondent, resolveScope, isInScope, describeScopes,
+  getAuthSettings, toPublicUser, isEventManager, canSeeRespondentData, redactRespondent,
+  isPicOfMetric, picMetricIds, picMetrics, getPicMetric, requirePicMetric, rowsForViewer, respondentScopeFor, audit, resolveScope, isInScope, describeScopes,
   parseCookies, requireRole, requireLogin, requireEventManager, scopeFilter, registerAuthRoutes, warnIfNoUsers
 };
