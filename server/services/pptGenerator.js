@@ -453,7 +453,16 @@ async function generateEventPPT(event_id, options = {}) {
     fontFace: 'Arial'
   });
 
-  const photosToShow = enrichedMedia.slice(0, 3);
+  // Only 3 slots: videos that have a finished AI Summary come first (stable order otherwise).
+  const hasVideoSummary = m => m.file_type === 'VIDEO' && m.summary_status === 'DONE' && !!m.summary;
+  const photosToShow = [...enrichedMedia.filter(hasVideoSummary), ...enrichedMedia.filter(m => !hasVideoSummary(m))].slice(0, 3);
+  // Cuts text at a word boundary so it stays inside the 3.2" x 1.5" card text box.
+  const clipAtWord = (text, max) => {
+    const t = String(text).trim();
+    if (t.length <= max) return t;
+    const cut = t.slice(0, max);
+    return `${cut.slice(0, Math.max(cut.lastIndexOf(' '), Math.floor(max / 2))).trimEnd()}…`;
+  };
   const cardW = 3.6;
 
   photosToShow.forEach((item, idx) => {
@@ -499,7 +508,11 @@ async function generateEventPPT(event_id, options = {}) {
       fontFace: 'Arial'
     });
 
-    slide5.addText(item.ai_generated_description || 'Momen kebersamaan peserta dalam sesi program.', {
+    // A video with an AI Summary of its transcript shows that (read from the database, never generated here).
+    const videoSummary = item.file_type === 'VIDEO' && item.summary_status === 'DONE' && item.summary
+      ? `Ringkasan${item.summary_source === 'AI' ? ' AI' : ' otomatis'}: ${clipAtWord(item.summary, 300)}`
+      : null;
+    slide5.addText(videoSummary || item.ai_generated_description || 'Momen kebersamaan peserta dalam sesi program.', {
       x: xP + 0.2,
       y: 4.8,
       w: cardW - 0.4,

@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    37 MODUL PENGUJIAN    │     182 AUTOMATED TESTS     │       100% PASS RATE          │
+│    38 MODUL PENGUJIAN    │     195 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -734,3 +734,31 @@ Cakupan yang **tidak** diuji otomatis: tampilan UI per role (diperiksa QC di Bro
 | Reset password | Positif | memakai password awal, `must_change_password`, membuka akun yang terkunci (5 gagal) |
 | Kebocoran | Negatif | password awal tidak ada di audit log maupun daftar user |
 | Env kosong/spasi/tidak ada | Positif | kembali ke password acak yang lolos kebijakan, berbeda tiap kali, `is_default_password: false` |
+
+---
+
+## 🤖 21. AI Summary Video (Gemma) — v2.28.0 (2026-10-15)
+
+**Regression suite: 195 test di SQL Server** (angka dari laporan QC; penulis dokumen ini tidak menjalankan ulang suite); **177 di JSON**, karena Modul 37 dan Modul 38 di-skip di JSON — dari Modul 38 hanya 2 tes validator offline yang berjalan. **Modul 38 = 15 tes** (setelah perbaikan hasil QC). Modul 34: tes lockout diperbaiki agar tidak mengasumsikan password sementara >= 10 karakter. Catatan: hitungan statis baris `runTest` di `tests/regressionTest.js` tidak persis sama dengan 182 + 15; angka resmi di dokumen ini mengikuti laporan QC.
+
+Modul 38 (SQL Server) menjalankan **backend kedua** (`PX_DISABLE_SCHEDULERS=1`) di atas database yang sama dengan **Ollama palsu** (`OLLAMA_HOST`) dan **API transkrip palsu** (`TRANSCRIBE_API_URL`) dalam proses test — suite tidak pernah memanggil Gemma asli. Dua tes pertama (validator) murni offline dan jalan di kedua backend.
+
+| # | Jenis | Yang diuji |
+| :-: | :---: | :--- |
+| 1 | Negatif | Validator menolak angka/kata bilangan karangan (enam -> sepuluh bulan, dua -> tiga kali, seminggu -> setahun, six -> ten, twice -> three times), termasuk di poin |
+| 2 | Positif | Kata bilangan/digit setara yang ada di transkrip diterima; ringkasan Gemma asli yang tersimpan (video user) tidak ditolak berlebihan |
+| 3 | Positif | Saat boot hanya ringkasan `PROCESSING` yang dilanjutkan (tepat 1 panggilan); video lama tanpa ringkasan tidak diproses |
+| 4 | Positif | Page load, buka event, dashboard, alerts, health, upload foto, PPT: **nol** request ke Ollama |
+| 5 | Positif | Video baru: upload dijawab langsung, transkrip `DONE` memicu tepat 1 panggilan; tersimpan sumber `AI`, model, bahasa, waktu |
+| 6 | Positif | Video berbahasa Inggris diringkas dalam bahasa Inggris |
+| 7 | Negatif | Angka/nama karangan ditolak: 1 retry menyebut fakta yang salah, lalu `RULE`; tidak ada yang dikarang tersimpan |
+| 8 | Positif | Jawaban pertama salah, retry bersih dipakai (sumber `AI`, 2 panggilan) |
+| 9 | Negatif | Ollama mati (koneksi putus) atau model belum ada: upload dan transkrip tidak terganggu, jatuh ke `RULE` dengan alasan jelas |
+| 10 | Positif | Transkrip panjang diringkas per bagian lalu digabung; jawaban akhir dicek terhadap seluruh transkrip |
+| 11 | Negatif | Transkrip terlalu pendek: `INSUFFICIENT`, nol panggilan |
+| 12 | Positif | Tombol manual: pengelola membuat ringkasan video lama (202 `PROCESSING` -> `DONE`, tepat 1 panggilan) |
+| 13 | Negatif | Manual: User non-pengelola 403 (nol panggilan), tanpa login 401, foto 400, tak dikenal 404, transkrip belum `DONE` 409 |
+| 14 | Positif | User biasa dapat membaca ringkasan; ringkasan tidak memuat identitas responden |
+| 15 | Positif | PPT dibuat dari data tersimpan saja (tetap nol panggilan Ollama) |
+
+**Tidak diuji / keterbatasan**: Video Extractor asli (:8000) tidak diuji end-to-end oleh QC; Gemma asli hanya dicoba satu kali pada video user (±53 dtk); teks di slide PPT tidak diperiksa secara visual (slide media hanya 3 media); distorsi semantik halus dan negasi dapat lolos validator.

@@ -871,7 +871,9 @@ const storage = {
     if (!media) return null;
     const allowed = [
       'caption', 'ai_generated_description', 'transcript', 'transcript_segments',
-      'transcript_status', 'transcript_error', 'transcript_language', 'duration_seconds'
+      'transcript_status', 'transcript_error', 'transcript_language', 'duration_seconds',
+      'summary', 'summary_points', 'summary_status', 'summary_source', 'summary_model',
+      'summary_language', 'summary_generated_at', 'summary_error'
     ];
     allowed.forEach(k => {
       if (patch[k] !== undefined) media[k] = patch[k];

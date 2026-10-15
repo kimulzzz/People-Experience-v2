@@ -2292,7 +2292,9 @@ async function runRegressionSuite() {
       const reset = await adminJson('POST', `/api/admin/users/${u.id}/reset-password`);
       assert.strictEqual(reset.status, 200);
       const rb = await reset.json();
-      assert.ok(rb.temporary_password && rb.temporary_password.length >= 10);
+      // The standard initial password from the env (is_default_password) may be shorter; a random one must be >= 10.
+      if (rb.is_default_password === true) assert.ok(rb.temporary_password);
+      else assert.ok(rb.temporary_password && rb.temporary_password.length >= 10);
       assert.strictEqual(rb.user.must_change_password, true);
       assert.strictEqual((await loginAs(u.username, u.password)).res.status, 401, 'old password dead after reset');
       assert.strictEqual((await loginAs(u.username, rb.temporary_password)).res.status, 200);
@@ -3389,6 +3391,344 @@ async function runRegressionSuite() {
         for (const id of ids37) { try { await storage37.deleteUser(id); } catch (_) { /* ignore */ } }
         const leftovers = (await storage37.listUsers()).filter(x => x.username.endsWith(stamp37) && x.username.startsWith('rt37'));
         if (leftovers.length) console.error(`     cleanup: ${leftovers.length} Module 37 users remain`);
+      }
+    }
+  }
+
+  // --- MODULE 38 (v2.28.0): AI SUMMARY OF A VIDEO TRANSCRIPT (local Gemma, FAKE Ollama) ---
+  // The suite never talks to the real Gemma: a throw-away second backend is started with OLLAMA_HOST and
+  // TRANSCRIBE_API_URL pointing at in-process fakes, over the same SQL database. SQL backend only.
+  console.log('\n📦 MODULE 38: Video AI Summary - Gemma only for a new video, validator, fallback, zero stray calls (Positive & Negative Testing)');
+  {
+    const storage38 = require('../server/db/storage');
+    // Validator: numbers written as words are facts too (offline, no Ollama).
+    const summarySvc = require('../server/services/mediaSummaryService');
+    const wrap = (summary, points = ['Mentor mendampingi peserta baru.', 'Mentor bertemu para peserta.']) => ({ summary, points });
+    const NUM_TR_ID = 'Setiap mentor mendampingi peserta selama enam bulan pertama dan bertemu dua kali seminggu dengan para peserta baru di kantor pusat setiap pekan.';
+    const NUM_TR_EN = 'Every mentor supports the participants for six months and meets them twice a week at the head office for new employees.';
+    await runTest('[NEGATIVE] Validator: invented number WORDS are rejected (enam -> sepuluh bulan, dua -> tiga kali, seminggu -> setahun, six -> ten, twice -> three times)', async () => {
+      const bad = [
+        ['Setiap mentor mendampingi peserta selama sepuluh bulan pertama di kantor pusat.', NUM_TR_ID, 'id', /sepuluh/],
+        ['Setiap mentor bertemu tiga kali seminggu dengan para peserta baru di kantor pusat.', NUM_TR_ID, 'id', /tiga/],
+        ['Setiap mentor bertemu dua kali setahun dengan para peserta baru di kantor pusat.', NUM_TR_ID, 'id', /setahun/],
+        ['Every mentor supports the participants for ten months at the head office for new employees.', NUM_TR_EN, 'en', /ten/],
+        ['Every mentor meets them three times a week at the head office for new employees.', NUM_TR_EN, 'en', /three/]
+      ];
+      for (const [text, tr, lang, re] of bad) {
+        const reason = summarySvc.validateAnswer(wrap(text), tr, lang);
+        assert.ok(reason && re.test(reason), `"${text}" must be rejected for a number word, got: ${reason}`);
+      }
+      // a number word in a key point is checked too
+      assert.ok(summarySvc.validateAnswer(wrap('Setiap mentor mendampingi peserta selama enam bulan pertama di kantor pusat.', ['Bertemu seratus kali.', 'Poin lain yang wajar.']), NUM_TR_ID, 'id'));
+    });
+    await runTest('[POSITIVE] Validator: number words (and equal digits) that ARE in the transcript are accepted; the stored real summary of the user video is still accepted', async () => {
+      const ok = [
+        ['Setiap mentor mendampingi peserta selama enam bulan pertama dan bertemu dua kali seminggu di kantor pusat.', NUM_TR_ID, 'id'],
+        ['Setiap mentor mendampingi peserta selama 6 bulan pertama dan bertemu 2 kali seminggu di kantor pusat.', NUM_TR_ID, 'id'],
+        ['Every mentor supports the participants for six months and meets them twice a week at the head office.', NUM_TR_EN, 'en', ['Every mentor supports the participants.', 'Mentors meet the participants.']],
+        ['Every mentor supports the participants for 6 months and meets them 2 times a week at the head office.', NUM_TR_EN, 'en', ['Every mentor supports the participants.', 'Mentors meet the participants.']]
+      ];
+      for (const [text, tr, lang, pts] of ok) assert.strictEqual(summarySvc.validateAnswer(wrap(text, pts), tr, lang), null, text);
+      const REAL_TR = 'Orang yang pasif, banyak dihabiskan untuk menyendiri, sibuk dengan diri sendiri, mencari sebuah ketenangan, tapi sembuh. Pelan-pelan aku sadar, semua ini terasa hampak, lebih lagi saat ku ingat, demi masa, sesungguhnya manusia berada dalam kerugian. hingga akhirnya aku memberanikan diri untuk beranjak keluar mencoba jadi bagian dari hidup ini bagian yang berarti kalau tidak waktuku tidak habis dengan sia-sia';
+      const real = summarySvc.parseModelAnswer('RINGKASAN: Orang yang sebelumnya pasif dan banyak menyendiri, mencari ketenangan, namun kemudian sembuh. Ia mulai menyadari bahwa hal tersebut terasa sangat mengganggu, terutama ketika mengingat bahwa manusia sebenarnya berada dalam kerugian. Akhirnya, ia berani keluar dan mencoba menjadi bagian dari kehidupan, agar tidak menyia-nyiakan waktu.\n\nPOIN:\n- Orang tersebut sebelumnya banyak menyendiri dan mencari ketenangan.\n- Ia menyadari bahwa tindakannya terasa sangat mengganggu.\n- Ia mengingat bahwa manusia sebenarnya berada dalam kerugian.\n- Ia berani keluar dan mencoba menjadi bagian dari kehidupan.\n- Ia ingin agar waktunya tidak terbuang sia-sia.');
+      assert.strictEqual(summarySvc.validateAnswer(real, REAL_TR, 'id'), null, 'the real stored Gemma summary must not be over-rejected');
+    });
+    if (storage38.backend !== 'sql') {
+      console.log('  ⏭️  SKIP: Module 38 needs the SQL backend (second backend over the same database)');
+    } else {
+      const http38 = require('http');
+      const { spawn } = require('child_process');
+      const path38 = require('path');
+      const crypto38 = require('crypto');
+      const auth38 = require('../server/services/authService');
+      const EVENT = 'ev-perspektif-2024-q1';
+      const TEXT_ID = 'Hari ini kami membahas program mentoring untuk karyawan baru di kantor pusat. Setiap mentor mendampingi peserta selama enam bulan pertama, bertemu secara rutin, dan membantu mereka memahami budaya kerja. Peserta merasa lebih percaya diri setelah mengikuti sesi tersebut dan ingin program ini diteruskan.';
+      const TEXT_EN = 'Today we talked about the mentoring program for new employees at the head office. Every mentor supports a participant during the first months, meets regularly, and helps them understand the working culture. Participants felt more confident after the sessions and want this program to continue.';
+      const TEXT_SHORT = 'Halo semuanya, terima kasih sudah hadir.';
+      const GOOD_ID = 'RINGKASAN: Program mentoring untuk karyawan baru di kantor pusat dibahas. Mentor mendampingi peserta selama enam bulan pertama dan membantu mereka memahami budaya kerja. Peserta merasa lebih percaya diri dan ingin program diteruskan.\n\nPOIN:\n- Program mentoring untuk karyawan baru di kantor pusat.\n- Mentor mendampingi peserta dan bertemu secara rutin.\n- Peserta ingin program ini diteruskan.';
+      const GOOD_EN = 'SUMMARY: The mentoring program for new employees at the head office was discussed. Every mentor supports a participant, meets regularly and helps them understand the working culture. Participants felt more confident and want the program to continue.\n\nPOINTS:\n- Mentoring program for new employees at the head office.\n- Mentors meet participants regularly.\n- Participants want this program to continue.';
+      const FABRICATED = 'RINGKASAN: Program mentoring untuk karyawan baru dibuka oleh Budi Santoso pada tahun 2019 dengan 350 peserta di kantor pusat. Mentor mendampingi peserta dengan rutin.\n\nPOIN:\n- Dibuka oleh Budi Santoso.\n- Diikuti 350 peserta sejak 2019.\n- Mentor mendampingi peserta.';
+
+      const oll = { calls: [], mode: 'good', delay: 0 };
+      const fakeOllama = http38.createServer((req, res) => {
+        const chunks = [];
+        req.on('data', c => chunks.push(c));
+        req.on('end', () => {
+          let body = {};
+          try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch (_) { /* tags etc. */ }
+          oll.calls.push({ method: req.method, url: req.url, prompt: body.prompt || '', model: body.model });
+          if (oll.mode === 'close') return req.socket.destroy();
+          const endLater = payload => setTimeout(() => res.end(payload), oll.delay || 0);
+          res.setHeader('Content-Type', 'application/json');
+          if (oll.mode === 'missing') { res.statusCode = 404; return res.end(JSON.stringify({ error: "model 'gemma3:4b' not found" })); }
+          let answer = (body.prompt || '').includes('Summarize the transcript') ? GOOD_EN : GOOD_ID;
+          if (oll.mode === 'fabricate') answer = FABRICATED;
+          if (oll.mode === 'fabricate-once' && oll.calls.filter(c => c.url === '/api/generate').length === 1) answer = FABRICATED;
+          endLater(JSON.stringify({ response: answer, done: true }));
+        });
+      });
+      const tr = { text: TEXT_ID, language: 'id', fail: false };
+      const fakeTranscribe = http38.createServer((req, res) => {
+        req.resume();
+        req.on('end', () => {
+          res.setHeader('Content-Type', 'application/json');
+          if (req.method === 'POST' && req.url === '/transcribe') {
+            if (tr.fail) { res.statusCode = 500; return res.end('{"detail":"boom"}'); }
+            return res.end(JSON.stringify({ text: tr.text, language: tr.language, duration: 30, segments: [{ start: 0, end: 30, text: tr.text }] }));
+          }
+          res.end('{"status":"ok"}');
+        });
+      });
+      const listen = srv => new Promise(resolve => srv.listen(0, '127.0.0.1', () => resolve(srv.address().port)));
+      const sleep38 = ms => new Promise(r => setTimeout(r, ms));
+      const ollamaPort = await listen(fakeOllama);
+      const trPort = await listen(fakeTranscribe);
+      const freePort = await (async () => { const s = http38.createServer(); const p = await listen(s); await new Promise(r => s.close(r)); return p; })();
+      const CHILD = `http://127.0.0.1:${freePort}`;
+
+      const stamp38 = Date.now().toString(36);
+      const pw38 = { admin: crypto38.randomBytes(9).toString('hex') + 'Aa1', user: crypto38.randomBytes(9).toString('hex') + 'Bb2' };
+      const userIds = [];
+      const mediaIds = new Set();
+      let child = null;
+      let adminCookie = null;
+      let userCookie = null;
+      const cookieOf = r => (r.headers.getSetCookie() || []).map(c => c.split(';')[0]).find(c => c.startsWith('px_session='));
+      const api = (p, opts = {}, cookie = adminCookie) => realFetch(`${CHILD}${p}`, { ...opts, headers: { ...(opts.headers || {}), ...(cookie ? { Cookie: cookie } : {}) } });
+      const generateCalls = () => oll.calls.filter(c => c.url === '/api/generate').length;
+      const eventMedia = async (id, cookie = adminCookie) => (await (await api(`/api/events/${EVENT}`, {}, cookie)).json()).media.find(m => m.media_id === id);
+      const waitFor = async (id, pred, ms = 20000) => {
+        for (let i = 0; i < ms / 250; i++) { const m = await eventMedia(id); if (m && pred(m)) return m; await sleep38(250); }
+        return await eventMedia(id);
+      };
+      const upload = async (buffer, name, mime) => {
+        const form = new FormData();
+        form.append('mediaFile', new Blob([buffer], { type: mime }), name);
+        const res = await api(`/api/events/${EVENT}/media`, { method: 'POST', body: form });
+        const body = await res.json();
+        if (body.media) mediaIds.add(body.media.media_id);
+        return { res, media: body.media };
+      };
+      const uploadVideo = async (text, language = 'id') => {
+        tr.text = text; tr.language = language; tr.fail = false;
+        const up = await upload(Buffer.from('fake video bytes'), 'regression-summary.mp4', 'video/mp4');
+        assert.strictEqual(up.res.status, 201);
+        return up.media;
+      };
+
+      // Videos that exist BEFORE the second backend boots: one "old" without a summary, one interrupted mid-summary.
+      const oldVideo = await storage38.addMedia({ event_id: EVENT, file_name: 'rt38-old.mp4', file_path: '/uploads/rt38-old.mp4', file_type: 'VIDEO', caption: 'rt38 old', transcript_status: 'DONE' });
+      mediaIds.add(oldVideo.media_id);
+      await storage38.updateMedia(oldVideo.media_id, { transcript: TEXT_ID, transcript_language: 'id', transcript_segments: [] });
+      const interrupted = await storage38.addMedia({ event_id: EVENT, file_name: 'rt38-int.mp4', file_path: '/uploads/rt38-int.mp4', file_type: 'VIDEO', caption: 'rt38 interrupted', transcript_status: 'DONE' });
+      mediaIds.add(interrupted.media_id);
+      await storage38.updateMedia(interrupted.media_id, { transcript: TEXT_ID, transcript_language: 'id', transcript_segments: [], summary_status: 'PROCESSING' });
+
+      try {
+        const mk = async (suffix, role) => {
+          const pw = pw38[role === 'ADMIN' ? 'admin' : 'user'];
+          const u = await storage38.createUser({ username: `rt38${suffix}${stamp38}`, full_name: `Regression 38 ${suffix}`, email: '', role, password_hash: await auth38.hashPassword(pw), must_change_password: false });
+          userIds.push(u.user_id);
+          return { username: u.username, password: pw };
+        };
+        const adminAcc = await mk('a', 'ADMIN');
+        const userAcc = await mk('u', 'USER');
+
+        child = spawn(process.execPath, [path38.join(__dirname, '..', 'server', 'server.js')], {
+          cwd: path38.join(__dirname, '..'),
+          env: { ...process.env, PORT: String(freePort), OLLAMA_HOST: `http://127.0.0.1:${ollamaPort}`, OLLAMA_MODEL: 'gemma3:4b', TRANSCRIBE_API_URL: `http://127.0.0.1:${trPort}`, PX_DISABLE_SCHEDULERS: '1' },
+          stdio: 'ignore'
+        });
+        let booted = false;
+        for (let i = 0; i < 120 && !booted; i++) { try { booted = (await realFetch(`${CHILD}/api/health`)).ok; } catch (_) { await sleep38(500); } }
+        assert.ok(booted, 'second backend did not start');
+        const login = async acc => {
+          const r = await realFetch(`${CHILD}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(acc) });
+          assert.strictEqual(r.status, 200);
+          return cookieOf(r);
+        };
+        adminCookie = await login(adminAcc);
+        userCookie = await login(userAcc);
+
+        // The interrupted summary job resumes at boot (it belongs to a video that was being processed); the old video does not.
+        await waitFor(interrupted.media_id, m => m.summary_status === 'DONE');
+        await sleep38(1500);
+
+        await runTest('[POSITIVE] At boot only the interrupted summary continues (exactly 1 Gemma call); an old video without a summary is NOT processed automatically', async () => {
+          assert.strictEqual(generateCalls(), 1, `boot made ${generateCalls()} generate calls`);
+          assert.strictEqual(oll.calls.filter(c => c.url !== '/api/generate').length, 0, 'no other Ollama request at boot');
+          assert.strictEqual((await eventMedia(interrupted.media_id)).summary_status, 'DONE');
+          const old = await eventMedia(oldVideo.media_id);
+          assert.strictEqual(old.summary_status, undefined, 'old video must stay without a summary');
+          assert.strictEqual(old.summary, undefined);
+        });
+
+        oll.calls.length = 0;
+        await runTest('[POSITIVE] Page loads / opening an event / dashboard / alerts / health / photo upload / PPT all make ZERO Ollama requests', async () => {
+          for (const p of ['/api/events', `/api/events/${EVENT}`, '/api/metrics/calculate', '/api/alerts', '/api/health', '/api/settings', '/api/directorates']) {
+            assert.strictEqual((await api(p)).status, 200, p);
+          }
+          const photo = await upload(TINY_PNG, 'rt38.png', 'image/png');
+          assert.strictEqual(photo.res.status, 201);
+          assert.strictEqual(photo.media.summary_status, undefined);
+          await sleep38(800);
+          assert.strictEqual((await eventMedia(photo.media.media_id)).summary_status, undefined, 'a photo is never summarized');
+          const ppt = await api(`/api/events/${EVENT}/generate-ppt`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+          assert.strictEqual(ppt.status, 200);
+          await sleep38(500);
+          assert.strictEqual(oll.calls.length, 0, `unexpected Ollama requests: ${JSON.stringify(oll.calls.map(c => c.url))}`);
+        });
+
+        await runTest('[POSITIVE] A NEW video: upload answers at once (no summary yet), transcript DONE triggers exactly one Gemma call, summary + key points stored with source AI, model, language, time', async () => {
+          oll.calls.length = 0; oll.mode = 'good';
+          const media = await uploadVideo(TEXT_ID);
+          assert.strictEqual(media.transcript_status, 'PROCESSING');
+          assert.strictEqual(media.summary_status, undefined);
+          const done = await waitFor(media.media_id, m => m.summary_status === 'DONE');
+          assert.strictEqual(done.transcript_status, 'DONE');
+          assert.strictEqual(done.summary_status, 'DONE', done.summary_error);
+          assert.strictEqual(done.summary_source, 'AI');
+          assert.strictEqual(done.summary_model, 'gemma3:4b');
+          assert.strictEqual(done.summary_language, 'id');
+          assert.ok(done.summary_generated_at);
+          assert.ok(done.summary.length > 40);
+          assert.ok(done.summary_points.length >= 2 && done.summary_points.length <= 5);
+          assert.strictEqual(generateCalls(), 1);
+          assert.ok(oll.calls[0].prompt.includes(TEXT_ID), 'the transcript was sent to the model');
+          assert.strictEqual(oll.calls[0].model, 'gemma3:4b');
+        });
+
+        await runTest('[POSITIVE] An English video is summarized in English (English instructions, summary_language en)', async () => {
+          oll.calls.length = 0; oll.mode = 'good';
+          const media = await uploadVideo(TEXT_EN, 'en');
+          const done = await waitFor(media.media_id, m => m.summary_status === 'DONE');
+          assert.strictEqual(done.summary_status, 'DONE', done.summary_error);
+          assert.strictEqual(done.summary_language, 'en');
+          assert.strictEqual(done.summary_source, 'AI');
+          assert.ok(oll.calls[0].prompt.includes('Summarize the transcript below in English'));
+          assert.ok(/mentoring program/i.test(done.summary));
+        });
+
+        await runTest('[NEGATIVE] Invented numbers/names are rejected: one retry naming the offending facts, then the rule-based summary (source RULE) - nothing invented is stored', async () => {
+          oll.calls.length = 0; oll.mode = 'fabricate';
+          const media = await uploadVideo(TEXT_ID);
+          const done = await waitFor(media.media_id, m => m.summary_status === 'DONE');
+          assert.strictEqual(done.summary_status, 'DONE');
+          assert.strictEqual(done.summary_source, 'RULE');
+          assert.strictEqual(done.summary_model, null);
+          assert.strictEqual(generateCalls(), 2, 'exactly one retry');
+          assert.ok(oll.calls[1].prompt.includes('PERBAIKAN') && /2019|350/.test(oll.calls[1].prompt), 'retry prompt names the rejected facts');
+          assert.ok(/validator/i.test(done.summary_error));
+          const stored = `${done.summary} ${done.summary_points.join(' ')}`;
+          assert.ok(!/2019|350|Budi|Santoso/.test(stored), 'invented facts must not be stored');
+          for (const sentence of done.summary.split(/(?<=[.!?])\s+/)) assert.ok(TEXT_ID.includes(sentence.replace(/…$/, '').trim()), 'rule summary is extracted from the transcript');
+        });
+
+        await runTest('[POSITIVE] First answer invented, retry clean: the retry result is used (source AI, 2 calls)', async () => {
+          oll.calls.length = 0; oll.mode = 'fabricate-once';
+          const media = await uploadVideo(TEXT_ID);
+          const done = await waitFor(media.media_id, m => m.summary_status === 'DONE');
+          assert.strictEqual(done.summary_source, 'AI');
+          assert.strictEqual(generateCalls(), 2);
+        });
+
+        await runTest('[NEGATIVE] Ollama off (connection dropped) or model missing: the upload and transcript are unaffected, the summary falls back to rules with a clear reason - no crash', async () => {
+          oll.calls.length = 0; oll.mode = 'close';
+          const a = await uploadVideo(TEXT_ID);
+          const doneA = await waitFor(a.media_id, m => m.summary_status === 'DONE' || m.summary_status === 'FAILED');
+          assert.strictEqual(doneA.transcript_status, 'DONE');
+          assert.strictEqual(doneA.summary_status, 'DONE');
+          assert.strictEqual(doneA.summary_source, 'RULE');
+          assert.ok(doneA.summary_error.length > 5, 'reason shown');
+          oll.mode = 'missing';
+          const b = await uploadVideo(TEXT_ID);
+          const doneB = await waitFor(b.media_id, m => m.summary_status === 'DONE' || m.summary_status === 'FAILED');
+          assert.strictEqual(doneB.summary_source, 'RULE');
+          assert.ok(/ollama pull/i.test(doneB.summary_error), doneB.summary_error);
+          assert.strictEqual((await api('/api/health')).status, 200, 'server still alive');
+        });
+
+        await runTest('[POSITIVE] A long transcript is summarized part by part (safe context size) and then combined; the final answer is checked against the whole transcript', async () => {
+          oll.calls.length = 0; oll.mode = 'good';
+          const long = Array(30).fill(TEXT_ID).join(' ');
+          const media = await uploadVideo(long);
+          const done = await waitFor(media.media_id, m => m.summary_status === 'DONE', 30000);
+          assert.strictEqual(done.summary_status, 'DONE', done.summary_error);
+          assert.strictEqual(done.summary_source, 'AI');
+          assert.ok(generateCalls() >= 3, `expected part calls + combine, got ${generateCalls()}`);
+          assert.ok(oll.calls.every(c => c.prompt.length < 7500), 'no single prompt may exceed the safe context size');
+          assert.ok(oll.calls[0].prompt.includes('bagian 1 dari'));
+        });
+
+        await runTest('[NEGATIVE] A too-short transcript is not sent to the model: INSUFFICIENT, zero calls', async () => {
+          oll.calls.length = 0; oll.mode = 'good';
+          const media = await uploadVideo(TEXT_SHORT);
+          const done = await waitFor(media.media_id, m => m.summary_status);
+          assert.strictEqual(done.summary_status, 'INSUFFICIENT');
+          assert.ok(/belum cukup/i.test(done.summary_error));
+          await sleep38(500);
+          assert.strictEqual(oll.calls.length, 0);
+        });
+
+        await runTest('[POSITIVE] Manual "Buat ulang ringkasan": an event manager can make the summary of an old video (202 PROCESSING -> DONE, exactly one Gemma call)', async () => {
+          oll.calls.length = 0; oll.mode = 'good'; oll.delay = 1500;
+          const r = await api(`/api/media/${oldVideo.media_id}/summarize`, { method: 'POST' });
+          assert.strictEqual(r.status, 202);
+          assert.strictEqual((await api(`/api/media/${oldVideo.media_id}/summarize`, { method: 'POST' })).status, 409, 'a second press while PROCESSING/queued is refused');
+          assert.strictEqual((await r.json()).media.summary_status, 'PROCESSING');
+          const done = await waitFor(oldVideo.media_id, m => m.summary_status === 'DONE');
+          oll.delay = 0;
+          assert.strictEqual(done.summary_source, 'AI');
+          assert.strictEqual(generateCalls(), 1);
+        });
+
+        await runTest('[NEGATIVE] Manual summary: non-manager User 403 (zero calls), no login 401, photo 400, unknown 404, transcript not DONE 409', async () => {
+          oll.calls.length = 0;
+          assert.strictEqual((await api(`/api/media/${oldVideo.media_id}/summarize`, { method: 'POST' }, userCookie)).status, 403);
+          assert.strictEqual((await api(`/api/media/${oldVideo.media_id}/summarize`, { method: 'POST' }, null)).status, 401);
+          const photo = await upload(TINY_PNG, 'rt38b.png', 'image/png');
+          assert.strictEqual((await api(`/api/media/${photo.media.media_id}/summarize`, { method: 'POST' })).status, 400);
+          assert.strictEqual((await api('/api/media/does-not-exist/summarize', { method: 'POST' })).status, 404);
+          tr.fail = true;
+          const bad = await upload(Buffer.from('fake video bytes'), 'rt38-fail.mp4', 'video/mp4');
+          const failed = await waitFor(bad.media.media_id, m => m.transcript_status === 'FAILED');
+          assert.strictEqual(failed.transcript_status, 'FAILED');
+          assert.strictEqual((await api(`/api/media/${bad.media.media_id}/summarize`, { method: 'POST' })).status, 409);
+          tr.fail = false;
+          await sleep38(500);
+          assert.strictEqual(oll.calls.length, 0, 'none of these may reach Ollama');
+        });
+
+        await runTest('[POSITIVE] A plain User can READ the summary on the event; the summary carries no respondent identity', async () => {
+          const m = await eventMedia(oldVideo.media_id, userCookie);
+          assert.strictEqual(m.summary_status, 'DONE');
+          assert.ok(m.summary && m.summary_points.length > 0);
+          assert.ok(!/nip|email|password/i.test(JSON.stringify({ s: m.summary, p: m.summary_points })));
+        });
+
+        await runTest('[POSITIVE] The PPT is generated from stored data only (still zero Ollama calls with summaries present)', async () => {
+          oll.calls.length = 0;
+          const ppt = await api(`/api/events/${EVENT}/generate-ppt`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+          assert.strictEqual(ppt.status, 200);
+          assert.strictEqual(oll.calls.length, 0);
+          // slide 5 (media slots): videos with a finished summary come first and the text is clean UTF-8
+          const file = await api((await ppt.json()).download_url);
+          assert.strictEqual(file.status, 200);
+          const zip = await require('jszip').loadAsync(Buffer.from(await file.arrayBuffer()));
+          const xml = await zip.file('ppt/slides/slide5.xml').async('string');
+          assert.ok(xml.includes('Ringkasan AI:'), 'slide 5 must carry the video summary');
+          assert.ok(/[Pp]rogram mentoring/.test(xml), 'summary text of the video');
+          assert.ok(!/\u00e2\u20ac|\u00c3/.test(xml), 'no mojibake in slide 5');
+        });
+      } finally {
+        if (child) child.kill();
+        await sleep38(500);
+        for (const id of mediaIds) {
+          try { const removed = await storage38.deleteMedia(id); const abs = removed && require('../server/services/transcribeService').resolveUploadPath(removed.file_path); if (abs) require('fs').unlink(abs, () => {}); } catch (_) { /* ignore */ }
+        }
+        for (const id of userIds) { try { await storage38.deleteUser(id); } catch (_) { /* ignore */ } }
+        await new Promise(r => fakeOllama.close(r));
+        await new Promise(r => fakeTranscribe.close(r));
       }
     }
   }

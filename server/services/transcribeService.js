@@ -8,6 +8,7 @@ const https = require('https');
 const path = require('path');
 const fs = require('fs');
 const storage = require('../db/storage');
+const { queueMediaSummary } = require('./mediaSummaryService');
 
 const API_URL = (process.env.TRANSCRIBE_API_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '');
 const DEFAULT_LANGUAGE = process.env.TRANSCRIBE_LANGUAGE || 'id';
@@ -103,7 +104,12 @@ async function queueMediaTranscription(media_id) {
   if (!media) return false;
 
   inFlight.add(media_id);
-  await storage.updateMedia(media_id, { transcript_status: 'PROCESSING', transcript_error: '' });
+  // A new transcript makes any earlier AI summary stale: clear it (the summary is made again once this one is DONE).
+  await storage.updateMedia(media_id, {
+    transcript_status: 'PROCESSING', transcript_error: '',
+    summary: null, summary_points: null, summary_status: null, summary_source: null, summary_model: null,
+    summary_language: null, summary_generated_at: null, summary_error: null
+  });
 
   (async () => {
     try {
@@ -126,6 +132,13 @@ async function queueMediaTranscription(media_id) {
         duration_seconds: result.duration || null,
         ai_generated_description: text ? `Transkrip otomatis: ${excerpt(text)}` : 'Tidak ada ucapan yang terdeteksi pada video ini.'
       });
+      // The ONE automatic trigger of the local AI (Gemma): a video's transcript just finished. A failure here must
+      // never turn a finished transcript into a failed one.
+      try {
+        await queueMediaSummary(media_id);
+      } catch (sumErr) {
+        console.error(`Could not start the AI summary for ${media_id}:`, sumErr.message);
+      }
     } catch (err) {
       console.error(`Transcription failed for ${media_id}:`, err.message);
       // Media may have been deleted while it was processing — don't resurrect it.

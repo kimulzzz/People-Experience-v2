@@ -20,6 +20,7 @@ const { generateSurveyEvidenceCsv } = require('./services/surveyEvidenceService'
 const { getPendingUploadReminders, sendPendingUploadReminders, startReminderScheduler } = require('./services/reminderService');
 const emailSettingsService = require('./services/emailSettingsService');
 const auth = require('./services/authService');
+const { queueMediaSummary, resumeInterruptedSummaries, isSummaryInFlight } = require('./services/mediaSummaryService');
 const { queueMediaTranscription, resumeInterruptedTranscriptions, resolveUploadPath, isTranscribeApiReachable, unreachableMessage } = require('./services/transcribeService');
 
 // Default year for YTD/unparseable period query params, derived from the real server clock
@@ -83,7 +84,9 @@ const EVENT_MANAGER = auth.requireEventManager;
 
 // 1. Health & Status
 app.get('/api/health', async (req, res) => {
-  const ollama = await isOllamaAvailable();
+  // Only listing Ollama's models (no model run) and only on request: a page load must not touch the local AI.
+  const checkAi = req.user && req.query.check_ai === '1';
+  const ollama = checkAi ? await isOllamaAvailable() : null;
 
   // Report the REAL state of the active storage backend (for SQL Server: a live query).
   let database;
@@ -108,14 +111,15 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.27.2' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.28.0' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.27.2',
+    version: '2.28.0',
     local_ai: {
-      ollama_status: ollama ? 'connected' : 'offline (using local heuristic engine)',
+      ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
+      model: process.env.OLLAMA_MODEL || 'gemma3:4b',
       host: process.env.OLLAMA_HOST || 'http://localhost:11434'
     },
     database
@@ -1056,6 +1060,24 @@ app.post('/api/media/:id/transcribe', EVENT_MANAGER, async (req, res) => {
   }
 });
 
+// (Re)make the AI summary of a video's transcript - the "Buat ulang ringkasan" button, for event managers only.
+// This is an explicit user action; the only other trigger is a NEW video's transcript finishing (transcribeService).
+app.post('/api/media/:id/summarize', EVENT_MANAGER, async (req, res) => {
+  try {
+    const media = await storage.getMediaById(req.params.id);
+    if (!media) return res.status(404).json({ error: 'Media tidak ditemukan.' });
+    if (media.file_type !== 'VIDEO') return res.status(400).json({ error: 'Ringkasan AI hanya tersedia untuk file video.' });
+    if (media.transcript_status !== 'DONE' || !media.transcript) {
+      return res.status(409).json({ error: 'Transkrip video belum selesai, ringkasan belum bisa dibuat.' });
+    }
+    if (media.summary_status === 'PROCESSING' || isSummaryInFlight(media.media_id)) return res.status(409).json({ error: 'Ringkasan sedang diproses.' });
+    await queueMediaSummary(media.media_id);
+    res.status(202).json({ success: true, media: await storage.getMediaById(media.media_id) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete('/api/media/:id', EVENT_MANAGER, async (req, res) => {
   try {
     const removed = await storage.deleteMedia(req.params.id);
@@ -1145,11 +1167,14 @@ storageReady.then(() => app.listen(PORT, () => {
 
   // Video transcripts interrupted by a restart would otherwise sit on PROCESSING forever.
   resumeInterruptedTranscriptions().catch(err => console.error('Resume transcriptions failed:', err.message));
+  // Only summaries that were mid-way (PROCESSING) when the server stopped continue; old videos without one stay untouched.
+  resumeInterruptedSummaries().catch(err => console.error('Resume summaries failed:', err.message));
 
   // Automatic Survey Upload Reminders: on a metric's deadline day, if the PIC has not uploaded the
   // previous month's survey data, the PIC is emailed (see services/reminderService.js). Runs at boot
   // (catch-up) and every 30 minutes; px_reminder_log prevents duplicate emails.
-  startReminderScheduler();
+  // (PX_DISABLE_SCHEDULERS=1 is only for the throw-away second backend that the regression suite starts.)
+  if (process.env.PX_DISABLE_SCHEDULERS !== '1') startReminderScheduler();
 
   // Warn loudly when there is no login account yet (create one with `npm run auth:create-admin`).
   auth.warnIfNoUsers();

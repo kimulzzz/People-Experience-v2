@@ -175,3 +175,30 @@ Browser --GET /api/... (cookie otomatis)--> authGate: cookie -> hash -> px_sessi
 - **Ganti password wajib**: akun dengan `must_change_password` hanya bisa mengakses `/api/auth/me|logout|change-password` (selain itu 403 `PASSWORD_CHANGE_REQUIRED`).
 - **Penyimpanan**: SQL -> `px_users`, `px_user_scopes`, `px_sessions`, `px_audit_log`; JSON -> `server/data/auth.json` (git-ignored). Lihat `docs/08` §9.
 - **Kepatuhan**: login lokal sepenuhnya on-premise (tanpa layanan identitas eksternal). Secret (hash password, hash token) tidak pernah dikembalikan API maupun dicatat di log. Untuk produksi, taruh di belakang reverse proxy HTTPS dan set `TRUST_PROXY`. Proxy dev Vite sengaja **tanpa** `changeOrigin` supaya pemeriksaan `Origin` vs `Host` (pertahanan CSRF) tidak menolak request dari `localhost:3000`.
+
+---
+
+## 🤖 Aturan Produk AI Lokal & Alur AI Summary Video (v2.28.0)
+
+**Aturan produk**: model lokal (Gemma 3 4B via Ollama, `http://localhost:11434`) dipakai untuk **satu hal saja** — ringkasan transkrip video Signature Program Event. Analisis metrik WARNING/CRITICAL direncanakan sebagai langkah berikutnya, belum ada. Semua pemrosesan on-premise: transkrip dan prompt tidak keluar dari mesin.
+
+| Boleh memanggil Gemma | Tidak pernah memanggil Gemma |
+| :--- | :--- |
+| Video **baru** setelah transkrip `DONE` | GET event, dashboard, alerts, `/api/health` (tanpa `?check_ai=1`), upload/tampil foto, generate PPT |
+| Tombol manual **Buat / Buat ulang ringkasan** (pengelola event: Admin/HR) | Boot server, kecuali melanjutkan ringkasan yang terputus saat `PROCESSING` (video lama tanpa ringkasan tidak disentuh) |
+
+Penjaga tunggal: `localAiService.assertAiAllowed()` — `queryLocalOllama()` menolak panggilan tanpa scope `EVENT_VIDEO_SUMMARY` dan subjek berupa video yang punya transkrip.
+
+```text
+Upload video -> transcribeService (API lokal :8000) -> transcript_status DONE
+   -> queueMediaSummary -> aiQueue (satu job, kunci media:<id>)
+   -> mediaSummaryService: <20 kata? INSUFFICIENT (tanpa model)
+        -> prompt (dipecah 5000 karakter bila panjang) -> Ollama
+        -> parse RINGKASAN:/POIN: -> validateAnswer
+             lolos   -> summary_source AI
+             ditolak -> retry 1x (alasan dimasukkan ke prompt) -> ditolak lagi / Ollama gagal
+                     -> ringkasan ekstraktif aturan (summary_source RULE)
+   -> px_media.summary_* (SQL Server) -> UI polling 4 dtk -> slide media PPT membaca dari DB
+```
+
+Narasi Score Deficit Alert dan Event Summary kini murni aturan (tidak lagi mencoba Ollama). Ringkasan yang ditampilkan wajib berlabel sumbernya (`AI` atau "Otomatis (aturan)") dan UI mengingatkan agar dicek dengan transkrip.

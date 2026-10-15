@@ -74,7 +74,7 @@ function MediaLightbox({ media, onClose }) {
 }
 
 // One gallery item: viewable photo / playable video, plus (videos only) the AI transcript.
-function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false, retryNotice = null, canManage = false }) {
+function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false, retryNotice = null, onSummarize, summarizing = false, summaryNotice = null, canManage = false }) {
   const videoRef = useRef(null);
   const [broken, setBroken] = useState(false);
   const isVideo = med.file_type === 'VIDEO';
@@ -187,6 +187,79 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
       )}
 
       {isVideo && med.transcript_status === 'DONE' && med.transcript && (
+        <div className="bg-white rounded border border-[var(--theme-base)]/25 p-2 text-[10px] text-gray-700 space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center space-x-1 font-bold text-[var(--theme-base)]">
+              <Sparkles className="w-3 h-3" />
+              <span>AI Summary</span>
+            </div>
+            {med.summary_status === 'DONE' && (
+              <span className={`px-1.5 py-0.5 rounded font-bold text-[9px] ${med.summary_source === 'AI' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                {med.summary_source === 'AI' ? `AI${med.summary_model ? ` • ${med.summary_model}` : ''}` : 'Otomatis (aturan)'}
+              </span>
+            )}
+          </div>
+
+          {med.summary_status === 'PROCESSING' && (
+            <div className="flex items-center space-x-1.5 text-gray-600">
+              <Loader2 className="w-3 h-3 animate-spin shrink-0" style={{ color: 'var(--theme-base)' }} />
+              <span>Ringkasan AI sedang dibuat… bisa sekitar satu menit atau lebih, halaman ini akan terisi otomatis.</span>
+            </div>
+          )}
+
+          {med.summary_status === 'DONE' && (
+            <>
+              <p className="leading-snug text-gray-800">{med.summary}</p>
+              {Array.isArray(med.summary_points) && med.summary_points.length > 0 && (
+                <ul className="list-disc pl-4 space-y-0.5 leading-snug">
+                  {med.summary_points.map((pt, i) => <li key={i}>{pt}</li>)}
+                </ul>
+              )}
+              <p className="text-[9px] text-gray-400">
+                {med.summary_generated_at ? `Dibuat ${new Date(med.summary_generated_at).toLocaleString('id-ID')}` : ''}
+                {med.summary_language ? ` • ${med.summary_language.toUpperCase()}` : ''}
+              </p>
+              {med.summary_source === 'AI' && (
+                <p className="text-[9px] text-gray-400 italic">Dibuat otomatis oleh AI — periksa kembali dengan transkrip.</p>
+              )}
+              {med.summary_source !== 'AI' && med.summary_error && (
+                <p className="text-[9.5px] text-amber-700">{med.summary_error}</p>
+              )}
+            </>
+          )}
+
+          {med.summary_status === 'FAILED' && (
+            <div className="flex items-start space-x-1.5 text-red-700">
+              <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
+              <span>Ringkasan AI gagal: {med.summary_error || 'alasan tidak diketahui'}</span>
+            </div>
+          )}
+
+          {med.summary_status === 'INSUFFICIENT' && (
+            <p className="text-gray-500 italic">{med.summary_error || 'Transkrip belum cukup untuk diringkas.'}</p>
+          )}
+
+          {!med.summary_status && (
+            <p className="text-gray-500 italic">Belum ada ringkasan untuk video ini.</p>
+          )}
+
+          {canManage && med.summary_status !== 'PROCESSING' && med.summary_status !== 'INSUFFICIENT' && (!med.summary_status || med.summary_status === 'FAILED' || med.summary_source !== 'AI') && (
+            <button
+              onClick={() => onSummarize(med.media_id)}
+              disabled={summarizing}
+              className="inline-flex items-center space-x-1 px-2 py-0.5 bg-gray-50 border border-gray-200 rounded font-bold text-gray-700 hover:bg-gray-100 transition disabled:opacity-60 disabled:cursor-wait"
+            >
+              <RefreshCw className={`w-3 h-3 ${summarizing ? 'animate-spin' : ''}`} />
+              <span>{summarizing ? 'Memproses…' : (med.summary_status ? 'Buat ulang ringkasan' : 'Buat ringkasan')}</span>
+            </button>
+          )}
+          {summaryNotice && (
+            <p className="text-[9.5px] text-red-600 font-semibold">Dicoba pukul {summaryNotice.at}: {summaryNotice.text}</p>
+          )}
+        </div>
+      )}
+
+      {isVideo && med.transcript_status === 'DONE' && med.transcript && (
         <details className="bg-gray-50 rounded border border-gray-100 text-[10px] text-gray-600">
           <summary className="cursor-pointer select-none p-2 font-bold text-[var(--theme-base)] flex items-center space-x-1">
             <FileText className="w-3 h-3 inline" />
@@ -264,9 +337,9 @@ export default function EventManager({
     }
   };
 
-  // Video transcripts finish in the background (minutes, on CPU) — while any are still
+  // Video transcripts and AI summaries finish in the background (minutes, on CPU) — while any are still
   // processing, quietly re-fetch the event so the transcript appears without a manual refresh.
-  const hasProcessingTranscript = !!eventDetail?.media?.some(m => m.transcript_status === 'PROCESSING');
+  const hasProcessingTranscript = !!eventDetail?.media?.some(m => m.transcript_status === 'PROCESSING' || m.summary_status === 'PROCESSING');
   useEffect(() => {
     if (!hasProcessingTranscript || !selectedEvent?.event_id) return undefined;
     const eventId = selectedEvent.event_id;
@@ -338,6 +411,29 @@ export default function EventManager({
       // keep the spinner visible long enough to be noticed
       const wait = Math.max(0, 700 - (Date.now() - started));
       setTimeout(() => setRetryingIds(prev => ({ ...prev, [mediaId]: false })), wait);
+    }
+  };
+
+  // "Buat ulang ringkasan" (event managers): the server answers 202 with the video in its PROCESSING state.
+  const [summarizingIds, setSummarizingIds] = useState({});
+  const [summaryNotices, setSummaryNotices] = useState({});
+  const handleSummarize = async (mediaId) => {
+    const started = Date.now();
+    setSummarizingIds(prev => ({ ...prev, [mediaId]: true }));
+    setSummaryNotices(prev => ({ ...prev, [mediaId]: null }));
+    try {
+      const res = await fetch(`/api/media/${mediaId}/summarize`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setSummaryNotices(prev => ({ ...prev, [mediaId]: { at: new Date().toLocaleTimeString('id-ID'), text: data.error || `Gagal memulai ringkasan (HTTP ${res.status}).` } }));
+      } else if (data.media) {
+        setEventDetail(prev => (prev ? { ...prev, media: (prev.media || []).map(m => (m.media_id === mediaId ? data.media : m)) } : prev));
+      }
+    } catch (err) {
+      setSummaryNotices(prev => ({ ...prev, [mediaId]: { at: new Date().toLocaleTimeString('id-ID'), text: 'Gagal memulai ringkasan: ' + err.message } }));
+    } finally {
+      const wait = Math.max(0, 700 - (Date.now() - started));
+      setTimeout(() => setSummarizingIds(prev => ({ ...prev, [mediaId]: false })), wait);
     }
   };
 
@@ -624,6 +720,9 @@ export default function EventManager({
                       onRetryTranscript={handleRetryTranscript}
                       retrying={!!retryingIds[med.media_id]}
                       retryNotice={retryNotices[med.media_id] || null}
+                      onSummarize={handleSummarize}
+                      summarizing={!!summarizingIds[med.media_id]}
+                      summaryNotice={summaryNotices[med.media_id] || null}
                       canManage={canManageEvents}
                     />
                   ))}

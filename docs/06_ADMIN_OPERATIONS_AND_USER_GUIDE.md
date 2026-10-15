@@ -87,7 +87,7 @@ Buka berkas CSV di Microsoft Excel atau editor teks dan isi baris data:
 ### Langkah 2: Membagikan QR Code / Link Peserta
 - **QR Absensi Pra-Event**: Klik tombol QR Absensi untuk menampilkan kode QR di layar proyektor atau membagikan URL `http://.../checkin/:event_id` kepada peserta.
 - **QR Evaluasi Pasca-Event**: Di akhir sesi, tampilkan QR Evaluasi agar peserta mengisi rating pembicara, materi, dan kepuasan event.
-- **Dokumentasi Foto/Video & Transkrip AI**: Di bagian *Photo Gallery & Event Documentation* klik **Upload Photo / Video** (foto JPG/PNG/GIF/WEBP atau video MP4/MOV/WEBM, maks. 200 MB). Foto dan video langsung bisa dilihat/diputar di kartu (atau diperbesar lewat tombol *Perbesar*). Untuk video, sistem otomatis membuat **transkrip teks Bahasa Indonesia** lewat API transkrip lokal — prosesnya bisa beberapa menit (kartu menampilkan "sedang diproses" dan terisi sendiri). Buka *Transkrip AI lengkap* untuk membaca per segmen; klik sebuah baris untuk memutar video dari bagian itu. Jika gagal (mis. API transkrip belum dijalankan), klik **Coba lagi** setelah API aktif di `http://127.0.0.1:8000`.
+- **Dokumentasi Foto/Video & Transkrip AI**: Di bagian *Photo Gallery & Event Documentation* klik **Upload Photo / Video** (foto JPG/PNG/GIF/WEBP atau video MP4/MOV/WEBM, maks. 200 MB). Foto dan video langsung bisa dilihat/diputar di kartu (atau diperbesar lewat tombol *Perbesar*). Untuk video, sistem otomatis membuat **transkrip teks Bahasa Indonesia** lewat API transkrip lokal — prosesnya bisa beberapa menit (kartu menampilkan "sedang diproses" dan terisi sendiri). Buka *Transkrip AI lengkap* untuk membaca per segmen; klik sebuah baris untuk memutar video dari bagian itu. Jika gagal (mis. API transkrip belum dijalankan), klik **Coba lagi** setelah API aktif di `http://127.0.0.1:8000`. Setelah transkrip selesai, video **baru** otomatis mendapat **AI Summary** (lihat bagian "AI Summary Video" di bawah).
 
 ### Langkah 3: Menghasilkan Executive Report PPT (.pptx)
 1. Pada kartu event, klik tombol **"Generate Executive PPT"**.
@@ -209,3 +209,23 @@ Yang dilihat User: pilihan filter "Semua cakupan saya" menampilkan **data gabung
 Yang bisa dilakukan PIC, hanya untuk metrik miliknya: unduh template, **upload CSV** (metrik ditentukan dari form; kolom `metric_id` di CSV diabaikan), lihat riwayat upload, unduh evidence, dan lihat identitas responden. Untuk metrik karyawan, identitas/evidence hanya responden dalam **cakupan direktorat/divisi akun PIC**. Hasil upload PIC tidak menampilkan PE Index bankwide. Setiap upload tercatat di riwayat audit (`SURVEY_UPLOAD`) dan di riwayat batch sebagai `Nama (username)`. Reminder email tetap ke Email PIC.
 
 Perhatian (belum diputuskan): importer belum menolak NIP kembar dalam satu CSV atau antar-batch, dan PIC dapat mengunggah baris di luar cakupannya (tersimpan, terlihat oleh Admin, tidak oleh PIC); tanggal survei tidak valid disimpan sebagai hari ini.
+
+---
+
+## 🤖 AI Summary Video & Instalasi Ollama + Gemma (v2.28.0)
+
+### Cara kerja
+- Setiap video **baru** yang transkripnya selesai otomatis diringkas oleh model lokal **Gemma 3 4B** (Ollama di mesin yang sama; tidak ada data keluar). Kartu video menampilkan blok **AI Summary**: ringkasan, poin utama, dan label sumber.
+- **Label sumber**: `AI • gemma3:4b` = jawaban model yang lolos pemeriksaan otomatis; **Otomatis (aturan)** = model gagal/mati atau jawabannya ditolak pemeriksaan (angka, nama, atau bahasa tidak sesuai transkrip), sehingga sistem menampilkan kalimat yang diambil langsung dari transkrip. Ringkasan AI **dibuat otomatis — selalu periksa kembali dengan transkrip**; pemeriksaan otomatis tidak menjamin ketepatan makna (nuansa dan penafian bisa keliru).
+- Transkrip kurang dari 20 kata tidak diringkas ("Transkrip belum cukup").
+- Pembuatan bisa sekitar satu menit atau lebih (CPU); kartu terisi sendiri.
+- **Tombol "Buat / Buat ulang ringkasan"** (hanya Admin/pengelola event): muncul bila video belum punya ringkasan, ringkasan gagal, atau hasilnya "Otomatis (aturan)" (mis. setelah Ollama dinyalakan). Ringkasan AI yang sudah jadi tidak punya tombol. Bila sedang diproses/antri, sistem menolak dengan pesan 409.
+- Video lama (diunggah sebelum v2.28.0) **tidak** diringkas otomatis; tekan tombol bila perlu. Gemma tidak dipanggil saat membuka halaman, dashboard, alerts, foto, atau PPT; PPT hanya menampilkan ringkasan yang sudah tersimpan.
+- Ollama mati tidak menghalangi upload maupun transkrip.
+
+### Memasang Ollama + Gemma (sekali per mesin)
+```powershell
+winget install Ollama.Ollama
+ollama pull gemma3:4b
+```
+Lalu di `.env` (tidak dikomit): `OLLAMA_MODEL=gemma3:4b`. Opsional: `OLLAMA_HOST` (default `http://localhost:11434`), `OLLAMA_TIMEOUT_MS` (default 300000), `AI_QUEUE_MAX` (default 50). Restart backend. Cek status: `GET /api/health?check_ai=1` (login) -> `local_ai.ollama_status`. Model diunduh sekali dari registri Ollama saat `ollama pull` (satu-satunya akses internet; setelahnya semuanya berjalan lokal) — pada jaringan tertutup, pasang model dari sumber internal sesuai kebijakan TI.

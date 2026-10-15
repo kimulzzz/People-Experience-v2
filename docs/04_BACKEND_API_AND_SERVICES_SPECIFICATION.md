@@ -17,8 +17,10 @@ Backend dibangun menggunakan **Node.js dan Express.js** sebagai REST API Server 
 │   ├── 📄 surveyImportService.js          # Parser Impor Respon CSV & Normalisasi Data
 │   ├── 📄 surveyEvidenceService.js        # Generator Berkas Audit Trail Evidence CSV
 │   ├── 📄 pptExportService.js             # Generator Corporate Deck PowerPoint (.pptx)
-│   ├── 📄 alertEngine.js                  # Pemetaan Metrik Defisit ke Inisiatif Aksi + Narasi AI
-│   ├── 📄 localAiService.js               # Integrasi Local Ollama (Narasi Alert & Event Summary) + Fallback Rule-Based
+│   ├── 📄 alertEngine.js                  # Pemetaan Metrik Defisit ke Inisiatif Aksi + Narasi (rule-based sejak v2.28.0)
+│   ├── 📄 localAiService.js               # Klien Local Ollama (hanya scope EVENT_VIDEO_SUMMARY) + narasi Alert/Event Summary rule-based
+│   ├── 📄 mediaSummaryService.js          # AI Summary transkrip video (Gemma), validator, fallback aturan (v2.28.0)
+│   ├── 📄 aiQueue.js                      # Antrian tunggal job AI lokal (satu per satu, tanpa duplikat)
 │   └── 📄 reminderService.js              # Deteksi & Pengiriman Email Reminder Upload Survei Manual
 └── 📁 db/                                 # Lapisan Akses & Persistensi Data
     ├── 📄 storage.js                      # Transactional In-Memory + File Store Adapter
@@ -32,7 +34,7 @@ Backend dibangun menggunakan **Node.js dan Express.js** sebagai REST API Server 
 ### 2.1 Modul Sistem & Kesehatan
 | Method | Endpoint | Deskripsi | Parameter Query |
 | :---: | :--- | :--- | :--- |
-| `GET` | `/api/health` | Status online server dan identitas sistem. Tanpa login hanya `status`/`system`/`version`; dengan login juga status Ollama dan detail database (sejak v2.26.0) | `-` |
+| `GET` | `/api/health` | Status online server dan identitas sistem. Tanpa login hanya `status`/`system`/`version`; dengan login juga status Ollama dan detail database (sejak v2.26.0). Sejak v2.28.0 Ollama hanya dicek bila login + `?check_ai=1` (hanya mendaftar model); tanpa itu `local_ai.ollama_status` = `not checked (add ?check_ai=1)`, dan `local_ai.model` menampilkan model aktif | `-` |
 
 ---
 
@@ -92,6 +94,7 @@ Backend dibangun menggunakan **Node.js dan Express.js** sebagai REST API Server 
 | `DELETE` | `/api/events/:event_id/feedback/:nip` | Menghapus satu respon feedback berdasarkan NIP (mis. untuk membersihkan data uji) | Path: `event_id`, `nip` |
 | `POST` | `/api/events/:event_id/media` | Upload foto/video dokumentasi (`multipart/form-data`, field `mediaFile`). Hanya `image/*` & `video/*` (selain itu **415**), batas `MEDIA_MAX_MB` (default 200 MB, lebih dari itu **413**). Tipe ditentukan dari MIME file. Video dijawab langsung dengan `transcript_status: "PROCESSING"` lalu ditranskrip di background | Path: `event_id`; Form: `mediaFile`, `caption` |
 | `POST` | `/api/media/:media_id/transcribe` | (Ulang) memulai transkrip AI untuk video — dipakai tombol "Coba lagi". **202** diterima, **400** bila bukan video, **404** bila media tak ada, **409** bila sedang diproses | Path: `media_id` |
+| `POST` | `/api/media/:media_id/summarize` | (Ulang) membuat **AI Summary** transkrip video (tombol "Buat / Buat ulang ringkasan"; pengelola event saja). **202** + record media berstatus `PROCESSING`; **400** bukan video; **404** media tak ada; **409** transkrip belum `DONE` atau ringkasan sedang diproses/antri; **403** non-pengelola; **401** tanpa login | Path: `media_id` |
 | `DELETE` | `/api/media/:media_id` | Menghapus record media **beserta file fisiknya** di `server/uploads` | Path: `media_id` |
 | `POST` | `/api/events/:event_id/generate-ppt` | Menghasilkan dan menyajikan berkas presentasi PowerPoint (.pptx) | Path: `event_id` |
 
@@ -104,7 +107,7 @@ Backend dibangun menggunakan **Node.js dan Express.js** sebagai REST API Server 
 ### 2.7 Modul Peringatan Kinerja & Rekomendasi Aksi
 | Method | Endpoint | Deskripsi | Parameter Query |
 | :---: | :--- | :--- | :--- |
-| `GET` | `/api/alerts` | Mengambil daftar metrik yang mengalami defisit kinerja beserta rekomendasi inisiatif AI/HR. Setiap alert memuat `narrative_summary` — narasi 1 paragraf yang dihasilkan dinamis via **local Ollama** (`alertEngine.js` → `localAiService.generateAlertNarrative()`); otomatis fallback ke kalimat rule-based deterministik jika Ollama offline, sehingga endpoint ini tidak pernah gagal. | `-` |
+| `GET` | `/api/alerts` | Mengambil daftar metrik yang mengalami defisit kinerja beserta rekomendasi inisiatif AI/HR. Setiap alert memuat `narrative_summary` — narasi 1 paragraf yang sejak v2.28.0 **murni rule-based** (`alertEngine.js` → `localAiService.generateAlertNarrative()`, tidak lagi memanggil Ollama; sebelumnya dicoba via Ollama sejak v2.10.0), sehingga endpoint ini tidak bergantung pada Ollama. | `-` |
 
 ---
 
@@ -319,3 +322,34 @@ Perubahan perilaku:
 - **Reminder**: tetap ke `pic_email` (tidak diubah).
 
 Tidak diubah / belum diputuskan: importer tidak menolak NIP kembar (dalam satu CSV atau antar-batch; juga untuk Admin); tanggal survei tidak valid disimpan sebagai hari ini; PIC dapat mengunggah baris di luar cakupannya; unduh template/evidence tidak diaudit.
+
+---
+
+## 🤖 Catatan v2.28.0 — AI Summary Video (Gemma 3 4B Lokal)
+
+**Field baru pada record media** (sama di SQL `px_media` dan JSON; hadir hanya setelah ringkasan pernah diminta):
+
+| Field | Isi |
+| :--- | :--- |
+| `summary` | Ringkasan 2-4 kalimat |
+| `summary_points` | Array 2-5 poin utama |
+| `summary_status` | `PROCESSING` / `DONE` / `FAILED` / `INSUFFICIENT` (kosong = belum ada) |
+| `summary_source` | `AI` (lolos validator) atau `RULE` (fallback ekstraktif) |
+| `summary_model` | Model yang dipakai (mis. `gemma3:4b`), hanya untuk sumber `AI` |
+| `summary_language` | Mengikuti `transcript_language`; kode tak dikenal -> `id` |
+| `summary_generated_at`, `summary_error` | Waktu dibuat; alasan fallback/gagal (teks Indonesia, maks. 500 karakter) |
+
+**Service**
+
+- `mediaSummaryService.js`: `queueMediaSummary(media_id)` (hanya video dengan `transcript_status = DONE`; mengembalikan `queued`/`insufficient`/`duplicate`/`skipped`), `resumeInterruptedSummaries()` (dipanggil `server.js` saat boot; hanya yang `PROCESSING`), `validateAnswer`, `numberMentions`, `novelWords`, `splitTranscript`, `parseModelAnswer`, `ruleBasedSummary`.
+- Konstanta: `MIN_WORDS = 20`, `CHUNK_CHARS = 5000`, `MAX_CHUNKS = 12`, poin 2-5. Format keluaran model: teks `RINGKASAN:` + `POIN:` (bukan JSON).
+- Validator menolak: angka atau kata bilangan/kata satuan frekuensi yang tidak ada di transkrip, nama/akronim berkapital yang tidak ada di transkrip, bahasa salah (id/en), frasa meta, dan kata isi baru (>= 3 kata dan > 20% kata isi; hanya untuk bahasa id/en). Ditolak -> satu retry dengan alasan; gagal lagi, Ollama mati/timeout/model belum terpasang, atau transkrip > 12 bagian -> `RULE` dengan `summary_error`. Antrian penuh -> `RULE` langsung.
+- `aiQueue.js`: satu job berjalan pada satu waktu; `enqueue(key, run)` -> `queued`/`duplicate`/`full`; batas antrian `AI_QUEUE_MAX` (default 50).
+- `localAiService.js`: `queryLocalOllama(prompt, { scope, subject, ... })` memanggil `POST {OLLAMA_HOST}/api/generate` memakai modul `http` inti (bukan `fetch`, agar tidak terkena batas header 5 menit); timeout `OLLAMA_TIMEOUT_MS` (default 300000). `generateAlertNarrative` dan `generateEventSummary` kini rule-based.
+- `transcribeService.js`: memicu `queueMediaSummary` setelah transkrip `DONE` (kegagalan memulai ringkasan tidak mengubah transkrip yang sudah selesai); memulai transkrip ulang mengosongkan semua field `summary_*`.
+- `pptGenerator.js`: slide media (3 slot) memprioritaskan video ber-ringkasan `DONE`; teks "Ringkasan AI/otomatis: ..." dipotong di batas kata (300 karakter), dibaca dari database.
+- `server.js`: `PX_DISABLE_SCHEDULERS=1` melewati `startReminderScheduler()` (hanya untuk backend kedua milik suite).
+
+**Env (opsional)**: `OLLAMA_HOST` (default `http://localhost:11434`), `OLLAMA_MODEL` (default `gemma3:4b`), `OLLAMA_TIMEOUT_MS`, `AI_QUEUE_MAX`.
+
+**Tidak dicakup**: analisis metrik WARNING/CRITICAL oleh Gemma (langkah berikutnya); validator tidak menjamin ketepatan makna (lihat `CHANGELOG.md` [2.28.0]).

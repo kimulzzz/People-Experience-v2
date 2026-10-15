@@ -84,7 +84,7 @@ Tabel aplikasi berawalan `px_` (25 tabel). Yang paling sering dilihat: `px_metri
 
 ## 5. Foto & Video
 
-File foto/video Signature Event **tidak disimpan di database**. File tetap di disk (`server/uploads/`, disajikan di `/uploads/...`). Tabel `px_media` hanya menyimpan **path** (`file_path`), nama file, caption, deskripsi/transkrip AI, status transkrip, dan durasi. Menghapus media lewat aplikasi menghapus baris + file fisiknya.
+File foto/video Signature Event **tidak disimpan di database**. File tetap di disk (`server/uploads/`, disajikan di `/uploads/...`). Tabel `px_media` hanya menyimpan **path** (`file_path`), nama file, caption, deskripsi/transkrip AI, status transkrip, durasi, dan (v2.28.0) AI Summary transkrip video (kolom `summary_*`, lihat §12). Menghapus media lewat aplikasi menghapus baris + file fisiknya.
 
 ---
 
@@ -158,3 +158,11 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 | Backend JSON | akun di `server/data/auth.json` (git-ignored), terpisah dari akun di SQL |
 | Admin pertama | `npm run auth:create-admin` (password acak dicetak sekali di konsol) |
 | Backup | akun ikut backup `.bak` database; berisi hash password — simpan seperti data rahasia |
+
+---
+
+## 12. AI Summary Video (v2.28.0)
+
+- `px_media` mendapat 8 kolom nullable: `summary`, `summary_points` (JSON), `summary_status` (`PROCESSING|DONE|FAILED|INSUFFICIENT`), `summary_source` (`AI|RULE`), `summary_model`, `summary_language`, `summary_generated_at`, `summary_error`. Ditambahkan otomatis saat server start (`schema.sql`, per kolom `IF COL_LENGTH ... IS NULL`), aman diulang. Database ini sudah memiliki 7 kolom sisa percobaan v2.26.0 (menurut laporan; tidak dicek langsung) — tidak menimbulkan masalah.
+- Isi kolom dibuat oleh model lokal Gemma (Ollama, on-premise) atau fallback aturan; tidak ada setting database baru. Setting Ollama ada di `.env` (`OLLAMA_MODEL`, `OLLAMA_HOST`, `OLLAMA_TIMEOUT_MS`, `AI_QUEUE_MAX`) — lihat `docs/06`.
+- Backup `.bak` ikut memuat ringkasan. `node server/db/migrate.js --reset` memuat ulang dari `store.json`, sehingga ringkasan dan transkrip video yang hanya ada di SQL ikut hilang (lihat catatan video user di `CLAUDE.md` v2.24.1).

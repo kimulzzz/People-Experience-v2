@@ -287,6 +287,16 @@ CREATE TABLE dbo.px_media (                          -- photos & videos: the FIL
   duration_seconds          FLOAT          NULL
 );
 GO
+-- v2.28.0: AI summary of a video's transcript. Databases created earlier get the columns here (NULL = no summary yet).
+IF COL_LENGTH(N'dbo.px_media', N'summary') IS NULL ALTER TABLE dbo.px_media ADD summary NVARCHAR(MAX) NULL;
+IF COL_LENGTH(N'dbo.px_media', N'summary_points') IS NULL ALTER TABLE dbo.px_media ADD summary_points NVARCHAR(MAX) NULL;  -- JSON array of key points
+IF COL_LENGTH(N'dbo.px_media', N'summary_status') IS NULL ALTER TABLE dbo.px_media ADD summary_status VARCHAR(20) NULL;  -- PROCESSING | DONE | FAILED | INSUFFICIENT (NULL = none)
+IF COL_LENGTH(N'dbo.px_media', N'summary_source') IS NULL ALTER TABLE dbo.px_media ADD summary_source VARCHAR(10) NULL;  -- AI | RULE
+IF COL_LENGTH(N'dbo.px_media', N'summary_model') IS NULL ALTER TABLE dbo.px_media ADD summary_model VARCHAR(60) NULL;
+IF COL_LENGTH(N'dbo.px_media', N'summary_language') IS NULL ALTER TABLE dbo.px_media ADD summary_language VARCHAR(10) NULL;
+IF COL_LENGTH(N'dbo.px_media', N'summary_generated_at') IS NULL ALTER TABLE dbo.px_media ADD summary_generated_at DATETIME2(3) NULL;
+IF COL_LENGTH(N'dbo.px_media', N'summary_error') IS NULL ALTER TABLE dbo.px_media ADD summary_error NVARCHAR(500) NULL;
+GO
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_px_media_seq' AND object_id = OBJECT_ID(N'dbo.px_media'))
   CREATE UNIQUE INDEX IX_px_media_seq ON dbo.px_media(media_seq);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_px_media_event' AND object_id = OBJECT_ID(N'dbo.px_media'))

@@ -113,7 +113,7 @@ graph TD
 - **Journey Performance Cards**: Ringkasan capaian per tahapan employee journey (*Hire, Onboard, Work, Move, Exit*).
   - **Metrics List dengan Status Eksplisit (sejak v2.17.1)**: Setiap metrik dalam kartu Journey ditampilkan sebagai baris penuh bertumpuk (bukan lagi chip kecil yang di-wrap), diwarnai sesuai status pencapaian — **Hijau** (`bg-emerald-50` / `text-emerald-700`) untuk *On Target*, **Kuning** (`bg-amber-50` / `text-amber-700`) untuk *Warning*, dan **Merah** (`bg-red-50` / `text-red-700`) untuk *Critical*. Selain warna, setiap baris kini menampilkan **ikon status eksplisit** (`CheckCircle2`/`AlertTriangle`/`AlertCircle`/`MinusCircle` untuk metrik yang di-exempt) beserta **label teks status** ("ON TARGET"/"WARNING"/"CRITICAL"/"EXEMPTED") di sisi kanan — mengikuti pola badge status yang sama dengan Explore Metrics (`Calculator.jsx`). Nama metrik kini punya ruang horizontal penuh (baris lebar kartu, bukan lagi `max-w-[120px]` yang terpotong `...`). Nomor metrik ditampilkan tanpa awalan `#` dan dipisahkan dari nama metrik dengan tanda hubung (contoh: `1 - Career website & social media follower...` bukan `#1 Career website...`).
 - **Deficit Action Alert Banner**: Notifikasi otomatis metrik yang berada di bawah ambang batas (*threshold*) beserta rekomendasi tindakan korektif.
-  - **Ringkasan Analisis AI (Local Ollama)**: Setiap kartu alert menampilkan narasi 1 paragraf (`narrative_summary`) yang dihasilkan dinamis oleh model Ollama on-premise via `alertEngine.js`, ditampilkan di atas bagian *Recommended Immediate Action* dari Action Library. Fallback otomatis ke kalimat rule-based jika Ollama offline.
+  - **Ringkasan Analisis**: Setiap kartu alert menampilkan narasi 1 paragraf (`narrative_summary`) dari `alertEngine.js`, ditampilkan di atas bagian *Recommended Immediate Action* dari Action Library. Sejak v2.28.0 narasi ini murni rule-based (tidak memanggil Ollama).
 
 ---
 
@@ -166,6 +166,7 @@ graph TD
 - **Foto** tampil sebagai thumbnail (klik atau tombol *Perbesar* → lightbox ukuran penuh); **video** tampil dengan pemutar bawaan browser (play/pause/seek/volume/fullscreen, mendukung HTTP Range) dan tombol *Putar di layar besar*. Lightbox (`MediaLightbox`) ditutup dengan klik latar, tombol X, atau `Esc`, dan menyediakan tautan "Buka di tab baru".
 - File yang hilang dari server (mis. data seed contoh) tidak menampilkan gambar rusak, tetapi placeholder "File tidak tersedia di server".
 - **Transkrip AI video** (`MediaCard`): status `PROCESSING` → indikator berputar; halaman melakukan polling `GET /api/events/:id` tiap 4 detik **hanya selama ada media yang diproses**, lalu terisi otomatis. Status `DONE` → cuplikan di *AI Description* + panel lipat **Transkrip AI lengkap** berisi segmen bertimestamp; **klik segmen untuk melompat & memutar video dari detik tersebut**. Status `FAILED` → alasan kegagalan + tombol **Coba lagi** (`POST /api/media/:id/transcribe`).
+- **AI Summary video** (sejak v2.28.0, `MediaCard`): lihat catatan v2.28.0 di bawah.
 - Error upload (format tidak didukung, melebihi batas ukuran) kini ditampilkan sebagai alert dengan pesan dari server, bukan diabaikan diam-diam.
 
 ### 3.8 People Experience Glossary ([`src/components/GlossaryView.jsx`](file:///d:/Mul/Project/Anti%20Gravity/People%20Experience/src/components/GlossaryView.jsx)) — sejak v2.17.0, tab di-rename "About" di v2.19.0
@@ -280,3 +281,19 @@ Menu per role (penegakan sebenarnya di server, lihat `docs/04`):
 - **`AdminParametersModal.jsx`**: di bawah field **Email PIC** muncul peringatan "PIC belum punya akun login" bila tidak ada akun aktif ber-email sama (`active_account_emails`; dicek terhadap akun aktif apa pun, termasuk Admin).
 - **`UserManagementModal.jsx`**: baris akun menampilkan **PIC metrik** (`pic_metrics`, read-only; ditandai nonaktif bila akun nonaktif); field email diberi saran untuk diisi karena menentukan status PIC.
 - Tidak diuji otomatis: tampilan UI (diperiksa QC di Browser pane); tampilan mobile.
+
+---
+
+## 🤖 Catatan v2.28.0 — Blok "AI Summary" pada Kartu Video (`EventManager.jsx`)
+
+Muncul di `MediaCard` untuk video yang `transcript_status = DONE` dan punya transkrip:
+
+| `summary_status` | Tampilan |
+| :--- | :--- |
+| `PROCESSING` | Spinner "Ringkasan AI sedang dibuat…"; polling `GET /api/events/:id` tiap 4 dtk kini juga aktif selama ada ringkasan `PROCESSING` |
+| `DONE` | Ringkasan + poin; badge `AI • <model>` (hijau) atau **Otomatis (aturan)** (amber); waktu dibuat dan kode bahasa; untuk sumber `AI` teks "Dibuat otomatis oleh AI — periksa kembali dengan transkrip."; untuk `RULE` alasan fallback (`summary_error`) |
+| `FAILED` | "Ringkasan AI gagal: <alasan>" |
+| `INSUFFICIENT` | Pesan "transkrip belum cukup" (< 20 kata); tanpa tombol |
+| kosong | "Belum ada ringkasan untuk video ini." |
+
+Tombol **Buat ringkasan / Buat ulang ringkasan** (`handleSummarize` -> `POST /api/media/:id/summarize`) hanya tampil untuk pengelola event (`canManage`) dan hanya bila belum ada ringkasan, `FAILED`, atau sumbernya `RULE`. Selama request tombol disabled dan berputar; balasan 202 langsung dipasang ke state; penolakan (mis. 409) ditampilkan dengan jam percobaan. Pengguna biasa hanya membaca ringkasan.

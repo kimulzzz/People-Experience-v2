@@ -207,6 +207,17 @@ function rowToMedia(r) {
   if (r.transcript_segments !== null && r.transcript_segments !== undefined) m.transcript_segments = parseJson(r.transcript_segments, []);
   if (r.transcript_language !== null && r.transcript_language !== undefined) m.transcript_language = r.transcript_language;
   if (r.duration_seconds !== null && r.duration_seconds !== undefined) m.duration_seconds = r.duration_seconds;
+  // AI summary of the transcript (v2.28.0); absent until a summary was requested.
+  if (r.summary_status !== null && r.summary_status !== undefined) {
+    m.summary_status = r.summary_status;
+    m.summary = r.summary === null || r.summary === undefined ? '' : r.summary;
+    m.summary_points = parseJson(r.summary_points, []);
+    m.summary_source = r.summary_source || null;
+    m.summary_model = r.summary_model || null;
+    m.summary_language = r.summary_language || null;
+    m.summary_generated_at = r.summary_generated_at ? iso(r.summary_generated_at) : null;
+    m.summary_error = r.summary_error || '';
+  }
   return m;
 }
 
@@ -781,9 +792,16 @@ async function importStore(store, log = () => {}) {
       if (!eventIds.has(m.event_id)) { log(`  skipped media ${m.media_id}: unknown event ${m.event_id}`); continue; }
       await run(`INSERT INTO dbo.px_media (media_id, event_id, file_name, file_path, file_type, caption, ai_generated_description,
                    highlight_order, created_at, transcript_status, transcript_error, transcript, transcript_segments,
-                   transcript_language, duration_seconds)
+                   transcript_language, duration_seconds, summary, summary_points, summary_status, summary_source, summary_model,
+                   summary_language, summary_generated_at, summary_error)
                  VALUES (@media_id, @event_id, @file_name, @file_path, @file_type, @caption, @ai, @highlight_order, @created_at,
-                   @transcript_status, @transcript_error, @transcript, @transcript_segments, @transcript_language, @duration_seconds)`, {
+                   @transcript_status, @transcript_error, @transcript, @transcript_segments, @transcript_language, @duration_seconds,
+                   @summary, @summary_points, @summary_status, @summary_source, @summary_model, @summary_language, @summary_generated_at, @summary_error)`, {
+        summary: m.summary === undefined || m.summary === null ? null : T.max(m.summary),
+        summary_points: m.summary_points === undefined ? null : T.max(JSON.stringify(m.summary_points)),
+        summary_status: m.summary_status || null, summary_source: m.summary_source || null, summary_model: m.summary_model || null,
+        summary_language: m.summary_language || null, summary_generated_at: m.summary_generated_at ? toDateObj(m.summary_generated_at) : null,
+        summary_error: m.summary_error ? String(m.summary_error).slice(0, 500) : null,
         media_id: m.media_id, event_id: m.event_id, file_name: m.file_name, file_path: m.file_path,
         file_type: m.file_type || 'IMAGE', caption: T.max(m.caption || ''), ai: T.max(m.ai_generated_description || ''),
         highlight_order: parseInt(m.highlight_order || 1, 10), created_at: toDateObj(m.created_at),
@@ -1597,6 +1615,15 @@ const storage = {
     setIf('transcript_error', 'transcript_error', v => T.max(v === null ? null : String(v)));
     setIf('transcript_language', 'transcript_language');
     setIf('duration_seconds', 'duration_seconds');
+    // AI summary (v2.28.0)
+    setIf('summary', 'summary', v => T.max(v === null ? null : String(v)));
+    setIf('summary_points', 'summary_points', v => T.max(v === null ? null : JSON.stringify(v)));
+    setIf('summary_status', 'summary_status');
+    setIf('summary_source', 'summary_source');
+    setIf('summary_model', 'summary_model');
+    setIf('summary_language', 'summary_language');
+    setIf('summary_generated_at', 'summary_generated_at', v => (v ? new Date(v) : null));
+    setIf('summary_error', 'summary_error', v => (v === null ? null : String(v).slice(0, 500)));
     if (!sets.length) return this.getMediaById(media_id);
     const rows = await run(`UPDATE dbo.px_media SET ${sets.join(', ')} OUTPUT INSERTED.* WHERE media_id = @id`, params);
     return rows[0] ? rowToMedia(rows[0]) : null;
