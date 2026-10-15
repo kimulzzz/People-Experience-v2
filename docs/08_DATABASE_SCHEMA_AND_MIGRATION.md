@@ -40,7 +40,7 @@ Script `scripts/sqlserver/Setup-SqlServer.ps1` (idempoten, log di `scripts/sqlse
 
 ---
 
-## 3. Skema (`server/db/schema.sql` — 25 tabel, prefix `px_`)
+## 3. Skema (`server/db/schema.sql` — 28 tabel, prefix `px_`)
 
 | Kelompok | Tabel | Catatan |
 | :--- | :--- | :--- |
@@ -52,6 +52,7 @@ Script `scripts/sqlserver/Setup-SqlServer.ps1` (idempoten, log di `scripts/sqlse
 | Pengaturan | `px_app_settings` | Nilai yang ditampilkan di UI dan dikelola admin (JSON): `px_index_target` (garis target chart), `event_program_categories`, `event_types`, serta katalog pilihan `metric_types`, `scale_types`, `target_audiences`, `update_frequencies`, `question_types` (hanya label yang boleh diubah). API: `GET /api/settings`, `PUT /api/admin/settings/:key`. |
 | Signature Event | `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` | `UNIQUE(event_id, nip)` pada absensi & feedback (NIP tetap kunci utama responden). FK `ON DELETE CASCADE` ke `px_events`. **`px_media.file_path`** = path file di disk (mis. `/uploads/media-….mp4`) + `caption`, `ai_generated_description`, `transcript`, `transcript_segments` (JSON), `transcript_status`, `duration_seconds`. |
 | Survei | `px_survey_uploads`, `px_survey_uploaded_responses`, `px_acknowledged_alerts` | Responden **dinormalisasi** (lihat bawah). Index `(metric_id, survey_date)` dan `(org_unit_1, org_unit_2)`. |
+| Login (v2.26.0) | `px_users`, `px_sessions`, `px_audit_log` | `px_users`: `username` UNIQUE (NIP/nama login), `password_hash` (scrypt, tidak pernah dikembalikan API), `role` CHECK `ADMIN`/`USER`, `directorate`/`division` (nama, NULL untuk Admin), `is_active`, `must_change_password`, `failed_attempts`, `locked_until`, `last_login_at`. `px_sessions`: PK `token_hash` (**SHA-256 token cookie**, bukan token-nya), `expires_at`, FK ke user `ON DELETE CASCADE`. `px_audit_log`: waktu, user, `action`, `target`, `ip` — tanpa secret. Dibuat idempoten saat boot/`applySchema()`. |
 | Drilldown OUTCOME | `px_recruitment_sla_by_unit`, `px_approval_stage_compliance`, `px_hiring_channel_mix`, `px_recognition_categories`, `px_attrition_by_tenure` | Menggantikan objek `operationalRecords` (5 bentuk kolom berbeda dalam satu objek). |
 
 **Normalisasi responden** (`px_survey_uploaded_responses`): alias `nip` / `participant_id` / `candidate_id` (dan `directorate`/`university`/`applied_position`, `division`/`major`/`recruitment_channel`) diringkas menjadi `respondent_type` (`EMPLOYEE` | `CAMPUS_STUDENT` | `JOB_CANDIDATE`) + `respondent_id/name/email` + `org_unit_1/org_unit_2`. `sqlStorage.js › rowToResponse()` menurunkan kembali nama-nama field lama untuk `calculationEngine`, `alertEngine`, evidence CSV, dst. — sehingga tidak ada kode lain yang berubah.
@@ -114,3 +115,13 @@ Keamanan (sesuai batasan *100% on-premise*): seluruh data tetap di mesin ini; lo
 ## 8. Pembaruan v2.22.1 — Audit Sumber Data
 
 Hasil audit `auditor` (semua data dashboard harus dari SQL Server) dan perbaikannya ada di `CHANGELOG.md` **[2.22.1]**. Ringkasnya: katalog pertanyaan survei dipindah ke `px_survey_questions`; target PX Index & opsi dropdown event ke `px_app_settings`; 16 unit organisasi yang dipakai responden ditambahkan ke `px_directorates`/`px_divisions` (dijalankan otomatis saat boot, tidak pernah menghapus/mengubah entri admin); set `SEED_DEMO_DATA=false` di produksi agar respons survei demo tidak dibuat untuk bulan baru. Database v2.22.0 yang sudah ada otomatis ter-upgrade saat server dinyalakan (tabel lama `px_custom_survey_questions` dihapus).
+
+---
+
+## 9. Pembaruan v2.26.0 — Akun Login
+
+- Tiga tabel baru (`px_users`, `px_sessions`, `px_audit_log`) dan setting baru di `px_app_settings`: `session_hours`, `login_max_attempts`, `login_lockout_minutes`, `login_rate_limit_per_minute`, `event_manager_directorates`. Database yang ada ter-upgrade otomatis saat server dinyalakan.
+- **`node server/db/migrate.js --reset` TIDAK menghapus akun**: `dropAllTables()` sengaja tidak memuat tiga tabel login, jadi akun, sesi, dan audit login bertahan.
+- **`npm run db:export` / `importStore` tidak memuat akun** (bukan bagian `store.json`). Untuk memindahkan akun, gunakan backup database (`.bak`) atau buat ulang dengan `npm run auth:create-admin` + menu Kelola User.
+- **Backend JSON** (jalur rollback) menyimpan akun, sesi, dan audit di **`server/data/auth.json`** (di-`.gitignore`, terpisah dari `store.json` yang dikomit). Akun di SQL dan di `auth.json` adalah dua daftar terpisah: setelah rollback ke JSON, buat Admin lagi dengan `npm run auth:create-admin`.
+- `auth.json` dan tabel `px_users` memuat hash password — perlakukan seperti data rahasia saat backup.

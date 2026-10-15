@@ -138,6 +138,29 @@ function saveStore() {
 }
 
 // Database / Storage Adapter API
+// Login accounts, sessions and the audit trail live in their OWN file (server/data/auth.json,
+// gitignored) — never in store.json, which is committed and can be exported/imported as a whole.
+const AUTH_FILE = path.join(DATA_DIR, 'auth.json');
+let authStore = null;
+
+function getAuth() {
+  if (!authStore) {
+    authStore = { users: [], sessions: [], audit: [] };
+    if (fs.existsSync(AUTH_FILE)) {
+      try { authStore = { ...authStore, ...JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8')) }; }
+      catch (err) { console.error('Error loading auth.json:', err.message); }
+    }
+  }
+  return authStore;
+}
+
+function saveAuth() {
+  try { fs.writeFileSync(AUTH_FILE, JSON.stringify(authStore, null, 2), 'utf8'); }
+  catch (err) { console.error('Failed to save auth.json:', err); }
+}
+
+const copyUser = u => (u ? { ...u } : null);
+
 const storage = {
   // --- APP SETTINGS (admin-managed UI values: PX target line, event dropdown options) ---
   getSettings() {
@@ -185,6 +208,113 @@ const storage = {
     s.reminderLog.push(record);
     saveStore();
     return record;
+  },
+
+  // --- LOGIN ACCOUNTS, SESSIONS, AUDIT TRAIL (server/data/auth.json) ---
+  countUsers() {
+    return getAuth().users.length;
+  },
+  listUsers() {
+    return getAuth().users.map(copyUser);
+  },
+  getUserById(user_id) {
+    return copyUser(getAuth().users.find(u => u.user_id === parseInt(user_id, 10)));
+  },
+  getUserByUsername(username) {
+    const key = String(username).toLowerCase();
+    return copyUser(getAuth().users.find(u => u.username.toLowerCase() === key));
+  },
+  createUser(u) {
+    const a = getAuth();
+    if (a.users.some(x => x.username.toLowerCase() === String(u.username).toLowerCase())) {
+      const e = new Error(`Username "${u.username}" sudah dipakai.`);
+      e.code = 'DUPLICATE_USER';
+      throw e;
+    }
+    const record = {
+      user_id: a.users.reduce((mx, x) => Math.max(mx, x.user_id), 0) + 1,
+      username: u.username,
+      full_name: u.full_name,
+      email: u.email || '',
+      password_hash: u.password_hash,
+      role: u.role,
+      directorate: u.directorate || null,
+      division: u.division || null,
+      is_active: u.is_active === undefined ? true : !!u.is_active,
+      must_change_password: u.must_change_password === undefined ? true : !!u.must_change_password,
+      failed_attempts: 0,
+      locked_until: null,
+      created_at: new Date().toISOString(),
+      last_login_at: null
+    };
+    a.users.push(record);
+    saveAuth();
+    return copyUser(record);
+  },
+  updateUser(user_id, patch) {
+    const a = getAuth();
+    const u = a.users.find(x => x.user_id === parseInt(user_id, 10));
+    if (!u) return null;
+    ['full_name', 'email', 'password_hash', 'role', 'directorate', 'division', 'is_active', 'must_change_password',
+      'failed_attempts', 'locked_until', 'last_login_at'].forEach(f => {
+      if (patch[f] !== undefined) u[f] = (f === 'locked_until' || f === 'last_login_at') && patch[f] ? new Date(patch[f]).toISOString() : patch[f];
+    });
+    saveAuth();
+    return copyUser(u);
+  },
+  deleteUser(user_id) {
+    const a = getAuth();
+    const id = parseInt(user_id, 10);
+    const idx = a.users.findIndex(x => x.user_id === id);
+    if (idx === -1) return null;
+    const [removed] = a.users.splice(idx, 1);
+    a.sessions = a.sessions.filter(s => s.user_id !== id);
+    saveAuth();
+    return copyUser(removed);
+  },
+  createSession({ token_hash, user_id, expires_at }) {
+    const a = getAuth();
+    a.sessions.push({ token_hash, user_id: parseInt(user_id, 10), expires_at: new Date(expires_at).toISOString(), created_at: new Date().toISOString() });
+    saveAuth();
+  },
+  getSession(token_hash) {
+    const s = getAuth().sessions.find(x => x.token_hash === token_hash);
+    return s ? { token_hash: s.token_hash, user_id: s.user_id, expires_at: s.expires_at } : null;
+  },
+  deleteSession(token_hash) {
+    const a = getAuth();
+    a.sessions = a.sessions.filter(x => x.token_hash !== token_hash);
+    saveAuth();
+  },
+  deleteSessionsForUser(user_id, exceptTokenHash) {
+    const a = getAuth();
+    const id = parseInt(user_id, 10);
+    a.sessions = a.sessions.filter(x => x.user_id !== id || (exceptTokenHash && x.token_hash === exceptTokenHash));
+    saveAuth();
+  },
+  purgeExpiredSessions() {
+    const a = getAuth();
+    const now = Date.now();
+    a.sessions = a.sessions.filter(x => new Date(x.expires_at).getTime() >= now);
+    saveAuth();
+  },
+  addAuditLog(e) {
+    const a = getAuth();
+    a.audit.push({
+      audit_id: (a.audit.length ? a.audit[a.audit.length - 1].audit_id : 0) + 1,
+      occurred_at: new Date().toISOString(),
+      user_id: e.user_id === undefined ? null : e.user_id,
+      username: e.username || null,
+      action: String(e.action).slice(0, 50),
+      target: e.target ? String(e.target).slice(0, 200) : null,
+      ip: e.ip ? String(e.ip).slice(0, 64) : null
+    });
+    if (a.audit.length > 20000) a.audit = a.audit.slice(-20000);
+    saveAuth();
+  },
+  getAuditLog(limit = 200) {
+    const n = Math.max(1, Math.min(parseInt(limit, 10) || 200, 1000));
+    return [...getAuth().audit].reverse().slice(0, n);
   },
 
   // --- REMINDER E-MAIL SENDER SETTINGS (password is stored encrypted — see secretBox.js) ---

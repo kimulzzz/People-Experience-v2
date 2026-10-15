@@ -23,10 +23,65 @@ function runTest(name, fn) {
     });
 }
 
+// --- LOGIN (v2.26.0): every /api route needs a session, so the suite logs in first. ---
+// Credentials are never stored in the repo: either TEST_ADMIN_USER / TEST_ADMIN_PASSWORD (e.g. an account made
+// with `npm run auth:create-admin`; required for the JSON backend, whose data the server keeps in memory) or, on
+// SQL Server, a temporary admin that the suite creates itself (random password) and deletes at the end.
+const realFetch = globalThis.fetch;
+let suiteCookie = null;
+// Every fetch to the app carries the suite admin's session cookie, unless the test sends its own Cookie header.
+globalThis.fetch = (url, opts = {}) => {
+  const headers = opts.headers || {};
+  if (suiteCookie && String(url).startsWith(BASE_URL) && !('Cookie' in headers)) {
+    return realFetch(url, { ...opts, headers: { ...headers, Cookie: suiteCookie } });
+  }
+  return realFetch(url, opts);
+};
+let tempAdmin = null; // { storage, user_id } when the suite created its own admin
+
+async function setupSuiteLogin() {
+  const login = async (username, password) => {
+    const res = await realFetch(`${BASE_URL}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+    if (res.status !== 200) throw new Error(`Suite login failed (HTTP ${res.status})`);
+    const cookie = (res.headers.getSetCookie() || []).map(c => c.split(';')[0]).find(c => c.startsWith('px_session='));
+    return { cookie, body: await res.json() };
+  };
+  let username = process.env.TEST_ADMIN_USER;
+  let password = process.env.TEST_ADMIN_PASSWORD;
+  if (!username || !password) {
+    require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+    const storage = require('../server/db/storage');
+    if (storage.backend !== 'sql') {
+      throw new Error('Set TEST_ADMIN_USER and TEST_ADMIN_PASSWORD (create the account with `npm run auth:create-admin`) - the suite can only create its own admin on the SQL backend.');
+    }
+    const { hashPassword, generateTempPassword } = require('../server/services/authService');
+    username = `rt-suite-${Date.now().toString(36)}`;
+    password = generateTempPassword();
+    const created = await storage.createUser({ username, full_name: 'Regression Suite Admin', email: '', role: 'ADMIN', password_hash: await hashPassword(password), must_change_password: false });
+    tempAdmin = { storage, user_id: created.user_id };
+  }
+  let { cookie, body } = await login(username, password);
+  if (body.user.must_change_password) { // a fresh `auth:create-admin` account: complete the forced change
+    const newPassword = require('crypto').randomBytes(9).toString('hex') + 'Aa1';
+    const res = await realFetch(`${BASE_URL}/api/auth/change-password`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ current_password: password, new_password: newPassword }) });
+    if (res.status !== 200) throw new Error('Suite could not complete the forced password change');
+  }
+  suiteCookie = cookie;
+}
+
+async function teardownSuiteLogin() {
+  if (tempAdmin) {
+    await tempAdmin.storage.deleteUser(tempAdmin.user_id);
+    if (typeof tempAdmin.storage.close === 'function') await tempAdmin.storage.close();
+  }
+}
+
 async function runRegressionSuite() {
   console.log('\n================================================================');
   console.log('🧪 CIMB NIAGA PEOPLE EXPERIENCE (PX) - REGRESSION TESTING SUITE');
   console.log('================================================================\n');
+
+  await setupSuiteLogin();
 
   // --- 1. SYSTEM HEALTH & METRICS CALCULATION (YTD & PERIOD FILTER) ---
   console.log('📦 MODULE 1: Calculation Engine & Period Filtering');
@@ -2125,17 +2180,478 @@ async function runRegressionSuite() {
     assert.strictEqual(put.status, 400);
   });
 
+  // --- 34. LOGIN, ROLES & ACCESS CONTROL (v2.26.0) ---
+  console.log('\n📦 MODULE 34: Login, Roles (Admin / User) & Access Control (Positive & Negative Testing)');
+
+  const rawFetch = realFetch; // never adds the suite admin's cookie
+  const asUser = (cookie, extra = {}) => ({ ...extra, headers: { ...(extra.headers || {}), ...(cookie ? { Cookie: cookie } : {}) } });
+  const jsonBody = (method, body, cookie) => asUser(cookie, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const cookieFrom = res => (res.headers.getSetCookie() || []).map(c => c.split(';')[0]).find(c => c.startsWith('px_session=')) || null;
+  const loginAs = async (username, password) => {
+    const res = await rawFetch(`${BASE_URL}/api/auth/login`, jsonBody('POST', { username, password }));
+    return { res, cookie: cookieFrom(res) };
+  };
+  const adminJson = (method, p, body) => fetch(`${BASE_URL}${p}`, jsonBody(method, body)); // suite admin session via the fetch wrapper
+  const allBodies = []; // every JSON body we read in this module is scanned for secrets at the end
+
+  // Pick a non-HR directorate and the HR directorate (setting event_manager_directorates) from the database.
+  const directory = await (await rawFetch(`${BASE_URL}/api/directorates`)).json();
+  const settings = await (await fetch(`${BASE_URL}/api/settings`)).json();
+  const hrName = settings.event_manager_directorates[0].value;
+  const hrDir = directory.find(d => d.directorate_name === hrName);
+  const otherDirs = directory.filter(d => d.directorate_name !== hrName && d.divisions.length > 0);
+  const itDir = otherDirs[0];
+  const otherDir2 = otherDirs[1];
+
+  const stamp = Date.now().toString(36);
+  const createdUserIds = [];
+  const newUser = async (suffix, role, dir) => {
+    const username = `rt${suffix}${stamp}`;
+    const res = await adminJson('POST', '/api/admin/users', {
+      username, full_name: `Regression ${suffix}`, email: `${username}@example.test`, role,
+      directorate: dir ? dir.directorate_name : undefined, division: dir ? dir.divisions[0] : undefined
+    });
+    assert.strictEqual(res.status, 201, `create ${suffix}: ${res.status}`);
+    const body = await res.json();
+    createdUserIds.push(body.user.user_id);
+    return { id: body.user.user_id, username, tempPassword: body.temporary_password, body };
+  };
+  const STRONG = 'Regress1on-Pass-9x';
+  // Creates a user and completes the forced password change; returns { id, username, cookie }.
+  const readyUser = async (suffix, role, dir) => {
+    const u = await newUser(suffix, role, dir);
+    const { res, cookie } = await loginAs(u.username, u.tempPassword);
+    assert.strictEqual(res.status, 200);
+    const ch = await rawFetch(`${BASE_URL}/api/auth/change-password`, jsonBody('POST', { current_password: u.tempPassword, new_password: STRONG }, cookie));
+    assert.strictEqual(ch.status, 200);
+    return { ...u, cookie, password: STRONG };
+  };
+
+  try {
+    await runTest('[POSITIVE] Login sets an httpOnly SameSite=Strict session cookie; /me returns the user and permissions with no secrets', async () => {
+      const u = await newUser('a', 'USER', itDir);
+      const { res, cookie } = await loginAs(u.username, u.tempPassword);
+      assert.strictEqual(res.status, 200);
+      const setCookie = res.headers.getSetCookie().find(c => c.startsWith('px_session='));
+      assert.ok(/HttpOnly/i.test(setCookie) && /SameSite=Strict/i.test(setCookie), setCookie);
+      const body = await res.json(); allBodies.push(JSON.stringify(body));
+      assert.strictEqual(body.user.username, u.username);
+      assert.strictEqual(body.user.role, 'USER');
+      assert.strictEqual(body.user.directorate, itDir.directorate_name);
+      assert.strictEqual(body.user.password_hash, undefined);
+      assert.strictEqual(body.permissions.is_admin, false);
+      assert.strictEqual(body.permissions.can_manage_events, false);
+    });
+
+    await runTest('[POSITIVE] A new account must change its temporary password first (403 PASSWORD_CHANGE_REQUIRED), then gets access; weak passwords are refused', async () => {
+      const u = await newUser('b', 'USER', itDir);
+      const { cookie } = await loginAs(u.username, u.tempPassword);
+      const blocked = await rawFetch(`${BASE_URL}/api/metrics/calculate`, asUser(cookie));
+      assert.strictEqual(blocked.status, 403);
+      assert.strictEqual((await blocked.json()).code, 'PASSWORD_CHANGE_REQUIRED');
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/auth/me`, asUser(cookie))).status, 200, '/me stays reachable');
+      for (const weak of ['short1', 'onlyletterspassword', '1234567890123', u.username]) {
+        const r = await rawFetch(`${BASE_URL}/api/auth/change-password`, jsonBody('POST', { current_password: u.tempPassword, new_password: weak }, cookie));
+        assert.strictEqual(r.status, 400, `weak password "${weak}" must be refused`);
+      }
+      const wrongCurrent = await rawFetch(`${BASE_URL}/api/auth/change-password`, jsonBody('POST', { current_password: 'Wrong-current-1', new_password: STRONG }, cookie));
+      assert.strictEqual(wrongCurrent.status, 400);
+      const ok = await rawFetch(`${BASE_URL}/api/auth/change-password`, jsonBody('POST', { current_password: u.tempPassword, new_password: STRONG }, cookie));
+      assert.strictEqual(ok.status, 200);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/metrics/calculate`, asUser(cookie))).status, 200);
+      assert.strictEqual((await loginAs(u.username, u.tempPassword)).res.status, 401, 'old temporary password no longer works');
+      assert.strictEqual((await loginAs(u.username, STRONG)).res.status, 200);
+    });
+
+    await runTest('[POSITIVE] Logout invalidates the session server-side (the old cookie gets 401)', async () => {
+      const u = await readyUser('c', 'USER', itDir);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/auth/me`, asUser(u.cookie))).status, 200);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/auth/logout`, jsonBody('POST', {}, u.cookie))).status, 200);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/auth/me`, asUser(u.cookie))).status, 401);
+    });
+
+    await runTest('[NEGATIVE] Wrong password / unknown user / empty fields: the same generic 401 message (no user enumeration), 400 for missing fields', async () => {
+      const u = await readyUser('d', 'USER', itDir);
+      const wrong = await loginAs(u.username, 'Totally-Wrong-1');
+      const unknown = await loginAs(`nobody${stamp}`, 'Totally-Wrong-1');
+      assert.strictEqual(wrong.res.status, 401);
+      assert.strictEqual(unknown.res.status, 401);
+      assert.strictEqual((await wrong.res.json()).error, (await unknown.res.json()).error);
+      assert.strictEqual(wrong.cookie, null);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/auth/login`, jsonBody('POST', { username: u.username }))).status, 400);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/auth/login`, jsonBody('POST', {}))).status, 400);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/auth/login`, jsonBody('POST', { username: { $ne: 1 }, password: { $ne: 1 } }))).status, 400);
+    });
+
+    await runTest('[NEGATIVE] 5 wrong passwords lock the account: even the right password is refused until the Admin resets it (reset also unlocks, shows the temp password once)', async () => {
+      const u = await readyUser('e', 'USER', itDir);
+      for (let i = 0; i < 5; i++) assert.strictEqual((await loginAs(u.username, 'Bad-Password-1')).res.status, 401);
+      assert.strictEqual((await loginAs(u.username, u.password)).res.status, 401, 'locked: correct password must be refused');
+      const listed = (await (await adminJson('GET', '/api/admin/users')).json()).find(x => x.user_id === u.id);
+      assert.ok(listed.locked_until, 'admin list shows the lock');
+      const reset = await adminJson('POST', `/api/admin/users/${u.id}/reset-password`);
+      assert.strictEqual(reset.status, 200);
+      const rb = await reset.json();
+      assert.ok(rb.temporary_password && rb.temporary_password.length >= 10);
+      assert.strictEqual(rb.user.must_change_password, true);
+      assert.strictEqual((await loginAs(u.username, u.password)).res.status, 401, 'old password dead after reset');
+      assert.strictEqual((await loginAs(u.username, rb.temporary_password)).res.status, 200);
+      const again = (await (await adminJson('GET', '/api/admin/users')).json()).find(x => x.user_id === u.id);
+      assert.strictEqual(JSON.stringify(again).includes(rb.temporary_password), false, 'the temporary password is never shown again');
+    });
+
+    await runTest('[NEGATIVE] Without a login the data/API routes answer 401 (sample of every area), and so do /uploads and /exports', async () => {
+      const gets = ['/api/metrics/calculate', '/api/metrics/trends', '/api/metrics/8/detail', '/api/alerts', '/api/action-library', '/api/settings',
+        '/api/events', '/api/events/ev-perspektif-2024-q1', '/api/questions/master', '/api/qrcode?text=x', '/api/surveys/metrics', '/api/surveys/template',
+        '/api/surveys/evidence', '/api/surveys/history', '/api/surveys/responses/8', '/api/admin/parameters', '/api/admin/users', '/api/admin/audit-log',
+        '/api/admin/email-settings', '/api/admin/targets', '/api/auth/me', '/api/reports/download/x.pptx', '/uploads/sample.jpg', '/exports/x.pptx'];
+      for (const p of gets) assert.strictEqual((await rawFetch(`${BASE_URL}${p}`)).status, 401, `GET ${p}`);
+      const posts = ['/api/events', '/api/metrics/weights', '/api/metrics/score', '/api/alerts/acknowledge', '/api/surveys/upload', '/api/admin/users', '/api/events/x/media',
+        '/api/events/x/generate-ppt', '/api/media/x/transcribe', '/api/auth/logout', '/api/auth/change-password'];
+      for (const p of posts) assert.strictEqual((await rawFetch(`${BASE_URL}${p}`, jsonBody('POST', {}))).status, 401, `POST ${p}`);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/x`, jsonBody('DELETE'))).status, 401);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/media/x`, jsonBody('DELETE'))).status, 401);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/admin/metrics/1`, jsonBody('DELETE'))).status, 401);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/metrics/calculate`, asUser('px_session=' + 'a'.repeat(64)))).status, 401, 'forged cookie');
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/metrics/calculate`, asUser('px_session=garbage'))).status, 401);
+    });
+
+    await runTest('[POSITIVE] The public check-in / feedback forms still work with no login (directory, event by code, attendance, feedback); /health hides database details', async () => {
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/directorates`)).status, 200);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/by-code/NOSUCHCODE`)).status, 404, '404 (unknown code), not 401');
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/ev-perspektif-2024-q1/attendance`, jsonBody('POST', {}))).status, 400, '400 (validation), not 401');
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/ev-perspektif-2024-q1/feedback`, jsonBody('POST', {}))).status, 400);
+      const health = await (await rawFetch(`${BASE_URL}/api/health`)).json();
+      assert.strictEqual(health.status, 'online');
+      assert.strictEqual(health.database, undefined, 'database details only for logged-in users');
+      const full = await (await fetch(`${BASE_URL}/api/health`)).json();
+      assert.ok(full.database, 'logged-in users still get the database block');
+    });
+
+    await runTest('[NEGATIVE] A state-changing request from another Origin is refused (CSRF defence in depth)', async () => {
+      const res = await rawFetch(`${BASE_URL}/api/events/ev-perspektif-2024-q1/attendance`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'http://evil.example' }, body: '{}' });
+      assert.strictEqual(res.status, 403);
+    });
+
+    await runTest('[NEGATIVE] A USER gets 403 on every /api/admin route and on admin-only actions; ADMIN does not', async () => {
+      const u = await readyUser('f', 'USER', itDir);
+      const gets = ['/api/admin/parameters', '/api/admin/users', '/api/admin/audit-log', '/api/admin/email-settings', '/api/admin/targets', '/api/admin/survey-questions',
+        '/api/admin/upload-reminders', '/api/surveys/metrics', '/api/surveys/template', '/api/surveys/history'];
+      for (const p of gets) assert.strictEqual((await rawFetch(`${BASE_URL}${p}`, asUser(u.cookie))).status, 403, `GET ${p}`);
+      const posts = [['/api/admin/users', { username: 'x' }], ['/api/admin/metrics', {}], ['/api/admin/parameters/reset', {}], ['/api/admin/upload-reminders/send', {}],
+        ['/api/surveys/upload', {}], ['/api/metrics/weights', { weights: [] }], ['/api/metrics/score', { metric_id: 1 }], ['/api/alerts/acknowledge', { metric_id: 1 }],
+        ['/api/action-library', { items: [] }], ['/api/questions/master', { questions: [] }]];
+      for (const [p, b] of posts) assert.strictEqual((await rawFetch(`${BASE_URL}${p}`, jsonBody('POST', b, u.cookie))).status, 403, `POST ${p}`);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/admin/settings/px_index_target`, jsonBody('PUT', { value: 50 }, u.cookie))).status, 403);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/admin/email-settings`, jsonBody('PUT', { enabled: true }, u.cookie))).status, 403);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/admin/users/${u.id}`, jsonBody('PUT', { role: 'ADMIN' }, u.cookie))).status, 403, 'no self-promotion');
+      assert.strictEqual((await adminJson('GET', '/api/admin/parameters')).status, 200);
+      assert.strictEqual((await adminJson('GET', '/api/surveys/metrics')).status, 200);
+      const me = await (await rawFetch(`${BASE_URL}/api/auth/me`, asUser(u.cookie))).json();
+      assert.strictEqual(me.user.role, 'USER', 'role unchanged');
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] A USER only sees their own directorate: no/ALL/own is accepted and forced to own; another directorate is 403 (calculate, trends, detail)', async () => {
+      const u = await readyUser('g', 'USER', itDir);
+      const own = itDir.directorate_name;
+      const get = async q => rawFetch(`${BASE_URL}${q}`, asUser(u.cookie));
+      for (const q of ['/api/metrics/calculate?period=YTD', '/api/metrics/calculate?period=YTD&directorate=ALL', `/api/metrics/calculate?period=YTD&directorate=${encodeURIComponent(own)}`]) {
+        const r = await get(q);
+        assert.strictEqual(r.status, 200, q);
+        assert.strictEqual((await r.json()).directorate, own, `${q} must be forced to the user's directorate`);
+      }
+      const other = encodeURIComponent(otherDir2.directorate_name);
+      for (const q of [`/api/metrics/calculate?period=YTD&directorate=${other}`, `/api/metrics/trends?directorate=${other}`, `/api/metrics/8/detail?directorate=${other}`,
+        `/api/metrics/calculate?directorate=${encodeURIComponent('Nama Ngawur')}`]) {
+        assert.strictEqual((await get(q)).status, 403, q);
+      }
+      assert.strictEqual((await get('/api/metrics/trends')).status, 200);
+      assert.strictEqual((await get(`/api/metrics/trends?directorate=${encodeURIComponent(own)}`)).status, 200);
+      // the Admin can still pick any directorate
+      const adminOther = await (await adminJson('GET', `/api/metrics/calculate?period=YTD&directorate=${other}`)).json();
+      assert.strictEqual(adminOther.directorate, otherDir2.directorate_name);
+      // read-only bankwide view of a non-employee metric (campus, #2) stays available to the USER
+      assert.strictEqual((await get('/api/metrics/2/detail')).status, 200);
+      assert.strictEqual((await get('/api/metrics/1/detail')).status, 200);
+    });
+
+    await runTest('[NEGATIVE] A USER never sees respondent identity (metric detail, metric 11 attendees, evidence CSV, responses); the Admin does', async () => {
+      const u = await readyUser('h', 'USER', itDir);
+      const detail = await (await rawFetch(`${BASE_URL}/api/metrics/8/detail?period=YTD`, asUser(u.cookie))).json();
+      assert.ok(detail.responses.length > 0, 'USER still sees the (anonymous) answers');
+      assert.strictEqual(detail.respondent_data_hidden, true);
+      detail.responses.forEach(r => {
+        ['nip', 'employee_name', 'cimb_email', 'email'].forEach(f => assert.ok(r[f] === null || r[f] === undefined, `response.${f} must be hidden`));
+        assert.ok(r.ratings, 'answers remain visible');
+      });
+      const adminDetail = await (await adminJson('GET', '/api/metrics/8/detail?period=YTD')).json();
+      assert.ok(adminDetail.responses.some(r => r.nip && r.employee_name), 'Admin still sees identities');
+      const d11 = await (await rawFetch(`${BASE_URL}/api/metrics/11/detail?period=YTD`, asUser(u.cookie))).json();
+      (d11.operational_records || []).forEach(r => {
+        assert.ok(!r.nip && !r.employee_name && !r.cimb_email, 'metric 11 attendee identity hidden');
+      });
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/surveys/evidence?metric_id=8&period=YTD`, asUser(u.cookie))).status, 403);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/surveys/evidence?metric_id=ALL&period=YTD`, asUser(u.cookie))).status, 403);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/surveys/responses/8`, asUser(u.cookie))).status, 403);
+      assert.strictEqual((await adminJson('GET', '/api/surveys/evidence?metric_id=8&period=YTD')).status, 200);
+      // attendee / feedback identity inside the event detail is also hidden for non-managers
+      const ev = await (await rawFetch(`${BASE_URL}/api/events/ev-perspektif-2024-q1`, asUser(u.cookie))).json();
+      ev.attendances.forEach(a => assert.ok(!a.nip && !a.employee_name && !a.cimb_email));
+      ev.feedbacks.forEach(f => assert.ok(!f.nip));
+      const evAdmin = await (await adminJson('GET', '/api/events/ev-perspektif-2024-q1')).json();
+      assert.ok(evAdmin.attendances.every(a => a.nip));
+      // the public form access codes are not sent to non-managers either (list + detail), but are to Admin
+      const evList = await (await rawFetch(`${BASE_URL}/api/events`, asUser(u.cookie))).json();
+      evList.forEach(e => assert.ok(!e.pre_event_code && !e.post_event_code, 'codes hidden in list'));
+      assert.ok(!ev.event.pre_event_code && !ev.event.post_event_code, 'codes hidden in detail');
+      assert.ok(evAdmin.event.pre_event_code && evAdmin.event.post_event_code, 'Admin still gets the codes');
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] Event writes: ADMIN and a USER of the HR directorate (from the database setting) may; a USER of another directorate gets 403 but can read', async () => {
+      assert.ok(hrDir, `directorate "${hrName}" from event_manager_directorates must exist in the directory`);
+      const hr = await readyUser('hr', 'USER', hrDir);
+      const it = await readyUser('it', 'USER', itDir);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/auth/me`, asUser(hr.cookie)).then(r => r.json())).permissions.can_manage_events, true);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/auth/me`, asUser(it.cookie)).then(r => r.json())).permissions.can_manage_events, false);
+      const payload = { event_name: 'Regression Test Event (Module 34 Access)', program_category: 'Testing', event_type: 'Online', event_date: '2026-08-20', target_participants: 5 };
+      const made = [];
+      try {
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events`, jsonBody('POST', payload, it.cookie))).status, 403, 'non-HR USER cannot create');
+        const byHr = await rawFetch(`${BASE_URL}/api/events`, jsonBody('POST', payload, hr.cookie));
+        assert.strictEqual(byHr.status, 201, 'HR USER can create');
+        made.push((await byHr.json()).event.event_id);
+        const byAdmin = await adminJson('POST', '/api/events', payload);
+        assert.strictEqual(byAdmin.status, 201, 'ADMIN can create');
+        made.push((await byAdmin.json()).event.event_id);
+        const eventId = made[0];
+        // everyone logged in can read
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}`, asUser(it.cookie))).status, 200);
+        assert.ok((await (await rawFetch(`${BASE_URL}/api/events`, asUser(it.cookie))).json()).some(e => e.event_id === eventId));
+        // non-HR USER: no delete, media, transcript, PPT, report download, questions, check-in clean-up
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}`, jsonBody('DELETE', undefined, it.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}/generate-ppt`, jsonBody('POST', {}, it.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}/questions`, jsonBody('POST', { questions: [] }, it.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}/attendance/12345`, jsonBody('DELETE', undefined, it.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}/feedback/12345`, jsonBody('DELETE', undefined, it.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/media/x/transcribe`, jsonBody('POST', {}, it.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/media/x`, jsonBody('DELETE', undefined, it.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/reports/download/x.pptx`, asUser(it.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/exports/x.pptx`, asUser(it.cookie))).status, 403);
+        const form = new FormData();
+        form.append('mediaFile', new Blob([Buffer.from('x')], { type: 'image/png' }), 'x.png');
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}/media`, asUser(it.cookie, { method: 'POST', body: form }))).status, 403);
+        // HR USER: PPT generation works, and the generated file is downloadable only by managers
+        const ppt = await rawFetch(`${BASE_URL}/api/events/ev-perspektif-2024-q1/generate-ppt`, jsonBody('POST', {}, hr.cookie));
+        assert.strictEqual(ppt.status, 200);
+        const pptBody = await ppt.json();
+        assert.strictEqual((await rawFetch(`${BASE_URL}${pptBody.download_url}`, asUser(hr.cookie))).status, 200);
+        assert.strictEqual((await rawFetch(`${BASE_URL}${pptBody.download_url}`, asUser(it.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}${pptBody.download_url}`)).status, 401);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/reports/download/..%2F..%2Fpackage.json`, asUser(hr.cookie))).status, 404, 'no path traversal');
+        const hrRead = await (await rawFetch(`${BASE_URL}/api/events/ev-perspektif-2024-q1`, asUser(hr.cookie))).json();
+        assert.ok(hrRead.attendances.every(a => a.nip), 'HR USER sees attendee data of events');
+      } finally {
+        for (const id of made) await adminJson('DELETE', `/api/events/${id}`);
+      }
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] User management: validation (role, directorate/division from the directory, duplicate, bad username), no self lock-out, deactivated user is shut out', async () => {
+      const base = { username: `rtv${stamp}`, full_name: 'Regression V', email: 'v@example.test', role: 'USER', directorate: itDir.directorate_name, division: itDir.divisions[0] };
+      const create = body => adminJson('POST', '/api/admin/users', body);
+      assert.strictEqual((await create({ ...base, role: 'SUPERUSER' })).status, 400);
+      assert.strictEqual((await create({ ...base, directorate: undefined, division: undefined })).status, 400, 'USER needs directorate + division');
+      assert.strictEqual((await create({ ...base, directorate: 'Direktorat Fiktif' })).status, 400);
+      assert.strictEqual((await create({ ...base, division: otherDir2.divisions[0] })).status, 400, 'division must belong to the directorate');
+      assert.strictEqual((await create({ ...base, username: 'a b' })).status, 400);
+      assert.strictEqual((await create({ ...base, username: 'ab' })).status, 400);
+      assert.strictEqual((await create({ ...base, full_name: '   ' })).status, 400);
+      assert.strictEqual((await create({ ...base, email: 'not-an-email' })).status, 400);
+      const ok = await create(base);
+      assert.strictEqual(ok.status, 201);
+      const okBody = await ok.json();
+      createdUserIds.push(okBody.user.user_id);
+      assert.strictEqual(okBody.user.must_change_password, true);
+      assert.strictEqual((await create(base)).status, 409, 'duplicate username');
+      assert.strictEqual((await create({ ...base, username: base.username.toUpperCase() })).status, 409, 'username is case-insensitive');
+      // an ADMIN account is not tied to a directorate
+      const adm = await create({ ...base, username: `rtadm${stamp}`, role: 'ADMIN', directorate: itDir.directorate_name, division: itDir.divisions[0] });
+      assert.strictEqual(adm.status, 201);
+      const admBody = await adm.json();
+      createdUserIds.push(admBody.user.user_id);
+      assert.strictEqual(admBody.user.directorate, null);
+      // update: changing directorate re-validates, deactivation shuts the user out
+      const u = await readyUser('i', 'USER', itDir);
+      assert.strictEqual((await adminJson('PUT', `/api/admin/users/${u.id}`, { directorate: otherDir2.directorate_name })).status, 400, 'old division no longer valid');
+      const moved = await adminJson('PUT', `/api/admin/users/${u.id}`, { directorate: otherDir2.directorate_name, division: otherDir2.divisions[0] });
+      assert.strictEqual(moved.status, 200);
+      assert.strictEqual((await (await rawFetch(`${BASE_URL}/api/metrics/calculate`, asUser(u.cookie))).json()).directorate, otherDir2.directorate_name, 'scope follows the account at once');
+      assert.strictEqual((await adminJson('PUT', `/api/admin/users/${u.id}`, { is_active: false })).status, 200);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/auth/me`, asUser(u.cookie))).status, 401, 'existing session dies on deactivation');
+      assert.strictEqual((await loginAs(u.username, u.password)).res.status, 401, 'deactivated user cannot log in');
+      assert.strictEqual((await adminJson('PUT', `/api/admin/users/${u.id}`, { is_active: true })).status, 200);
+      assert.strictEqual((await loginAs(u.username, u.password)).res.status, 200);
+      assert.strictEqual((await adminJson('PUT', '/api/admin/users/999999', { is_active: false })).status, 404);
+      // no self lock-out
+      const me = (await (await adminJson('GET', '/api/auth/me')).json()).user;
+      assert.strictEqual((await adminJson('PUT', `/api/admin/users/${me.user_id}`, { is_active: false })).status, 400);
+      assert.strictEqual((await adminJson('PUT', `/api/admin/users/${me.user_id}`, { role: 'USER', directorate: itDir.directorate_name, division: itDir.divisions[0] })).status, 400);
+      assert.strictEqual((await adminJson('DELETE', `/api/admin/users/${me.user_id}`)).status, 400);
+      assert.strictEqual((await adminJson('POST', `/api/admin/users/${me.user_id}/reset-password`)).status, 400);
+      assert.strictEqual((await adminJson('GET', '/api/auth/me')).status, 200, 'admin still logged in');
+    });
+
+    await runTest('[POSITIVE] Audit trail records logins (ok / failed / locked), logout and user management, and never contains a password; secrets never appear in any response', async () => {
+      const u = await readyUser('j', 'USER', itDir);
+      await loginAs(u.username, 'Wrong-Audit-Pass-1');
+      const log = await (await adminJson('GET', '/api/admin/audit-log?limit=500')).json();
+      const text = JSON.stringify(log);
+      allBodies.push(text);
+      const mine = log.filter(e => e.username === u.username).map(e => e.action);
+      ['LOGIN_SUCCESS', 'LOGIN_FAILED', 'PASSWORD_CHANGE'].forEach(a => assert.ok(mine.includes(a), `audit has ${a}`));
+      assert.ok(log.some(e => e.action === 'USER_CREATE' && e.target && e.target.startsWith(u.username)));
+      assert.ok(log.some(e => e.action === 'PASSWORD_RESET'));
+      assert.ok(log.some(e => e.action === 'LOGOUT'));
+      assert.ok(log.some(e => e.action === 'LOGIN_LOCKED'));
+      [u.password, u.tempPassword, 'Wrong-Audit-Pass-1', STRONG].forEach(p => assert.ok(!text.includes(p), 'audit log must not contain passwords'));
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/admin/audit-log`, asUser(u.cookie))).status, 403, 'audit log is Admin only');
+      // sweep: no hash / scrypt string anywhere in what the API returned
+      for (const p of ['/api/admin/users', '/api/auth/me', '/api/settings', '/api/admin/email-settings']) allBodies.push(JSON.stringify(await (await adminJson('GET', p)).json()));
+      allBodies.forEach(b => {
+        assert.ok(!b.includes('password_hash'), 'password_hash leaked');
+        assert.ok(!b.includes('scrypt$'), 'scrypt hash leaked');
+        assert.ok(!/"token_hash"/.test(b), 'token hash leaked');
+      });
+    });
+
+    await runTest('[NEGATIVE] No respondent name appears ANYWHERE in what a USER receives (full-payload scan of every metric detail + alerts + events), even nested verbatim samples', async () => {
+      const u = await readyUser('k', 'USER', itDir);
+      const names = new Set();
+      const collect = v => {
+        if (Array.isArray(v)) return v.forEach(collect);
+        if (v && typeof v === 'object') {
+          for (const [k, x] of Object.entries(v)) {
+            if (['employee_name', 'participant_name', 'candidate_name'].includes(k) && typeof x === 'string' && x.length >= 5 && x !== 'Responden') names.add(x);
+            else collect(x);
+          }
+        }
+      };
+      const userJson = [];
+      for (let id = 1; id <= 27; id++) {
+        collect(await (await adminJson('GET', `/api/metrics/${id}/detail?period=YTD`)).json());
+        const r = await rawFetch(`${BASE_URL}/api/metrics/${id}/detail?period=YTD`, asUser(u.cookie));
+        if (r.status === 200) userJson.push(await r.text());
+      }
+      userJson.push(await (await rawFetch(`${BASE_URL}/api/alerts`, asUser(u.cookie))).text());
+      userJson.push(await (await rawFetch(`${BASE_URL}/api/events/ev-perspektif-2024-q1`, asUser(u.cookie))).text());
+      userJson.push(await (await rawFetch(`${BASE_URL}/api/metrics/calculate?period=YTD`, asUser(u.cookie))).text());
+      assert.ok(names.size > 5, `expected known respondent names from the Admin view, got ${names.size}`);
+      assert.ok(userJson.length >= 20);
+      const all = userJson.join('\n');
+      for (const n of names) assert.ok(!all.includes(JSON.stringify(n).slice(1, -1)), `respondent name "${n}" leaked to a USER`);
+      // the free-text answers themselves stay visible (anonymous)
+      const d5 = await (await rawFetch(`${BASE_URL}/api/metrics/5/detail?period=YTD`, asUser(u.cookie))).json();
+      const samples = (d5.questions_breakdown || d5.questions || []).flatMap(q => q.verbatim_samples || []);
+      samples.forEach(sm => assert.ok(sm.employee_name === null && sm.text));
+    });
+
+    await runTest('[POSITIVE] A USER sees non-employee metrics (#1-#5) as read-only bankwide values (not exempted), equal to the Admin ALL view, while the directorate index equals the Admin view of that directorate', async () => {
+      const u = await readyUser('l', 'USER', itDir);
+      const own = encodeURIComponent(itDir.directorate_name);
+      const user = await (await rawFetch(`${BASE_URL}/api/metrics/calculate?period=YTD`, asUser(u.cookie))).json();
+      const adminAll = await (await adminJson('GET', '/api/metrics/calculate?period=YTD')).json();
+      const adminDir = await (await adminJson('GET', `/api/metrics/calculate?period=YTD&directorate=${own}`)).json();
+      const nonEmp = user.metrics.filter(m => m.is_employee_metric === false);
+      assert.ok(nonEmp.length >= 5);
+      for (const m of nonEmp) {
+        assert.strictEqual(m.is_disabled, false, `metric ${m.metric_id} must not be exempted for a USER`);
+        const a = adminAll.metrics.find(x => x.metric_id === m.metric_id);
+        assert.strictEqual(m.normalized_score, a.normalized_score, `metric ${m.metric_id} bankwide value`);
+        assert.strictEqual(m.sample_size, a.sample_size);
+      }
+      assert.strictEqual(user.px_index, adminDir.px_index, 'scorecard total equals the Admin view of the same directorate');
+      assert.strictEqual(user.survey_index, adminDir.survey_index);
+      assert.ok(adminDir.metrics.filter(m => m.is_employee_metric === false).every(m => m.is_disabled), 'Admin directorate view is unchanged (exempted)');
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] Public by-code lookup does not hand out the partner access code; failed logins for an unknown username store no raw text in the audit log', async () => {
+      const ev = await (await adminJson('GET', '/api/events/ev-perspektif-2024-q1')).json();
+      const pre = await (await rawFetch(`${BASE_URL}/api/events/by-code/${ev.event.pre_event_code}`)).json();
+      const post = await (await rawFetch(`${BASE_URL}/api/events/by-code/${ev.event.post_event_code}`)).json();
+      assert.strictEqual(pre.type, 'PRE_EVENT');
+      assert.strictEqual(post.type, 'POST_EVENT');
+      [pre.event, post.event].forEach(e => assert.ok(!e.pre_event_code && !e.post_event_code));
+      const typo = `Typo-Pass-${stamp}-9`;
+      assert.strictEqual((await loginAs(typo, 'whatever')).res.status, 401);
+      const log = JSON.stringify(await (await adminJson('GET', '/api/admin/audit-log?limit=50')).json());
+      assert.ok(!log.includes(typo), 'raw text typed into the username field must not be stored');
+      assert.ok(log.includes('LOGIN_FAILED'));
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] Through the Vite dev proxy (:3000, only when running): login works, a foreign Origin is still refused', async () => {
+      const VITE = process.env.TEST_VITE_URL || 'http://localhost:3000';
+      let up = false;
+      try { up = (await rawFetch(`${VITE}/api/health`, { signal: AbortSignal.timeout(1500) })).ok; } catch (_) { /* vite not running: skipped */ }
+      if (!up) { console.log('     (skipped: Vite dev server not running)'); return; }
+      const body = JSON.stringify({ username: `nobody${stamp}`, password: 'x' });
+      const viaProxy = await rawFetch(`${VITE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: VITE }, body });
+      assert.strictEqual(viaProxy.status, 401, 'same-origin request through the proxy must reach the login handler, not be refused as cross-origin');
+      const evil = await rawFetch(`${VITE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'http://evil.example' }, body });
+      assert.strictEqual(evil.status, 403);
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] Units: scrypt hashing is salted and verifies only the right password; scope & identity helpers; login rate limiter blocks and expires', async () => {
+      const auth = require('../server/services/authService');
+      const { createRateLimiter } = require('../server/services/rateLimiter');
+      const h1 = await auth.hashPassword('Sama-Saja-123');
+      const h2 = await auth.hashPassword('Sama-Saja-123');
+      assert.notStrictEqual(h1, h2, 'per-user salt');
+      assert.ok(h1.startsWith('scrypt$'));
+      assert.strictEqual(await auth.verifyPassword('Sama-Saja-123', h1), true);
+      assert.strictEqual(await auth.verifyPassword('sama-saja-123', h1), false);
+      assert.strictEqual(await auth.verifyPassword('', h1), false);
+      assert.strictEqual(await auth.verifyPassword('x', 'garbage'), false);
+      assert.strictEqual(await auth.verifyPassword('x', undefined), false);
+      assert.notStrictEqual(auth.generateTempPassword(), auth.generateTempPassword());
+      assert.strictEqual(auth.validateNewPassword(auth.generateTempPassword(), { username: 'x' }), null);
+      const user = { role: 'USER', directorate: 'D1' };
+      assert.strictEqual(auth.canSeeRespondentData(user, { metric_id: 1 }), false);
+      assert.strictEqual(auth.canSeeRespondentData({ role: 'ADMIN' }, { metric_id: 1 }), true);
+      assert.strictEqual(auth.canSeeRespondentData(null, { metric_id: 1 }), false);
+      assert.deepStrictEqual(auth.resolveDirectorateScope(user, undefined), { directorate: 'D1' });
+      assert.deepStrictEqual(auth.resolveDirectorateScope(user, 'ALL'), { directorate: 'D1' });
+      assert.ok(auth.resolveDirectorateScope(user, 'D2').error);
+      assert.ok(auth.resolveDirectorateScope({ role: 'USER', directorate: null }, 'ALL').error, 'USER without directorate is refused');
+      assert.deepStrictEqual(auth.resolveDirectorateScope({ role: 'ADMIN' }, 'D2'), { directorate: 'D2' });
+      const red = auth.redactRespondent({ nip: '1', employee_name: 'N', cimb_email: 'e', rating_score: 4 });
+      assert.deepStrictEqual(red, { nip: null, employee_name: null, cimb_email: null, rating_score: 4 });
+      const lim = createRateLimiter({ windowMs: 1000 });
+      for (let i = 0; i < 3; i++) lim.record('ip', 1000 + i);
+      assert.strictEqual(lim.isBlocked('ip', 3, 1100), true);
+      assert.strictEqual(lim.isBlocked('ip', 4, 1100), false);
+      assert.strictEqual(lim.isBlocked('other', 3, 1100), false);
+      assert.strictEqual(lim.isBlocked('ip', 3, 2500), false, 'window expired');
+      lim.record('ip2'); lim.reset('ip2');
+      assert.strictEqual(lim.count('ip2'), 0);
+    });
+  } finally {
+    for (const id of createdUserIds) await adminJson('DELETE', `/api/admin/users/${id}`);
+    const left = (await (await adminJson('GET', '/api/admin/users')).json()).filter(x => x.username.endsWith(stamp) && x.username.startsWith('rt'));
+    if (left.length) console.error(`     cleanup: ${left.length} test users remain`);
+  }
+
   // --- SUMMARY ---
   console.log('\n================================================================');
   console.log(`📊 REGRESSION TEST SUMMARY: ${passedTests}/${totalTests} Tests Passed (${failedTests} Failed)`);
   console.log('================================================================\n');
 
+  await teardownSuiteLogin();
   if (failedTests > 0) {
     process.exit(1);
   }
 }
 
-runRegressionSuite().catch(err => {
+runRegressionSuite().catch(async err => {
   console.error('Test runner fatal error:', err);
+  try { await teardownSuiteLogin(); } catch (_) { /* ignore */ }
   process.exit(1);
 });

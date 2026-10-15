@@ -398,3 +398,45 @@ CREATE TABLE dbo.px_attrition_by_tenure (
   benchmark        NVARCHAR(30)   NOT NULL
 );
 GO
+
+-- ---------------------------------------------------------------- login accounts (v2.26.0)
+-- Local accounts (no AD/LDAP). password_hash = scrypt (salt per user) - never returned by the API.
+-- username is the NIP / login name. Two roles: ADMIN (not tied to a directorate) and USER
+-- (1 directorate + 1 division, by name like the rest of the app).
+IF OBJECT_ID(N'dbo.px_users', N'U') IS NULL
+CREATE TABLE dbo.px_users (
+  user_id               INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_px_users PRIMARY KEY,
+  username              NVARCHAR(50)   NOT NULL CONSTRAINT UQ_px_users_username UNIQUE,
+  full_name             NVARCHAR(200)  NOT NULL,
+  email                 NVARCHAR(200)  NOT NULL CONSTRAINT DF_px_users_email DEFAULT (N''),
+  password_hash         NVARCHAR(400)  NOT NULL,
+  role                  NVARCHAR(20)   NOT NULL CONSTRAINT CK_px_users_role CHECK (role IN (N'ADMIN', N'USER')),
+  directorate           NVARCHAR(200)  NULL,
+  division              NVARCHAR(200)  NULL,
+  is_active             BIT            NOT NULL CONSTRAINT DF_px_users_active DEFAULT (1),
+  must_change_password  BIT            NOT NULL CONSTRAINT DF_px_users_mcp DEFAULT (1),
+  failed_attempts       INT            NOT NULL CONSTRAINT DF_px_users_failed DEFAULT (0),
+  locked_until          DATETIME2(3)   NULL,
+  created_at            DATETIME2(3)   NOT NULL CONSTRAINT DF_px_users_created DEFAULT (SYSUTCDATETIME()),
+  last_login_at         DATETIME2(3)   NULL
+);
+GO
+IF OBJECT_ID(N'dbo.px_sessions', N'U') IS NULL
+CREATE TABLE dbo.px_sessions (                     -- only the SHA-256 of the cookie token is stored
+  token_hash   CHAR(64)      NOT NULL CONSTRAINT PK_px_sessions PRIMARY KEY,
+  user_id      INT           NOT NULL CONSTRAINT FK_px_sessions_user REFERENCES dbo.px_users(user_id) ON DELETE CASCADE,
+  expires_at   DATETIME2(3)  NOT NULL,
+  created_at   DATETIME2(3)  NOT NULL CONSTRAINT DF_px_sessions_created DEFAULT (SYSUTCDATETIME())
+);
+GO
+IF OBJECT_ID(N'dbo.px_audit_log', N'U') IS NULL
+CREATE TABLE dbo.px_audit_log (                    -- login / user-management trail; never holds secrets
+  audit_id     BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_px_audit_log PRIMARY KEY,
+  occurred_at  DATETIME2(3)  NOT NULL CONSTRAINT DF_px_audit_ts DEFAULT (SYSUTCDATETIME()),
+  user_id      INT           NULL,
+  username     NVARCHAR(100) NULL,
+  action       NVARCHAR(50)  NOT NULL,
+  target       NVARCHAR(200) NULL,
+  ip           NVARCHAR(64)  NULL
+);
+GO

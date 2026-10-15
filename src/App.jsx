@@ -1,5 +1,5 @@
 // src/App.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Header from './components/Header';
 import Dashboard from './components/Dashboard';
 import Calculator from './components/Calculator';
@@ -17,6 +17,10 @@ import EmailSettingsModal from './components/EmailSettingsModal';
 import PublicCheckInForm from './components/PublicCheckInForm';
 import PublicFeedbackForm from './components/PublicFeedbackForm';
 import GlossaryView from './components/GlossaryView';
+import UserManagementModal from './components/UserManagementModal';
+import { LoginPage, ChangePasswordScreen } from './components/AuthScreens';
+import { AuthContext, useAuth } from './utils/AuthContext';
+import { UNAUTHORIZED_EVENT } from './utils/apiClient';
 import { fetchWithRetry } from './utils/fetchWithRetry';
 
 // Derived from the real browser clock (not a frozen literal) so the Dashboard's default year
@@ -24,7 +28,65 @@ import { fetchWithRetry } from './utils/fetchWithRetry';
 // backend's CURRENT_YEAR constant in server/services/calculationEngine.js.
 const CURRENT_YEAR = String(new Date().getFullYear());
 
+// Login gate: nothing of the app is shown (or fetched) until there is a valid session. A USER's data
+// filters are locked to their own directorate here AND enforced by the server.
+function AuthGate({ children }) {
+  const [state, setState] = useState({ status: 'loading', session: null });
+  const [notice, setNotice] = useState('');
+  const statusRef = useRef('loading');
+  const setAuth = (status, session = null) => { statusRef.current = status; setState({ status, session }); };
+
+  useEffect(() => {
+    let alive = true;
+    fetchWithRetry('/api/auth/me')
+      .then(async (res) => {
+        if (!alive) return;
+        if (res.ok) setAuth('authed', await res.json()); else setAuth('anon');
+      })
+      .catch(() => { if (alive) setAuth('anon'); });
+    const onUnauthorized = () => {
+      if (statusRef.current === 'authed') setNotice('Sesi Anda berakhir. Silakan login kembali.');
+      setAuth('anon');
+    };
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => { alive = false; window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized); };
+  }, []);
+
+  const logout = async () => {
+    try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (_) { /* session is dropped client-side anyway */ }
+    setNotice('');
+    setAuth('anon');
+  };
+
+  if (state.status === 'loading') {
+    return <div className="min-h-screen flex items-center justify-center bg-[#F8F9FA] text-sm text-gray-500">Memuat...</div>;
+  }
+  if (state.status === 'anon') {
+    return <LoginPage notice={notice} onLoggedIn={(session) => { setNotice(''); setAuth('authed', session); }} />;
+  }
+  const { user, permissions } = state.session;
+  if (user.must_change_password) {
+    return <ChangePasswordScreen user={user} onChanged={(session) => setAuth('authed', session)} onLogout={logout} />;
+  }
+  return (
+    <AuthContext.Provider
+      key={user.user_id}
+      value={{ user, isAdmin: !!permissions.is_admin, canManageEvents: !!permissions.can_manage_events, logout }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
 export default function App() {
+  // The public check-in / feedback forms (?checkin= / ?survey=) never need a login.
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('checkin') || params.get('survey')) return <AppContent />;
+  return <AuthGate><AppContent /></AuthGate>;
+}
+
+function AppContent() {
+  const { user, isAdmin, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('dashboard');
   const [calculationData, setCalculationData] = useState(null);
   const [alertsData, setAlertsData] = useState(null);
@@ -38,7 +100,8 @@ export default function App() {
     mode: 'YTD',
     year: CURRENT_YEAR,
     month: '01',
-    directorate: 'ALL',
+    // A USER is locked to their own directorate (the server enforces it as well).
+    directorate: user && user.role !== 'ADMIN' ? user.directorate : 'ALL',
     sub_directorate: 'ALL'
   });
 
@@ -53,6 +116,7 @@ export default function App() {
   const [isAdminSurveyQuestionsOpen, setIsAdminSurveyQuestionsOpen] = useState(false);
   const [isAdminParametersOpen, setIsAdminParametersOpen] = useState(false);
   const [isEmailSettingsOpen, setIsEmailSettingsOpen] = useState(false);
+  const [isUserManagementOpen, setIsUserManagementOpen] = useState(false);
   const [selectedMetricDetailId, setSelectedMetricDetailId] = useState(null);
   const [preSelectedSurveyMetricId, setPreSelectedSurveyMetricId] = useState(null);
   const [preSelectedQuestionMetricId, setPreSelectedQuestionMetricId] = useState(null);
@@ -81,7 +145,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    fetchAllData(filterOptions);
+    if (user) fetchAllData(filterOptions); // public forms (no login) have no dashboard data to load
   }, [filterOptions]);
 
   const fetchAllData = async (filters = filterOptions) => {
@@ -114,7 +178,7 @@ export default function App() {
   };
 
   const handleFilterChange = (newFilters) => {
-    setFilterOptions(newFilters);
+    setFilterOptions(isAdmin ? newFilters : { ...newFilters, directorate: user.directorate });
   };
 
   const handleOpenMetricDetail = (metricId) => {
@@ -183,7 +247,7 @@ export default function App() {
     return (
       <PublicCheckInForm
         eventCode={publicCheckinCode}
-        onBackToAdmin={() => {
+        onBackToAdmin={!user ? undefined : () => {
           setPublicCheckinCode(null);
           window.history.pushState({}, '', window.location.pathname);
         }}
@@ -196,7 +260,7 @@ export default function App() {
     return (
       <PublicFeedbackForm
         eventCode={publicSurveyCode}
-        onBackToAdmin={() => {
+        onBackToAdmin={!user ? undefined : () => {
           setPublicSurveyCode(null);
           window.history.pushState({}, '', window.location.pathname);
         }}
@@ -229,6 +293,7 @@ export default function App() {
         }}
         onOpenAdminParametersModal={() => setIsAdminParametersOpen(true)}
         onOpenEmailSettingsModal={() => setIsEmailSettingsOpen(true)}
+        onOpenUserManagementModal={() => setIsUserManagementOpen(true)}
       />
 
       {/* Main App Body */}
@@ -253,7 +318,7 @@ export default function App() {
               setActiveTab('calculator');
             }}
             onSelectMetric={handleOpenMetricDetail}
-            onAcknowledgeAlert={handleAcknowledgeAlert}
+            onAcknowledgeAlert={isAdmin ? handleAcknowledgeAlert : undefined}
             onNavigateToSimulator={() => setActiveTab('calculator')}
             onNavigateToEvents={() => setActiveTab('events')}
           />
@@ -363,22 +428,30 @@ export default function App() {
         metricId={selectedMetricDetailId}
         filterOptions={filterOptions}
         onClose={() => setSelectedMetricDetailId(null)}
-        onOpenSurveyUpload={(metricId) => {
+        onOpenSurveyUpload={isAdmin ? (metricId) => {
           setSelectedMetricDetailId(null);
           setPreSelectedSurveyMetricId(metricId);
           setIsSurveyImportOpen(true);
-        }}
-        onOpenSurveyQuestionSettings={(metricId) => {
+        } : undefined}
+        onOpenSurveyQuestionSettings={isAdmin ? (metricId) => {
           setSelectedMetricDetailId(null);
           setPreSelectedQuestionMetricId(metricId);
           setIsAdminSurveyQuestionsOpen(true);
-        }}
+        } : undefined}
       />
 
       <EmailSettingsModal
         isOpen={isEmailSettingsOpen}
         onClose={() => setIsEmailSettingsOpen(false)}
       />
+
+      {isAdmin && (
+        <UserManagementModal
+          isOpen={isUserManagementOpen}
+          onClose={() => setIsUserManagementOpen(false)}
+          currentUserId={user.user_id}
+        />
+      )}
 
       <AdminParametersModal
         isOpen={isAdminParametersOpen}

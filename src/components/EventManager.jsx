@@ -1,3 +1,4 @@
+import { useAuth } from '../utils/AuthContext';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus,
@@ -73,7 +74,7 @@ function MediaLightbox({ media, onClose }) {
 }
 
 // One gallery item: viewable photo / playable video, plus (videos only) the AI transcript.
-function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false, retryNotice = null }) {
+function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false, retryNotice = null, canManage = false }) {
   const videoRef = useRef(null);
   const [broken, setBroken] = useState(false);
   const isVideo = med.file_type === 'VIDEO';
@@ -128,14 +129,16 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
           </button>
         )}
 
-        {/* Delete overlay */}
-        <button
-          onClick={() => onDelete(med.media_id)}
-          className="absolute top-2 right-2 p-1 bg-red-600 text-white rounded-md opacity-0 group-hover:opacity-100 transition shadow-xs"
-          title="Delete"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
+        {/* Delete overlay (event managers only) */}
+        {canManage && (
+          <button
+            onClick={() => onDelete(med.media_id)}
+            className="absolute top-2 right-2 p-1 bg-red-600 text-white rounded-md opacity-0 group-hover:opacity-100 transition shadow-xs"
+            title="Delete"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
 
       <p className="text-[11px] font-bold text-gray-800 line-clamp-2">
@@ -155,14 +158,14 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
             <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
             <span>Transkrip AI gagal: {med.transcript_error || 'alasan tidak diketahui'}</span>
           </div>
-          <button
+          {canManage && <button
             onClick={() => onRetryTranscript(med.media_id)}
             disabled={retrying}
             className="inline-flex items-center space-x-1 px-2 py-0.5 bg-white border border-red-200 rounded font-bold hover:bg-red-100 transition disabled:opacity-60 disabled:cursor-wait"
           >
             <RefreshCw className={`w-3 h-3 ${retrying ? 'animate-spin' : ''}`} />
             <span>{retrying ? 'Memproses ulang…' : 'Coba lagi'}</span>
-          </button>
+          </button>}
           {retryNotice && (
             <p className="text-[9.5px] text-red-600 font-semibold">
               Dicoba ulang pukul {retryNotice.at}: {retryNotice.text}
@@ -228,6 +231,7 @@ export default function EventManager({
   onOpenPublicCheckIn,
   onOpenPublicSurvey
 }) {
+  const { canManageEvents } = useAuth(); // creating / changing events, media, transcripts and PPT: Admin + event-manager directorate
   const [selectedEventId, setSelectedEventId] = useState(events?.[0]?.event_id || null);
   const [eventDetail, setEventDetail] = useState(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -392,13 +396,15 @@ export default function EventManager({
           </p>
         </div>
 
-        <button
-          onClick={onOpenCreateEventModal}
-          className="px-4 py-2 bg-[var(--theme-base)] hover:bg-[var(--theme-hover)] text-white rounded-lg text-xs font-bold transition flex items-center space-x-2 shadow-sm border border-white/30"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Create New Signature Event</span>
-        </button>
+        {canManageEvents && (
+          <button
+            onClick={onOpenCreateEventModal}
+            className="px-4 py-2 bg-[var(--theme-base)] hover:bg-[var(--theme-hover)] text-white rounded-lg text-xs font-bold transition flex items-center space-x-2 shadow-sm border border-white/30"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Create New Signature Event</span>
+          </button>
+        )}
       </div>
 
       {/* Main Two-Column Layout */}
@@ -490,18 +496,18 @@ export default function EventManager({
                 </div>
 
                 {/* Generate PPT Button */}
-                <button
+                {canManageEvents && <button
                   onClick={handleGeneratePpt}
                   disabled={generatingPpt}
                   className="px-4 py-2.5 bg-gradient-to-r from-[#231F20] to-[#3B3637] hover:from-[#3B3637] hover:to-[#4A4445] text-white rounded-xl text-xs font-bold transition flex items-center space-x-2 shadow-md"
                 >
                   <Download className="w-4 h-4" />
                   <span>{generatingPpt ? 'Generating PPT Slides...' : 'Download PPTX Report'}</span>
-                </button>
+                </button>}
               </div>
 
-              {/* Quick Links & QR Distribution Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Quick Links & QR Distribution Cards (the access codes are only sent to event managers) */}
+              {canManageEvents && <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 
                 {/* Pra-Event Link Card */}
                 <div className="bg-blue-600 border border-blue-400 rounded-xl p-4 space-y-3">
@@ -583,7 +589,7 @@ export default function EventManager({
                   </div>
                 </div>
 
-              </div>
+              </div>}
 
               {/* Media Gallery Section */}
               <div className="space-y-3 pt-2">
@@ -595,7 +601,7 @@ export default function EventManager({
                     </h4>
                   </div>
 
-                  <label className="px-3 py-1.5 bg-white/90 hover:bg-white text-[var(--theme-dark)] rounded-lg text-xs font-bold transition cursor-pointer flex items-center space-x-1.5">
+                  {canManageEvents && <label className="px-3 py-1.5 bg-white/90 hover:bg-white text-[var(--theme-dark)] rounded-lg text-xs font-bold transition cursor-pointer flex items-center space-x-1.5">
                     <Upload className="w-3.5 h-3.5" />
                     <span>{uploadingMedia ? 'Uploading...' : 'Upload Photo / Video'}</span>
                     <input
@@ -605,7 +611,7 @@ export default function EventManager({
                       className="hidden"
                       disabled={uploadingMedia}
                     />
-                  </label>
+                  </label>}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-start">
@@ -618,6 +624,7 @@ export default function EventManager({
                       onRetryTranscript={handleRetryTranscript}
                       retrying={!!retryingIds[med.media_id]}
                       retryNotice={retryNotices[med.media_id] || null}
+                      canManage={canManageEvents}
                     />
                   ))}
 
@@ -644,7 +651,7 @@ export default function EventManager({
                   {eventDetail?.feedbacks?.map((fb) => (
                     <div key={fb.response_id} className="p-3 bg-white border border-white/40 rounded-xl text-xs space-y-1">
                       <div className="flex items-center justify-between">
-                        <span className="font-bold text-gray-700">NIP: {fb.nip}</span>
+                        <span className="font-bold text-gray-700">{fb.nip ? `NIP: ${fb.nip}` : 'Responden anonim'}</span>
                         <span className="text-[10px] text-gray-400">
                           {new Date(fb.submitted_at).toLocaleDateString('en-US', { hour: '2-digit', minute: '2-digit' })}
                         </span>

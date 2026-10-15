@@ -19,6 +19,7 @@ const { processSurveyCsv } = require('./services/surveyImportService');
 const { generateSurveyEvidenceCsv } = require('./services/surveyEvidenceService');
 const { getPendingUploadReminders, sendPendingUploadReminders, startReminderScheduler } = require('./services/reminderService');
 const emailSettingsService = require('./services/emailSettingsService');
+const auth = require('./services/authService');
 const { queueMediaTranscription, resumeInterruptedTranscriptions, resolveUploadPath, isTranscribeApiReachable, unreachableMessage } = require('./services/transcribeService');
 
 // Default year for YTD/unparseable period query params, derived from the real server clock
@@ -27,6 +28,9 @@ const CURRENT_YEAR = String(new Date().getFullYear());
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+// Behind an HTTPS reverse proxy set TRUST_PROXY (e.g. 1) so req.secure / req.ip are right and the
+// session cookie gets the Secure flag.
+if (process.env.TRUST_PROXY) app.set('trust proxy', /^\d+$/.test(process.env.TRUST_PROXY) ? parseInt(process.env.TRUST_PROXY, 10) : process.env.TRUST_PROXY);
 
 app.use(cors());
 app.use(express.json());
@@ -37,8 +41,10 @@ const EXPORTS_DIR = path.join(__dirname, 'exports');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 if (!fs.existsSync(EXPORTS_DIR)) fs.mkdirSync(EXPORTS_DIR, { recursive: true });
 
-app.use('/uploads', express.static(UPLOADS_DIR));
-app.use('/exports', express.static(EXPORTS_DIR));
+// Static files need a login too: uploaded media for any logged-in user, generated PPT reports only
+// for people who may manage events. (The public check-in / feedback forms use neither.)
+app.use('/uploads', auth.requireLogin, (req, res, next) => { res.set('X-Content-Type-Options', 'nosniff'); next(); }, express.static(UPLOADS_DIR));
+app.use('/exports', auth.requireLogin, auth.requireEventManager, express.static(EXPORTS_DIR));
 
 // Multer storage for media uploads
 const multerStorage = multer.diskStorage({
@@ -69,6 +75,12 @@ const mediaUpload = multer({
 // API ROUTES
 // ==========================================
 
+// Login gate: every /api route below needs a session except the public whitelist in
+// services/authService.js (PUBLIC_ROUTES); everything under /api/admin is ADMIN only.
+auth.registerAuthRoutes(app);
+const ADMIN_ONLY = auth.requireRole('ADMIN');
+const EVENT_MANAGER = auth.requireEventManager;
+
 // 1. Health & Status
 app.get('/api/health', async (req, res) => {
   const ollama = await isOllamaAvailable();
@@ -94,10 +106,14 @@ app.get('/api/health', async (req, res) => {
     database = { mode: 'Local File Store (Active)', backend: 'json', store_file: 'server/data/store.json' };
   }
 
+  // Without a login only the bare status is shown (no database server / host details).
+  if (!req.user) {
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.26.0' });
+  }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.25.0',
+    version: '2.26.0',
     local_ai: {
       ollama_status: ollama ? 'connected' : 'offline (using local heuristic engine)',
       host: process.env.OLLAMA_HOST || 'http://localhost:11434'
@@ -109,7 +125,11 @@ app.get('/api/health', async (req, res) => {
 const NUMERIC_SETTINGS = {
   px_index_target: { min: 0, max: 100, integer: false, label: 'Target PX Index' },
   reminder_send_hour: { min: 0, max: 23, integer: true, label: 'Jam pengiriman reminder' },
-  reminder_repeat_days: { min: 0, max: 31, integer: true, label: 'Interval pengulangan reminder (hari)' }
+  reminder_repeat_days: { min: 0, max: 31, integer: true, label: 'Interval pengulangan reminder (hari)' },
+  session_hours: { min: 1, max: 72, integer: true, label: 'Masa berlaku sesi login (jam)' },
+  login_max_attempts: { min: 3, max: 20, integer: true, label: 'Batas gagal login' },
+  login_lockout_minutes: { min: 1, max: 1440, integer: true, label: 'Lama penguncian akun (menit)' },
+  login_rate_limit_per_minute: { min: 5, max: 200, integer: true, label: 'Batas percobaan login gagal per IP per menit' }
 };
 const LABEL_ONLY_SETTINGS = new Set(['metric_types', 'scale_types', 'target_audiences', 'update_frequencies', 'question_types']);
 
@@ -192,7 +212,10 @@ app.get('/api/directorates', async (req, res) => {
 // 2. Metrics & PE Index Calculation (Supports ?mode=YTD|MTD&year=2026&month=03&directorate=...&sub_directorate=...)
 app.get('/api/metrics/calculate', async (req, res) => {
   try {
-    const { period, mode, year, month, endMonth, directorate, sub_directorate, subDirectorate } = req.query;
+    const { period, mode, year, month, endMonth, sub_directorate, subDirectorate } = req.query;
+    // A USER is locked to their own directorate (another one -> 403); the client value is otherwise ignored.
+    const directorate = auth.scopeDirectorate(req, res, req.query.directorate);
+    if (directorate === null) return;
     const filterOptions = {
       period: period || (mode === 'MTD' ? `${year || CURRENT_YEAR}-${month || '01'}` : (mode === 'YTD' ? 'YTD' : (year || CURRENT_YEAR))),
       mode: mode || (period && /^\d{4}-\d{2}$/.test(period) ? 'MTD' : 'YTD'),
@@ -202,10 +225,12 @@ app.get('/api/metrics/calculate', async (req, res) => {
       // instead of the full year — mainly used to audit/verify the Performance Trend chart's
       // cumulative points against this same scorecard endpoint.
       endMonth: endMonth || null,
-      directorate: directorate || 'ALL',
+      directorate,
       sub_directorate: sub_directorate || subDirectorate || 'ALL'
     };
-    const calculation = await calculatePEIndex(filterOptions);
+    // A USER reads non-employee metrics (#1-#5 ...) as read-only bankwide values instead of "exempted";
+    // they stay out of the directorate's index so the total equals what the Admin sees for that directorate.
+    const calculation = await calculatePEIndex(filterOptions, { bankwideReadOnly: req.user.role !== 'ADMIN' });
     res.json(calculation);
   } catch (err) {
     console.error('Error calculating PE Index:', err);
@@ -216,18 +241,30 @@ app.get('/api/metrics/calculate', async (req, res) => {
 // 2b. Metric Drilldown Detail with Questions Breakdown & Responses
 app.get('/api/metrics/:id/detail', async (req, res) => {
   try {
-    const { period, mode, year, month, directorate, sub_directorate, subDirectorate } = req.query;
+    const { period, mode, year, month, sub_directorate, subDirectorate } = req.query;
+    let directorate = auth.scopeDirectorate(req, res, req.query.directorate);
+    if (directorate === null) return;
+    // Bankwide / non-employee metrics (campus, candidates, ...) have no directorate: a USER reads
+    // them as the bankwide aggregate (read-only) instead of an "exempted" empty view.
+    if (req.user.role !== 'ADMIN') {
+      const metric = (await storage.getMetrics()).find(m => String(m.metric_id) === String(req.params.id));
+      if (metric && metric.is_employee_metric === false) directorate = 'ALL';
+    }
     const filterOptions = {
       period: period || (mode === 'MTD' ? `${year || CURRENT_YEAR}-${month || '01'}` : (mode === 'YTD' ? 'YTD' : (year || CURRENT_YEAR))),
       mode: mode || (period && /^\d{4}-\d{2}$/.test(period) ? 'MTD' : 'YTD'),
       year: year || (period && /^\d{4}/.test(period) ? period.slice(0, 4) : CURRENT_YEAR),
       month: month || (period && period.length >= 7 && /^\d{4}-\d{2}/.test(period) ? period.slice(5, 7) : '01'),
-      directorate: directorate || 'ALL',
+      directorate,
       sub_directorate: sub_directorate || subDirectorate || 'ALL'
     };
     const detail = await getMetricDetail(req.params.id, filterOptions);
     if (!detail) {
       return res.status(404).json({ error: `Metric #${req.params.id} not found` });
+    }
+    // Per-respondent identity (name / NIP / e-mail) only for those allowed to see it (Admin; the metric's PIC in stage 2).
+    if (!auth.canSeeRespondentData(req.user, { metric_id: detail.metric_id })) {
+      return res.json({ ...auth.redactRespondent(detail), respondent_data_hidden: true });
     }
     res.json(detail);
   } catch (err) {
@@ -238,7 +275,9 @@ app.get('/api/metrics/:id/detail', async (req, res) => {
 // 2c. Monthly Trend Series
 app.get('/api/metrics/trends', async (req, res) => {
   try {
-    const { mode, year, startYear, startMonth, endYear, endMonth, directorate, sub_directorate, subDirectorate } = req.query;
+    const { mode, year, startYear, startMonth, endYear, endMonth, sub_directorate, subDirectorate } = req.query;
+    const directorate = auth.scopeDirectorate(req, res, req.query.directorate);
+    if (directorate === null) return;
     const targetYear = year || CURRENT_YEAR;
     const filterOptions = {
       mode: (mode || 'YTD').toUpperCase() === 'MTD' ? 'MTD' : 'YTD',
@@ -247,7 +286,7 @@ app.get('/api/metrics/trends', async (req, res) => {
       startMonth: startMonth || null,
       endYear: endYear || null,
       endMonth: endMonth || null,
-      directorate: directorate || 'ALL',
+      directorate,
       sub_directorate: sub_directorate || subDirectorate || 'ALL'
     };
     const trends = await computeMonthlyTrends(filterOptions);
@@ -508,7 +547,7 @@ app.post('/api/admin/upload-reminders/send', async (req, res) => {
   }
 });
 
-app.post('/api/metrics/score', async (req, res) => {
+app.post('/api/metrics/score', ADMIN_ONLY, async (req, res) => {
   try {
     const { metric_id, raw_value, normalized_score, notes } = req.body;
     if (!metric_id) return res.status(400).json({ error: 'metric_id is required' });
@@ -521,7 +560,7 @@ app.post('/api/metrics/score', async (req, res) => {
   }
 });
 
-app.post('/api/metrics/weights', async (req, res) => {
+app.post('/api/metrics/weights', ADMIN_ONLY, async (req, res) => {
   try {
     const { weights } = req.body; // Array of { metric_id, weight }
     if (!Array.isArray(weights)) return res.status(400).json({ error: 'weights must be an array' });
@@ -544,7 +583,7 @@ app.get('/api/alerts', async (req, res) => {
   }
 });
 
-app.post('/api/alerts/acknowledge', async (req, res) => {
+app.post('/api/alerts/acknowledge', ADMIN_ONLY, async (req, res) => {
   try {
     const { metric_id } = req.body;
     await storage.acknowledgeAlert(parseInt(metric_id));
@@ -558,7 +597,7 @@ app.get('/api/action-library', async (req, res) => {
   res.json(await storage.getActionLibrary());
 });
 
-app.post('/api/action-library', async (req, res) => {
+app.post('/api/action-library', ADMIN_ONLY, async (req, res) => {
   try {
     const { items } = req.body;
     const updated = await storage.updateActionLibrary(items);
@@ -569,7 +608,7 @@ app.post('/api/action-library', async (req, res) => {
 });
 
 // 4. Manual Survey Data Upload & Template Generation
-app.get('/api/surveys/metrics', async (req, res) => {
+app.get('/api/surveys/metrics', ADMIN_ONLY, async (req, res) => {
   try {
     const metrics = (await storage.getMetrics()).filter(m => m.metric_type === 'SURVEY');
     res.json(metrics);
@@ -578,7 +617,7 @@ app.get('/api/surveys/metrics', async (req, res) => {
   }
 });
 
-app.get('/api/surveys/template', async (req, res) => {
+app.get('/api/surveys/template', ADMIN_ONLY, async (req, res) => {
   try {
     const metric_id = req.query.metric_id || 'ALL';
     const csvContent = await generateSurveyCsvTemplate(metric_id);
@@ -599,6 +638,7 @@ app.get('/api/surveys/template', async (req, res) => {
 app.get('/api/surveys/evidence', async (req, res) => {
   try {
     const { metric_id = 'ALL', period = 'YTD' } = req.query;
+    if (!auth.canSeeRespondentData(req.user, { metric_id })) return res.status(403).json({ error: 'Evidence survei memuat data pribadi responden dan hanya dapat diunduh oleh Admin.' });
     const csvContent = await generateSurveyEvidenceCsv(metric_id, period);
     const filename = metric_id === 'ALL'
       ? `Evidence_Survey_Master_All_Metrics_${period}.csv`
@@ -612,7 +652,7 @@ app.get('/api/surveys/evidence', async (req, res) => {
   }
 });
 
-app.post('/api/surveys/upload', upload.single('csvFile'), async (req, res) => {
+app.post('/api/surveys/upload', ADMIN_ONLY, upload.single('csvFile'), async (req, res) => {
   try {
     let csvText = '';
     let fileName = 'manual_survey_data.csv';
@@ -637,7 +677,7 @@ app.post('/api/surveys/upload', upload.single('csvFile'), async (req, res) => {
   }
 });
 
-app.get('/api/surveys/history', async (req, res) => {
+app.get('/api/surveys/history', ADMIN_ONLY, async (req, res) => {
   try {
     res.json(await storage.getSurveyUploads());
   } catch (err) {
@@ -647,6 +687,7 @@ app.get('/api/surveys/history', async (req, res) => {
 
 app.get('/api/surveys/responses/:metric_id', async (req, res) => {
   try {
+    if (!auth.canSeeRespondentData(req.user, { metric_id: req.params.metric_id })) return res.status(403).json({ error: 'Data responden hanya dapat dilihat oleh Admin.' });
     const responses = await storage.getUploadedResponsesByMetric(req.params.metric_id);
     res.json(responses);
   } catch (err) {
@@ -655,6 +696,8 @@ app.get('/api/surveys/responses/:metric_id', async (req, res) => {
 });
 
 // 5. Events Management (Signature Programs)
+const hideEventCodes = e => ({ ...e, pre_event_code: null, post_event_code: null });
+
 app.get('/api/events', async (req, res) => {
   try {
     const events = await storage.getEvents();
@@ -684,7 +727,8 @@ app.get('/api/events', async (req, res) => {
         satisfaction_percentage: ((parseFloat(avgScore) / 5.0) * 100).toFixed(1)
       };
     }));
-    res.json(enriched);
+    // The public check-in / feedback access codes are only for those who manage events.
+    res.json((await auth.isEventManager(req.user)) ? enriched : enriched.map(hideEventCodes));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -700,11 +744,13 @@ app.get('/api/events/:id', async (req, res) => {
     const feedbacks = await storage.getFeedbackByEvent(event.event_id);
     const media = await storage.getMediaByEvent(event.event_id);
 
+    // Attendee / respondent identity (NIP, name, e-mail) is only for those who manage events.
+    const manager = await auth.isEventManager(req.user);
     res.json({
-      event,
+      event: manager ? event : hideEventCodes(event),
       questions,
-      attendances,
-      feedbacks,
+      attendances: manager ? attendances : attendances.map(auth.redactRespondent),
+      feedbacks: manager ? feedbacks : feedbacks.map(auth.redactRespondent),
       media
     });
   } catch (err) {
@@ -712,7 +758,7 @@ app.get('/api/events/:id', async (req, res) => {
   }
 });
 
-app.post('/api/events', async (req, res) => {
+app.post('/api/events', EVENT_MANAGER, async (req, res) => {
   try {
     const newEvent = await storage.createEvent(req.body);
     // Recalculate metrics
@@ -723,7 +769,7 @@ app.post('/api/events', async (req, res) => {
   }
 });
 
-app.delete('/api/events/:id', async (req, res) => {
+app.delete('/api/events/:id', EVENT_MANAGER, async (req, res) => {
   try {
     const removed = await storage.deleteEvent(req.params.id);
     await calculatePEIndex();
@@ -733,16 +779,19 @@ app.delete('/api/events/:id', async (req, res) => {
   }
 });
 
+// The public forms never need the access codes (the visitor already has one); do not hand out the partner code.
+const publicEvent = e => ({ ...e, pre_event_code: null, post_event_code: null });
+
 app.get('/api/events/by-code/:code', async (req, res) => {
   const code = req.params.code.toUpperCase();
   const preEvent = await storage.getEventByPreCode(code);
   if (preEvent) {
-    return res.json({ type: 'PRE_EVENT', event: preEvent });
+    return res.json({ type: 'PRE_EVENT', event: publicEvent(preEvent) });
   }
   const postEvent = await storage.getEventByPostCode(code);
   if (postEvent) {
     const questions = await storage.getEventQuestions(postEvent.event_id);
-    return res.json({ type: 'POST_EVENT', event: postEvent, questions });
+    return res.json({ type: 'POST_EVENT', event: publicEvent(postEvent), questions });
   }
   res.status(404).json({ error: 'Invalid event access code' });
 });
@@ -752,7 +801,7 @@ app.get('/api/questions/master', async (req, res) => {
   res.json(await storage.getMasterQuestions());
 });
 
-app.post('/api/questions/master', async (req, res) => {
+app.post('/api/questions/master', ADMIN_ONLY, async (req, res) => {
   try {
     const updated = await storage.updateMasterQuestions(req.body.questions);
     res.json({ success: true, questions: updated });
@@ -761,7 +810,7 @@ app.post('/api/questions/master', async (req, res) => {
   }
 });
 
-app.post('/api/events/:id/questions', async (req, res) => {
+app.post('/api/events/:id/questions', EVENT_MANAGER, async (req, res) => {
   try {
     const updated = await storage.saveEventQuestions(req.params.id, req.body.questions);
     res.json({ success: true, questions: updated });
@@ -829,7 +878,7 @@ app.post('/api/events/:id/feedback', async (req, res) => {
   }
 });
 
-app.delete('/api/events/:id/attendance/:nip', async (req, res) => {
+app.delete('/api/events/:id/attendance/:nip', EVENT_MANAGER, async (req, res) => {
   try {
     const removed = await storage.deleteAttendance(req.params.id, req.params.nip);
     await calculatePEIndex();
@@ -839,7 +888,7 @@ app.delete('/api/events/:id/attendance/:nip', async (req, res) => {
   }
 });
 
-app.delete('/api/events/:id/feedback/:nip', async (req, res) => {
+app.delete('/api/events/:id/feedback/:nip', EVENT_MANAGER, async (req, res) => {
   try {
     const removed = await storage.deleteFeedbackResponse(req.params.id, req.params.nip);
     await calculatePEIndex();
@@ -850,7 +899,7 @@ app.delete('/api/events/:id/feedback/:nip', async (req, res) => {
 });
 
 // 6. Media Gallery Uploads
-app.post('/api/events/:id/media', (req, res, next) => {
+app.post('/api/events/:id/media', EVENT_MANAGER, (req, res, next) => {
   mediaUpload.single('mediaFile')(req, res, (err) => {
     if (!err) return next();
     if (err.code === 'LIMIT_FILE_SIZE') {
@@ -897,7 +946,7 @@ app.post('/api/events/:id/media', (req, res, next) => {
 
 // (Re)run the AI transcript for an uploaded video — used by the "Coba lagi" button after a
 // failure, e.g. when the local transcribe API wasn't running at upload time.
-app.post('/api/media/:id/transcribe', async (req, res) => {
+app.post('/api/media/:id/transcribe', EVENT_MANAGER, async (req, res) => {
   try {
     const media = await storage.getMediaById(req.params.id);
     if (!media) return res.status(404).json({ error: 'Media tidak ditemukan.' });
@@ -919,7 +968,7 @@ app.post('/api/media/:id/transcribe', async (req, res) => {
   }
 });
 
-app.delete('/api/media/:id', async (req, res) => {
+app.delete('/api/media/:id', EVENT_MANAGER, async (req, res) => {
   try {
     const removed = await storage.deleteMedia(req.params.id);
     // Uploaded videos are large — don't leave the file behind once its record is gone.
@@ -932,7 +981,7 @@ app.delete('/api/media/:id', async (req, res) => {
 });
 
 // 7. PowerPoint (PPTX) Generation & Download
-app.post('/api/events/:id/generate-ppt', async (req, res) => {
+app.post('/api/events/:id/generate-ppt', EVENT_MANAGER, async (req, res) => {
   try {
     const { fileName, filePath } = await generateEventPPT(req.params.id);
     res.json({
@@ -947,8 +996,8 @@ app.post('/api/events/:id/generate-ppt', async (req, res) => {
   }
 });
 
-app.get('/api/reports/download/:fileName', async (req, res) => {
-  const filePath = path.join(EXPORTS_DIR, req.params.fileName);
+app.get('/api/reports/download/:fileName', EVENT_MANAGER, async (req, res) => {
+  const filePath = path.join(EXPORTS_DIR, path.basename(req.params.fileName));
   if (fs.existsSync(filePath)) {
     res.download(filePath);
   } else {
@@ -1004,6 +1053,9 @@ storageReady.then(() => app.listen(PORT, () => {
   // previous month's survey data, the PIC is emailed (see services/reminderService.js). Runs at boot
   // (catch-up) and every 30 minutes; px_reminder_log prevents duplicate emails.
   startReminderScheduler();
+
+  // Warn loudly when there is no login account yet (create one with `npm run auth:create-admin`).
+  auth.warnIfNoUsers();
 })).catch(err => {
   console.error('Storage backend failed to start:', err.message);
   console.error('Set STORAGE_BACKEND=json in .env to fall back to the JSON file store.');

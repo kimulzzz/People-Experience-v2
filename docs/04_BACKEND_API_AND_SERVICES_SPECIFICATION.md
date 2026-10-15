@@ -32,7 +32,7 @@ Backend dibangun menggunakan **Node.js dan Express.js** sebagai REST API Server 
 ### 2.1 Modul Sistem & Kesehatan
 | Method | Endpoint | Deskripsi | Parameter Query |
 | :---: | :--- | :--- | :--- |
-| `GET` | `/api/health` | Status online server dan identitas sistem | `-` |
+| `GET` | `/api/health` | Status online server dan identitas sistem. Tanpa login hanya `status`/`system`/`version`; dengan login juga status Ollama dan detail database (sejak v2.26.0) | `-` |
 
 ---
 
@@ -231,3 +231,51 @@ backend boot) tanpa perlu dipicu manual — lihat `server.js` bagian `app.listen
 
 - Field **`unit`** (teks, mis. `orang/tahun`, `pax`, `/ 5`, `%`) ada di tiap metrik pada `GET /api/metrics/calculate`, `GET /api/metrics/:id/detail` (di level atas dan `metric.unit`), dan `GET /api/admin/parameters`.
 - `POST`/`PUT /api/admin/metrics` menerima `unit`: wajib, di-trim, 1–30 karakter, kosong/terlalu panjang → **400** ("Satuan nilai tidak boleh kosong." / "Satuan nilai maksimal 30 karakter."). `PUT` tanpa `unit` mempertahankan nilai lama; `POST` tanpa `unit` memakai default skala (`RATING_5` → `/ 5`, `QUOTA_COUNT` → `pax`, lainnya `%`). Hanya label tampilan — tidak memengaruhi skor/status.
+
+---
+
+## 🔐 Catatan v2.26.0 — Login, Role & Aturan Akses
+
+**Rute publik (tanpa login)** — selebihnya `/api/*` → 401 `{ code: 'AUTH_REQUIRED' }`:
+
+| Method | Endpoint | Catatan |
+| :---: | :--- | :--- |
+| `GET` | `/api/health` | tanpa login: status + versi saja |
+| `POST` | `/api/auth/login` | rate limit per IP |
+| `GET` | `/api/directorates` | dropdown form publik |
+| `GET` | `/api/events/by-code/:code` | tidak mengembalikan kode akses partner |
+| `POST` | `/api/events/:id/attendance`, `/api/events/:id/feedback` | check-in & feedback peserta |
+
+### 2.9 Modul Autentikasi & Manajemen User
+| Method | Endpoint | Akses | Deskripsi |
+| :---: | :--- | :---: | :--- |
+| `POST` | `/api/auth/login` | publik | Body `{ username, password }` → set cookie `px_session`; balas `{ user, permissions: { is_admin, can_manage_events } }`. Salah/tidak dikenal/nonaktif/terkunci → 401 pesan generik; kosong → 400; terlalu banyak gagal → 429 + `Retry-After` |
+| `POST` | `/api/auth/logout` | login | Hapus sesi di server + cookie |
+| `GET` | `/api/auth/me` | login | User + permissions saat ini |
+| `POST` | `/api/auth/change-password` | login | `{ current_password, new_password }`; aturan password di bawah; sesi lain milik user itu dimatikan |
+| `GET` | `/api/admin/users` | ADMIN | Daftar akun (tanpa `password_hash`) |
+| `POST` | `/api/admin/users` | ADMIN | `{ username, full_name, email?, role, directorate, division }` → 201 `{ user, temporary_password }` (tampil sekali). Username 3-50 karakter `[A-Za-z0-9._-]`; USER wajib direktorat+divisi yang ada di direktori database; ADMIN tidak terikat direktorat; duplikat → 409 |
+| `PUT` | `/api/admin/users/:id` | ADMIN | Ubah `full_name`, `email`, `is_active`, `role`/`directorate`/`division`. Tidak bisa menonaktifkan/menurunkan diri sendiri atau Admin aktif terakhir (400); nonaktif/ganti role mematikan sesi user itu |
+| `POST` | `/api/admin/users/:id/reset-password` | ADMIN | Password sementara acak baru (tampil sekali), membuka kunci akun, mematikan sesi; tidak untuk akun sendiri |
+| `DELETE` | `/api/admin/users/:id` | ADMIN | Hapus akun (bukan diri sendiri / Admin aktif terakhir). Belum ada tombol di UI |
+| `GET` | `/api/admin/audit-log` | ADMIN | `?limit=` (default 200, maks 1000), terbaru dulu |
+
+Aturan password baru: 10-128 karakter, mengandung huruf dan angka, tidak sama dengan username, berbeda dari password lama.
+
+### Rute → aturan akses (USER vs ADMIN)
+| Rute | USER | ADMIN |
+| :--- | :--- | :--- |
+| `GET /api/metrics/calculate`, `/api/metrics/trends` | hanya direktoratnya (kosong/`ALL`/miliknya → miliknya; lain → 403). `calculate`: metrik non-karyawan = agregat bankwide read-only, `excluded_from_index` | semua |
+| `GET /api/metrics/:id/detail` | idem; payload di-`redactRespondent()` + `respondent_data_hidden: true` | lengkap |
+| `GET /api/surveys/evidence`, `GET /api/surveys/responses/:metric_id` | 403 | ya |
+| `GET /api/surveys/metrics`, `/template`, `/history`; `POST /api/surveys/upload` | 403 | ya |
+| `POST /api/metrics/score`, `/api/metrics/weights`, `/api/alerts/acknowledge`, `/api/action-library`, `/api/questions/master` | 403 | ya |
+| `GET /api/alerts`, `/api/action-library`, `/api/questions/master`, `/api/settings`, `/api/directorates` | ya (alerts bankwide, tidak disaring direktorat) | ya |
+| `/api/admin/*` (parameter, journeys, metrics, targets, survey-questions, upload-reminders, email-settings, settings, users, audit-log) | 403 | ya |
+| `GET /api/events`, `/api/events/:id` | ya, tanpa kode akses; absensi/feedback per orang disamarkan | lengkap |
+| `POST/DELETE` event, hapus absensi/feedback, media, transkrip, `generate-ppt`, `GET /api/reports/download/:file`, `/exports/*` | hanya bila direktoratnya ada di setting `event_manager_directorates` (default Human Resources); selain itu 403 | ya |
+| `/uploads/*` | ya | ya |
+
+Setting baru (`px_app_settings`, ubah lewat `PUT /api/admin/settings/:key`; angka divalidasi rentang): `session_hours` (8; 1-72), `login_max_attempts` (5; 3-20), `login_lockout_minutes` (15; 1-1440), `login_rate_limit_per_minute` (20; 5-200), `event_manager_directorates` (daftar `{ value, label }`, default Human Resources).
+
+Respons 403 tambahan: `PASSWORD_CHANGE_REQUIRED` (akun belum ganti password sementara) dan penolakan `Origin` lintas-host pada request tulis. Service baru: `authService.js`, `rateLimiter.js`; storage: `getUser*/createUser/updateUser/deleteUser`, `createSession/getSession/deleteSession[sForUser]/purgeExpiredSessions`, `addAuditLog/getAuditLog` di `sqlStorage.js` dan `jsonStorage.js`.

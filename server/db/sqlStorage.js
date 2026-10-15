@@ -445,6 +445,24 @@ async function topUpMetricUnits() {
   console.log(`[sqlStorage] Filled the display unit of ${rows.length} metrics.`);
 }
 
+// ------------------------------------------------------------------ login accounts (px_users)
+const rowToUser = r => ({
+  user_id: r.user_id,
+  username: r.username,
+  full_name: r.full_name,
+  email: r.email,
+  password_hash: r.password_hash,
+  role: r.role,
+  directorate: r.directorate,
+  division: r.division,
+  is_active: !!r.is_active,
+  must_change_password: !!r.must_change_password,
+  failed_attempts: r.failed_attempts,
+  locked_until: iso(r.locked_until),
+  created_at: iso(r.created_at),
+  last_login_at: iso(r.last_login_at)
+});
+
 // ------------------------------------------------------------------ app settings (px_app_settings)
 // Inserts any default setting that is not in the table yet (never overwrites an admin's value).
 async function seedAppSettings(tx) {
@@ -981,6 +999,83 @@ const storage = {
                             OUTPUT INSERTED.setting_key WHERE setting_key = @key`, { key: String(key), value: T.max(JSON.stringify(value)) });
     if (!rows.length) throw new Error(`Setting "${key}" tidak ditemukan.`);
     return value;
+  },
+
+  // ---- login accounts, sessions, audit trail (px_users / px_sessions / px_audit_log)
+  async countUsers() {
+    return (await run('SELECT COUNT(*) AS c FROM dbo.px_users'))[0].c;
+  },
+  async listUsers() {
+    return (await run('SELECT * FROM dbo.px_users ORDER BY user_id')).map(rowToUser);
+  },
+  async getUserById(user_id) {
+    const rows = await run('SELECT * FROM dbo.px_users WHERE user_id = @id', { id: parseInt(user_id, 10) });
+    return rows[0] ? rowToUser(rows[0]) : null;
+  },
+  async getUserByUsername(username) {
+    const rows = await run('SELECT * FROM dbo.px_users WHERE username = @username', { username: String(username) });
+    return rows[0] ? rowToUser(rows[0]) : null;
+  },
+  async createUser(u) {
+    try {
+      const rows = await run(`INSERT INTO dbo.px_users (username, full_name, email, password_hash, role, directorate, division, is_active, must_change_password)
+                              OUTPUT INSERTED.* VALUES (@username, @full_name, @email, @password_hash, @role, @directorate, @division, @is_active, @mcp)`, {
+        username: u.username, full_name: u.full_name, email: u.email || '', password_hash: u.password_hash, role: u.role,
+        directorate: u.directorate || null, division: u.division || null,
+        is_active: u.is_active === undefined ? true : !!u.is_active, mcp: u.must_change_password === undefined ? true : !!u.must_change_password
+      });
+      return rowToUser(rows[0]);
+    } catch (err) {
+      if (isUniqueViolation(err)) { const e = new Error(`Username "${u.username}" sudah dipakai.`); e.code = 'DUPLICATE_USER'; throw e; }
+      throw err;
+    }
+  },
+  async updateUser(user_id, patch) {
+    const cols = { full_name: 'full_name', email: 'email', password_hash: 'password_hash', role: 'role', directorate: 'directorate', division: 'division',
+      is_active: 'is_active', must_change_password: 'must_change_password', failed_attempts: 'failed_attempts', locked_until: 'locked_until', last_login_at: 'last_login_at' };
+    const sets = [];
+    const params = { id: parseInt(user_id, 10) };
+    for (const [field, col] of Object.entries(cols)) {
+      if (patch[field] === undefined) continue;
+      sets.push(`${col} = @${field}`);
+      const v = patch[field];
+      params[field] = (field === 'locked_until' || field === 'last_login_at') ? (v ? new Date(v) : null) : v;
+    }
+    if (!sets.length) return this.getUserById(user_id);
+    const rows = await run(`UPDATE dbo.px_users SET ${sets.join(', ')} OUTPUT INSERTED.* WHERE user_id = @id`, params);
+    return rows[0] ? rowToUser(rows[0]) : null;
+  },
+  async deleteUser(user_id) {
+    const rows = await run('DELETE FROM dbo.px_users OUTPUT DELETED.* WHERE user_id = @id', { id: parseInt(user_id, 10) });
+    return rows[0] ? rowToUser(rows[0]) : null;
+  },
+  async createSession({ token_hash, user_id, expires_at }) {
+    await run('INSERT INTO dbo.px_sessions (token_hash, user_id, expires_at) VALUES (@token_hash, @user_id, @expires_at)',
+      { token_hash, user_id: parseInt(user_id, 10), expires_at: new Date(expires_at) });
+  },
+  async getSession(token_hash) {
+    const rows = await run('SELECT token_hash, user_id, expires_at FROM dbo.px_sessions WHERE token_hash = @token_hash', { token_hash });
+    return rows[0] ? { token_hash: rows[0].token_hash, user_id: rows[0].user_id, expires_at: iso(rows[0].expires_at) } : null;
+  },
+  async deleteSession(token_hash) {
+    await run('DELETE FROM dbo.px_sessions WHERE token_hash = @token_hash', { token_hash });
+  },
+  async deleteSessionsForUser(user_id, exceptTokenHash) {
+    await run('DELETE FROM dbo.px_sessions WHERE user_id = @id AND (@except IS NULL OR token_hash <> @except)',
+      { id: parseInt(user_id, 10), except: exceptTokenHash || null });
+  },
+  async purgeExpiredSessions() {
+    await run('DELETE FROM dbo.px_sessions WHERE expires_at < SYSUTCDATETIME()');
+  },
+  async addAuditLog(e) {
+    await run('INSERT INTO dbo.px_audit_log (user_id, username, action, target, ip) VALUES (@user_id, @username, @action, @target, @ip)', {
+      user_id: e.user_id === undefined ? null : e.user_id, username: e.username || null, action: String(e.action).slice(0, 50),
+      target: e.target ? String(e.target).slice(0, 200) : null, ip: e.ip ? String(e.ip).slice(0, 64) : null
+    });
+  },
+  async getAuditLog(limit = 200) {
+    const rows = await run('SELECT TOP (@limit) * FROM dbo.px_audit_log ORDER BY audit_id DESC', { limit: Math.max(1, Math.min(parseInt(limit, 10) || 200, 1000)) });
+    return rows.map(r => ({ audit_id: Number(r.audit_id), occurred_at: iso(r.occurred_at), user_id: r.user_id, username: r.username, action: r.action, target: r.target, ip: r.ip }));
   },
 
   // ---- journeys

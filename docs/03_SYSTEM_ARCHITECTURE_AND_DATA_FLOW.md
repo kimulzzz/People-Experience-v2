@@ -151,3 +151,26 @@ flowchart TD
 ## 🗄️ Lapisan Penyimpanan: JSON Store & Microsoft SQL Server (v2.22.0)
 
 Persistensi kini dapat dipilih lewat `STORAGE_BACKEND` di `.env`: `json` (default; `server/data/store.json` + cache memori, node "Transactional JSON Store" pada diagram di atas) atau `sql` (**Microsoft SQL Server lokal**, database `PeopleExperiencePX`, tanpa cache — setiap pembacaan = query). `server/db/storage.js` hanya dispatcher; semua pemanggil memakai `await storage.x()` sehingga kontrak kedua backend identik. Foto & video Signature Event **tidak** masuk database: file tetap di `server/uploads/`, database menyimpan path + metadata + transkrip AI. Tetap 100% on-premise (SQL Server berjalan di mesin yang sama; login aplikasi `px_app` hanya `db_owner` database itu). Skema, migrasi, rollback, dan operasional: lihat **`docs/08_DATABASE_SCHEMA_AND_MIGRATION.md`**.
+
+---
+
+## 🔐 Alur Login & Sesi (v2.26.0)
+
+```
+Browser --POST /api/auth/login {username,password}--> authService
+   |                                   | scrypt verify (+ hash tiruan bila user tak ada)
+   |                                   | gagal >=5x -> akun dikunci 15 menit; >20 gagal/menit/IP -> 429
+   |<-- Set-Cookie px_session=<token acak> (httpOnly, SameSite=Strict, Secure bila HTTPS) --
+   |                                   px_sessions menyimpan SHA-256(token) + expires_at (8 jam)
+Browser --GET /api/... (cookie otomatis)--> authGate: cookie -> hash -> px_sessions -> px_users
+                                           tanpa sesi valid -> 401 (UI kembali ke halaman login)
+```
+
+- **Satu gerbang**: `registerAuthRoutes()` memasang `authGate` pada `/api` sebelum rute lain. Hanya 6 rute publik yang lolos tanpa sesi (health, login, daftar direktorat, `events/by-code`, absensi dan feedback event) — yang dipakai form check-in/feedback publik. `/api/admin/*` hanya ADMIN; `/uploads` dan `/exports` juga wajib login.
+- **Role**: `ADMIN` (semua data, semua menu admin) dan `USER` (terikat 1 direktorat + 1 divisi). Penegakan ada di **server**; UI hanya menyembunyikan menu yang tidak bisa dipakai.
+- **Cakupan data USER**: `resolveDirectorateScope()` — direktorat kosong/`ALL`/miliknya dipaksa ke direktoratnya, direktorat lain → 403 (`calculate`, `trends`, `:id/detail`). Metrik non-karyawan memakai agregat bankwide read-only dan tidak masuk indeks direktorat. Divisi **belum** menyaring data (tahap 2).
+- **Data responden**: `redactRespondent()` menelusuri seluruh payload (termasuk daftar bersarang seperti `verbatim_samples`) dan mengosongkan `nip`, `employee_name`, `cimb_email`, `email`, `participant_*`, `candidate_*`. Evidence CSV dan `GET /api/surveys/responses/:metric_id` → 403 untuk non-Admin.
+- **Signature Event**: baca untuk semua yang login; tulis hanya Admin + User dari direktorat di setting `event_manager_directorates`. Non-pengelola tidak menerima kode akses check-in/feedback dan data absensi/feedback per orang disamarkan.
+- **Ganti password wajib**: akun dengan `must_change_password` hanya bisa mengakses `/api/auth/me|logout|change-password` (selain itu 403 `PASSWORD_CHANGE_REQUIRED`).
+- **Penyimpanan**: SQL -> `px_users`, `px_sessions`, `px_audit_log`; JSON -> `server/data/auth.json` (git-ignored). Lihat `docs/08` §9.
+- **Kepatuhan**: login lokal sepenuhnya on-premise (tanpa layanan identitas eksternal). Secret (hash password, hash token) tidak pernah dikembalikan API maupun dicatat di log. Untuk produksi, taruh di belakang reverse proxy HTTPS dan set `TRUST_PROXY`. Proxy dev Vite sengaja **tanpa** `changeOrigin` supaya pemeriksaan `Origin` vs `Host` (pertahanan CSRF) tidak menolak request dari `localhost:3000`.

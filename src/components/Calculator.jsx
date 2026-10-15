@@ -1,5 +1,6 @@
 // src/components/Calculator.jsx
 import React, { useState, useRef, useEffect } from 'react';
+import { useAuth } from '../utils/AuthContext';
 import { 
   Layers, 
   Search, 
@@ -92,6 +93,7 @@ export default function Calculator({
   onOpenSurveyImport,
   onOpenAdminSettings
 }) {
+  const { isAdmin } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('ALL'); // ALL, SURVEY, OUTCOME
   const [tableDensity, setTableDensity] = useState('fit'); // 'fit' (Fit to Screen) or 'wide' (Expanded)
@@ -573,6 +575,7 @@ export default function Calculator({
                             </span>
                           ) : isSurvey ? (
                             <>
+                              {isAdmin && (<>
                               {/* 1. Download Template */}
                               <a
                                 href={`/api/surveys/template?metric_id=${m.metric_id}`}
@@ -610,6 +613,8 @@ export default function Calculator({
                                 <span>Upload</span>
                               </button>
 
+                              </>)}
+
                               {/* 4. View Detail */}
                               <button
                                 onClick={(e) => {
@@ -638,7 +643,7 @@ export default function Calculator({
                                 <span>View Data</span>
                               </button>
 
-                              <button
+                              {isAdmin && <button
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   if (onOpenAdminSettings) onOpenAdminSettings();
@@ -648,7 +653,7 @@ export default function Calculator({
                               >
                                 <SlidersHorizontal className="w-3 h-3 text-slate-500 shrink-0" />
                                 <span>Target</span>
-                              </button>
+                              </button>}
                             </>
                           )}
                         </div>

@@ -172,3 +172,23 @@ mengubahnya; sudah diperbaiki di v2.12.0 (lihat `CHANGELOG.md`).
 5. Pantau di **Setting Email → Riwayat Reminder Terkirim** dan panel peringatan di Parameter Admin; tombol **Kirim Reminder Sekarang** mengirim manual ke semua PIC yang masih pending.
 
 > Metrik **Tahunan** diingatkan pada tanggal+bulan batas tahun itu bila belum ada data bertanggal tahun tersebut. Data bulan berjalan tidak dihitung untuk metrik bulanan.
+
+---
+
+## 🔐 Login, Akun & Kelola User (v2.26.0)
+
+**Membuat Admin pertama** (sekali, setelah instalasi / pada database baru):
+1. Di folder proyek jalankan `npm run auth:create-admin` (opsi: `-- --username 8801923 --name "Nama" --email nama@...`; default username `admin`).
+2. Catat **password sementara** yang tampil di konsol — hanya muncul sekali, tidak ada password bawaan. Login dengan akun itu; aplikasi langsung meminta ganti password (min 10 karakter, ada huruf dan angka).
+3. Lupa password Admin / semua Admin terkunci: `npm run auth:create-admin -- --username <akun> --reset-password`.
+
+**Kelola User** (menu Header, hanya Admin):
+- **Tambah user**: isi username/NIP, nama, email (opsional), role. Role **User** wajib memilih direktorat dan divisi; role **Admin** tidak terikat direktorat. Setelah disimpan, **password sementara tampil sekali** — salin dan sampaikan ke yang bersangkutan; saat login pertama ia wajib menggantinya.
+- **Reset password**: password sementara baru (sekali tampil). Reset juga **membuka kunci akun** dan mengeluarkan semua sesi user itu.
+- **Kunci akun**: 5 kali salah password berturut-turut mengunci akun 15 menit; Admin dapat membukanya lewat reset password. Batas dapat diubah di setting `login_max_attempts` / `login_lockout_minutes`.
+- **Nonaktifkan / ganti role**: mematikan sesi user tersebut. Anda tidak bisa menonaktifkan/menurunkan akun sendiri atau Admin aktif terakhir. Tombol hapus akun belum tersedia di UI — gunakan nonaktifkan.
+- **Riwayat**: panel audit menampilkan login berhasil/gagal/terkunci, logout, dan perubahan akun (tanpa password).
+
+**Hak akses User**: melihat data direktoratnya (metrik non-karyawan tampil sebagai angka bankwide read-only), tanpa data per responden, tanpa menu admin/upload; Signature Event hanya baca kecuali User dari direktorat pengelola event (setting `event_manager_directorates`, default Human Resources — belum ada menu UI untuk mengubahnya). Divisi User saat ini hanya tercatat, belum menyaring data.
+
+**Deployment**: sebaiknya di belakang reverse proxy HTTPS on-premise dengan `TRUST_PROXY` di `.env` (cookie sesi menjadi `Secure`). Sesi berlaku 8 jam (`session_hours`).

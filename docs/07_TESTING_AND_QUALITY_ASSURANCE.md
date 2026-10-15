@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    27 MODUL PENGUJIAN    │     94 AUTOMATED TESTS      │       100% PASS RATE          │
+│    34 MODUL PENGUJIAN    │     157 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -651,3 +651,30 @@ Test jalur lengkap dan "belum dikonfigurasi" **dilewati otomatis** bila sudah ad
 **Regression suite: 138 test** (130 + **Modul 33**, 8 test) → **138/138 PASS** di SQL Server (2×) dan JSON. Modul 33: setiap metrik punya `unit` (calculate & admin); #14 bukan `%` dan skor/status tidak berubah; endpoint detail memuat `unit`; default per skala + trim; edit `unit` terlihat di semua endpoint tanpa mengubah skor; `unit` kosong / 31 karakter → 400 (30 karakter diterima); POST `unit` kosong ditolak dan tidak menyimpan metrik; PUT metrik tak ada → 400.
 
 **Bukti tidak ada regresi (di luar suite)**: kode commit sebelumnya (git worktree sementara, port terpisah) vs kode baru, database sama → **58/58 endpoint GET identik** selain field `unit`; teks nilai aktual 27 metrik rumus lama vs `formatMetricValue` → 26 identik, hanya #14 berubah.
+
+---
+
+## 🔐 17. Login, Role & Kontrol Akses — v2.26.0 (2026-10-15)
+
+**Regression suite: 157 test** (138 + **Modul 34**, 19 test) → **157/157 PASS di SQL Server**. Sebelum perbaikan hasil QC suite berisi 153 test: 153/153 di SQL dan JSON; **JSON belum dijalankan ulang pada 157 test**. Karena kini semua `/api` butuh sesi, suite login dulu (cookie disisipkan otomatis ke setiap `fetch`).
+
+| Variabel lingkungan | Fungsi |
+| :--- | :--- |
+| `TEST_ADMIN_USER` / `TEST_ADMIN_PASSWORD` | Akun Admin yang dipakai suite (buat dengan `npm run auth:create-admin`). **Wajib di backend JSON**; di SQL bila kosong, suite membuat Admin sementara dengan password acak dan menghapusnya di akhir. Jangan menaruh nilainya di repo |
+| `TEST_VITE_URL` | Alamat Vite untuk tes proxy (default `http://localhost:3000`); tes dilewati otomatis bila Vite tidak berjalan |
+
+| Modul 34 (19 test) | Jenis | Yang diuji |
+| :--- | :---: | :--- |
+| Login & sesi | Positif | cookie `httpOnly`+`SameSite=Strict`, `/me` tanpa secret; akun baru wajib ganti password (403 `PASSWORD_CHANGE_REQUIRED`), password lemah ditolak; logout mematikan sesi di server |
+| Kredensial salah | Negatif | salah password / user tak dikenal / kosong → pesan generik (tanpa user enumeration), 400 bila kosong; 5× salah mengunci akun walau password benar sesudahnya, reset membuka kunci |
+| Tanpa login | Negatif | contoh tiap area → 401, juga `/uploads` dan `/exports`; form publik (direktori, event by code, absensi, feedback) tetap jalan; `/health` tanpa detail database; `Origin` asing pada request tulis → 403 |
+| Role | Positif/Negatif | USER 403 di semua `/api/admin/*` dan aksi admin-only; USER hanya direktoratnya (kosong/ALL/miliknya diterima, lain 403 pada calculate/trends/detail) |
+| Data responden | Negatif | USER tidak melihat identitas responden (detail, metrik #11, evidence CSV, responses) dan **tidak ada nama responden di seluruh payload** (pemindaian penuh termasuk `verbatim_samples` bersarang, alerts, events); kode akses partner tidak keluar dari lookup publik |
+| Signature Event | Positif/Negatif | Admin dan USER direktorat pengelola (dari setting database) boleh menulis; USER lain 403 tetapi bisa membaca |
+| Manajemen user | Positif/Negatif | validasi role/direktorat/divisi dari direktori, duplikat, username salah; tidak bisa mengunci diri sendiri; user nonaktif tertutup |
+| Audit | Positif | login berhasil/gagal/terkunci, logout, perubahan akun tercatat; tidak ada password di log/respons; username tak dikenal tanpa teks mentah |
+| Metrik non-karyawan | Positif | USER melihat #1-#5 sebagai agregat bankwide read-only sama dengan tampilan Admin ALL; indeks direktorat USER = tampilan Admin untuk direktorat itu |
+| Proxy Vite | Positif/Negatif | login lewat proxy `:3000` sampai ke handler (401, bukan ditolak sebagai lintas-origin) dan Origin asing tetap 403 — dilewati bila Vite mati |
+| Unit | Positif/Negatif | hash scrypt ber-salt dan hanya cocok dengan password benar; helper scope/identitas; rate limiter memblokir lalu kedaluwarsa |
+
+Cakupan yang **tidak** diuji otomatis: tampilan UI per role (diperiksa QC di Browser pane), perilaku di belakang HTTPS/`TRUST_PROXY`, dan rate limit setelah restart (di memori).

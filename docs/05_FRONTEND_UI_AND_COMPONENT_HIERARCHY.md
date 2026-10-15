@@ -243,3 +243,26 @@ Tombol **Setting Email** di Header (sebelah Survey Templates) membuka modal: tog
 ## 🏷️ Catatan v2.25.0 — Satuan Nilai Aktual
 
 `src/utils/formatMetricValue.js` (`formatMetricValue(raw, unit, scale_type)`) memformat nilai aktual di `Calculator.jsx` (Explore Metrics) dan `MetricDetailModal.jsx` (kartu "Actual Value & Target") — bilangan bulat QUOTA_COUNT diberi pemisah ribuan (4.330), "%" ditempel tanpa spasi, satuan lain dengan spasi. `AdminParametersModal.jsx` punya input "Satuan Nilai Aktual" (maks 30 karakter, wajib, pratinjau langsung; terisi otomatis saat skala diganti pada metrik baru) dan subjudul "satuan: …" pada tabel metrik.
+
+---
+
+## 🔐 Catatan v2.26.0 — Login & Menu per Role
+
+| File | Fungsi |
+| :--- | :--- |
+| `src/components/AuthScreens.jsx` | `LoginPage` (form username/password, pesan galat generik, notifikasi "Sesi Anda berakhir") dan `ChangePasswordScreen` (wajib saat memakai password sementara) |
+| `src/components/UserManagementModal.jsx` | Menu **Kelola User** (Admin): daftar akun, tambah/ubah (direktorat & divisi dari `/api/directorates`), aktif/nonaktif, reset password (password sementara tampil sekali dengan tombol salin), riwayat audit login. **Belum ada tombol hapus** |
+| `src/utils/AuthContext.jsx` | `AuthContext` / `useAuth()` → `{ user, isAdmin, canManageEvents, logout }` |
+| `src/utils/apiClient.js` | Membungkus `window.fetch` untuk `/api`, `/uploads`, `/exports`: `credentials: 'same-origin'`; respons 401 (selain login) memicu event `px:unauthorized` |
+| `src/App.jsx` | `AuthGate` memeriksa `/api/auth/me`; anon → `LoginPage`; `must_change_password` → `ChangePasswordScreen`; selain itu aplikasi. URL `?checkin=` / `?survey=` melewati `AuthGate` (form publik tanpa login) |
+
+Menu per role (penegakan sebenarnya di server, lihat `docs/04`):
+
+| Elemen | ADMIN | USER |
+| :--- | :---: | :---: |
+| Parameter Admin, Survey Templates, Setting Email, Kelola User (Header) | tampil | disembunyikan |
+| Filter direktorat Header | bebas | terkunci ke direktoratnya (label "User - <direktorat>") |
+| Tombol upload/pengaturan survei di Explore Metrics & MetricDetailModal, acknowledge alert | tampil | disembunyikan |
+| Detail metrik: data per responden | tampil | disembunyikan (`respondent_data_hidden`) |
+| Signature Events: buat/hapus event, unggah media, transkrip, PPT | tampil | hanya bila `canManageEvents` (direktorat di `event_manager_directorates`) |
+| Logout (Header) | tampil | tampil |

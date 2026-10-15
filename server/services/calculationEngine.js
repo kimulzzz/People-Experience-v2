@@ -384,7 +384,10 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
 
     // Determine if this metric should be disabled in the current directorate scope
     const isEmployeeMetric = m.is_employee_metric !== undefined ? m.is_employee_metric : true;
-    const isDisabled = isDirectorateFiltered && !isEmployeeMetric;
+    // bankwideReadOnly (USER): show the bankwide value of a non-employee metric, but keep it out of the
+    // directorate's index (excluded_from_index) exactly like an Admin's directorate view does.
+    const bankwideReadOnly = !!options.bankwideReadOnly && isDirectorateFiltered && !isEmployeeMetric;
+    const isDisabled = isDirectorateFiltered && !isEmployeeMetric && !bankwideReadOnly;
     const disabledReason = isDisabled ? 'Bankwide External / Non-Employee Metric (Exempted from Directorate Calculation)' : null;
 
     let rawVal = parseFloat(m.raw_value || 0);
@@ -392,7 +395,7 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
     let lastSurveyDate = null;
 
     if (m.metric_type === 'SURVEY') {
-      const responses = await storage.getResponsesByMetricAndPeriod(m.metric_id, queryFilter);
+      const responses = await storage.getResponsesByMetricAndPeriod(m.metric_id, bankwideReadOnly ? { ...queryFilter, directorate: 'ALL', sub_directorate: 'ALL' } : queryFilter);
       sampleSize = responses.length;
 
       if (responses.length > 0) {
@@ -449,12 +452,13 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       is_employee_metric: isEmployeeMetric,
       target_audience: m.target_audience || (isEmployeeMetric ? 'EMPLOYEE' : 'EXTERNAL_MARKET'),
       is_disabled: isDisabled,
+      excluded_from_index: bankwideReadOnly,
       disabled_reason: disabledReason
     };
   }));
 
   // 2. Separate Active Survey vs Outcome metrics (Excluding Disabled non-employee metrics when directorate is selected)
-  const activeMetrics = enrichedMetrics.filter(m => !m.is_disabled);
+  const activeMetrics = enrichedMetrics.filter(m => !m.is_disabled && !m.excluded_from_index);
   const activeSurveyMetrics = activeMetrics.filter(m => m.metric_type === 'SURVEY');
   const activeOutcomeMetrics = activeMetrics.filter(m => m.metric_type === 'OUTCOME');
 
@@ -481,7 +485,7 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
   // 6. Rollup by Journey
   const journeySummaries = journeys.map(j => {
     const jMetrics = enrichedMetrics.filter(m => m.journey_id === j.journey_id);
-    const jActiveMetrics = jMetrics.filter(m => !m.is_disabled);
+    const jActiveMetrics = jMetrics.filter(m => !m.is_disabled && !m.excluded_from_index);
     const jSurvey = jActiveMetrics.filter(m => m.metric_type === 'SURVEY');
     const jOutcome = jActiveMetrics.filter(m => m.metric_type === 'OUTCOME');
 
@@ -528,7 +532,7 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
   // 7. Rollup by Checkpoint
   const checkpointSummaries = checkpoints.map(cp => {
     const cpMetrics = enrichedMetrics.filter(m => m.checkpoint_id === cp.checkpoint_id);
-    const cpActiveMetrics = cpMetrics.filter(m => !m.is_disabled);
+    const cpActiveMetrics = cpMetrics.filter(m => !m.is_disabled && !m.excluded_from_index);
     const totalWeight = cpActiveMetrics.reduce((s, m) => s + m.weight, 0);
     const cpScore = totalWeight > 0 ? cpActiveMetrics.reduce((s, m) => s + (m.normalized_score * m.weight), 0) / totalWeight : 0;
 

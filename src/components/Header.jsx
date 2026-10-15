@@ -13,10 +13,14 @@ import {
   BookMarked,
   Palette,
   Check,
-  Mail
+  Mail,
+  Users,
+  LogOut,
+  UserCircle2
 } from 'lucide-react';
 import CimbLogo from './CimbLogo';
 import { THEME_PRESETS, applyTheme, getSavedThemeId } from '../utils/theme';
+import { useAuth } from '../utils/AuthContext';
 
 // Derived from the real browser clock (not a frozen literal) — only used as a last-resort
 // fallback when App.jsx hasn't passed filterOptions/availableYears yet.
@@ -32,8 +36,12 @@ export default function Header({
   availableYears,
   onOpenAdminParametersModal,
   onOpenSurveyQuestionsModal,
-  onOpenEmailSettingsModal
+  onOpenEmailSettingsModal,
+  onOpenUserManagementModal
 }) {
+  const { user, isAdmin, logout } = useAuth();
+  // A USER's directorate filter is locked to their own directorate (the server enforces the same rule).
+  const directorateLocked = !isAdmin;
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [activeThemeId, setActiveThemeId] = useState(getSavedThemeId());
 
@@ -218,11 +226,12 @@ export default function Header({
               <Building2 className="w-3.5 h-3.5 text-[#ED1C24] shrink-0" />
               <select
                 value={filterOptions.directorate}
+                disabled={directorateLocked}
                 onChange={(e) => handleDirectorateChange(e.target.value)}
-                className="text-xs font-bold text-gray-900 bg-transparent focus:outline-none cursor-pointer truncate"
-                title="Pilih Direktorat (Default: All Bankwide)"
+                className={`text-xs font-bold text-gray-900 bg-transparent focus:outline-none truncate ${directorateLocked ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                title={directorateLocked ? 'Terkunci ke direktorat akun Anda' : 'Pilih Direktorat (Default: All Bankwide)'}
               >
-                <option value="ALL">Direktorat: All (Bankwide)</option>
+                {!directorateLocked && <option value="ALL">Direktorat: All (Bankwide)</option>}
                 {directoratesList.map(d => (
                   <option key={d.name} value={d.name}>
                     {d.name}
@@ -254,6 +263,7 @@ export default function Header({
               </select>
             </div>
 
+            {isAdmin && (<>
             {/* Admin Menu: Parameter Journey & Metric */}
             <button
               onClick={onOpenAdminParametersModal}
@@ -283,6 +293,17 @@ export default function Header({
               <Mail className="w-3.5 h-3.5 text-[#ED1C24]" />
               <span className="hidden md:inline">Setting Email</span>
             </button>
+
+            {/* Admin Menu: Kelola User (login accounts) */}
+            <button
+              onClick={onOpenUserManagementModal}
+              className="px-2.5 py-1 text-xs font-bold text-gray-800 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg flex items-center space-x-1.5 transition shadow-2xs"
+              title="Admin Menu: Kelola akun login (tambah user, reset password, aktif/nonaktif)"
+            >
+              <Users className="w-3.5 h-3.5 text-[#ED1C24]" />
+              <span className="hidden md:inline">Kelola User</span>
+            </button>
+            </>)}
 
             {alertCount > 0 && (
               <button
@@ -332,6 +353,27 @@ export default function Header({
                 </>
               )}
             </div>
+
+            {/* Logged-in user + logout */}
+            {user && (
+              <div className="flex items-center space-x-2 pl-2 ml-1 border-l border-gray-200">
+                <UserCircle2 className="w-5 h-5 text-gray-400 shrink-0" />
+                <div className="leading-tight hidden sm:block max-w-[170px]">
+                  <div className="text-[11px] font-bold text-gray-900 truncate" title={user.full_name}>{user.full_name}</div>
+                  <div className="text-[9px] font-bold text-gray-500 uppercase tracking-wide truncate" title={isAdmin ? 'Admin' : `${user.directorate} - ${user.division}`}>
+                    {isAdmin ? 'Admin' : `User - ${user.directorate}`}
+                  </div>
+                </div>
+                <button
+                  onClick={logout}
+                  className="px-2.5 py-1 text-xs font-bold text-gray-800 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg flex items-center space-x-1.5 transition shadow-2xs"
+                  title="Keluar dari aplikasi"
+                >
+                  <LogOut className="w-3.5 h-3.5 text-[#ED1C24]" />
+                  <span>Keluar</span>
+                </button>
+              </div>
+            )}
 
           </div>
 

@@ -296,12 +296,14 @@ export default function Dashboard({
                       <Eye className="w-3 h-3" />
                       <span>View Metric Detail</span>
                     </button>
-                    <button
-                      onClick={() => onAcknowledgeAlert(alert.metric_id)}
-                      className="px-2.5 py-1 text-xs font-semibold bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 rounded shadow-2xs transition"
-                    >
-                      Acknowledge
-                    </button>
+                    {onAcknowledgeAlert && (
+                      <button
+                        onClick={() => onAcknowledgeAlert(alert.metric_id)}
+                        className="px-2.5 py-1 text-xs font-semibold bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 rounded shadow-2xs transition"
+                      >
+                        Acknowledge
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

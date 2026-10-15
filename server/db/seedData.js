@@ -1375,6 +1375,15 @@ const initialAppSettings = {
   },
   reminder_send_hour: { value: 8, description: 'Jam (0-23, waktu server) mulai pengiriman otomatis email reminder upload survei ke PIC' },
   reminder_repeat_days: { value: 1, description: 'Ulangi reminder setiap N hari sampai data diupload (0 = hanya satu kali pada tanggal batas)' },
+  // Login & akses (v2.26.0)
+  session_hours: { value: 8, description: 'Masa berlaku sesi login (jam) sejak login' },
+  login_max_attempts: { value: 5, description: 'Jumlah gagal login berturut-turut sebelum akun dikunci sementara' },
+  login_lockout_minutes: { value: 15, description: 'Lama penguncian akun (menit) setelah gagal login berulang' },
+  login_rate_limit_per_minute: { value: 20, description: 'Batas percobaan login GAGAL per alamat IP per menit' },
+  event_manager_directorates: {
+    value: [{ value: 'Human Resources', label: 'Human Resources' }],
+    description: 'Direktorat yang pengguna (role User)-nya boleh mengelola Signature Event (Admin selalu boleh)'
+  },
   px_index_target: { value: 85, description: 'Target PX Index (%) — garis target pada Performance Trend chart' },
   event_program_categories: {
     value: [

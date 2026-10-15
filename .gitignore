@@ -6,3 +6,4 @@ server/exports/
 *.log
 
 server/data/backups/
+server/data/auth.json

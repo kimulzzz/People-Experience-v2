@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(138-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(157-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (138 cases) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (157 cases) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (25 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules |
 
@@ -458,6 +458,24 @@ domain model, not just descriptive:
   → 138/138 on SQL (x2) and JSON. NOT changed (reported): #14's name still has "%", #1 keeps "%", #11 shows "2.5 pax" vs target 500.
   Gotcha: the regression suite adds ~16 survey rows per run to the active DB; cleaned with `migrate --reset` + re-adding the user's real
   video record (see v2.24.1) and deleting the stale old video record that store.json resurrects.
+
+- **v2.26.0** (2026-10-15, see `CHANGELOG.md` [2.26.0], `docs/03`, `docs/04` "Catatan v2.26.0", `docs/06`, `docs/07` §17, `docs/08` §9): User asked for
+  a local login (no AD) with 2 roles, ADMIN and USER (1 user = 1 directorate + 1 division). Decisions: the division is stored but does NOT
+  filter data yet (stage 2: PIC -> account, upload by PIC, respondent data for PIC, division filtering); USER sees only their own directorate
+  (server enforces, other directorate -> 403); non-employee/OUTCOME metrics are read-only bankwide aggregates (`bankwideReadOnly`,
+  `excluded_from_index`); per-respondent data hidden from USER (`redactRespondent`, recursive; `canSeeRespondentData` = Admin only);
+  Signature Events read-only for USER except directorates in setting `event_manager_directorates` (default Human Resources). Built:
+  `authService.js` (scrypt, random session token in `px_session` httpOnly/SameSite=Strict cookie, only SHA-256 stored, 8 h, lock after 5
+  failures for 15 min, IP rate limit in memory, generic login error, cross-host Origin refused), `px_users`/`px_sessions`/`px_audit_log`
+  (JSON backend: `server/data/auth.json`, gitignored), public routes = health, auth/login, directorates, events/by-code, attendance,
+  feedback; `/uploads` and `/exports` need a login. Frontend: `AuthScreens.jsx`, `UserManagementModal.jsx`, `AuthContext.jsx`, `apiClient.js`.
+  Gotchas: first admin = `npm run auth:create-admin` (random password printed once); `migrate --reset` does NOT delete accounts and
+  export/import does not carry them; the Vite proxy has no `changeOrigin` on purpose (Origin vs Host check); the suite needs
+  `TEST_ADMIN_USER`/`TEST_ADMIN_PASSWORD` on JSON (SQL makes a temp admin), optional `TEST_VITE_URL`. Tests: Module 34 (19) -> 157/157 on
+  SQL; JSON was 153/153 before QC's fixes and NOT re-run on 157. QC: LULUS DENGAN CATATAN. Known/minor: 401 noise on `/api/settings` in the
+  public-form console (caller unknown), rate limit in memory, no UI for `event_manager_directorates`, no delete-user button (API exists).
+  Production: HTTPS reverse proxy + `TRUST_PROXY`. Version 2.26.0 was earlier used by WIP AI work now in a git stash - AI ships as the next
+  version (e.g. 2.27.0).
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

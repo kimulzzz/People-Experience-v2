@@ -143,3 +143,17 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 | Parameter journey/checkpoint/metric/target/bobot | `px_journeys`, `px_checkpoints`, `px_metrics`, `px_metric_targets` | menu Parameter Admin |
 
 > **Perhatian:** `node server/db/migrate.js --reset` menghapus semua tabel `px_*` termasuk `px_email_settings` — pengaturan email harus diisi ulang setelahnya.
+
+---
+
+## 11. Akun Login (v2.26.0)
+
+| Hal | Keterangan |
+| :--- | :--- |
+| Tabel | `px_users` (akun; `password_hash` = scrypt), `px_sessions` (hanya **hash SHA-256** token cookie), `px_audit_log` (jejak login & kelola user, tanpa secret) |
+| Setting (`px_app_settings`) | `session_hours` (8), `login_max_attempts` (5), `login_lockout_minutes` (15), `login_rate_limit_per_minute` (20), `event_manager_directorates` (Human Resources) |
+| `node server/db/migrate.js --reset` | **Tidak menghapus** tiga tabel di atas — akun bertahan |
+| `npm run db:export` / import | **Tidak memuat** akun |
+| Backend JSON | akun di `server/data/auth.json` (git-ignored), terpisah dari akun di SQL |
+| Admin pertama | `npm run auth:create-admin` (password acak dicetak sekali di konsol) |
+| Backup | akun ikut backup `.bak` database; berisi hash password — simpan seperti data rahasia |

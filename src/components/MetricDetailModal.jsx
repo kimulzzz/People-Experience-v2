@@ -1,4 +1,5 @@
 // src/components/MetricDetailModal.jsx
+import { useAuth } from '../utils/AuthContext';
 import React, { useState, useEffect } from 'react';
 import { 
   X, 
@@ -99,6 +100,7 @@ export default function MetricDetailModal({
   onOpenSurveyUpload,
   onOpenSurveyQuestionSettings
 }) {
+  const { isAdmin } = useAuth();
   const [detailData, setDetailData] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -290,8 +292,8 @@ export default function MetricDetailModal({
                       </div>
                     </div>
 
-                    {/* Survey: Quick Actions */}
-                    <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-xl">
+                    {/* Survey: Quick Actions (template / evidence / upload = Admin only) */}
+                    {isAdmin && <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-xl">
                       <div className="text-[11px] font-bold text-gray-500 uppercase flex items-center justify-between">
                         <span>Survey Data Operations</span>
                       </div>
@@ -335,7 +337,7 @@ export default function MetricDetailModal({
                           <span className="text-[9px] font-normal text-red-100">Import CSV</span>
                         </button>
                       </div>
-                    </div>
+                    </div>}
                   </>
                 ) : (
                   <>
@@ -705,7 +707,7 @@ export default function MetricDetailModal({
                                       <div key={sIdx} className="p-2 bg-white rounded-lg border border-gray-200 text-[11px] text-gray-700 italic">
                                         "{samp.text}"
                                         <div className="text-[9px] text-gray-400 not-italic mt-1 font-semibold">
-                                          — {samp.employee_name} ({samp.division})
+                                          — {samp.employee_name || 'Anonim'} ({samp.division})
                                         </div>
                                       </div>
                                     ))}
@@ -922,8 +924,8 @@ export default function MetricDetailModal({
                       </div>
                     </div>
 
-                    {/* Download Evidence Button */}
-                    <div className="flex items-center space-x-2 shrink-0 w-full md:w-auto justify-end">
+                    {/* Download Evidence Button (contains respondent identities: Admin only) */}
+                    {isAdmin && <div className="flex items-center space-x-2 shrink-0 w-full md:w-auto justify-end">
                       <a
                         href={`/api/surveys/evidence?metric_id=${detailData.metric_id}&period=${period || 'YTD'}`}
                         download={`Evidence_Survey_Metric_${detailData.metric_id}_${period || 'YTD'}.csv`}
@@ -933,7 +935,7 @@ export default function MetricDetailModal({
                         <Download className="w-4 h-4" />
                         <span>Download Evidence ({filteredResponses.length} Records)</span>
                       </a>
-                    </div>
+                    </div>}
                   </div>
 
                   {/* List of Respondents & Survey Answers Table */}
@@ -988,12 +990,14 @@ export default function MetricDetailModal({
                                   </div>
                                 </td>
                                 <td className="py-3 px-3.5">
-                                  <div className="font-bold text-gray-900">{displayName}</div>
-                                  <div className="flex items-center space-x-1.5 text-[10px] text-gray-500 mt-0.5 font-mono">
-                                    <span>{displayId}</span>
-                                    <span>•</span>
-                                    <span className="truncate max-w-[130px]">{displayEmail}</span>
-                                  </div>
+                                  <div className="font-bold text-gray-900">{displayName || <span className="italic font-medium text-gray-400">Identitas disembunyikan</span>}</div>
+                                  {(displayId || displayEmail) && (
+                                    <div className="flex items-center space-x-1.5 text-[10px] text-gray-500 mt-0.5 font-mono">
+                                      <span>{displayId}</span>
+                                      <span>•</span>
+                                      <span className="truncate max-w-[130px]">{displayEmail}</span>
+                                    </div>
+                                  )}
                                 </td>
                                 <td className="py-3 px-3.5">
                                   <div className="font-medium text-gray-900">{displayOrg1}</div>
@@ -1146,8 +1150,8 @@ export default function MetricDetailModal({
                                   {item.registered_at ? new Date(item.registered_at).toLocaleString('en-US') : '-'}
                                 </td>
                                 <td className="py-2.5 px-3.5">
-                                  <div className="font-bold text-gray-900">{item.employee_name}</div>
-                                  <div className="text-[10px] text-gray-500 font-mono">{item.nip} • {item.cimb_email}</div>
+                                  <div className="font-bold text-gray-900">{item.employee_name || <span className="italic font-medium text-gray-400">Identitas disembunyikan</span>}</div>
+                                  {item.nip && <div className="text-[10px] text-gray-500 font-mono">{item.nip} • {item.cimb_email}</div>}
                                 </td>
                                 <td className="py-2.5 px-3.5 text-gray-700">
                                   <div>{item.directorate}</div>
