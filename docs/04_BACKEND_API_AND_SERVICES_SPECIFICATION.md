@@ -254,13 +254,13 @@ backend boot) tanpa perlu dipicu manual — lihat `server.js` bagian `app.listen
 | `GET` | `/api/auth/me` | login | User (termasuk `scopes`) + permissions saat ini |
 | `POST` | `/api/auth/change-password` | login | `{ current_password, new_password }`; aturan password di bawah; sesi lain milik user itu dimatikan |
 | `GET` | `/api/admin/users` | ADMIN | Daftar akun (tanpa `password_hash`) |
-| `POST` | `/api/admin/users` | ADMIN | `{ username, full_name, email?, role, scopes }` (v2.27.0; bentuk lama `directorate` + `division` masih diterima) → 201 `{ user, temporary_password }` (tampil sekali). Username 3-50 karakter `[A-Za-z0-9._-]`; USER wajib minimal satu cakupan, direktorat/divisi harus ada di direktori database; ADMIN tidak terikat direktorat; duplikat → 409 |
+| `POST` | `/api/admin/users` | ADMIN | `{ username, full_name, email?, role, scopes }` (v2.27.0; bentuk lama `directorate` + `division` masih diterima) → 201 `{ user, temporary_password, is_default_password }` (tampil sekali; v2.27.2: bila env `DEFAULT_INITIAL_PASSWORD` terisi, `temporary_password` = password awal standar itu dan `is_default_password: true`, selain itu acak dan `false`). Username 3-50 karakter `[A-Za-z0-9._-]`; USER wajib minimal satu cakupan, direktorat/divisi harus ada di direktori database; ADMIN tidak terikat direktorat; duplikat → 409 |
 | `PUT` | `/api/admin/users/:id` | ADMIN | Ubah `full_name`, `email`, `is_active`, `role`/`scopes` (atau bentuk lama `directorate`/`division`). Tidak bisa menonaktifkan/menurunkan diri sendiri atau Admin aktif terakhir (400); nonaktif/ganti role mematikan sesi user itu |
-| `POST` | `/api/admin/users/:id/reset-password` | ADMIN | Password sementara acak baru (tampil sekali), membuka kunci akun, mematikan sesi; tidak untuk akun sendiri |
+| `POST` | `/api/admin/users/:id/reset-password` | ADMIN | Password sementara baru (acak, atau password awal standar bila env `DEFAULT_INITIAL_PASSWORD` terisi; respons memuat `is_default_password`; tampil sekali), membuka kunci akun, mematikan sesi; tidak untuk akun sendiri |
 | `DELETE` | `/api/admin/users/:id` | ADMIN | Hapus akun (bukan diri sendiri / Admin aktif terakhir). Belum ada tombol di UI |
 | `GET` | `/api/admin/audit-log` | ADMIN | `?limit=` (default 200, maks 1000), terbaru dulu |
 
-Aturan password baru: 10-128 karakter, mengandung huruf dan angka, tidak sama dengan username, berbeda dari password lama.
+Aturan password baru: 10-128 karakter, mengandung huruf dan angka, tidak sama dengan username, berbeda dari password lama, dan (v2.27.2) tidak sama dengan password awal standar bila env `DEFAULT_INITIAL_PASSWORD` terisi (`400`). Password awal itu sendiri (buatan sistem) dikecualikan dari aturan ini dan tidak dicatat di audit log.
 
 ### Rute → aturan akses (USER vs ADMIN)
 | Rute | USER | ADMIN |

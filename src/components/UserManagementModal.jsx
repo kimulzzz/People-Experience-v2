@@ -103,7 +103,7 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId }) 
       }
       if (editingId === null) {
         const data = await call('/api/admin/users', 'POST', { ...payload, username: form.username });
-        setTempPassword({ username: data.user.username, password: data.temporary_password });
+        setTempPassword({ username: data.user.username, password: data.temporary_password, isDefault: !!data.is_default_password });
         setMessage({ type: 'success', text: `Akun ${data.user.username} dibuat.` });
       } else {
         await call(`/api/admin/users/${editingId}`, 'PUT', payload);
@@ -133,7 +133,7 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId }) 
     setMessage(null);
     try {
       const data = await call(`/api/admin/users/${u.user_id}/reset-password`, 'POST');
-      setTempPassword({ username: u.username, password: data.temporary_password });
+      setTempPassword({ username: u.username, password: data.temporary_password, isDefault: !!data.is_default_password });
       await load();
     } catch (err) {
       setMessage({ type: 'error', text: err.message });
@@ -181,6 +181,7 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId }) 
               <code className="px-3 py-1.5 bg-white border border-amber-300 rounded-lg font-mono text-sm font-bold tracking-wider select-all">{tempPassword.password}</code>
               <button onClick={() => navigator.clipboard && navigator.clipboard.writeText(tempPassword.password)} className="p-1.5 bg-white border border-amber-300 rounded-lg hover:bg-amber-100" title="Salin"><Copy className="w-4 h-4" /></button>
             </div>
+            {tempPassword.isDefault && <p className="text-amber-900 font-semibold">Password awal standar — wajib diganti saat login pertama.</p>}
             <p className="text-amber-800">Password ini hanya ditampilkan SEKALI. Sampaikan ke pemilik akun; ia wajib menggantinya saat login pertama.</p>
             <button onClick={() => setTempPassword(null)} className="text-[11px] font-bold text-amber-900 underline">Sudah saya catat, tutup</button>
           </div>

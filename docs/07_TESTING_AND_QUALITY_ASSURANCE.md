@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    36 MODUL PENGUJIAN    │     177 AUTOMATED TESTS     │       100% PASS RATE          │
+│    37 MODUL PENGUJIAN    │     182 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -720,3 +720,17 @@ Cakupan yang **tidak** diuji otomatis: tampilan UI per role (diperiksa QC di Bro
 | Reminder | Positif | daftar reminder tidak berubah oleh hak PIC (tetap ke `pic_email`, tanpa secret) |
 
 **Tidak diuji / tidak terverifikasi**: NIP kembar (importer tidak menolaknya — celah lama, belum diputuskan), tanggal survei tidak valid, pengiriman email reminder asli, tampilan UI (hanya diperiksa QC di Browser pane), JSON setelah perbaikan terakhir.
+
+---
+
+## 🔑 20. Password Awal Standar — v2.27.2 (2026-10-15)
+
+**Regression suite: 182 test** (177 + **Modul 37**, 5 test). Modul 37 **hanya berjalan di SQL Server** dan di-skip di JSON: ia memasang `registerAuthRoutes` pada app express sementara di proses test (port acak) di atas database yang sama dan mengatur `process.env.DEFAULT_INITIAL_PASSWORD` sendiri dengan nilai acak per run (tidak ada password asli di repo). Akun uji dibersihkan di `finally`. Hasil suite penuh: lihat laporan QC/developer (tidak diverifikasi oleh penulis dokumen ini).
+
+| Modul 37 (5 test) | Jenis | Yang diuji |
+| :--- | :---: | :--- |
+| Akun baru dengan env terisi | Positif | `temporary_password` = password awal, `is_default_password: true`, `must_change_password`; login berhasil tetapi endpoint lain `403 PASSWORD_CHANGE_REQUIRED`; pengganti lemah ditolak; pengganti kuat diterima dan password awal mati |
+| Ganti ke password awal | Negatif | `400` ("awal standar"), password tidak berubah |
+| Reset password | Positif | memakai password awal, `must_change_password`, membuka akun yang terkunci (5 gagal) |
+| Kebocoran | Negatif | password awal tidak ada di audit log maupun daftar user |
+| Env kosong/spasi/tidak ada | Positif | kembali ke password acak yang lolos kebijakan, berbeda tiap kali, `is_default_password: false` |

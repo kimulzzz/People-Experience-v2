@@ -3275,6 +3275,124 @@ async function runRegressionSuite() {
     if (left.length) console.error(`     cleanup: ${left.length} test users remain`);
   }
 
+  // --- MODULE 37 (v2.27.2): standard initial password via env DEFAULT_INITIAL_PASSWORD ---
+  // The real server has its own environment, so this module mounts the REAL auth routes (registerAuthRoutes) on a
+  // throw-away in-process express app over the same SQL database and sets process.env here. The test value is made
+  // up per run; no real/default password exists in the repo. SQL backend only (the JSON backend keeps its data in
+  // the running server's memory, which an in-process app cannot share).
+  console.log('\n📦 MODULE 37: Standard Initial Password - env DEFAULT_INITIAL_PASSWORD (Positive & Negative Testing)');
+  {
+    const storage37 = require('../server/db/storage');
+    if (storage37.backend !== 'sql') {
+      console.log('  ⏭️  SKIP: Module 37 needs the SQL backend (in-process auth routes over the same database)');
+    } else {
+      const express = require('express');
+      const auth37 = require('../server/services/authService');
+      const crypto37 = require('crypto');
+      const savedEnv = process.env.DEFAULT_INITIAL_PASSWORD;
+      const DEFAULT_PW = 'Init-' + crypto37.randomBytes(6).toString('hex') + 'Zz'; // made up for this run only
+      const app37 = express();
+      app37.use(express.json());
+      auth37.registerAuthRoutes(app37);
+      const server37 = await new Promise(resolve => { const s = app37.listen(0, '127.0.0.1', () => resolve(s)); });
+      const B = `http://127.0.0.1:${server37.address().port}`;
+      const stamp37 = Date.now().toString(36);
+      const ids37 = [];
+      const post = (p, body, cookie) => realFetch(`${B}${p}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) }, body: JSON.stringify(body || {}) });
+      const ck = r => (r.headers.getSetCookie() || []).map(c => c.split(';')[0]).find(c => c.startsWith('px_session=')) || null;
+      const adminPw = crypto37.randomBytes(9).toString('hex') + 'Aa1';
+      const admin = await storage37.createUser({ username: `rt37admin${stamp37}`, full_name: 'Regression 37 Admin', email: '', role: 'ADMIN', password_hash: await auth37.hashPassword(adminPw), must_change_password: false });
+      ids37.push(admin.user_id);
+      try {
+        const adminLogin = await post('/api/auth/login', { username: admin.username, password: adminPw });
+        assert.strictEqual(adminLogin.status, 200);
+        const adminCookie = ck(adminLogin);
+        const createUser = async suffix => {
+          const username = `rt37${suffix}${stamp37}`;
+          const r = await post('/api/admin/users', { username, full_name: `Regression 37 ${suffix}`, role: 'ADMIN', scopes: [] }, adminCookie);
+          assert.strictEqual(r.status, 201);
+          const b = await r.json(); ids37.push(b.user.user_id);
+          return { username, id: b.user.user_id, body: b };
+        };
+
+        process.env.DEFAULT_INITIAL_PASSWORD = DEFAULT_PW;
+
+        await runTest('[POSITIVE] With the env set, a new account gets the standard initial password, must change it (403 elsewhere), and the policy still applies to its replacement', async () => {
+          const u = await createUser('a');
+          assert.strictEqual(u.body.temporary_password, DEFAULT_PW);
+          assert.strictEqual(u.body.is_default_password, true);
+          assert.strictEqual(u.body.user.must_change_password, true);
+          const login = await post('/api/auth/login', { username: u.username, password: DEFAULT_PW });
+          assert.strictEqual(login.status, 200);
+          const cookie = ck(login);
+          const blocked = await realFetch(`${B}/api/admin/users`, { headers: { Cookie: cookie } });
+          assert.strictEqual(blocked.status, 403);
+          assert.strictEqual((await blocked.json()).code, 'PASSWORD_CHANGE_REQUIRED');
+          const weak = await post('/api/auth/change-password', { current_password: DEFAULT_PW, new_password: 'short1' }, cookie);
+          assert.strictEqual(weak.status, 400);
+          const strong = 'Repl-' + crypto37.randomBytes(6).toString('hex') + '9';
+          const ok = await post('/api/auth/change-password', { current_password: DEFAULT_PW, new_password: strong }, cookie);
+          assert.strictEqual(ok.status, 200);
+          assert.strictEqual((await post('/api/auth/login', { username: u.username, password: DEFAULT_PW })).status, 401, 'initial password dead after the change');
+          assert.strictEqual((await post('/api/auth/login', { username: u.username, password: strong })).status, 200);
+        });
+
+        await runTest('[NEGATIVE] Changing to the standard initial password itself is refused (400, clear message) - also when it satisfies the policy', async () => {
+          const u = await createUser('b');
+          const cookie = ck(await post('/api/auth/login', { username: u.username, password: DEFAULT_PW }));
+          // A different current password so the "same as current" rule cannot be what refuses it: first move to a strong one.
+          const mid = 'Mid-' + crypto37.randomBytes(6).toString('hex') + '7';
+          assert.strictEqual((await post('/api/auth/change-password', { current_password: DEFAULT_PW, new_password: mid }, cookie)).status, 200);
+          const cookie2 = ck(await post('/api/auth/login', { username: u.username, password: mid }));
+          const r = await post('/api/auth/change-password', { current_password: mid, new_password: DEFAULT_PW }, cookie2);
+          assert.strictEqual(r.status, 400);
+          assert.ok(/awal standar/i.test((await r.json()).error));
+          assert.strictEqual((await post('/api/auth/login', { username: u.username, password: mid })).status, 200, 'password unchanged');
+        });
+
+        await runTest('[POSITIVE] reset-password uses the standard initial password too, forces a change and unlocks the account (lockout rules unchanged)', async () => {
+          const u = await createUser('c');
+          for (let i = 0; i < 5; i++) assert.strictEqual((await post('/api/auth/login', { username: u.username, password: 'Bad-Password-1' })).status, 401);
+          assert.strictEqual((await post('/api/auth/login', { username: u.username, password: DEFAULT_PW })).status, 401, 'locked after 5 failures even with the right password');
+          const reset = await post(`/api/admin/users/${u.id}/reset-password`, {}, adminCookie);
+          assert.strictEqual(reset.status, 200);
+          const rb = await reset.json();
+          assert.strictEqual(rb.temporary_password, DEFAULT_PW);
+          assert.strictEqual(rb.is_default_password, true);
+          assert.strictEqual(rb.user.must_change_password, true);
+          assert.strictEqual((await post('/api/auth/login', { username: u.username, password: DEFAULT_PW })).status, 200);
+        });
+
+        await runTest('[NEGATIVE] The standard initial password is never in the audit log or the user list', async () => {
+          const log = JSON.stringify(await storage37.getAuditLog(500));
+          assert.ok(log.includes(`rt37a${stamp37}`) || log.includes('USER_CREATE'), 'audit log has the events');
+          assert.strictEqual(log.includes(DEFAULT_PW), false, 'audit log must not contain the password');
+          const list = await realFetch(`${B}/api/admin/users`, { headers: { Cookie: adminCookie } });
+          assert.strictEqual((await list.text()).includes(DEFAULT_PW), false, 'user list must not contain the password');
+        });
+
+        await runTest('[POSITIVE] With the env empty or unset, accounts get a random temporary password as before (policy-conform, different each time, flagged not-default)', async () => {
+          for (const value of ['', '   ', undefined]) {
+            if (value === undefined) delete process.env.DEFAULT_INITIAL_PASSWORD; else process.env.DEFAULT_INITIAL_PASSWORD = value;
+            const u = await createUser(`r${ids37.length}`);
+            assert.notStrictEqual(u.body.temporary_password, DEFAULT_PW);
+            assert.strictEqual(u.body.is_default_password, false);
+            assert.strictEqual(auth37.validateNewPassword(u.body.temporary_password, null), null);
+            const reset = await (await post(`/api/admin/users/${u.id}/reset-password`, {}, adminCookie)).json();
+            assert.strictEqual(reset.is_default_password, false);
+            assert.notStrictEqual(reset.temporary_password, u.body.temporary_password);
+          }
+        });
+      } finally {
+        if (savedEnv === undefined) delete process.env.DEFAULT_INITIAL_PASSWORD; else process.env.DEFAULT_INITIAL_PASSWORD = savedEnv;
+        await new Promise(resolve => server37.close(resolve));
+        for (const id of ids37) { try { await storage37.deleteUser(id); } catch (_) { /* ignore */ } }
+        const leftovers = (await storage37.listUsers()).filter(x => x.username.endsWith(stamp37) && x.username.startsWith('rt37'));
+        if (leftovers.length) console.error(`     cleanup: ${leftovers.length} Module 37 users remain`);
+      }
+    }
+  }
+
   // --- SUMMARY ---
   console.log('\n================================================================');
   console.log(`📊 REGRESSION TEST SUMMARY: ${passedTests}/${totalTests} Tests Passed (${failedTests} Failed)`);

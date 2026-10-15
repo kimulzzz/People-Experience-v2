@@ -5,13 +5,14 @@
 //   npm run auth:create-admin -- --username 8801923 --name "Nama Lengkap" --email nama@cimbniaga.co.id
 //   npm run auth:create-admin -- --username admin --reset-password     new random password for an EXISTING account
 //
-// The password is RANDOM, printed once to this console and never stored in clear text (scrypt hash only).
+// The password is RANDOM, printed once to this console and never stored in clear text (scrypt hash only) - unless
+// the env DEFAULT_INITIAL_PASSWORD is set: then that standard initial password is used (and not echoed here).
 // The account must change it at the first login. There is no default password anywhere in the code.
 // Works on the active backend (STORAGE_BACKEND in .env: sql = px_users, json = server/data/auth.json).
 // Safe to re-run: an existing username is left alone unless --reset-password is given.
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const storage = require('../server/db/storage');
-const { hashPassword, generateTempPassword } = require('../server/services/authService');
+const { hashPassword, makeInitialPassword } = require('../server/services/authService');
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(`--${name}`);
@@ -29,7 +30,7 @@ async function main() {
   if (typeof storage.applySchema === 'function') await storage.applySchema();
 
   const existing = await storage.getUserByUsername(username);
-  const password = generateTempPassword();
+  const { password, isDefault } = makeInitialPassword();
   const password_hash = await hashPassword(password);
 
   if (existing) {
@@ -46,7 +47,7 @@ async function main() {
   console.log('==============================================================');
   console.log(existing ? 'Password akun Admin direset.' : 'Akun Admin dibuat.');
   console.log(`  Username           : ${username}`);
-  console.log(`  Password sementara : ${password}`);
+  console.log(isDefault ? '  Password sementara : (password awal standar dari DEFAULT_INITIAL_PASSWORD)' : `  Password sementara : ${password}`);
   console.log('  Catat sekarang - password ini TIDAK akan ditampilkan lagi.');
   console.log('  Anda wajib menggantinya pada login pertama.');
   console.log('==============================================================');

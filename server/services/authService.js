@@ -58,6 +58,18 @@ function generateTempPassword() {
   return chars.join('');
 }
 
+// Standard initial password (env DEFAULT_INITIAL_PASSWORD, read at call time; never stored in code, the database
+// in clear text or any log). Empty/unset = every new/reset account gets a random temporary password instead.
+// It is system-made, so it is exempt from validateNewPassword; the account still has to change it at first login.
+function getDefaultInitialPassword() {
+  const v = process.env.DEFAULT_INITIAL_PASSWORD;
+  return typeof v === 'string' && v.trim() ? v : null;
+}
+function makeInitialPassword() {
+  const def = getDefaultInitialPassword();
+  return def ? { password: def, isDefault: true } : { password: generateTempPassword(), isDefault: false };
+}
+
 // Returns an error message, or null when the password is acceptable.
 function validateNewPassword(password, user) {
   if (typeof password !== 'string') return 'Password baru wajib diisi.';
@@ -508,6 +520,7 @@ function registerAuthRoutes(app) {
       const problem = validateNewPassword(new_password, user);
       if (problem) return res.status(400).json({ error: problem });
       if (new_password === current_password) return res.status(400).json({ error: 'Password baru harus berbeda dari password saat ini.' });
+      if (new_password === getDefaultInitialPassword()) return res.status(400).json({ error: 'Password baru tidak boleh sama dengan password awal standar. Pilih password lain.' });
       const updated = await storage.updateUser(user.user_id, { password_hash: await hashPassword(new_password), must_change_password: false });
       await storage.deleteSessionsForUser(user.user_id, req.sessionHash);
       await audit(req, 'PASSWORD_CHANGE');
@@ -550,7 +563,7 @@ function registerAuthRoutes(app) {
       const assign = await validateAssignment(b.role, fromBody.scopes);
       if (assign.error) return res.status(400).json({ error: assign.error });
 
-      const temporaryPassword = generateTempPassword();
+      const { password: temporaryPassword, isDefault } = makeInitialPassword();
       let created;
       try {
         created = await storage.createUser({
@@ -562,7 +575,7 @@ function registerAuthRoutes(app) {
         throw err;
       }
       await audit(req, 'USER_CREATE', { target: `${created.username} (${created.role}) cakupan: ${describeScopes(created.scopes)}` });
-      res.status(201).json({ user: toPublicUser(created), temporary_password: temporaryPassword });
+      res.status(201).json({ user: toPublicUser(created), temporary_password: temporaryPassword, is_default_password: isDefault });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -626,13 +639,13 @@ function registerAuthRoutes(app) {
       const target = await storage.getUserById(req.params.id);
       if (!target) return res.status(404).json({ error: 'User tidak ditemukan.' });
       if (target.user_id === req.user.user_id) return res.status(400).json({ error: 'Gunakan menu ganti password untuk akun Anda sendiri.' });
-      const temporaryPassword = generateTempPassword();
+      const { password: temporaryPassword, isDefault } = makeInitialPassword();
       const updated = await storage.updateUser(target.user_id, {
         password_hash: await hashPassword(temporaryPassword), must_change_password: true, failed_attempts: 0, locked_until: null
       });
       await storage.deleteSessionsForUser(target.user_id);
       await audit(req, 'PASSWORD_RESET', { target: target.username });
-      res.json({ user: toPublicUser(updated), temporary_password: temporaryPassword });
+      res.json({ user: toPublicUser(updated), temporary_password: temporaryPassword, is_default_password: isDefault });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -680,7 +693,7 @@ async function warnIfNoUsers() {
 
 module.exports = {
   COOKIE_NAME, ROLES, PUBLIC_ROUTES,
-  hashPassword, verifyPassword, generateTempPassword, validateNewPassword,
+  hashPassword, verifyPassword, generateTempPassword, getDefaultInitialPassword, makeInitialPassword, validateNewPassword,
   getAuthSettings, toPublicUser, isEventManager, canSeeRespondentData, redactRespondent,
   isPicOfMetric, picMetricIds, picMetrics, getPicMetric, requirePicMetric, rowsForViewer, respondentScopeFor, audit, resolveScope, isInScope, describeScopes,
   parseCookies, requireRole, requireLogin, requireEventManager, scopeFilter, registerAuthRoutes, warnIfNoUsers

@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(177-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(182-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (177 cases) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (182 cases) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (29 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules |
 
@@ -501,6 +501,15 @@ domain model, not just descriptive:
   with the unique-NIP rule); invalid survey dates stored as today; PIC can upload rows outside own scope; only upload is audited; User e-mail optional;
   "PIC belum punya akun" checks any active account incl. Admin; leftover `px_survey_uploads` test batches (null `metric_id`) survive metric delete; real
   reminder e-mail untested; `/api/settings` 401 noise remains. Version 2.28.0 stays reserved for the AI feature in `git stash`.
+
+- **v2.27.2** (2026-10-15, see `CHANGELOG.md` [2.27.2], `docs/06`): User asked for a standard initial password instead of random temporary ones. New OPTIONAL env
+  `DEFAULT_INITIAL_PASSWORD` (`.env`, gitignored; never write its value anywhere): when set, new accounts (`POST /api/admin/users`), `reset-password` and
+  `npm run auth:create-admin` (first admin and `--reset-password`) use it instead of a random password (`authService.getDefaultInitialPassword/makeInitialPassword`);
+  empty/unset = old random behaviour. `must_change_password` stays true; the initial password is exempt from the password policy but the replacement must pass it
+  (min 10 + letter + digit) and must differ from it (400). Responses keep `temporary_password` plus new `is_default_password`; not in audit/server logs; UI shows
+  "Password awal standar - wajib diganti saat login pertama". Lockout/rate limit unchanged. The old statement "no default password" now means: none in code/repo, settable
+  via env. RISK (user's trade-off): until the owner first logs in, anyone who knows the initial password can enter that account - change it at once. Tests: Module 37
+  (5) -> 182 total; runs on SQL only (skipped on JSON; mounts `registerAuthRoutes` on a temporary express app).
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

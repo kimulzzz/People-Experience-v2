@@ -108,12 +108,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.27.1' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.27.2' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.27.1',
+    version: '2.27.2',
     local_ai: {
       ollama_status: ollama ? 'connected' : 'offline (using local heuristic engine)',
       host: process.env.OLLAMA_HOST || 'http://localhost:11434'
