@@ -23,33 +23,27 @@ experience ("Kejar Mimpi" framework: 70% Survey Index + 30% Outcome Index).
 
 ## Custom subagents (`.claude/agents/`)
 
-Files are named by ROLE (easy to find when handing over); the agent's call name is the `name:` in each file's header:
+Agents are called by their ROLE — the agent name equals the file name: `developer`, `qc`, `technical-writer`, `auditor`
+(no nicknames; refer to them by role in conversation too).
 
-| File | Agent name (call it by this) | Role |
-|---|---|---|
-| `developer.md` | **nia** | developer |
-| `qc.md` | **fiqih** | QC |
-| `technical-writer.md` | **zaki** | technical writer |
-| `auditor.md` | **ajo** | auditor |
-
-- **`ajo`** (the auditor; formerly named `auditor` — older notes below still say "auditor") — read-only agent that scans `server/services/*.js` and `server/server.js` for
+- **`auditor`** — read-only agent that scans `server/services/*.js` and `server/server.js` for
   hardcoded values that should instead come from `server/db/storage.js`/`store.json` (the app's
   database) or the real server clock, as distinct from `server/db/seedData.js`'s intentionally
   static seed/demo data. Run it periodically after touching `calculationEngine.js`,
   `alertEngine.js`, or `seedData.js`. See `.claude/agents/auditor.md` for its full brief and
   `CHANGELOG.md` **[2.12.0]** for its first run's findings (all fixed).
 
-- **`nia`** (developer) — implements a change (backend, frontend, SQL schema, services). Keeps both storage backends
+- **`developer`** — implements a change (backend, frontend, SQL schema, services). Keeps both storage backends
   (`sqlStorage.js` + `jsonStorage.js`) in step, runs the regression suite itself, bumps the version; never commits,
   never edits `.env`/`store.json`, never touches credentials. See `.claude/agents/developer.md`.
-- **`fiqih`** (QC) — read-only quality control: runs the suite (SQL ×2, JSON when relevant), probes API/negative cases,
+- **`qc`** — read-only quality control: runs the suite (SQL ×2, JSON when relevant), probes API/negative cases,
   checks SQL↔JSON parity, data leakage, and verifies the UI in the Browser pane; returns a LULUS/GAGAL verdict with
   evidence. Never fixes. See `.claude/agents/qc.md`.
-- **`zaki`** (technical writer) — documents a finished change (CHANGELOG, `docs/*.md`, `SQLServerDB.md`, these Notes) in the
+- **`technical-writer`** — documents a finished change (CHANGELOG, `docs/*.md`, `SQLServerDB.md`, these Notes) in the
   project's Indonesian style, verifying claims against the code; docs only, CRLF-safe, never writes secrets. See
   `.claude/agents/technical-writer.md`.
 
-Suggested flow for a change: `nia` → `fiqih` → `zaki` → (main session) commit & push with explicit
+Suggested flow for a change: `developer` → `qc` → `technical-writer` → (main session) commit & push with explicit
 `git add <files>` (never `git add server`/`.` — it would sweep in `server/data/store.json`).
 
 ## Running locally
@@ -456,7 +450,7 @@ domain model, not just descriptive:
 - **v2.25.0** (2026-10-13, see `CHANGELOG.md` [2.25.0]): User noticed Explore Metrics showed metric #14 ("% employees receiving
   recognition / year") as "4330%" (it is a head-count: 2,840+980+510 recipients vs target 5,000/yr) and asked to fix only that.
   Root cause: `Calculator.jsx`/`MetricDetailModal.jsx` hardcoded the unit (`RATING_5 → "/ 5"`, `metric_id === 11 → "pax"`, everything else
-  "%"), and metrics had no unit in the DB. Fix (built by the `nia` agent): new `px_metrics.unit` column (idempotent ALTER + boot top-up
+  "%"), and metrics had no unit in the DB. Fix (built by the `developer` agent): new `px_metrics.unit` column (idempotent ALTER + boot top-up
   that only fills NULLs, so admin edits are never overwritten; JSON backfill too), seeded (`/ 5`, `pax`, `orang/tahun` for #14, `%`),
   editable in Parameter Admin, exposed as `unit` by calculate/detail/parameters, rendered via `src/utils/formatMetricValue.js`.
   Scores/status untouched. Proof nothing else moved: previous commit (temp git worktree, other port, same DB) vs new code → 58/58
@@ -470,8 +464,12 @@ domain model, not just descriptive:
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan
 langkah-langkah ini sebelum melaporkan pekerjaan selesai — jangan tunggu diminta:
 
-1. **Regression test**: jalankan `node tests/regressionTest.js`. Semua test harus PASS.
-   Kalau ada yang gagal karena perubahanmu, perbaiki dulu sebelum lanjut.
+1. **Regression test** (dua tingkat, agar hemat waktu & token — disetujui user 2026-10-15): **selama pengembangan**
+   jalankan hanya tes cepat/terarah yang relevan dengan perubahan (modul terkait, probe API, `vite build`), jangan
+   mengulang suite penuh; **sekali sebelum commit** jalankan `node tests/regressionTest.js` penuh — semua test harus
+   PASS (tes yang di-skip dilaporkan sebagai skip, bukan lulus). Kalau ada yang gagal karena perubahanmu, perbaiki dulu.
+   Developer tidak mengulang suite penuh berkali-kali; QC hanya menguji area yang berubah (bukan "dari awal") kecuali
+   perubahan besar. (Fitur `--only=<modul>` untuk tes cepat belum ada — rencana setelah PR fitur AI.)
 2. **Versioning**: naikkan angka versi di `server/server.js` (field `version` pada endpoint
    `/api/health`), dan tambahkan entri baru di `CHANGELOG.md` (format `## [x.y.z] - YYYY-MM-DD`
    yang sudah konsisten dipakai di file ini) menjelaskan apa yang berubah dan mengapa.
