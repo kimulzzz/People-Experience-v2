@@ -251,11 +251,11 @@ backend boot) tanpa perlu dipicu manual — lihat `server.js` bagian `app.listen
 | :---: | :--- | :---: | :--- |
 | `POST` | `/api/auth/login` | publik | Body `{ username, password }` → set cookie `px_session`; balas `{ user, permissions: { is_admin, can_manage_events } }`. Salah/tidak dikenal/nonaktif/terkunci → 401 pesan generik; kosong → 400; terlalu banyak gagal → 429 + `Retry-After` |
 | `POST` | `/api/auth/logout` | login | Hapus sesi di server + cookie |
-| `GET` | `/api/auth/me` | login | User + permissions saat ini |
+| `GET` | `/api/auth/me` | login | User (termasuk `scopes`) + permissions saat ini |
 | `POST` | `/api/auth/change-password` | login | `{ current_password, new_password }`; aturan password di bawah; sesi lain milik user itu dimatikan |
 | `GET` | `/api/admin/users` | ADMIN | Daftar akun (tanpa `password_hash`) |
-| `POST` | `/api/admin/users` | ADMIN | `{ username, full_name, email?, role, directorate, division }` → 201 `{ user, temporary_password }` (tampil sekali). Username 3-50 karakter `[A-Za-z0-9._-]`; USER wajib direktorat+divisi yang ada di direktori database; ADMIN tidak terikat direktorat; duplikat → 409 |
-| `PUT` | `/api/admin/users/:id` | ADMIN | Ubah `full_name`, `email`, `is_active`, `role`/`directorate`/`division`. Tidak bisa menonaktifkan/menurunkan diri sendiri atau Admin aktif terakhir (400); nonaktif/ganti role mematikan sesi user itu |
+| `POST` | `/api/admin/users` | ADMIN | `{ username, full_name, email?, role, scopes }` (v2.27.0; bentuk lama `directorate` + `division` masih diterima) → 201 `{ user, temporary_password }` (tampil sekali). Username 3-50 karakter `[A-Za-z0-9._-]`; USER wajib minimal satu cakupan, direktorat/divisi harus ada di direktori database; ADMIN tidak terikat direktorat; duplikat → 409 |
+| `PUT` | `/api/admin/users/:id` | ADMIN | Ubah `full_name`, `email`, `is_active`, `role`/`scopes` (atau bentuk lama `directorate`/`division`). Tidak bisa menonaktifkan/menurunkan diri sendiri atau Admin aktif terakhir (400); nonaktif/ganti role mematikan sesi user itu |
 | `POST` | `/api/admin/users/:id/reset-password` | ADMIN | Password sementara acak baru (tampil sekali), membuka kunci akun, mematikan sesi; tidak untuk akun sendiri |
 | `DELETE` | `/api/admin/users/:id` | ADMIN | Hapus akun (bukan diri sendiri / Admin aktif terakhir). Belum ada tombol di UI |
 | `GET` | `/api/admin/audit-log` | ADMIN | `?limit=` (default 200, maks 1000), terbaru dulu |
@@ -265,12 +265,12 @@ Aturan password baru: 10-128 karakter, mengandung huruf dan angka, tidak sama de
 ### Rute → aturan akses (USER vs ADMIN)
 | Rute | USER | ADMIN |
 | :--- | :--- | :--- |
-| `GET /api/metrics/calculate`, `/api/metrics/trends` | hanya direktoratnya (kosong/`ALL`/miliknya → miliknya; lain → 403). `calculate`: metrik non-karyawan = agregat bankwide read-only, `excluded_from_index` | semua |
+| `GET /api/metrics/calculate`, `/api/metrics/trends` | hanya cakupannya (v2.27.0: kosong/`ALL` → semua cakupan saya; direktorat/divisi di luar cakupan → 403). `calculate`: metrik non-karyawan = agregat bankwide read-only, `excluded_from_index` | semua |
 | `GET /api/metrics/:id/detail` | idem; payload di-`redactRespondent()` + `respondent_data_hidden: true` | lengkap |
 | `GET /api/surveys/evidence`, `GET /api/surveys/responses/:metric_id` | 403 | ya |
 | `GET /api/surveys/metrics`, `/template`, `/history`; `POST /api/surveys/upload` | 403 | ya |
 | `POST /api/metrics/score`, `/api/metrics/weights`, `/api/alerts/acknowledge`, `/api/action-library`, `/api/questions/master` | 403 | ya |
-| `GET /api/alerts`, `/api/action-library`, `/api/questions/master`, `/api/settings`, `/api/directorates` | ya (alerts bankwide, tidak disaring direktorat) | ya |
+| `GET /api/alerts`, `/api/action-library`, `/api/questions/master`, `/api/settings`, `/api/directorates` | ya (v2.27.0: `/api/alerts` dihitung dari data dalam cakupan) | ya |
 | `/api/admin/*` (parameter, journeys, metrics, targets, survey-questions, upload-reminders, email-settings, settings, users, audit-log) | 403 | ya |
 | `GET /api/events`, `/api/events/:id` | ya, tanpa kode akses; absensi/feedback per orang disamarkan | lengkap |
 | `POST/DELETE` event, hapus absensi/feedback, media, transkrip, `generate-ppt`, `GET /api/reports/download/:file`, `/exports/*` | hanya bila direktoratnya ada di setting `event_manager_directorates` (default Human Resources); selain itu 403 | ya |
@@ -279,3 +279,20 @@ Aturan password baru: 10-128 karakter, mengandung huruf dan angka, tidak sama de
 Setting baru (`px_app_settings`, ubah lewat `PUT /api/admin/settings/:key`; angka divalidasi rentang): `session_hours` (8; 1-72), `login_max_attempts` (5; 3-20), `login_lockout_minutes` (15; 1-1440), `login_rate_limit_per_minute` (20; 5-200), `event_manager_directorates` (daftar `{ value, label }`, default Human Resources).
 
 Respons 403 tambahan: `PASSWORD_CHANGE_REQUIRED` (akun belum ganti password sementara) dan penolakan `Origin` lintas-host pada request tulis. Service baru: `authService.js`, `rateLimiter.js`; storage: `getUser*/createUser/updateUser/deleteUser`, `createSession/getSession/deleteSession[sForUser]/purgeExpiredSessions`, `addAuditLog/getAuditLog` di `sqlStorage.js` dan `jsonStorage.js`.
+
+## 🎯 Catatan v2.27.0 — Cakupan Data User (scopes)
+
+**Bentuk `scopes`** (di `GET|POST /api/admin/users`, `PUT /api/admin/users/:id`, `GET /api/auth/me`): `[{ "directorate": "<nama>", "divisions": null | ["<divisi>", ...] }]`. `null` (atau `[]` pada input) = semua divisi direktorat itu. Respons selalu dinormalisasi: satu entri per direktorat, divisi digabung, "semua" menyerap subset. Objek user tetap memuat `directorate`/`division` tunggal untuk klien lama (terisi hanya bila cakupan tepat satu direktorat; `division` hanya bila tepat satu divisi).
+
+**Validasi (400)**: User tanpa `scopes`/kosong, `scopes` bukan array, entri tanpa direktorat, direktorat atau divisi tak ada di direktori, divisi bukan milik direktoratnya, `divisions` bukan array string, Admin dengan cakupan tidak kosong, bentuk lama tanpa `division`. Menurunkan Admin → User tanpa `scopes` ditolak; mengubah ke Admin mengosongkan cakupan. Permintaan ditolak tidak mengubah apa pun. `PUT` ke id tak ada → 404. Perubahan cakupan dicatat sebagai `USER_SCOPE_CHANGE` di `px_audit_log` (kolom `target` dipotong ±190 karakter).
+
+**Aturan rute yang berubah untuk USER** (Admin tidak dibatasi):
+
+| Rute | Perilaku v2.27.0 |
+| :--- | :--- |
+| `GET /api/metrics/calculate`, `/trends`, `/:id/detail` | `?directorate&sub_directorate` diselesaikan oleh `resolveScope()`; kosong/`ALL` = gabungan seluruh cakupan (di-pool, sampel = jumlah sampel); satu direktorat dari cakupan = angka sama dengan tampilan Admin untuk direktorat itu; di luar cakupan → 403. `calculate` menambah `filter_options.scopes` dan `is_directorate_filtered` |
+| `GET /api/alerts` | Menerima `?directorate&sub_directorate`; skor dan komentar verbatim dihitung dari responden dalam cakupan saja; di luar cakupan → 403. Tiap alert punya `is_bankwide_readonly` (true untuk metrik non-karyawan/OUTCOME: nilai bankwide read-only) |
+| `GET /api/events`, `/api/events/:id` | Non-pengelola hanya melihat absensi dan feedback peserta dalam cakupan; `total_attendees` di daftar mengikuti. Admin melihat semua |
+| Rute tulis event, media, transkrip, PPT | Pengelola event = Admin, atau User yang cakupannya memuat direktorat di setting `event_manager_directorates` (`permissions.can_manage_events`) |
+
+Catatan: User dengan "semua divisi" yang meminta `sub_directorate` tak dikenal mendapat 200 dengan data kosong (bukan 403), tanpa kebocoran. Kode: `server/db/scopeUtils.js` (`normalizeScopes`, `scopeAllows`, `rowInScopes`, `legacyUserScopes`), `authService.js` (`resolveScope`, `isInScope`, `scopeFilter`, `describeScopes`), `filterUtils.js` dan `calculationEngine.js` (filter gabungan), `alertEngine.js` (parameter `scope`), storage SQL/JSON (`createUser`/`updateUser`/`getUser*` memuat `scopes`).

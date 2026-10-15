@@ -16,6 +16,7 @@ const {
   initialEmailSettings
 } = require('./seedData');
 const { parseFilterOptions, normalizeDateString, todayDateString } = require('./filterUtils');
+const { normalizeScopes, rowInScopes, legacyUserScopes } = require('./scopeUtils');
 const { defaultUnitForScale, parseUnit } = require('./metricUnit');
 const { buildInitialStore: loadInitialStore } = require('./initialStore');
 
@@ -150,6 +151,15 @@ function getAuth() {
       try { authStore = { ...authStore, ...JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8')) }; }
       catch (err) { console.error('Error loading auth.json:', err.message); }
     }
+    // v2.26.0 accounts had ONE directorate + ONE division: turn them into scope entries (division empty =
+    // all divisions). Only users without a `scopes` array are touched, so this is safe on every load.
+    let migrated = false;
+    authStore.users.forEach(u => {
+      if (Array.isArray(u.scopes)) return;
+      u.scopes = legacyUserScopes(u);
+      migrated = true;
+    });
+    if (migrated) saveAuth();
   }
   return authStore;
 }
@@ -159,7 +169,7 @@ function saveAuth() {
   catch (err) { console.error('Failed to save auth.json:', err); }
 }
 
-const copyUser = u => (u ? { ...u } : null);
+const copyUser = u => (u ? { ...u, scopes: normalizeScopes(u.scopes) } : null);
 
 const storage = {
   // --- APP SETTINGS (admin-managed UI values: PX target line, event dropdown options) ---
@@ -238,8 +248,7 @@ const storage = {
       email: u.email || '',
       password_hash: u.password_hash,
       role: u.role,
-      directorate: u.directorate || null,
-      division: u.division || null,
+      scopes: normalizeScopes(u.scopes),
       is_active: u.is_active === undefined ? true : !!u.is_active,
       must_change_password: u.must_change_password === undefined ? true : !!u.must_change_password,
       failed_attempts: 0,
@@ -255,10 +264,11 @@ const storage = {
     const a = getAuth();
     const u = a.users.find(x => x.user_id === parseInt(user_id, 10));
     if (!u) return null;
-    ['full_name', 'email', 'password_hash', 'role', 'directorate', 'division', 'is_active', 'must_change_password',
+    ['full_name', 'email', 'password_hash', 'role', 'is_active', 'must_change_password',
       'failed_attempts', 'locked_until', 'last_login_at'].forEach(f => {
       if (patch[f] !== undefined) u[f] = (f === 'locked_until' || f === 'last_login_at') && patch[f] ? new Date(patch[f]).toISOString() : patch[f];
     });
+    if (patch.scopes !== undefined) u.scopes = normalizeScopes(patch.scopes);
     saveAuth();
     return copyUser(u);
   },
@@ -1135,7 +1145,7 @@ const storage = {
   applyResponseFilters(responses, filterOptions) {
     const parsed = parseFilterOptions(filterOptions);
     if (!parsed) return responses;
-    const { mode, year, month, directorate, subDirectorate, endMonth } = parsed;
+    const { mode, year, month, directorate, subDirectorate, endMonth, scopes } = parsed;
 
     return responses.filter(r => {
       const d = normalizeDateString(r.survey_date || r.created_at) || '';
@@ -1160,6 +1170,9 @@ const storage = {
         const itemSubDir = r.division || r.major || r.recruitment_channel || '';
         if (itemSubDir !== subDirectorate) return false;
       }
+
+      // 4. Union scope (login's data scope): the row must fall in at least one scope entry
+      if (scopes && !rowInScopes(scopes, r.directorate || r.university || r.applied_position || '', r.division || r.major || r.recruitment_channel || '')) return false;
 
       return true;
     });

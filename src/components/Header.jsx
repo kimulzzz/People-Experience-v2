@@ -40,8 +40,9 @@ export default function Header({
   onOpenUserManagementModal
 }) {
   const { user, isAdmin, logout } = useAuth();
-  // A USER's directorate filter is locked to their own directorate (the server enforces the same rule).
-  const directorateLocked = !isAdmin;
+  // A USER's filters only offer their data scope (one or more directorates, each all or some divisions);
+  // "ALL" then means "all my scope". The server enforces the same rule.
+  const userScopes = isAdmin ? null : (user.scopes || []);
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [activeThemeId, setActiveThemeId] = useState(getSavedThemeId());
 
@@ -73,9 +74,12 @@ export default function Header({
     ? [...availableYears].sort((a, b) => b.localeCompare(a))
     : [filterOptions.year || CURRENT_YEAR];
 
-  // Current selected directorate object
+  // Directorates / divisions the filters offer: everything for an Admin, only the account's scope for a User
+  const selectableDirectorates = userScopes ? directoratesList.filter(d => userScopes.some(s => s.directorate === d.name)) : directoratesList;
   const currentDirectorateObj = directoratesList.find(d => d.name === filterOptions.directorate);
-  const availableSubDirectorates = currentDirectorateObj ? currentDirectorateObj.divisions : [];
+  const currentScope = userScopes ? userScopes.find(s => s.directorate === filterOptions.directorate) : null;
+  const availableSubDirectorates = !currentDirectorateObj ? []
+    : (currentScope && currentScope.divisions ? currentDirectorateObj.divisions.filter(v => currentScope.divisions.includes(v)) : currentDirectorateObj.divisions);
 
   const handleModeChange = (newMode) => {
     if (onFilterChange) {
@@ -226,13 +230,12 @@ export default function Header({
               <Building2 className="w-3.5 h-3.5 text-[#ED1C24] shrink-0" />
               <select
                 value={filterOptions.directorate}
-                disabled={directorateLocked}
                 onChange={(e) => handleDirectorateChange(e.target.value)}
-                className={`text-xs font-bold text-gray-900 bg-transparent focus:outline-none truncate ${directorateLocked ? 'cursor-not-allowed' : 'cursor-pointer'}`}
-                title={directorateLocked ? 'Terkunci ke direktorat akun Anda' : 'Pilih Direktorat (Default: All Bankwide)'}
+                className="text-xs font-bold text-gray-900 bg-transparent focus:outline-none truncate cursor-pointer"
+                title={isAdmin ? 'Pilih Direktorat (Default: All Bankwide)' : 'Pilih direktorat dalam cakupan data akun Anda'}
               >
-                {!directorateLocked && <option value="ALL">Direktorat: All (Bankwide)</option>}
-                {directoratesList.map(d => (
+                <option value="ALL">{isAdmin ? 'Direktorat: All (Bankwide)' : 'Semua cakupan saya'}</option>
+                {selectableDirectorates.map(d => (
                   <option key={d.name} value={d.name}>
                     {d.name}
                   </option>
@@ -360,8 +363,8 @@ export default function Header({
                 <UserCircle2 className="w-5 h-5 text-gray-400 shrink-0" />
                 <div className="leading-tight hidden sm:block max-w-[170px]">
                   <div className="text-[11px] font-bold text-gray-900 truncate" title={user.full_name}>{user.full_name}</div>
-                  <div className="text-[9px] font-bold text-gray-500 uppercase tracking-wide truncate" title={isAdmin ? 'Admin' : `${user.directorate} - ${user.division}`}>
-                    {isAdmin ? 'Admin' : `User - ${user.directorate}`}
+                  <div className="text-[9px] font-bold text-gray-500 uppercase tracking-wide truncate" title={isAdmin ? 'Admin' : (user.scopes || []).map(s => `${s.directorate}${s.divisions ? ` (${s.divisions.join(', ')})` : ''}`).join('; ')}>
+                    {isAdmin ? 'Admin' : `User - ${(user.scopes || []).length === 1 ? user.scopes[0].directorate : `${(user.scopes || []).length} direktorat`}`}
                   </div>
                 </div>
                 <button

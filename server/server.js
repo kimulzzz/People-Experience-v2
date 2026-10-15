@@ -108,12 +108,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.26.0' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.27.0' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.26.0',
+    version: '2.27.0',
     local_ai: {
       ollama_status: ollama ? 'connected' : 'offline (using local heuristic engine)',
       host: process.env.OLLAMA_HOST || 'http://localhost:11434'
@@ -213,9 +213,10 @@ app.get('/api/directorates', async (req, res) => {
 app.get('/api/metrics/calculate', async (req, res) => {
   try {
     const { period, mode, year, month, endMonth, sub_directorate, subDirectorate } = req.query;
-    // A USER is locked to their own directorate (another one -> 403); the client value is otherwise ignored.
-    const directorate = auth.scopeDirectorate(req, res, req.query.directorate);
-    if (directorate === null) return;
+    // A USER is limited to their data scope (one or more directorates, each all or some divisions): a
+    // directorate/division outside it -> 403; "ALL" means the union of their whole scope.
+    const scope = auth.scopeFilter(req, res);
+    if (scope === null) return;
     const filterOptions = {
       period: period || (mode === 'MTD' ? `${year || CURRENT_YEAR}-${month || '01'}` : (mode === 'YTD' ? 'YTD' : (year || CURRENT_YEAR))),
       mode: mode || (period && /^\d{4}-\d{2}$/.test(period) ? 'MTD' : 'YTD'),
@@ -225,8 +226,9 @@ app.get('/api/metrics/calculate', async (req, res) => {
       // instead of the full year — mainly used to audit/verify the Performance Trend chart's
       // cumulative points against this same scorecard endpoint.
       endMonth: endMonth || null,
-      directorate,
-      sub_directorate: sub_directorate || subDirectorate || 'ALL'
+      directorate: scope.directorate,
+      sub_directorate: scope.sub_directorate,
+      scopes: scope.scopes
     };
     // A USER reads non-employee metrics (#1-#5 ...) as read-only bankwide values instead of "exempted";
     // they stay out of the directorate's index so the total equals what the Admin sees for that directorate.
@@ -241,14 +243,15 @@ app.get('/api/metrics/calculate', async (req, res) => {
 // 2b. Metric Drilldown Detail with Questions Breakdown & Responses
 app.get('/api/metrics/:id/detail', async (req, res) => {
   try {
-    const { period, mode, year, month, sub_directorate, subDirectorate } = req.query;
-    let directorate = auth.scopeDirectorate(req, res, req.query.directorate);
-    if (directorate === null) return;
+    const { period, mode, year, month } = req.query;
+    const scope = auth.scopeFilter(req, res);
+    if (scope === null) return;
+    let { directorate, sub_directorate, scopes } = scope;
     // Bankwide / non-employee metrics (campus, candidates, ...) have no directorate: a USER reads
     // them as the bankwide aggregate (read-only) instead of an "exempted" empty view.
     if (req.user.role !== 'ADMIN') {
       const metric = (await storage.getMetrics()).find(m => String(m.metric_id) === String(req.params.id));
-      if (metric && metric.is_employee_metric === false) directorate = 'ALL';
+      if (metric && metric.is_employee_metric === false) { directorate = 'ALL'; sub_directorate = 'ALL'; scopes = null; }
     }
     const filterOptions = {
       period: period || (mode === 'MTD' ? `${year || CURRENT_YEAR}-${month || '01'}` : (mode === 'YTD' ? 'YTD' : (year || CURRENT_YEAR))),
@@ -256,7 +259,8 @@ app.get('/api/metrics/:id/detail', async (req, res) => {
       year: year || (period && /^\d{4}/.test(period) ? period.slice(0, 4) : CURRENT_YEAR),
       month: month || (period && period.length >= 7 && /^\d{4}-\d{2}/.test(period) ? period.slice(5, 7) : '01'),
       directorate,
-      sub_directorate: sub_directorate || subDirectorate || 'ALL'
+      sub_directorate,
+      scopes
     };
     const detail = await getMetricDetail(req.params.id, filterOptions);
     if (!detail) {
@@ -275,9 +279,9 @@ app.get('/api/metrics/:id/detail', async (req, res) => {
 // 2c. Monthly Trend Series
 app.get('/api/metrics/trends', async (req, res) => {
   try {
-    const { mode, year, startYear, startMonth, endYear, endMonth, sub_directorate, subDirectorate } = req.query;
-    const directorate = auth.scopeDirectorate(req, res, req.query.directorate);
-    if (directorate === null) return;
+    const { mode, year, startYear, startMonth, endYear, endMonth } = req.query;
+    const scope = auth.scopeFilter(req, res);
+    if (scope === null) return;
     const targetYear = year || CURRENT_YEAR;
     const filterOptions = {
       mode: (mode || 'YTD').toUpperCase() === 'MTD' ? 'MTD' : 'YTD',
@@ -286,8 +290,9 @@ app.get('/api/metrics/trends', async (req, res) => {
       startMonth: startMonth || null,
       endYear: endYear || null,
       endMonth: endMonth || null,
-      directorate,
-      sub_directorate: sub_directorate || subDirectorate || 'ALL'
+      directorate: scope.directorate,
+      sub_directorate: scope.sub_directorate,
+      scopes: scope.scopes
     };
     const trends = await computeMonthlyTrends(filterOptions);
     // last_complete_month tells the frontend range picker which months of `year` are even
@@ -576,7 +581,11 @@ app.post('/api/metrics/weights', ADMIN_ONLY, async (req, res) => {
 // 3. Alerts & Action Library Recommendations
 app.get('/api/alerts', async (req, res) => {
   try {
-    const alertsData = await getAlertsAndRecommendations();
+    // A USER's alerts are computed from the data inside their scope only (Admin: bankwide, or the
+    // optional ?directorate / ?sub_directorate filter).
+    const scope = auth.scopeFilter(req, res);
+    if (scope === null) return;
+    const alertsData = await getAlertsAndRecommendations({ ...scope, bankwideReadOnly: req.user.role !== 'ADMIN' });
     res.json(alertsData);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -698,12 +707,25 @@ app.get('/api/surveys/responses/:metric_id', async (req, res) => {
 // 5. Events Management (Signature Programs)
 const hideEventCodes = e => ({ ...e, pre_event_code: null, post_event_code: null });
 
+// A User who does not manage events only sees attendance / feedback rows of attendees inside their data
+// scope (feedback carries just the NIP, so it follows the attendee's directorate/division). Managers and
+// Admins see everything.
+async function eventRowsForViewer(req, eventId) {
+  let atts = await storage.getAttendancesByEvent(eventId);
+  let feedbacks = await storage.getFeedbackByEvent(eventId);
+  if (!(await auth.isEventManager(req.user))) {
+    const inScope = new Set(atts.filter(a => auth.isInScope(req.user, a.directorate, a.division)).map(a => a.nip));
+    atts = atts.filter(a => inScope.has(a.nip));
+    feedbacks = feedbacks.filter(f => inScope.has(f.nip));
+  }
+  return { atts, feedbacks };
+}
+
 app.get('/api/events', async (req, res) => {
   try {
     const events = await storage.getEvents();
     const enriched = await Promise.all(events.map(async e => {
-      const atts = await storage.getAttendancesByEvent(e.event_id);
-      const feedbacks = await storage.getFeedbackByEvent(e.event_id);
+      const { atts, feedbacks } = await eventRowsForViewer(req, e.event_id);
 
       let totalRating = 0;
       let count = 0;
@@ -740,8 +762,7 @@ app.get('/api/events/:id', async (req, res) => {
     if (!event) return res.status(404).json({ error: 'Event not found' });
 
     const questions = await storage.getEventQuestions(event.event_id);
-    const attendances = await storage.getAttendancesByEvent(event.event_id);
-    const feedbacks = await storage.getFeedbackByEvent(event.event_id);
+    const { atts: attendances, feedbacks } = await eventRowsForViewer(req, event.event_id);
     const media = await storage.getMediaByEvent(event.event_id);
 
     // Attendee / respondent identity (NIP, name, e-mail) is only for those who manage events.

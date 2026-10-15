@@ -40,7 +40,7 @@ Script `scripts/sqlserver/Setup-SqlServer.ps1` (idempoten, log di `scripts/sqlse
 
 ---
 
-## 3. Skema (`server/db/schema.sql` — 28 tabel, prefix `px_`)
+## 3. Skema (`server/db/schema.sql` — 29 tabel, prefix `px_`)
 
 | Kelompok | Tabel | Catatan |
 | :--- | :--- | :--- |
@@ -53,6 +53,7 @@ Script `scripts/sqlserver/Setup-SqlServer.ps1` (idempoten, log di `scripts/sqlse
 | Signature Event | `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` | `UNIQUE(event_id, nip)` pada absensi & feedback (NIP tetap kunci utama responden). FK `ON DELETE CASCADE` ke `px_events`. **`px_media.file_path`** = path file di disk (mis. `/uploads/media-….mp4`) + `caption`, `ai_generated_description`, `transcript`, `transcript_segments` (JSON), `transcript_status`, `duration_seconds`. |
 | Survei | `px_survey_uploads`, `px_survey_uploaded_responses`, `px_acknowledged_alerts` | Responden **dinormalisasi** (lihat bawah). Index `(metric_id, survey_date)` dan `(org_unit_1, org_unit_2)`. |
 | Login (v2.26.0) | `px_users`, `px_sessions`, `px_audit_log` | `px_users`: `username` UNIQUE (NIP/nama login), `password_hash` (scrypt, tidak pernah dikembalikan API), `role` CHECK `ADMIN`/`USER`, `directorate`/`division` (nama, NULL untuk Admin), `is_active`, `must_change_password`, `failed_attempts`, `locked_until`, `last_login_at`. `px_sessions`: PK `token_hash` (**SHA-256 token cookie**, bukan token-nya), `expires_at`, FK ke user `ON DELETE CASCADE`. `px_audit_log`: waktu, user, `action`, `target`, `ip` — tanpa secret. Dibuat idempoten saat boot/`applySchema()`. |
+| Cakupan User (v2.27.0) | `px_user_scopes` | `user_id` FK ke `px_users` `ON DELETE CASCADE`, `directorate`, `division` (**NULL = semua divisi** direktorat itu), `UNIQUE(user_id, directorate, division)`. Kolom `px_users.directorate`/`division` (v2.26.0) **legacy: tidak ditulis/dipakai lagi**. Dibuat idempoten saat boot. |
 | Drilldown OUTCOME | `px_recruitment_sla_by_unit`, `px_approval_stage_compliance`, `px_hiring_channel_mix`, `px_recognition_categories`, `px_attrition_by_tenure` | Menggantikan objek `operationalRecords` (5 bentuk kolom berbeda dalam satu objek). |
 
 **Normalisasi responden** (`px_survey_uploaded_responses`): alias `nip` / `participant_id` / `candidate_id` (dan `directorate`/`university`/`applied_position`, `division`/`major`/`recruitment_channel`) diringkas menjadi `respondent_type` (`EMPLOYEE` | `CAMPUS_STUDENT` | `JOB_CANDIDATE`) + `respondent_id/name/email` + `org_unit_1/org_unit_2`. `sqlStorage.js › rowToResponse()` menurunkan kembali nama-nama field lama untuk `calculationEngine`, `alertEngine`, evidence CSV, dst. — sehingga tidak ada kode lain yang berubah.
@@ -125,3 +126,11 @@ Hasil audit `auditor` (semua data dashboard harus dari SQL Server) dan perbaikan
 - **`npm run db:export` / `importStore` tidak memuat akun** (bukan bagian `store.json`). Untuk memindahkan akun, gunakan backup database (`.bak`) atau buat ulang dengan `npm run auth:create-admin` + menu Kelola User.
 - **Backend JSON** (jalur rollback) menyimpan akun, sesi, dan audit di **`server/data/auth.json`** (di-`.gitignore`, terpisah dari `store.json` yang dikomit). Akun di SQL dan di `auth.json` adalah dua daftar terpisah: setelah rollback ke JSON, buat Admin lagi dengan `npm run auth:create-admin`.
 - `auth.json` dan tabel `px_users` memuat hash password — perlakukan seperti data rahasia saat backup.
+
+---
+
+## 12. Pembaruan v2.27.0 — Cakupan Data User
+
+- Tabel baru `px_user_scopes` (total 29). Cakupan User = baris-baris tabel ini; `division` NULL = semua divisi. Kolom `px_users.directorate`/`division` tidak dipakai lagi (dibiarkan agar upgrade/rollback aman).
+- **Migrasi otomatis saat boot**: `sqlStorage.migrateLegacyUserScopes()` mengubah akun v2.26.0 (User dengan `directorate`, divisi kosong = semua divisi) menjadi baris cakupan. Hanya menyentuh User yang belum punya baris cakupan, jadi aman dijalankan tiap boot dan tidak menimpa pengaturan Admin; Admin tidak mendapat cakupan. Backend JSON memakai `legacyUserScopes()` saat `auth.json` dimuat.
+- `node server/db/migrate.js --reset` tetap **tidak** menghapus akun maupun `px_user_scopes` (dropAllTables tidak memuat tabel login). Perlakukan `px_user_scopes` sebagai bagian backup akun.

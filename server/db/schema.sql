@@ -421,6 +421,19 @@ CREATE TABLE dbo.px_users (
   last_login_at         DATETIME2(3)   NULL
 );
 GO
+-- Data scope of a USER (v2.27.0): any number of directorates; division NULL = every division of that
+-- directorate, otherwise one row per allowed division. UNIQUE treats the single NULL as a value, so
+-- "all divisions" can appear once per directorate. px_users.directorate / division are LEGACY (v2.26.0
+-- single scope): migrated into this table at boot and no longer written.
+IF OBJECT_ID(N'dbo.px_user_scopes', N'U') IS NULL
+CREATE TABLE dbo.px_user_scopes (
+  scope_id     INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_px_user_scopes PRIMARY KEY,
+  user_id      INT           NOT NULL CONSTRAINT FK_px_user_scopes_user REFERENCES dbo.px_users(user_id) ON DELETE CASCADE,
+  directorate  NVARCHAR(200) NOT NULL,
+  division     NVARCHAR(200) NULL,
+  CONSTRAINT UQ_px_user_scopes UNIQUE (user_id, directorate, division)
+);
+GO
 IF OBJECT_ID(N'dbo.px_sessions', N'U') IS NULL
 CREATE TABLE dbo.px_sessions (                     -- only the SHA-256 of the cookie token is stored
   token_hash   CHAR(64)      NOT NULL CONSTRAINT PK_px_sessions PRIMARY KEY,

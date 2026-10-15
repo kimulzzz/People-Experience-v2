@@ -29,7 +29,7 @@ import { fetchWithRetry } from './utils/fetchWithRetry';
 const CURRENT_YEAR = String(new Date().getFullYear());
 
 // Login gate: nothing of the app is shown (or fetched) until there is a valid session. A USER's data
-// filters are locked to their own directorate here AND enforced by the server.
+// filters only offer their own data scope (Header) AND the server enforces it.
 function AuthGate({ children }) {
   const [state, setState] = useState({ status: 'loading', session: null });
   const [notice, setNotice] = useState('');
@@ -100,8 +100,9 @@ function AppContent() {
     mode: 'YTD',
     year: CURRENT_YEAR,
     month: '01',
-    // A USER is locked to their own directorate (the server enforces it as well).
-    directorate: user && user.role !== 'ADMIN' ? user.directorate : 'ALL',
+    // 'ALL' = the whole bank for an Admin, "all my scope" (union of the account's scopes) for a User -
+    // the server decides; a User choosing something outside the scope gets a 403.
+    directorate: 'ALL',
     sub_directorate: 'ALL'
   });
 
@@ -161,7 +162,8 @@ function AppContent() {
 
       const [calcRes, alertsRes, eventsRes, healthRes, actionRes] = await Promise.all([
         fetchWithRetry(`/api/metrics/calculate?${queryParams}`),
-        fetchWithRetry('/api/alerts'),
+        // A User's alerts follow the same data scope / filter as the scorecard (the server limits them anyway)
+        fetchWithRetry(isAdmin ? '/api/alerts' : `/api/alerts?${new URLSearchParams({ directorate: directorate || 'ALL', sub_directorate: sub_directorate || 'ALL' })}`),
         fetchWithRetry('/api/events'),
         fetchWithRetry('/api/health'),
         fetchWithRetry('/api/action-library')
@@ -178,7 +180,7 @@ function AppContent() {
   };
 
   const handleFilterChange = (newFilters) => {
-    setFilterOptions(isAdmin ? newFilters : { ...newFilters, directorate: user.directorate });
+    setFilterOptions(newFilters);
   };
 
   const handleOpenMetricDetail = (metricId) => {

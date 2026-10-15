@@ -250,6 +250,7 @@ function buildMonthRange(startYear, startMonth, endYear, endMonth) {
 async function computeMonthlyTrends(filterOptions = {}) {
   const directorate = filterOptions.directorate || 'ALL';
   const subDirectorate = filterOptions.sub_directorate || filterOptions.subDirectorate || 'ALL';
+  const scopes = Array.isArray(filterOptions.scopes) ? filterOptions.scopes : null; // union data scope of a USER
   const trendMode = (filterOptions.mode || 'YTD').toUpperCase() === 'MTD' ? 'MTD' : 'YTD';
 
   // Default year for whichever endpoint isn't explicitly given — the real current year, NOT
@@ -292,8 +293,8 @@ async function computeMonthlyTrends(filterOptions = {}) {
     // same period). For YTD mode, `endMonth` bounds the cumulative window to Jan..month of
     // THIS point's own `year` — never spilling over into a prior/next year's data.
     const periodFilter = trendMode === 'MTD'
-      ? { mode: 'MTD', year: yearStr, month: monthNum, directorate, sub_directorate: subDirectorate }
-      : { mode: 'YTD', year: yearStr, endMonth: monthNum, directorate, sub_directorate: subDirectorate };
+      ? { mode: 'MTD', year: yearStr, month: monthNum, directorate, sub_directorate: subDirectorate, scopes }
+      : { mode: 'YTD', year: yearStr, endMonth: monthNum, directorate, sub_directorate: subDirectorate, scopes };
     const periodResult = await calculatePEIndex(periodFilter, { skipTrends: true });
 
     const responseCount = periodResult.metrics
@@ -330,6 +331,7 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
   let month = '01';
   let directorate = 'ALL';
   let subDirectorate = 'ALL';
+  let scopes = null; // union data scope [{ directorate, divisions }] of a USER; null = no scope restriction
   let periodString = 'YTD';
   let endMonth = null;
 
@@ -360,10 +362,15 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
     // Optional upper bound month for a "cumulative YTD as of end of this month" snapshot
     // (used internally by computeMonthlyTrends — not exposed on the main scorecard).
     endMonth = filterInput.endMonth ? String(filterInput.endMonth).padStart(2, '0') : null;
+    if (Array.isArray(filterInput.scopes)) scopes = filterInput.scopes;
   }
 
-  const isDirectorateFiltered = directorate && directorate !== 'ALL';
-  const queryFilter = { mode, year, month, directorate, sub_directorate: subDirectorate, period: periodString, endMonth };
+  // A scoped read (USER) is always a "directorate view": non-employee metrics are exempted from the index
+  // exactly as for an Admin who filters one directorate. The union scope pools the responses of ALL scoped
+  // directorates/divisions into the SAME per-metric mean -> normalize -> weight pipeline as the scorecard
+  // (no average of averages), so a scope covering one whole directorate equals the Admin's directorate filter.
+  const isDirectorateFiltered = (directorate && directorate !== 'ALL') || !!scopes;
+  const queryFilter = { mode, year, month, directorate, sub_directorate: subDirectorate, period: periodString, endMonth, scopes };
 
   const [metrics, journeys, checkpoints, targets] = await Promise.all([
     storage.getMetrics(),
@@ -395,7 +402,7 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
     let lastSurveyDate = null;
 
     if (m.metric_type === 'SURVEY') {
-      const responses = await storage.getResponsesByMetricAndPeriod(m.metric_id, bankwideReadOnly ? { ...queryFilter, directorate: 'ALL', sub_directorate: 'ALL' } : queryFilter);
+      const responses = await storage.getResponsesByMetricAndPeriod(m.metric_id, bankwideReadOnly ? { ...queryFilter, directorate: 'ALL', sub_directorate: 'ALL', scopes: null } : queryFilter);
       sampleSize = responses.length;
 
       if (responses.length > 0) {
@@ -567,7 +574,8 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       month,
       directorate,
       sub_directorate: subDirectorate,
-      is_directorate_filtered: isDirectorateFiltered
+      is_directorate_filtered: isDirectorateFiltered,
+      scopes
     },
     px_index: parseFloat(pxIndex.toFixed(2)),
     pe_index: parseFloat(pxIndex.toFixed(2)), // backward compatibility
@@ -605,6 +613,7 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
   let month = '01';
   let directorate = 'ALL';
   let subDirectorate = 'ALL';
+  let scopes = null; // union data scope of a USER (see calculatePEIndex)
   let periodString = 'YTD';
 
   if (typeof filterInput === 'string') {
@@ -631,10 +640,11 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
     directorate = filterInput.directorate || 'ALL';
     subDirectorate = filterInput.sub_directorate || filterInput.subDirectorate || 'ALL';
     periodString = filterInput.period || (mode === 'MTD' ? `${year}-${month}` : `${year}`);
+    if (Array.isArray(filterInput.scopes)) scopes = filterInput.scopes;
   }
 
-  const isDirectorateFiltered = directorate && directorate !== 'ALL';
-  const queryFilter = { mode, year, month, directorate, sub_directorate: subDirectorate, period: periodString };
+  const isDirectorateFiltered = (directorate && directorate !== 'ALL') || !!scopes;
+  const queryFilter = { mode, year, month, directorate, sub_directorate: subDirectorate, period: periodString, scopes };
 
   const isEmployeeMetric = metric.is_employee_metric !== undefined ? metric.is_employee_metric : true;
   const isDisabled = isDirectorateFiltered && !isEmployeeMetric;

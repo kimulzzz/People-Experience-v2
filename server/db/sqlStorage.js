@@ -12,6 +12,7 @@ const seed = require('./seedData');
 const { defaultUnitForScale, parseUnit } = require('./metricUnit');
 const { buildInitialStore } = require('./initialStore');
 const { parseFilterOptions, normalizeDateString, CURRENT_YEAR } = require('./filterUtils');
+const { normalizeScopes } = require('./scopeUtils');
 
 // ------------------------------------------------------------------ connection
 let poolPromise = null;
@@ -453,8 +454,7 @@ const rowToUser = r => ({
   email: r.email,
   password_hash: r.password_hash,
   role: r.role,
-  directorate: r.directorate,
-  division: r.division,
+  scopes: [],             // filled by withScopes() from px_user_scopes
   is_active: !!r.is_active,
   must_change_password: !!r.must_change_password,
   failed_attempts: r.failed_attempts,
@@ -462,6 +462,40 @@ const rowToUser = r => ({
   created_at: iso(r.created_at),
   last_login_at: iso(r.last_login_at)
 });
+
+// Scopes live in px_user_scopes (division NULL = every division of the directorate).
+async function withScopes(users, tx) {
+  if (!users.length) return users;
+  const rows = await run('SELECT user_id, directorate, division FROM dbo.px_user_scopes ORDER BY scope_id', {}, tx);
+  const byUser = new Map();
+  rows.forEach(r => {
+    if (!byUser.has(r.user_id)) byUser.set(r.user_id, []);
+    byUser.get(r.user_id).push({ directorate: r.directorate, divisions: r.division === null ? null : [r.division] });
+  });
+  users.forEach(u => { u.scopes = normalizeScopes(byUser.get(u.user_id) || []); });
+  return users;
+}
+
+async function writeUserScopes(tx, user_id, scopes) {
+  await run('DELETE FROM dbo.px_user_scopes WHERE user_id = @id', { id: user_id }, tx);
+  for (const s of normalizeScopes(scopes)) {
+    const divs = s.divisions === null ? [null] : s.divisions;
+    for (const division of divs) {
+      await run('INSERT INTO dbo.px_user_scopes (user_id, directorate, division) VALUES (@id, @directorate, @division)',
+        { id: user_id, directorate: s.directorate, division }, tx);
+    }
+  }
+}
+
+// v2.26.0 accounts had ONE directorate + ONE division in px_users. Turn them into scope rows (division
+// empty = all divisions). Only users without any scope row are touched, so it is safe on every boot.
+async function migrateLegacyUserScopes() {
+  await run(`INSERT INTO dbo.px_user_scopes (user_id, directorate, division)
+                         SELECT u.user_id, u.directorate, NULLIF(LTRIM(RTRIM(u.division)), N'')
+                         FROM dbo.px_users u
+                         WHERE u.role = N'USER' AND u.directorate IS NOT NULL AND LTRIM(RTRIM(u.directorate)) <> N''
+                           AND NOT EXISTS (SELECT 1 FROM dbo.px_user_scopes s WHERE s.user_id = u.user_id)`);
+}
 
 // ------------------------------------------------------------------ app settings (px_app_settings)
 // Inserts any default setting that is not in the table yet (never overwrites an admin's value).
@@ -873,7 +907,7 @@ function nextMonthStart(year, monthNum) {
 function buildResponseFilter(filterOptions, params) {
   const parsed = parseFilterOptions(filterOptions);
   if (!parsed) return [];
-  const { mode, year, month, directorate, subDirectorate, endMonth } = parsed;
+  const { mode, year, month, directorate, subDirectorate, endMonth, scopes } = parsed;
   const where = [];
 
   if (mode === 'MTD') {
@@ -897,6 +931,16 @@ function buildResponseFilter(filterOptions, params) {
   }
   if (directorate && directorate !== 'ALL') { params.f_dir = directorate; where.push('org_unit_1 = @f_dir'); }
   if (subDirectorate && subDirectorate !== 'ALL') { params.f_sub = subDirectorate; where.push('org_unit_2 = @f_sub'); }
+  if (scopes) {
+    // Union scope: (dir1 AND division IN (...)) OR (dir2) OR ...; an empty list matches nothing.
+    const parts = scopes.map((s, i) => {
+      params[`f_sd${i}`] = s.directorate;
+      if (s.divisions === null) return `org_unit_1 = @f_sd${i}`;
+      const names = s.divisions.map((d, j) => { params[`f_sv${i}_${j}`] = d; return `@f_sv${i}_${j}`; });
+      return `(org_unit_1 = @f_sd${i} AND org_unit_2 IN (${names.join(', ')}))`;
+    });
+    where.push(parts.length ? `(${parts.join(' OR ')})` : '1 = 0');
+  }
   return where;
 }
 
@@ -916,6 +960,7 @@ const storage = {
     await inTransaction(async tx => { await seedSurveyQuestions(tx); await seedAppSettings(tx); await seedEmailSettings(tx); });
     await topUpDirectory();
     await topUpMetricUnits();
+    await migrateLegacyUserScopes();
     // Demo survey responses for newly elapsed months. Set SEED_DEMO_DATA=false on a real
     // production database so no synthetic responses are ever generated.
     if (String(process.env.SEED_DEMO_DATA || 'true').toLowerCase() !== 'false') await topUpSeedResponses();
@@ -1002,36 +1047,39 @@ const storage = {
   },
 
   // ---- login accounts, sessions, audit trail (px_users / px_sessions / px_audit_log)
+  migrateLegacyUserScopes,
   async countUsers() {
     return (await run('SELECT COUNT(*) AS c FROM dbo.px_users'))[0].c;
   },
   async listUsers() {
-    return (await run('SELECT * FROM dbo.px_users ORDER BY user_id')).map(rowToUser);
+    return withScopes((await run('SELECT * FROM dbo.px_users ORDER BY user_id')).map(rowToUser));
   },
   async getUserById(user_id) {
     const rows = await run('SELECT * FROM dbo.px_users WHERE user_id = @id', { id: parseInt(user_id, 10) });
-    return rows[0] ? rowToUser(rows[0]) : null;
+    return rows[0] ? (await withScopes([rowToUser(rows[0])]))[0] : null;
   },
   async getUserByUsername(username) {
     const rows = await run('SELECT * FROM dbo.px_users WHERE username = @username', { username: String(username) });
-    return rows[0] ? rowToUser(rows[0]) : null;
+    return rows[0] ? (await withScopes([rowToUser(rows[0])]))[0] : null;
   },
   async createUser(u) {
     try {
-      const rows = await run(`INSERT INTO dbo.px_users (username, full_name, email, password_hash, role, directorate, division, is_active, must_change_password)
-                              OUTPUT INSERTED.* VALUES (@username, @full_name, @email, @password_hash, @role, @directorate, @division, @is_active, @mcp)`, {
-        username: u.username, full_name: u.full_name, email: u.email || '', password_hash: u.password_hash, role: u.role,
-        directorate: u.directorate || null, division: u.division || null,
-        is_active: u.is_active === undefined ? true : !!u.is_active, mcp: u.must_change_password === undefined ? true : !!u.must_change_password
+      return await inTransaction(async tx => {
+        const rows = await run(`INSERT INTO dbo.px_users (username, full_name, email, password_hash, role, is_active, must_change_password)
+                                OUTPUT INSERTED.* VALUES (@username, @full_name, @email, @password_hash, @role, @is_active, @mcp)`, {
+          username: u.username, full_name: u.full_name, email: u.email || '', password_hash: u.password_hash, role: u.role,
+          is_active: u.is_active === undefined ? true : !!u.is_active, mcp: u.must_change_password === undefined ? true : !!u.must_change_password
+        }, tx);
+        await writeUserScopes(tx, rows[0].user_id, u.scopes);
+        return (await withScopes([rowToUser(rows[0])], tx))[0];
       });
-      return rowToUser(rows[0]);
     } catch (err) {
       if (isUniqueViolation(err)) { const e = new Error(`Username "${u.username}" sudah dipakai.`); e.code = 'DUPLICATE_USER'; throw e; }
       throw err;
     }
   },
   async updateUser(user_id, patch) {
-    const cols = { full_name: 'full_name', email: 'email', password_hash: 'password_hash', role: 'role', directorate: 'directorate', division: 'division',
+    const cols = { full_name: 'full_name', email: 'email', password_hash: 'password_hash', role: 'role',
       is_active: 'is_active', must_change_password: 'must_change_password', failed_attempts: 'failed_attempts', locked_until: 'locked_until', last_login_at: 'last_login_at' };
     const sets = [];
     const params = { id: parseInt(user_id, 10) };
@@ -1041,13 +1089,26 @@ const storage = {
       const v = patch[field];
       params[field] = (field === 'locked_until' || field === 'last_login_at') ? (v ? new Date(v) : null) : v;
     }
-    if (!sets.length) return this.getUserById(user_id);
-    const rows = await run(`UPDATE dbo.px_users SET ${sets.join(', ')} OUTPUT INSERTED.* WHERE user_id = @id`, params);
-    return rows[0] ? rowToUser(rows[0]) : null;
+    // patch.scopes replaces the whole scope list (together with any other field, in one transaction)
+    if (patch.scopes === undefined) {
+      if (!sets.length) return this.getUserById(user_id);
+      const rows = await run(`UPDATE dbo.px_users SET ${sets.join(', ')} OUTPUT INSERTED.* WHERE user_id = @id`, params);
+      return rows[0] ? (await withScopes([rowToUser(rows[0])]))[0] : null;
+    }
+    return inTransaction(async tx => {
+      const rows = sets.length
+        ? await run(`UPDATE dbo.px_users SET ${sets.join(', ')} OUTPUT INSERTED.* WHERE user_id = @id`, params, tx)
+        : await run('SELECT * FROM dbo.px_users WHERE user_id = @id', { id: params.id }, tx);
+      if (!rows[0]) return null;
+      await writeUserScopes(tx, params.id, patch.scopes);
+      return (await withScopes([rowToUser(rows[0])], tx))[0];
+    });
   },
   async deleteUser(user_id) {
-    const rows = await run('DELETE FROM dbo.px_users OUTPUT DELETED.* WHERE user_id = @id', { id: parseInt(user_id, 10) });
-    return rows[0] ? rowToUser(rows[0]) : null;
+    const id = parseInt(user_id, 10);
+    const before = await this.getUserById(id);
+    const rows = await run('DELETE FROM dbo.px_users OUTPUT DELETED.* WHERE user_id = @id', { id });
+    return rows[0] ? { ...rowToUser(rows[0]), scopes: before ? before.scopes : [] } : null;
   },
   async createSession({ token_hash, user_id, expires_at }) {
     await run('INSERT INTO dbo.px_sessions (token_hash, user_id, expires_at) VALUES (@token_hash, @user_id, @expires_at)',

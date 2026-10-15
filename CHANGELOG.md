@@ -4,6 +4,25 @@ Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Managemen
 
 ---
 
+## [2.27.0] - 2026-10-15
+
+### 🎯 Login Tahap 2a: Cakupan Akses User Fleksibel (Added / Changed)
+- **Permintaan pengguna**: di v2.26.0 satu User hanya terikat satu direktorat + satu divisi, dan divisi hanya tercatat. Diminta cakupan yang fleksibel: Admin menentukan, per User, direktorat mana saja yang boleh dilihat, dan untuk tiap direktorat apakah **semua divisi** atau **sebagian divisi**.
+- **Model cakupan** (`server/db/scopeUtils.js`, baru, dipakai bersama oleh SQL, JSON, `authService` dan engine perhitungan): daftar `[{ directorate, divisions }]`, `divisions: null` (atau `[]` saat input) = semua divisi. Dinormalisasi: satu entri per direktorat, divisi digabung dan tanpa duplikat, "semua" menyerap subset. Bentuk lama `directorate` + `division` pada API masih diterima (menjadi satu cakupan satu divisi; keduanya wajib).
+- **Penegakan di server** (`authService.resolveScope` / `isInScope` / `scopeFilter`): `calculate`, `trends`, `:id/detail`, `alerts`, dan event dibatasi. Direktorat kosong/`ALL` = **semua cakupan saya** (gabungan); direktorat/divisi di luar cakupan → 403. **Divisi kini ikut membatasi data** (di v2.26.0 belum). Perubahan cakupan berlaku di **request berikutnya tanpa mematikan sesi**.
+- **"Semua cakupan saya" = pooling**: respons semua entri cakupan digabung lalu dihitung lewat pipeline scorecard yang sama (bukan rata-rata dari rata-rata): sampel metrik = jumlah sampel (mis. A + B) dan rata-ratanya terbobot sampel. Memilih satu direktorat dari cakupan memberi angka yang sama dengan tampilan Admin untuk direktorat itu.
+- **`/api/alerts`** kini menerima `?directorate&sub_directorate` dan dihitung dari data dalam cakupan (skor dan komentar verbatim hanya dari responden dalam cakupan, termasuk umpan balik event dari peserta dalam cakupan; tidak lagi bankwide untuk User). Tiap alert membawa `is_bankwide_readonly` (metrik non-karyawan/OUTCOME tetap bankwide read-only). `filter_options.scopes` ditambahkan pada `/api/metrics/calculate`.
+- **Event**: non-pengelola hanya melihat absensi/feedback peserta dalam cakupan (`total_attendees` di daftar mengikuti). **Pengelola event** = Admin, atau User yang cakupannya memuat salah satu direktorat di setting `event_manager_directorates` (divisi apa pun).
+- **API**: `GET|POST /api/admin/users`, `PUT /api/admin/users/:id` dan `GET /api/auth/me` memuat/menerima `scopes`. Validasi: User wajib minimal satu cakupan; Admin tidak boleh membawa cakupan (mengubah ke Admin mengosongkan cakupan; menurunkan ke User wajib mengirim cakupan); direktorat dan divisi harus ada di direktori database dan divisi harus milik direktorat itu; permintaan ditolak tidak menyimpan apa pun. `directorate`/`division` pada objek user kini turunan dari cakupan (hanya terisi bila tunggal).
+- **Audit**: aksi baru `USER_SCOPE_CHANGE` (nilai lama → baru) saat cakupan berubah.
+- **Database**: tabel baru `px_user_scopes` (`user_id` FK `ON DELETE CASCADE`, `directorate`, `division` NULL = semua divisi, `UNIQUE(user_id, directorate, division)`; total tabel 28 → 29). Kolom `px_users.directorate`/`division` (v2.26.0) **tidak dipakai/ditulis lagi**. Migrasi otomatis saat boot (`sqlStorage.migrateLegacyUserScopes()`, idempoten, hanya untuk User tanpa baris cakupan; divisi kosong = semua divisi; Admin tanpa cakupan). Backend JSON memigrasikan akun di `auth.json` saat dimuat (`legacyUserScopes`).
+- **Frontend**: `UserManagementModal.jsx` — editor cakupan per User (tambah direktorat, pilih "Semua divisi" atau "Divisi tertentu" dengan centang, hapus), ringkasan cakupan di tabel; `Header.jsx` — filter direktorat/divisi User hanya menawarkan cakupannya, opsi "Semua cakupan saya", label akun "User - N direktorat".
+- **Verifikasi**: Modul 35 (9 test; total **166**) → **166/166 PASS di SQL Server dan di JSON**. QC: **LULUS DENGAN CATATAN**.
+- **Batasan yang diketahui (tidak diubah)**: (1) kolom `target` audit dipotong ±190-200 karakter, sehingga nilai cakupan pada `USER_SCOPE_CHANGE` bisa terpotong untuk daftar panjang; (2) User dengan "semua divisi" yang meminta `sub_directorate` yang tidak dikenal mendapat **200 dengan data kosong** (bukan 403) — tanpa kebocoran data; (3) angka SQL vs JSON **tidak dibandingkan** (data `store.json` lama berbeda dari SQL), yang dibandingkan hanya perilaku; (4) tampilan mobile tidak diuji; (5) noise `401` pada `GET /api/settings` di form publik dari v2.26.0 masih ada.
+- **Berikutnya (tahap 2b, belum dikerjakan)**: PIC dipetakan ke akun, upload survei oleh PIC, dan data responden dapat dilihat PIC. Nomor **2.28.0 dicadangkan untuk fitur AI** yang disimpan di `git stash`.
+
+---
+
 ## [2.26.0] - 2026-10-15
 
 ### 🔐 Login Lokal + 2 Role (ADMIN / USER) dan Pembatasan Akses Data (Added)

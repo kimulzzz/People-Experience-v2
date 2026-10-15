@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(157-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(166-case regression suite, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,8 +75,8 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (157 cases) |
-| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (25 `px_*` tables), JSON→SQL migration, rollback |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (166 cases) |
+| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (29 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules |
 
 ## Compliance constraints (do not violate)
@@ -476,6 +476,18 @@ domain model, not just descriptive:
   public-form console (caller unknown), rate limit in memory, no UI for `event_manager_directorates`, no delete-user button (API exists).
   Production: HTTPS reverse proxy + `TRUST_PROXY`. Version 2.26.0 was earlier used by WIP AI work now in a git stash - AI ships as the next
   version (e.g. 2.27.0).
+
+- **v2.27.0** (2026-10-15, see `CHANGELOG.md` [2.27.0], `docs/04`, `docs/06`): login stage 2a - flexible User data scope. Admin gives a User
+  any number of directorates, each "all divisions" (`divisions: null`) or a subset; stored in new `px_user_scopes` (legacy `px_users.directorate/division`
+  no longer used; boot migration `migrateLegacyUserScopes`, JSON `legacyUserScopes`). Shared logic in `server/db/scopeUtils.js`; enforced server-side by
+  `authService.resolveScope/isInScope/scopeFilter` on calculate/trends/detail/alerts/events; divisions now filter. "Semua cakupan saya" = POOLED data through
+  the scorecard pipeline (sample = A+B, sample-weighted mean), not an average of averages. `/api/alerts` takes `?directorate&sub_directorate` and computes from
+  in-scope data (+ `is_bankwide_readonly`); non-employee/OUTCOME metrics stay bankwide read-only. Event manager = Admin or a User whose scope covers a directorate
+  in `event_manager_directorates`. Scope changes apply on the next request (no session kill); audit `USER_SCOPE_CHANGE`; old `directorate`+`division` body still
+  accepted. Tests: Module 35 (9) -> 166/166 on SQL and JSON; QC LULUS DENGAN CATATAN. Known: audit `target` truncated at ~190 chars (long scope lists); "all
+  divisions" user asking an unknown `sub_directorate` gets 200 + empty data (no leak); SQL-vs-JSON numbers not compared (old store.json), mobile UI untested,
+  `/api/settings` 401 noise on the public form remains. Version 2.28.0 is reserved for the AI feature kept in `git stash`. Next = stage 2b: PIC -> account,
+  survey upload by PIC, respondent data visible to the PIC.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

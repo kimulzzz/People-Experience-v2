@@ -183,12 +183,19 @@ mengubahnya; sudah diperbaiki di v2.12.0 (lihat `CHANGELOG.md`).
 3. Lupa password Admin / semua Admin terkunci: `npm run auth:create-admin -- --username <akun> --reset-password`.
 
 **Kelola User** (menu Header, hanya Admin):
-- **Tambah user**: isi username/NIP, nama, email (opsional), role. Role **User** wajib memilih direktorat dan divisi; role **Admin** tidak terikat direktorat. Setelah disimpan, **password sementara tampil sekali** — salin dan sampaikan ke yang bersangkutan; saat login pertama ia wajib menggantinya.
+- **Tambah user**: isi username/NIP, nama, email (opsional), role. Role **User** wajib memiliki minimal satu cakupan data (lihat bawah); role **Admin** tidak terikat cakupan. Setelah disimpan, **password sementara tampil sekali** — salin dan sampaikan ke yang bersangkutan; saat login pertama ia wajib menggantinya.
 - **Reset password**: password sementara baru (sekali tampil). Reset juga **membuka kunci akun** dan mengeluarkan semua sesi user itu.
 - **Kunci akun**: 5 kali salah password berturut-turut mengunci akun 15 menit; Admin dapat membukanya lewat reset password. Batas dapat diubah di setting `login_max_attempts` / `login_lockout_minutes`.
 - **Nonaktifkan / ganti role**: mematikan sesi user tersebut. Anda tidak bisa menonaktifkan/menurunkan akun sendiri atau Admin aktif terakhir. Tombol hapus akun belum tersedia di UI — gunakan nonaktifkan.
 - **Riwayat**: panel audit menampilkan login berhasil/gagal/terkunci, logout, dan perubahan akun (tanpa password).
 
-**Hak akses User**: melihat data direktoratnya (metrik non-karyawan tampil sebagai angka bankwide read-only), tanpa data per responden, tanpa menu admin/upload; Signature Event hanya baca kecuali User dari direktorat pengelola event (setting `event_manager_directorates`, default Human Resources — belum ada menu UI untuk mengubahnya). Divisi User saat ini hanya tercatat, belum menyaring data.
+**Hak akses User**: melihat data direktoratnya (metrik non-karyawan tampil sebagai angka bankwide read-only), tanpa data per responden, tanpa menu admin/upload; Signature Event hanya baca kecuali User dari direktorat pengelola event (setting `event_manager_directorates`, default Human Resources — belum ada menu UI untuk mengubahnya). Cakupan data diatur seperti di bawah (sejak v2.27.0 divisi ikut menyaring data).
+
+**Mengatur cakupan data User** (v2.27.0, di form tambah/ubah user):
+1. Pilih role **User**, lalu di "Cakupan Data" pilih direktorat dari dropdown "+ Tambah direktorat ke cakupan". Ulangi untuk direktorat lain (satu User boleh banyak direktorat).
+2. Untuk tiap direktorat pilih **Semua divisi** atau **Divisi tertentu** lalu centang divisi yang boleh dilihat. Hapus direktorat dengan ikon tempat sampah.
+3. Simpan. Perubahan berlaku pada request User berikutnya — User tidak perlu login ulang. Perubahan tercatat di riwayat audit sebagai `USER_SCOPE_CHANGE`.
+
+Yang dilihat User: pilihan filter "Semua cakupan saya" menampilkan **data gabungan** seluruh cakupan (sampel digabung, bukan rata-rata dari rata-rata). Skor, trend, detail metrik, alert, dan absensi/feedback event dibatasi ke cakupan; metrik non-karyawan/OUTCOME tetap tampil sebagai angka bankwide read-only. User yang cakupannya memuat direktorat pengelola event (setting `event_manager_directorates`, default Human Resources) dapat mengelola Signature Event. Mengubah role ke Admin menghapus cakupan; menurunkan ke User wajib mengisi cakupan.
 
 **Deployment**: sebaiknya di belakang reverse proxy HTTPS on-premise dengan `TRUST_PROXY` di `.env` (cookie sesi menjadi `Secure`). Sesi berlaku 8 jam (`session_hours`).

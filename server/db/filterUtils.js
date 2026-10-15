@@ -3,6 +3,8 @@
 // sqlStorage.js), so the rules for what "YTD", "2026-03", {mode, year, month, endMonth, ...}
 // mean can never drift apart between them.
 
+const { normalizeScopes } = require('./scopeUtils');
+
 // Default year for filter queries with no explicit year, derived from the real server clock
 // instead of a frozen literal — mirrors CURRENT_YEAR in server/services/calculationEngine.js.
 const CURRENT_YEAR = String(new Date().getFullYear());
@@ -22,6 +24,7 @@ function parseFilterOptions(filterOptions) {
   let directorate = 'ALL';
   let subDirectorate = 'ALL';
   let endMonth = null;
+  let scopes = null;
 
   if (typeof filterOptions === 'string') {
     const rawPeriod = filterOptions.trim();
@@ -50,9 +53,13 @@ function parseFilterOptions(filterOptions) {
     // as of the end of this month" snapshot (e.g. for the Performance Trend chart), instead
     // of the whole year. Ignored when mode is MTD or when not provided (full-year YTD).
     endMonth = filterOptions.endMonth ? String(filterOptions.endMonth).padStart(2, '0') : null;
+    // Optional union scope (v2.27.0): [{ directorate, divisions: [..] | null }]. A row must fall in
+    // at least one entry (ANDed with the single directorate/sub-directorate above). An empty list
+    // matches nothing; absent = no scope restriction.
+    if (Array.isArray(filterOptions.scopes)) scopes = normalizeScopes(filterOptions.scopes);
   }
 
-  return { mode, year, month, directorate, subDirectorate, endMonth };
+  return { mode, year, month, directorate, subDirectorate, endMonth, scopes };
 }
 
 function normalizeDateString(dateVal) {

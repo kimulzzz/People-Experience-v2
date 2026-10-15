@@ -251,7 +251,7 @@ Tombol **Setting Email** di Header (sebelah Survey Templates) membuka modal: tog
 | File | Fungsi |
 | :--- | :--- |
 | `src/components/AuthScreens.jsx` | `LoginPage` (form username/password, pesan galat generik, notifikasi "Sesi Anda berakhir") dan `ChangePasswordScreen` (wajib saat memakai password sementara) |
-| `src/components/UserManagementModal.jsx` | Menu **Kelola User** (Admin): daftar akun, tambah/ubah (direktorat & divisi dari `/api/directorates`), aktif/nonaktif, reset password (password sementara tampil sekali dengan tombol salin), riwayat audit login. **Belum ada tombol hapus** |
+| `src/components/UserManagementModal.jsx` | Menu **Kelola User** (Admin): daftar akun, tambah/ubah (role + **editor cakupan data**, lihat v2.27.0; direktorat & divisi dari `/api/directorates`), aktif/nonaktif, reset password (password sementara tampil sekali dengan tombol salin), riwayat audit login. **Belum ada tombol hapus** |
 | `src/utils/AuthContext.jsx` | `AuthContext` / `useAuth()` → `{ user, isAdmin, canManageEvents, logout }` |
 | `src/utils/apiClient.js` | Membungkus `window.fetch` untuk `/api`, `/uploads`, `/exports`: `credentials: 'same-origin'`; respons 401 (selain login) memicu event `px:unauthorized` |
 | `src/App.jsx` | `AuthGate` memeriksa `/api/auth/me`; anon → `LoginPage`; `must_change_password` → `ChangePasswordScreen`; selain itu aplikasi. URL `?checkin=` / `?survey=` melewati `AuthGate` (form publik tanpa login) |
@@ -266,3 +266,9 @@ Menu per role (penegakan sebenarnya di server, lihat `docs/04`):
 | Detail metrik: data per responden | tampil | disembunyikan (`respondent_data_hidden`) |
 | Signature Events: buat/hapus event, unggah media, transkrip, PPT | tampil | hanya bila `canManageEvents` (direktorat di `event_manager_directorates`) |
 | Logout (Header) | tampil | tampil |
+
+## 🎯 Catatan v2.27.0 — Cakupan Data User
+
+- **`UserManagementModal.jsx` — editor cakupan**: untuk role User, bagian "Cakupan Data" menampilkan satu kartu per direktorat dengan pilihan radio **Semua divisi** / **Divisi tertentu** (daftar centang divisi), tombol hapus per direktorat, dan dropdown "+ Tambah direktorat ke cakupan ..." (direktorat yang sudah dipakai tidak muncul lagi). Simpan ditolak di UI bila tidak ada direktorat atau "Divisi tertentu" tanpa satu pun divisi dicentang. Untuk Admin, bagian ini diganti keterangan "Admin membaca semua data" dan cakupan dikirim kosong. Tabel user menampilkan ringkasan cakupan (`ScopeSummary`).
+- **`Header.jsx` — filter**: untuk User, dropdown Direktorat hanya menawarkan direktorat dalam `user.scopes`, opsi pertama berlabel **"Semua cakupan saya"** (Admin: "Direktorat: All (Bankwide)"), dan dropdown divisi hanya menawarkan divisi yang diizinkan pada direktorat terpilih. Label akun: "User - <direktorat>" bila satu direktorat, "User - N direktorat" bila lebih (tooltip memuat daftar lengkap). Penegakan tetap di server.
+- Tidak diuji: tampilan mobile.

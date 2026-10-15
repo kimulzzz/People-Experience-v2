@@ -151,6 +151,7 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 | Hal | Keterangan |
 | :--- | :--- |
 | Tabel | `px_users` (akun; `password_hash` = scrypt), `px_sessions` (hanya **hash SHA-256** token cookie), `px_audit_log` (jejak login & kelola user, tanpa secret) |
+| Cakupan User (v2.27.0) | `px_user_scopes` (cakupan data per User: `directorate`, `division` NULL = semua divisi; FK `ON DELETE CASCADE` ke `px_users`). Kolom `px_users.directorate`/`division` legacy, tidak dipakai lagi; dimigrasikan otomatis saat boot (`migrateLegacyUserScopes`, idempoten). Ikut dibackup bersama akun; tidak dihapus oleh `migrate --reset` |
 | Setting (`px_app_settings`) | `session_hours` (8), `login_max_attempts` (5), `login_lockout_minutes` (15), `login_rate_limit_per_minute` (20), `event_manager_directorates` (Human Resources) |
 | `node server/db/migrate.js --reset` | **Tidak menghapus** tiga tabel di atas — akun bertahan |
 | `npm run db:export` / import | **Tidak memuat** akun |

@@ -2209,7 +2209,7 @@ async function runRegressionSuite() {
     const username = `rt${suffix}${stamp}`;
     const res = await adminJson('POST', '/api/admin/users', {
       username, full_name: `Regression ${suffix}`, email: `${username}@example.test`, role,
-      directorate: dir ? dir.directorate_name : undefined, division: dir ? dir.divisions[0] : undefined
+      scopes: dir ? [{ directorate: dir.directorate_name, divisions: null }] : undefined // the whole directorate (v2.27.0 scope)
     });
     assert.strictEqual(res.status, 201, `create ${suffix}: ${res.status}`);
     const body = await res.json();
@@ -2613,15 +2613,16 @@ async function runRegressionSuite() {
       assert.strictEqual(await auth.verifyPassword('x', undefined), false);
       assert.notStrictEqual(auth.generateTempPassword(), auth.generateTempPassword());
       assert.strictEqual(auth.validateNewPassword(auth.generateTempPassword(), { username: 'x' }), null);
-      const user = { role: 'USER', directorate: 'D1' };
+      const user = { role: 'USER', scopes: [{ directorate: 'D1', divisions: null }] };
       assert.strictEqual(auth.canSeeRespondentData(user, { metric_id: 1 }), false);
       assert.strictEqual(auth.canSeeRespondentData({ role: 'ADMIN' }, { metric_id: 1 }), true);
       assert.strictEqual(auth.canSeeRespondentData(null, { metric_id: 1 }), false);
-      assert.deepStrictEqual(auth.resolveDirectorateScope(user, undefined), { directorate: 'D1' });
-      assert.deepStrictEqual(auth.resolveDirectorateScope(user, 'ALL'), { directorate: 'D1' });
-      assert.ok(auth.resolveDirectorateScope(user, 'D2').error);
-      assert.ok(auth.resolveDirectorateScope({ role: 'USER', directorate: null }, 'ALL').error, 'USER without directorate is refused');
-      assert.deepStrictEqual(auth.resolveDirectorateScope({ role: 'ADMIN' }, 'D2'), { directorate: 'D2' });
+      const one = { role: 'USER', scopes: [{ directorate: 'D1', divisions: null }] };
+      assert.strictEqual(auth.resolveScope(one, undefined).directorate, 'D1');
+      assert.strictEqual(auth.resolveScope(one, 'ALL').directorate, 'D1');
+      assert.ok(auth.resolveScope(one, 'D2').error);
+      assert.ok(auth.resolveScope({ role: 'USER', scopes: [] }, 'ALL').error, 'USER without scope is refused');
+      assert.strictEqual(auth.resolveScope({ role: 'ADMIN' }, 'D2').directorate, 'D2');
       const red = auth.redactRespondent({ nip: '1', employee_name: 'N', cimb_email: 'e', rating_score: 4 });
       assert.deepStrictEqual(red, { nip: null, employee_name: null, cimb_email: null, rating_score: 4 });
       const lim = createRateLimiter({ windowMs: 1000 });
@@ -2632,6 +2633,339 @@ async function runRegressionSuite() {
       assert.strictEqual(lim.isBlocked('ip', 3, 2500), false, 'window expired');
       lim.record('ip2'); lim.reset('ip2');
       assert.strictEqual(lim.count('ip2'), 0);
+    });
+
+    // --- 35. FLEXIBLE DATA SCOPE (v2.27.0) ---
+    console.log('\n📦 MODULE 35: User Data Scope - multiple directorates, all/subset of divisions (Positive & Negative Testing)');
+
+    const enc = encodeURIComponent;
+    const dName = d => d.directorate_name;
+    const scopeUser = async (suffix, scopes) => {
+      const username = `rt${suffix}${stamp}`;
+      const res = await adminJson('POST', '/api/admin/users', { username, full_name: `Regression ${suffix}`, email: `${username}@example.test`, role: 'USER', scopes });
+      assert.strictEqual(res.status, 201, `create ${suffix}: ${res.status} ${await res.clone().text()}`);
+      const body = await res.json();
+      createdUserIds.push(body.user.user_id);
+      const { cookie } = await loginAs(username, body.temporary_password);
+      const ch = await rawFetch(`${BASE_URL}/api/auth/change-password`, jsonBody('POST', { current_password: body.temporary_password, new_password: STRONG }, cookie));
+      assert.strictEqual(ch.status, 200);
+      return { id: body.user.user_id, username, cookie, body };
+    };
+    const uget = (u, q) => rawFetch(`${BASE_URL}${q}`, asUser(u.cookie));
+    const uj = async (u, q) => (await uget(u, q)).json();
+    const aj = async q => (await adminJson('GET', q)).json();
+    const dq = (dir, div) => `directorate=${enc(dir)}${div ? `&sub_directorate=${enc(div)}` : ''}`;
+    const respondents = async (dir, div) => (await aj(`/api/metrics/8/detail?period=YTD&${dq(dir, div)}`)).total_respondents;
+
+    // Directories that really hold survey data: A has two divisions with data (X, Y), B and C are other directorates with data.
+    let dirA = null, divX = null, divY = null; const withData = [];
+    for (const d of directory) {
+      if (!d.divisions.length) continue;
+      if ((await respondents(dName(d))) > 0) withData.push(d);
+    }
+    for (const d of withData) {
+      const have = [];
+      for (const v of d.divisions) { if ((await respondents(dName(d), v)) > 0) have.push(v); if (have.length === 2) break; }
+      if (have.length === 2) { dirA = d; [divX, divY] = have; break; }
+    }
+    assert.ok(dirA, 'seed data must contain a directorate with two divisions that have survey responses');
+    const [dirB, dirC] = withData.filter(d => dName(d) !== dName(dirA));
+    assert.ok(dirB && dirC, 'seed data must contain two more directorates with survey responses');
+    const A = dName(dirA), B = dName(dirB), C = dName(dirC);
+    const empMetrics = calc => calc.metrics.filter(m => m.is_employee_metric !== false && !m.is_disabled);
+
+    await runTest('[POSITIVE] A scope of ONE WHOLE directorate gives numbers identical to the Admin filtering that directorate (scorecard, every employee metric, trend series, alerts)', async () => {
+      const u = await scopeUser('s1', [{ directorate: A, divisions: null }]);
+      const user = await uj(u, '/api/metrics/calculate?period=YTD');
+      const adm = await aj(`/api/metrics/calculate?period=YTD&${dq(A)}`);
+      assert.strictEqual(user.px_index, adm.px_index);
+      assert.strictEqual(user.survey_index, adm.survey_index);
+      assert.strictEqual(user.outcome_index, adm.outcome_index);
+      assert.strictEqual(user.directorate, A);
+      for (const m of empMetrics(adm)) {
+        const x = user.metrics.find(k => k.metric_id === m.metric_id);
+        assert.strictEqual(x.normalized_score, m.normalized_score, `metric ${m.metric_id}`);
+        assert.strictEqual(x.sample_size, m.sample_size, `metric ${m.metric_id} sample`);
+      }
+      const ut = await uj(u, '/api/metrics/trends?mode=YTD');
+      const at = await aj(`/api/metrics/trends?mode=YTD&${dq(A)}`);
+      assert.deepStrictEqual(ut.trends.map(t => t.px_index), at.trends.map(t => t.px_index), 'trend series');
+      const alerts = await uj(u, '/api/alerts');
+      const expected = empMetrics(adm).filter(m => m.status !== 'HEALTHY').map(m => m.metric_id).sort((a, b) => a - b);
+      const got = alerts.alerts.filter(a => !a.is_bankwide_readonly).map(a => a.metric_id).sort((a, b) => a - b);
+      assert.deepStrictEqual(got, expected, 'alerts = deficits of the in-scope data');
+      alerts.alerts.filter(a => !a.is_bankwide_readonly).forEach(a => assert.strictEqual(a.current_score, adm.metrics.find(m => m.metric_id === a.metric_id).normalized_score, 'alert score is computed from in-scope data'));
+    });
+
+    await runTest('[POSITIVE] Two directorates = ONE pooled aggregate: each metric\'s sample = A + B and its mean is the sample-weighted mean (same pipeline as the scorecard, not an average of averages)', async () => {
+      const u = await scopeUser('s2', [{ directorate: A, divisions: null }, { directorate: B, divisions: null }]);
+      const user = await uj(u, '/api/metrics/calculate?period=YTD');
+      const a = await aj(`/api/metrics/calculate?period=YTD&${dq(A)}`);
+      const b = await aj(`/api/metrics/calculate?period=YTD&${dq(B)}`);
+      assert.strictEqual(user.directorate, 'ALL', 'two directorates: no single directorate to echo');
+      assert.strictEqual(user.filter_options.is_directorate_filtered, true);
+      assert.strictEqual(user.filter_options.scopes.length, 2);
+      let checked = 0;
+      for (const m of empMetrics(a).filter(x => x.metric_type === 'SURVEY')) {
+        const mb = b.metrics.find(k => k.metric_id === m.metric_id);
+        const mu = user.metrics.find(k => k.metric_id === m.metric_id);
+        assert.strictEqual(mu.sample_size, m.sample_size + mb.sample_size, `metric ${m.metric_id} sample`);
+        if (mu.sample_size > 0) {
+          const pooled = (m.raw_value * m.sample_size + mb.raw_value * mb.sample_size) / mu.sample_size;
+          assert.ok(Math.abs(pooled - mu.raw_value) <= 0.02, `metric ${m.metric_id}: pooled ${pooled} vs ${mu.raw_value}`);
+          checked++;
+        }
+      }
+      assert.ok(checked >= 3, `expected several pooled metrics, got ${checked}`);
+      // narrowing the union to one of its directorates equals the Admin view of that directorate
+      const narrowed = await uj(u, `/api/metrics/calculate?period=YTD&${dq(B)}`);
+      assert.strictEqual(narrowed.px_index, b.px_index);
+      assert.strictEqual(narrowed.directorate, B);
+      // bankwide non-employee metrics stay read-only, equal to the Admin bankwide view
+      const all = await aj('/api/metrics/calculate?period=YTD');
+      for (const m of user.metrics.filter(x => x.is_employee_metric === false)) {
+        assert.strictEqual(m.is_disabled, false);
+        assert.strictEqual(m.normalized_score, all.metrics.find(k => k.metric_id === m.metric_id).normalized_score);
+      }
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] A subset of divisions limits the data to those divisions; a division/directorate outside the scope is 403 on calculate, trends, detail and alerts', async () => {
+      const u = await scopeUser('s3', [{ directorate: A, divisions: [divX] }]);
+      assert.strictEqual((await uj(u, '/api/metrics/8/detail?period=YTD')).total_respondents, await respondents(A, divX), 'only the allowed division counts');
+      assert.ok((await respondents(A, divX)) < (await respondents(A)), 'guard: subset really is smaller than the whole directorate');
+      const own = await uj(u, `/api/metrics/calculate?period=YTD&${dq(A, divX)}`);
+      const adm = await aj(`/api/metrics/calculate?period=YTD&${dq(A, divX)}`);
+      assert.strictEqual(own.px_index, adm.px_index);
+      assert.strictEqual((await uget(u, `/api/metrics/calculate?period=YTD&sub_directorate=${enc(divX)}`)).status, 200, 'division with directorate ALL = inside the scope');
+      for (const q of [`/api/metrics/calculate?period=YTD&${dq(A, divY)}`, `/api/metrics/8/detail?${dq(A, divY)}`, `/api/metrics/trends?${dq(A, divY)}`, `/api/alerts?${dq(A, divY)}`,
+        `/api/metrics/calculate?period=YTD&sub_directorate=${enc(divY)}`, `/api/metrics/calculate?period=YTD&${dq(B)}`, `/api/metrics/trends?${dq(B)}`, `/api/alerts?${dq(C)}`,
+        `/api/metrics/8/detail?${dq(B)}`, '/api/metrics/calculate?directorate=Direktorat%20Fiktif']) {
+        const r = await uget(u, q);
+        assert.strictEqual(r.status, 403, q);
+        assert.ok((await r.json()).error);
+      }
+      assert.strictEqual((await adminJson('GET', `/api/metrics/calculate?period=YTD&${dq(A, divY)}`)).status, 200, 'Admin is never restricted');
+    });
+
+    await runTest('[POSITIVE] Mixed scope (some divisions of A + all of B) is the union; a user with a scope sees the SAME bankwide read-only values for #1-#5 and nothing of other directorates', async () => {
+      const u = await scopeUser('s4', [{ directorate: A, divisions: [divX] }, { directorate: B, divisions: null }]);
+      assert.strictEqual((await uj(u, '/api/metrics/8/detail?period=YTD')).total_respondents, (await respondents(A, divX)) + (await respondents(B)));
+      assert.strictEqual((await uget(u, `/api/metrics/calculate?period=YTD&${dq(A, divX)}`)).status, 200);
+      assert.strictEqual((await uget(u, `/api/metrics/calculate?period=YTD&${dq(A, divY)}`)).status, 403);
+      assert.strictEqual((await uget(u, `/api/metrics/calculate?period=YTD&${dq(C)}`)).status, 403);
+      assert.strictEqual((await uget(u, `/api/metrics/trends?${dq(B)}`)).status, 200);
+      const me = (await uj(u, '/api/auth/me')).user;
+      assert.deepStrictEqual(me.scopes, [{ directorate: A, divisions: [divX] }, { directorate: B, divisions: null }], '/me returns the effective scope');
+    });
+
+    await runTest('[NEGATIVE] Alerts of a scoped user are computed from in-scope data only: scores differ from the bankwide ones and no out-of-scope comment (uploaded or event) leaks into them', async () => {
+      const u = await scopeUser('s5', [{ directorate: A, divisions: [divX] }]);
+      const alerts = await uj(u, '/api/alerts');
+      const adm = await aj(`/api/metrics/calculate?period=YTD&${dq(A, divX)}`);
+      const bankwide = await aj('/api/alerts');
+      alerts.alerts.filter(a => !a.is_bankwide_readonly).forEach(a => assert.strictEqual(a.current_score, adm.metrics.find(m => m.metric_id === a.metric_id).normalized_score));
+      const bankCalc = await aj('/api/metrics/calculate?period=YTD');
+      assert.ok(adm.metrics.some(m => m.metric_type === 'SURVEY' && !m.is_disabled && m.normalized_score !== bankCalc.metrics.find(k => k.metric_id === m.metric_id).normalized_score), 'guard: the scope really changes survey scores vs bankwide');
+      assert.ok(bankwide.alerts.length > 0);
+      // Seed comments come from a shared pool, so a leak cannot be spotted by text alone; instead the comments shown
+      // must be exactly the first ones of the IN-SCOPE respondents - uploaded survey comments first, then event feedback
+      // of in-scope attendees (a leaking engine would show the bankwide first ones).
+      const u2 = await scopeUser('s5b', [{ directorate: A, divisions: [divX, divY] }]);
+      const alerts2 = await uj(u2, '/api/alerts');
+      const inScope = r => r.directorate === A && (r.division === divX || r.division === divY);
+      const eventComments = [];
+      for (const ev of await aj('/api/events')) {
+        const det = await aj(`/api/events/${ev.event_id}`);
+        const mine = new Set(det.attendances.filter(inScope).map(x => x.nip));
+        det.feedbacks.filter(f => mine.has(f.nip) && f.verbatim && f.verbatim.length > 5).forEach(f => eventComments.push(f.verbatim));
+      }
+      let differFromBankwide = 0;
+      assert.ok(alerts2.alerts.length > 0, 'guard: the scope has alerts to check');
+      for (const a of alerts2.alerts.filter(x => !x.is_bankwide_readonly)) {
+        const rows = await aj(`/api/surveys/responses/${a.metric_id}`);
+        const uploaded = (Array.isArray(rows) ? rows : []).filter(inScope).map(r => (r.verbatim_feedback || '').trim()).filter(v => v.length > 3);
+        assert.deepStrictEqual(a.verbatim_insights, [...uploaded, ...eventComments].slice(0, 3), `metric ${a.metric_id}: comments must come from in-scope respondents only`);
+        if (JSON.stringify((bankwide.alerts.find(b => b.metric_id === a.metric_id) || {}).verbatim_insights) !== JSON.stringify(a.verbatim_insights)) differFromBankwide++;
+      }
+      assert.ok(differFromBankwide > 0, 'guard: the in-scope comments really differ from the bankwide ones');
+      assert.ok(alerts.alerts.every(a => a.verbatim_insights.length <= 3));
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] Event attendance/feedback shown to a non-manager follows the scope (an Admin sees all); no respondent identity anywhere in a multi-scope user\'s payloads', async () => {
+      const u = await scopeUser('s6', [{ directorate: A, divisions: null }, { directorate: B, divisions: [dirB.divisions[0]] }]);
+      const ev = await uj(u, '/api/events/ev-perspektif-2024-q1');
+      const adm = await aj('/api/events/ev-perspektif-2024-q1');
+      const ok = a => (a.directorate === A) || (a.directorate === B && a.division === dirB.divisions[0]);
+      ev.attendances.forEach(a => assert.ok(ok(a), `attendance of ${a.directorate}/${a.division} is out of scope`));
+      assert.strictEqual(ev.attendances.length, adm.attendances.filter(ok).length);
+      assert.ok(ev.feedbacks.length <= adm.feedbacks.length);
+      const listed = (await uj(u, '/api/events')).find(e => e.event_id === 'ev-perspektif-2024-q1');
+      assert.strictEqual(listed.total_attendees, ev.attendances.length, 'list counts follow the same scope');
+      const names = new Set();
+      [...(await aj('/api/metrics/8/detail?period=YTD')).responses, ...(await aj('/api/metrics/5/detail?period=YTD')).questions.flatMap(q => q.verbatim_samples || [])]
+        .forEach(r => { if (typeof r.employee_name === 'string' && r.employee_name.length >= 5 && r.employee_name !== 'Responden') names.add(r.employee_name); });
+      adm.attendances.forEach(a => { if (a.employee_name && a.employee_name.length >= 5) names.add(a.employee_name); });
+      assert.ok(names.size > 3);
+      const payload = [await (await uget(u, '/api/metrics/8/detail?period=YTD')).text(), await (await uget(u, '/api/metrics/5/detail?period=YTD')).text(),
+        await (await uget(u, '/api/alerts')).text(), JSON.stringify(ev), JSON.stringify(listed)].join('\n');
+      for (const n of names) assert.ok(!payload.includes(JSON.stringify(n).slice(1, -1)), `name "${n}" leaked`);
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] Create/update validation of scopes: >=1 for USER, none for ADMIN, directorate/division must exist and match, overlaps are merged, legacy directorate+division still works', async () => {
+      const mk = async (suffix, body) => {
+        const res = await adminJson('POST', '/api/admin/users', { username: `rt${suffix}${stamp}`, full_name: 'Regression V', email: 'v@example.test', ...body });
+        return res;
+      };
+      for (const [i, bad] of [
+        { role: 'USER' }, { role: 'USER', scopes: [] }, { role: 'USER', scopes: 'IT' }, { role: 'USER', scopes: [{}] },
+        { role: 'USER', scopes: [{ directorate: 'Direktorat Fiktif', divisions: null }] },
+        { role: 'USER', scopes: [{ directorate: A, divisions: ['Divisi Fiktif'] }] },
+        { role: 'USER', scopes: [{ directorate: A, divisions: dirB.divisions.slice(0, 1) }] },
+        { role: 'USER', scopes: [{ directorate: A, divisions: 'x' }] }, { role: 'USER', scopes: [{ directorate: A, divisions: [1] }] },
+        { role: 'ADMIN', scopes: [{ directorate: A, divisions: null }] },
+        { role: 'USER', directorate: A }, { role: 'USER', directorate: A, division: dirB.divisions[0] }
+      ].entries()) {
+        const r = await mk(`v${i}`, bad);
+        assert.strictEqual(r.status, 400, `case ${i} ${JSON.stringify(bad)} -> ${r.status}`);
+        assert.ok((await r.json()).error);
+      }
+      assert.strictEqual((await adminJson('GET', '/api/admin/users')).status, 200);
+      const users = await (await adminJson('GET', '/api/admin/users')).json();
+      assert.ok(!users.some(x => (x.username.startsWith('rtv') && x.username.endsWith(stamp) && x.username.length > ('rtv' + stamp).length)), 'rejected requests store nothing');
+      // overlaps / duplicates are normalized: listed divisions merge, "all" absorbs a subset
+      const merged = await mk('m1', { role: 'USER', scopes: [{ directorate: A, divisions: [divX] }, { directorate: A, divisions: [divY, divX] }, { directorate: B, divisions: [dirB.divisions[0]] }, { directorate: B, divisions: null }] });
+      assert.strictEqual(merged.status, 201);
+      const mb = await merged.json(); createdUserIds.push(mb.user.user_id);
+      assert.deepStrictEqual(mb.user.scopes, [{ directorate: A, divisions: [divX, divY] }, { directorate: B, divisions: null }]);
+      // divisions [] means all divisions; legacy single directorate+division is one single-division scope
+      const empty = await mk('m2', { role: 'USER', scopes: [{ directorate: A, divisions: [] }] });
+      assert.strictEqual(empty.status, 201);
+      const eb = await empty.json(); createdUserIds.push(eb.user.user_id);
+      assert.deepStrictEqual(eb.user.scopes, [{ directorate: A, divisions: null }]);
+      const legacy = await mk('m3', { role: 'USER', directorate: A, division: divX });
+      assert.strictEqual(legacy.status, 201);
+      const lb = await legacy.json(); createdUserIds.push(lb.user.user_id);
+      assert.deepStrictEqual(lb.user.scopes, [{ directorate: A, divisions: [divX] }]);
+      assert.strictEqual(lb.user.directorate, A);
+      assert.strictEqual(lb.user.division, divX);
+      // ADMIN with an explicit empty scope list is fine and has none
+      const adm = await mk('m4', { role: 'ADMIN', scopes: [] });
+      assert.strictEqual(adm.status, 201);
+      const ab = await adm.json(); createdUserIds.push(ab.user.user_id);
+      assert.deepStrictEqual(ab.user.scopes, []);
+      // update: replace scopes; invalid ones rejected without touching the account; ADMIN <-> USER transitions
+      const put = (id, body) => adminJson('PUT', `/api/admin/users/${id}`, body);
+      assert.strictEqual((await put(mb.user.user_id, { scopes: [] })).status, 400, 'USER cannot end up without scope');
+      assert.strictEqual((await put(mb.user.user_id, { scopes: [{ directorate: C, divisions: [divX] }] })).status, 400);
+      assert.strictEqual((await put(mb.user.user_id, { role: 'ADMIN', scopes: [{ directorate: A, divisions: null }] })).status, 400);
+      assert.strictEqual((await put(mb.user.user_id, { directorate: C })).status, 400, 'legacy form still needs the division');
+      assert.strictEqual((await put(9999999, { scopes: [{ directorate: A, divisions: null }] })).status, 404);
+      const stillMerged = (await (await adminJson('GET', '/api/admin/users')).json()).find(x => x.user_id === mb.user.user_id);
+      assert.deepStrictEqual(stillMerged.scopes, mb.user.scopes, 'rejected updates change nothing');
+      const toC = await put(mb.user.user_id, { scopes: [{ directorate: C, divisions: null }] });
+      assert.strictEqual(toC.status, 200);
+      assert.deepStrictEqual((await toC.json()).user.scopes, [{ directorate: C, divisions: null }]);
+      const toAdmin = await put(mb.user.user_id, { role: 'ADMIN' });
+      assert.strictEqual(toAdmin.status, 200);
+      assert.deepStrictEqual((await toAdmin.json()).user.scopes, [], 'promoting to ADMIN clears the scope');
+      assert.strictEqual((await put(mb.user.user_id, { role: 'USER' })).status, 400, 'demoting to USER needs a scope');
+      const back = await put(mb.user.user_id, { role: 'USER', scopes: [{ directorate: B, divisions: null }] });
+      assert.strictEqual(back.status, 200);
+      assert.strictEqual((await back.json()).user.role, 'USER');
+    });
+
+    await runTest('[POSITIVE] A scope change applies at once to an open session (no re-login), is recorded in the audit trail, and an Event manager is a user whose scope covers a manager directorate', async () => {
+      const u = await scopeUser('s7', [{ directorate: A, divisions: null }]);
+      assert.strictEqual((await uget(u, `/api/metrics/calculate?period=YTD&${dq(A)}`)).status, 200);
+      assert.strictEqual((await uget(u, `/api/metrics/calculate?period=YTD&${dq(B)}`)).status, 403);
+      const put = await adminJson('PUT', `/api/admin/users/${u.id}`, { scopes: [{ directorate: B, divisions: [dirB.divisions[0]] }] });
+      assert.strictEqual(put.status, 200);
+      assert.strictEqual((await uget(u, '/api/auth/me')).status, 200, 'session survives a scope change');
+      assert.strictEqual((await uget(u, `/api/metrics/calculate?period=YTD&${dq(A)}`)).status, 403, 'old scope gone immediately');
+      assert.strictEqual((await uget(u, `/api/metrics/calculate?period=YTD&${dq(B, dirB.divisions[0])}`)).status, 200, 'new scope works immediately');
+      if (dirB.divisions.length > 1) assert.strictEqual((await uget(u, `/api/metrics/calculate?period=YTD&${dq(B, dirB.divisions[1])}`)).status, 403, 'other division of B is outside the new scope');
+      const log = await (await adminJson('GET', '/api/admin/audit-log?limit=100')).json();
+      const entry = log.find(e => e.action === 'USER_SCOPE_CHANGE' && e.target && e.target.startsWith(u.username));
+      assert.ok(entry, 'USER_SCOPE_CHANGE recorded');
+      assert.ok(entry.target.includes(A) && entry.target.includes(B));
+      assert.ok(!JSON.stringify(log).includes(STRONG), 'no password in the audit trail');
+      // event-manager rule follows the scope: covering the HR directorate (any division) is enough
+      if (hrDir) {
+        const hrDivision = hrDir.divisions[0];
+        await adminJson('PUT', `/api/admin/users/${u.id}`, { scopes: [{ directorate: A, divisions: null }, { directorate: hrName, divisions: hrDivision ? [hrDivision] : null }] });
+        assert.strictEqual((await uj(u, '/api/auth/me')).permissions.can_manage_events, true);
+        await adminJson('PUT', `/api/admin/users/${u.id}`, { scopes: [{ directorate: A, divisions: null }] });
+        assert.strictEqual((await uj(u, '/api/auth/me')).permissions.can_manage_events, false);
+      }
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] Migration of v2.26.0 single-scope accounts (division empty = all divisions, ADMIN gets none, idempotent) and scope helper units', async () => {
+      const { legacyUserScopes, normalizeScopes, scopeAllows, rowInScopes } = require('../server/db/scopeUtils');
+      assert.deepStrictEqual(legacyUserScopes({ role: 'USER', directorate: 'D1', division: 'V1' }), [{ directorate: 'D1', divisions: ['V1'] }]);
+      assert.deepStrictEqual(legacyUserScopes({ role: 'USER', directorate: 'D1', division: '  ' }), [{ directorate: 'D1', divisions: null }]);
+      assert.deepStrictEqual(legacyUserScopes({ role: 'USER', directorate: 'D1', division: null }), [{ directorate: 'D1', divisions: null }]);
+      assert.deepStrictEqual(legacyUserScopes({ role: 'ADMIN', directorate: 'D1', division: 'V1' }), []);
+      assert.deepStrictEqual(legacyUserScopes({ role: 'USER', directorate: null }), []);
+      assert.deepStrictEqual(normalizeScopes([{ directorate: ' D1 ', divisions: ['a', 'a', ' '] }, { directorate: 'D1', divisions: ['b'] }, { directorate: '', divisions: null }, null]), [{ directorate: 'D1', divisions: ['a', 'b'] }]);
+      assert.deepStrictEqual(normalizeScopes([{ directorate: 'D1', divisions: ['a'] }, { directorate: 'D1', divisions: null }]), [{ directorate: 'D1', divisions: null }]);
+      assert.deepStrictEqual(normalizeScopes('x'), []);
+      const sc = [{ directorate: 'D1', divisions: ['a'] }, { directorate: 'D2', divisions: null }];
+      assert.strictEqual(scopeAllows(sc, 'D1', 'a'), true);
+      assert.strictEqual(scopeAllows(sc, 'D1', 'b'), false);
+      assert.strictEqual(scopeAllows(sc, 'D1'), true);
+      assert.strictEqual(scopeAllows(sc, 'D3'), false);
+      assert.strictEqual(rowInScopes(sc, 'D2', 'zzz'), true);
+      assert.strictEqual(rowInScopes(sc, 'D1', 'b'), false);
+      assert.strictEqual(rowInScopes([], 'D1', 'a'), false);
+      const auth = require('../server/services/authService');
+      const user = { role: 'USER', scopes: sc };
+      assert.deepStrictEqual(auth.resolveScope(user, undefined), { directorate: 'ALL', sub_directorate: 'ALL', scopes: sc });
+      assert.deepStrictEqual(auth.resolveScope(user, 'D1'), { directorate: 'D1', sub_directorate: 'ALL', scopes: [sc[0]] });
+      assert.strictEqual(auth.resolveScope(user, 'ALL', 'a').scopes.length, 2, 'a division with directorate ALL keeps the entries that allow it (the filter then ANDs the division)');
+      assert.deepStrictEqual(auth.resolveScope({ role: 'USER', scopes: [sc[0]] }, 'ALL', 'a').scopes, [sc[0]]);
+      assert.ok(auth.resolveScope({ role: 'USER', scopes: [sc[0]] }, 'ALL', 'b').error);
+      assert.ok(auth.resolveScope(user, 'D1', 'b').error);
+      assert.ok(auth.resolveScope(user, 'D3').error);
+      assert.ok(auth.resolveScope({ role: 'USER', scopes: [sc[0]] }, 'ALL', 'nope').error);
+      assert.ok(auth.resolveScope({ role: 'USER', scopes: [] }, 'ALL').error, 'USER without scope is refused');
+      assert.deepStrictEqual(auth.resolveScope({ role: 'ADMIN' }, 'D9', 'v'), { directorate: 'D9', sub_directorate: 'v', scopes: null });
+      assert.strictEqual(auth.isInScope(user, 'D1', 'a'), true);
+      assert.strictEqual(auth.isInScope(user, 'D1', 'b'), false);
+      assert.strictEqual(auth.isInScope({ role: 'ADMIN' }, 'D9', 'x'), true);
+      // SQL Server: a real v2.26.0 row (directorate/division columns, no scope rows) is converted by the boot migration
+      require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+      const storage = require('../server/db/storage');
+      if (storage.backend !== 'sql') { console.log('     (SQL part skipped: JSON backend - its migration runs when auth.json is loaded and is covered by the units above)'); return; }
+      const sql = require('mssql');
+      const pool = await new sql.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
+        user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
+      const made = [];
+      try {
+        for (const [suffix, role, dir, div] of [['g1', 'USER', A, divX], ['g2', 'USER', B, null], ['g3', 'ADMIN', A, divX]]) {
+          const created = await storage.createUser({ username: `rt${suffix}${stamp}`, full_name: 'Legacy', email: '', role, password_hash: 'x', scopes: [] });
+          made.push(created.user_id);
+          await pool.request().input('id', sql.Int, created.user_id).input('d', sql.NVarChar, dir).input('v', sql.NVarChar, div)
+            .query('DELETE FROM dbo.px_user_scopes WHERE user_id = @id; UPDATE dbo.px_users SET directorate = @d, division = @v WHERE user_id = @id');
+        }
+        await storage.migrateLegacyUserScopes();
+        await storage.migrateLegacyUserScopes(); // idempotent
+        const [g1, g2, g3] = await Promise.all(made.map(id => storage.getUserById(id)));
+        assert.deepStrictEqual(g1.scopes, [{ directorate: A, divisions: [divX] }]);
+        assert.deepStrictEqual(g2.scopes, [{ directorate: B, divisions: null }], 'empty division = all divisions');
+        assert.deepStrictEqual(g3.scopes, [], 'ADMIN gets no scope');
+        // an account that already has scope rows is never overwritten by the migration
+        await storage.updateUser(g1.user_id, { scopes: [{ directorate: C, divisions: null }] });
+        await storage.migrateLegacyUserScopes();
+        assert.deepStrictEqual((await storage.getUserById(g1.user_id)).scopes, [{ directorate: C, divisions: null }]);
+        // deleting the account removes its scope rows (cascade)
+        await storage.deleteUser(g1.user_id);
+        const left = await pool.request().input('id', sql.Int, g1.user_id).query('SELECT COUNT(*) AS c FROM dbo.px_user_scopes WHERE user_id = @id');
+        assert.strictEqual(left.recordset[0].c, 0);
+      } finally {
+        for (const id of made) await storage.deleteUser(id);
+        await pool.close();
+        if (typeof storage.close === 'function' && !tempAdmin) await storage.close();
+      }
     });
   } finally {
     for (const id of createdUserIds) await adminJson('DELETE', `/api/admin/users/${id}`);

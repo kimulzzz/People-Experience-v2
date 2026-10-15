@@ -20,6 +20,7 @@ import {
   MinusCircle
 } from 'lucide-react';
 import TrendChart from './TrendChart';
+import { useAuth } from '../utils/AuthContext';
 
 // Derived from the real browser clock (not a frozen literal) — only used as a last-resort
 // fallback when App.jsx hasn't passed filterOptions yet.
@@ -48,6 +49,7 @@ export default function Dashboard({
   onNavigateToSimulator,
   onNavigateToEvents
 }) {
+  const { isAdmin } = useAuth();
   if (!calculationData) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -90,6 +92,11 @@ export default function Dashboard({
               {!isBankwide && (
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-200 border border-amber-400/40">
                   {directorate} {subDirectorate !== 'ALL' ? `• ${subDirectorate}` : ''}
+                </span>
+              )}
+              {isBankwide && !isAdmin && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-200 border border-amber-400/40">
+                  Semua cakupan saya {subDirectorate !== 'ALL' ? `• ${subDirectorate}` : ''}
                 </span>
               )}
             </div>

@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    34 MODUL PENGUJIAN    │     157 AUTOMATED TESTS     │       100% PASS RATE          │
+│    35 MODUL PENGUJIAN    │     166 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -678,3 +678,23 @@ Test jalur lengkap dan "belum dikonfigurasi" **dilewati otomatis** bila sudah ad
 | Unit | Positif/Negatif | hash scrypt ber-salt dan hanya cocok dengan password benar; helper scope/identitas; rate limiter memblokir lalu kedaluwarsa |
 
 Cakupan yang **tidak** diuji otomatis: tampilan UI per role (diperiksa QC di Browser pane), perilaku di belakang HTTPS/`TRUST_PROXY`, dan rate limit setelah restart (di memori).
+
+---
+
+## 🎯 18. Cakupan Data User Fleksibel — v2.27.0 (2026-10-15)
+
+**Regression suite: 166 test** (157 + **Modul 35**, 9 test) → **166/166 PASS di SQL Server dan di JSON**. QC: LULUS DENGAN CATATAN. Parity SQL vs JSON hanya pada perilaku, **bukan angka** (data `store.json` lama berbeda dari data SQL). Modul 35 mencari sendiri satu direktorat dengan dua divisi yang punya respons (A; divisi X, Y) dan dua direktorat lain berdata (B, C) dari data yang ada.
+
+| Modul 35 (9 test) | Jenis | Yang diuji |
+| :--- | :---: | :--- |
+| Satu direktorat penuh | Positif | `px_index`/`survey_index`/`outcome_index`, tiap metrik karyawan (skor + sampel), seri trend, dan alert User = tampilan Admin untuk direktorat itu |
+| Dua direktorat | Positif | satu agregat gabungan: sampel metrik = A + B, rata-rata = rata-rata terbobot sampel (toleransi 0,02); `filter_options.scopes`; menyempitkan ke B = tampilan Admin B; #1-#5 sama dengan Admin bankwide |
+| Subset divisi | Positif/Negatif | data hanya divisi yang diizinkan; divisi/direktorat di luar cakupan → 403 pada calculate, trends, detail, alerts (10 URL); Admin tidak dibatasi |
+| Cakupan campuran | Positif | sebagian divisi A + semua B = union; `/me` mengembalikan cakupan efektif |
+| Alert dalam cakupan | Negatif | skor alert dihitung dari data dalam cakupan, berbeda dari bankwide; komentar verbatim persis komentar responden dalam cakupan (upload + feedback event) |
+| Event & identitas | Positif/Negatif | absensi/feedback non-pengelola mengikuti cakupan, `total_attendees` konsisten; tidak ada nama responden di payload |
+| Validasi cakupan | Positif/Negatif | 12 input salah → 400 tanpa menyimpan; penggabungan duplikat; `divisions: []` = semua; bentuk lama `directorate`+`division`; Admin dengan cakupan; update ditolak tidak mengubah apa pun; ADMIN <-> USER |
+| Perubahan cakupan | Positif | berlaku langsung pada sesi terbuka (403 lama, 200 baru), `USER_SCOPE_CHANGE` tercatat tanpa password, aturan pengelola event mengikuti cakupan |
+| Migrasi & unit | Positif/Negatif | `legacyUserScopes`, `normalizeScopes`, `scopeAllows`, `rowInScopes`, `resolveScope`, `isInScope`; di SQL: baris v2.26.0 dikonversi `migrateLegacyUserScopes()` (idempoten, tidak menimpa, cascade saat hapus akun); bagian SQL dilewati di JSON |
+
+**Tidak diuji / tidak terverifikasi**: tampilan mobile; daftar cakupan panjang yang membuat kolom `target` audit terpotong; User "semua divisi" dengan `sub_directorate` tak dikenal (hasil 200 data kosong, bukan 403 — diketahui).

@@ -8,6 +8,7 @@
 const crypto = require('crypto');
 const storage = require('../db/storage');
 const { createRateLimiter } = require('./rateLimiter');
+const { normalizeScopes, scopeAllows } = require('../db/scopeUtils');
 
 const COOKIE_NAME = 'px_session';
 const ROLES = ['ADMIN', 'USER'];
@@ -82,18 +83,32 @@ async function getAuthSettings() {
 }
 
 // ------------------------------------------------------------------ users: shapes & permissions
+// `scopes` is the data scope of a USER ([{ directorate, divisions: [..] | null }], null = all divisions of
+// that directorate; an ADMIN has none and reads everything). `directorate` / `division` are kept only as a
+// read-only convenience for v2.26.0 clients: the first scope's directorate and, when the account has exactly
+// one single-division scope, that division.
 function toPublicUser(u) {
   if (!u) return null;
-  const { password_hash, ...rest } = u; // eslint-disable-line no-unused-vars
-  return rest;
+  const { password_hash, directorate: _d, division: _v, ...rest } = u; // eslint-disable-line no-unused-vars
+  const scopes = normalizeScopes(u.scopes);
+  const first = scopes[0];
+  return {
+    ...rest,
+    scopes,
+    directorate: first ? first.directorate : null,
+    division: scopes.length === 1 && first.divisions && first.divisions.length === 1 ? first.divisions[0] : null
+  };
 }
 
+// An event manager is an Admin, or a User whose scope COVERS at least one of the directorates in the
+// event_manager_directorates setting (any division - the scope entry only has to name the directorate).
 async function isEventManager(user) {
   if (!user) return false;
   if (user.role === 'ADMIN') return true;
-  if (!user.directorate) return false;
+  const scopes = normalizeScopes(user.scopes);
+  if (!scopes.length) return false;
   const { eventManagerDirectorates } = await getAuthSettings();
-  return eventManagerDirectorates.includes(String(user.directorate).trim().toLowerCase());
+  return scopes.some(s => eventManagerDirectorates.includes(s.directorate.toLowerCase()));
 }
 
 // Per-respondent data (name / NIP / e-mail in metric detail and the evidence CSV). Stage 1: only
@@ -115,13 +130,42 @@ function redactRespondent(value) {
   return value;
 }
 
-// The directorate a request may read. ADMIN: whatever was asked. USER: only their own - missing or
-// 'ALL' means "my directorate", a different one is refused. Returns { directorate } or { error }.
-function resolveDirectorateScope(user, requested) {
-  if (!user || user.role === 'ADMIN') return { directorate: requested || 'ALL' };
-  if (!user.directorate) return { error: 'Akun Anda belum memiliki direktorat. Hubungi Admin.' };
-  if (!requested || requested === 'ALL' || requested === user.directorate) return { directorate: user.directorate };
-  return { error: 'Anda hanya dapat melihat data direktorat Anda sendiri.' };
+// What a request may read (v2.27.0). ADMIN: whatever was asked, no scope restriction.
+// USER: only inside their scope list. Missing / 'ALL' directorate = "all my scope" (the UNION of every scope
+// entry); a named directorate must be one of theirs and a named division must be allowed inside it, otherwise
+// the request is refused. Returns { directorate, sub_directorate, scopes } or { error }:
+//  - scopes = null for an Admin, else the entries that apply (already narrowed to the requested directorate /
+//    division), to be passed to the calculation engine as the union filter;
+//  - directorate = the one directorate when exactly one is left, else 'ALL'.
+function resolveScope(user, requestedDirectorate, requestedDivision) {
+  const dirReq = requestedDirectorate && requestedDirectorate !== 'ALL' ? String(requestedDirectorate) : 'ALL';
+  const divReq = requestedDivision && requestedDivision !== 'ALL' ? String(requestedDivision) : 'ALL';
+  if (!user || user.role === 'ADMIN') return { directorate: dirReq, sub_directorate: divReq, scopes: null };
+  const mine = normalizeScopes(user.scopes);
+  if (!mine.length) return { error: 'Akun Anda belum memiliki cakupan data. Hubungi Admin.' };
+
+  let applicable = mine;
+  if (dirReq !== 'ALL') {
+    applicable = mine.filter(s => s.directorate === dirReq);
+    if (!applicable.length) return { error: 'Direktorat tersebut di luar cakupan data Anda.' };
+  }
+  if (divReq !== 'ALL') {
+    // keep only the entries that allow this division
+    applicable = applicable.filter(s => scopeAllows([s], s.directorate, divReq) && (s.divisions === null || s.divisions.includes(divReq)));
+    if (!applicable.length) return { error: 'Sub-direktorat/divisi tersebut di luar cakupan data Anda.' };
+  }
+  return {
+    directorate: applicable.length === 1 ? applicable[0].directorate : 'ALL',
+    sub_directorate: divReq,
+    scopes: applicable
+  };
+}
+
+// Is one (directorate, division) pair readable by this user? Admin: always.
+function isInScope(user, directorate, division) {
+  if (!user || user.role === 'ADMIN') return true;
+  const entry = normalizeScopes(user.scopes).find(s => s.directorate === directorate);
+  return !!entry && (entry.divisions === null || (!!division && entry.divisions.includes(division)));
 }
 
 // ------------------------------------------------------------------ request helpers
@@ -143,7 +187,7 @@ const cleanForLog = (text, max = 60) => String(text === undefined || text === nu
 async function audit(req, action, { user, target } = {}) {
   try {
     const actor = user || req.user || null;
-    await storage.addAuditLog({ user_id: actor ? actor.user_id : null, username: actor ? actor.username : null, action, target: target ? cleanForLog(target, 100) : null, ip: clientIp(req) });
+    await storage.addAuditLog({ user_id: actor ? actor.user_id : null, username: actor ? actor.username : null, action, target: target ? cleanForLog(target, 190) : null, ip: clientIp(req) });
   } catch (err) {
     console.error('[auth] audit log failed:', err.message);
   }
@@ -252,11 +296,13 @@ async function requireEventManager(req, res, next) {
   }
 }
 
-// For the scoped read routes: returns the directorate the request may use, or answers 403 and returns null.
-function scopeDirectorate(req, res, requested) {
-  const scope = resolveDirectorateScope(req.user, requested);
+// For the scoped read routes: returns { directorate, sub_directorate, scopes } for this request (see
+// resolveScope), or answers 403 and returns null. Reads ?directorate and ?sub_directorate / ?subDirectorate.
+function scopeFilter(req, res) {
+  const q = req.query || {};
+  const scope = resolveScope(req.user, q.directorate, q.sub_directorate || q.subDirectorate);
   if (scope.error) { res.status(403).json({ error: scope.error }); return null; }
-  return scope.directorate;
+  return scope;
 }
 
 // ------------------------------------------------------------------ routes
@@ -264,16 +310,50 @@ const loginLimiter = createRateLimiter({ windowMs: 60 * 1000 });
 const USERNAME_RE = /^[A-Za-z0-9._-]{3,50}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// Validates the role / directorate / division combination against the directory in the database.
-async function validateAssignment(role, directorate, division) {
+// Validates role + data scope against the directory in the database and returns { scopes } (normalized:
+// one entry per directorate, overlaps merged - "all divisions" absorbs a listed subset, duplicates dropped)
+// or { error }. `scopes` is [{ directorate, divisions: [..] | null | [] }] (null / [] = every division).
+// An ADMIN has no scope (a non-empty list is refused); a USER needs at least one.
+async function validateAssignment(role, scopesInput) {
   if (!ROLES.includes(role)) return { error: 'Role harus ADMIN atau USER.' };
-  if (role === 'ADMIN') return { directorate: null, division: null };
+  if (role === 'ADMIN') {
+    if (Array.isArray(scopesInput) && scopesInput.length) return { error: 'Role ADMIN tidak memiliki cakupan data (Admin membaca semua data). Kosongkan cakupan.' };
+    return { scopes: [] };
+  }
+  if (!Array.isArray(scopesInput) || scopesInput.length === 0) return { error: 'User wajib memiliki minimal satu cakupan (direktorat).' };
   const directory = await storage.getDirectorates();
-  const d = directory.find(x => x.directorate_name === directorate);
-  if (!d) return { error: 'Direktorat tidak valid (pilih dari daftar direktorat).' };
-  if (!(d.divisions || []).includes(division)) return { error: 'Divisi tidak valid untuk direktorat tersebut.' };
-  return { directorate: d.directorate_name, division };
+  for (const item of scopesInput) {
+    if (!item || typeof item !== 'object' || typeof item.directorate !== 'string' || !item.directorate.trim()) return { error: 'Setiap cakupan harus memiliki nama direktorat.' };
+    if (item.divisions !== undefined && item.divisions !== null && !(Array.isArray(item.divisions) && item.divisions.every(v => typeof v === 'string'))) {
+      return { error: 'Daftar divisi pada cakupan harus berupa array nama divisi (atau kosong/null = semua divisi).' };
+    }
+    const d = directory.find(x => x.directorate_name === item.directorate.trim());
+    if (!d) return { error: `Direktorat "${item.directorate}" tidak valid (pilih dari daftar direktorat).` };
+    const bad = (item.divisions || []).map(v => v.trim()).filter(Boolean).find(v => !(d.divisions || []).includes(v));
+    if (bad) return { error: `Divisi "${bad}" bukan bagian dari direktorat ${d.directorate_name}.` };
+  }
+  const scopes = normalizeScopes(scopesInput);
+  return scopes.length ? { scopes } : { error: 'User wajib memiliki minimal satu cakupan (direktorat).' };
 }
+
+// Cakupan from a request body: `scopes`, or (v2.26.0 clients) directorate + division as a single scope - there
+// the division stays mandatory, an omitted one is refused instead of silently meaning "all divisions"; and an
+// ADMIN's leftover directorate/division is ignored as before. Returns { scopes } (undefined = body names no
+// scope), or { error }.
+function scopesFromBody(b, role) {
+  if (b.scopes !== undefined) return { scopes: b.scopes === null ? [] : b.scopes };
+  if (b.directorate !== undefined || b.division !== undefined) {
+    if (role === 'ADMIN') return { scopes: [] };
+    if (!b.directorate || !b.division) return { error: 'Divisi wajib diisi bersama direktorat (atau kirim "scopes" untuk memilih beberapa direktorat / semua divisi).' };
+    return { scopes: [{ directorate: b.directorate, divisions: [b.division] }] };
+  }
+  return { scopes: undefined };
+}
+
+// Short, secret-free text of a scope list for the audit trail.
+const describeScopes = scopes => (scopes && scopes.length
+  ? scopes.map(s => `${s.directorate}${s.divisions === null ? ' (semua)' : ` [${s.divisions.join(', ')}]`}`).join('; ')
+  : '(tanpa cakupan)');
 
 function registerAuthRoutes(app) {
   app.use('/api', authGate);
@@ -394,21 +474,23 @@ function registerAuthRoutes(app) {
       if (!USERNAME_RE.test(username)) return res.status(400).json({ error: 'Username/NIP 3-50 karakter (huruf, angka, titik, minus, garis bawah).' });
       if (!fullName || fullName.length > 200) return res.status(400).json({ error: 'Nama lengkap wajib diisi (maks. 200 karakter).' });
       if (email && (!EMAIL_RE.test(email) || email.length > 200)) return res.status(400).json({ error: 'Format email tidak valid.' });
-      const assign = await validateAssignment(b.role, b.directorate, b.division);
+      const fromBody = scopesFromBody(b, b.role);
+      if (fromBody.error) return res.status(400).json({ error: fromBody.error });
+      const assign = await validateAssignment(b.role, fromBody.scopes);
       if (assign.error) return res.status(400).json({ error: assign.error });
 
       const temporaryPassword = generateTempPassword();
       let created;
       try {
         created = await storage.createUser({
-          username, full_name: fullName, email, role: b.role, directorate: assign.directorate, division: assign.division,
+          username, full_name: fullName, email, role: b.role, scopes: assign.scopes,
           password_hash: await hashPassword(temporaryPassword), is_active: true, must_change_password: true
         });
       } catch (err) {
         if (err.code === 'DUPLICATE_USER') return res.status(409).json({ error: err.message });
         throw err;
       }
-      await audit(req, 'USER_CREATE', { target: `${created.username} (${created.role})` });
+      await audit(req, 'USER_CREATE', { target: `${created.username} (${created.role}) cakupan: ${describeScopes(created.scopes)}` });
       res.status(201).json({ user: toPublicUser(created), temporary_password: temporaryPassword });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -433,12 +515,18 @@ function registerAuthRoutes(app) {
         if (typeof b.is_active !== 'boolean') return res.status(400).json({ error: 'is_active harus true/false.' });
         patch.is_active = b.is_active;
       }
-      if (b.role !== undefined || b.directorate !== undefined || b.division !== undefined) {
-        const newRole = b.role !== undefined ? b.role : target.role;
-        const assign = await validateAssignment(newRole,
-          b.directorate !== undefined ? b.directorate : target.directorate, b.division !== undefined ? b.division : target.division);
+      let scopeChanged = false;
+      const newRole = b.role !== undefined ? b.role : target.role;
+      const fromBody = scopesFromBody(b, newRole);
+      if (fromBody.error) return res.status(400).json({ error: fromBody.error });
+      const bodyScopes = fromBody.scopes;
+      if (b.role !== undefined || bodyScopes !== undefined) {
+        // Role change without new scopes: ADMIN -> none, USER keeps the current ones (empty -> refused).
+        const wanted = bodyScopes !== undefined ? bodyScopes : (newRole === 'ADMIN' ? [] : target.scopes);
+        const assign = await validateAssignment(newRole, wanted);
         if (assign.error) return res.status(400).json({ error: assign.error });
-        patch.role = newRole; patch.directorate = assign.directorate; patch.division = assign.division;
+        patch.role = newRole; patch.scopes = assign.scopes;
+        scopeChanged = JSON.stringify(normalizeScopes(target.scopes)) !== JSON.stringify(assign.scopes);
       }
 
       const isSelf = target.user_id === req.user.user_id;
@@ -452,7 +540,10 @@ function registerAuthRoutes(app) {
 
       const updated = await storage.updateUser(target.user_id, patch);
       if (patch.is_active === false || (patch.role && patch.role !== target.role)) await storage.deleteSessionsForUser(target.user_id);
-      await audit(req, 'USER_UPDATE', { target: `${target.username}: ${Object.keys(patch).join(',')}` });
+      // A scope change takes effect on the very next request of an open session: every request reloads the
+      // account (and its scopes) from the database, so no re-login and no session revocation is needed.
+      await audit(req, 'USER_UPDATE', { target: `${target.username}: ${Object.keys(patch).filter(k => k !== 'scopes').join(',')}` });
+      if (scopeChanged) await audit(req, 'USER_SCOPE_CHANGE', { target: `${target.username}: ${describeScopes(target.scopes)} -> ${describeScopes(updated.scopes)}` });
       res.json({ user: toPublicUser(updated) });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -519,6 +610,6 @@ async function warnIfNoUsers() {
 module.exports = {
   COOKIE_NAME, ROLES, PUBLIC_ROUTES,
   hashPassword, verifyPassword, generateTempPassword, validateNewPassword,
-  getAuthSettings, toPublicUser, isEventManager, canSeeRespondentData, redactRespondent, resolveDirectorateScope,
-  parseCookies, requireRole, requireLogin, requireEventManager, scopeDirectorate, registerAuthRoutes, warnIfNoUsers
+  getAuthSettings, toPublicUser, isEventManager, canSeeRespondentData, redactRespondent, resolveScope, isInScope, describeScopes,
+  parseCookies, requireRole, requireLogin, requireEventManager, scopeFilter, registerAuthRoutes, warnIfNoUsers
 };
