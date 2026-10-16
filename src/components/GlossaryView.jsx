@@ -15,8 +15,8 @@ import {
 
 // Sourced from docs/People_Experience_Glossary_Full_Text.xlsx — 44 official PX Framework terms,
 // grouped into the same 5 Employee Journeys used everywhere else in this app (Dashboard journey
-// cards, Explore Metrics filters), plus a "Framework & Konsep Inti" group for cross-cutting
-// concepts and a "Tools & Sistem" group for internal CIMB systems referenced by the glossary.
+// cards, Explore Metrics filters), plus a "Core Framework & Concepts" group for cross-cutting
+// concepts and a "Tools & Systems" group for internal CIMB systems referenced by the glossary.
 const GLOSSARY_TERMS = [
   // --- Framework & Konsep Inti ---
   { term: 'People Experience (PX)', def: 'Keseluruhan pengalaman karyawan di CIMB Niaga sepanjang employee lifecycle, mulai dari tahap menarik kandidat hingga karyawan meninggalkan organisasi. PX terdiri dari 5 journey yang membentuk momen-momen bermakna.', category: 'FRAMEWORK' },
@@ -80,8 +80,8 @@ const GLOSSARY_TERMS = [
 // Same journey palette used across Dashboard.jsx / Calculator.jsx journey cards & filter chips
 // (docs/05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md §4 CIMB Brand Digital Guidelines).
 const CATEGORIES = [
-  { id: 'FRAMEWORK', label: 'Framework & Konsep Inti', color: '#780000', icon: Compass },
-  { id: 'TOOLS', label: 'Tools & Sistem', color: '#2563EB', icon: Wrench },
+  { id: 'FRAMEWORK', label: 'Core Framework & Concepts', color: '#780000', icon: Compass },
+  { id: 'TOOLS', label: 'Tools & Systems', color: '#2563EB', icon: Wrench },
   { id: 'ARRIVAL', label: 'Arrival', color: '#FF8000', icon: UserPlus },
   { id: 'CONNECT', label: 'Connect', color: '#F7901E', icon: Users },
   { id: 'BELONG', label: 'Belong', color: '#6716C4', icon: HeartHandshake },
@@ -121,11 +121,11 @@ export default function GlossaryView() {
               People Experience Glossary
             </h3>
             <span className="text-[10px] font-bold px-2 py-0.5 bg-red-100 text-[#ED1C24] rounded-full">
-              {GLOSSARY_TERMS.length} Istilah
+              {GLOSSARY_TERMS.length} Terms
             </span>
           </div>
           <p className="text-xs text-gray-500 max-w-2xl">
-            Kamus istilah resmi framework People Experience (PX) CIMB Niaga — mulai dari konsep inti PE Index hingga istilah di setiap tahapan employee journey (Arrival, Connect, Belong, Contribute, Depart).
+            Official glossary of the CIMB Niaga People Experience (PX) framework — from the core PE Index concepts to the terms of each employee journey stage (Arrival, Connect, Belong, Contribute, Depart).
           </p>
         </div>
       </div>
@@ -137,7 +137,7 @@ export default function GlossaryView() {
           <Search className="w-4 h-4 text-gray-400 absolute left-3 top-2.5" />
           <input
             type="text"
-            placeholder="Cari istilah atau definisi..."
+            placeholder="Search term or definition..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full pl-9 pr-8 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#ED1C24]"
@@ -162,7 +162,7 @@ export default function GlossaryView() {
                 : 'text-gray-600 hover:bg-gray-100'
             }`}
           >
-            Semua ({GLOSSARY_TERMS.length})
+            All ({GLOSSARY_TERMS.length})
           </button>
           {CATEGORIES.map(cat => {
             const count = GLOSSARY_TERMS.filter(t => t.category === cat.id).length;
@@ -201,7 +201,7 @@ export default function GlossaryView() {
               </div>
               <h4 className="text-sm font-extrabold text-[#231F20]">{cat.label}</h4>
               <span className="text-[10px] font-bold px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full">
-                {cat.terms.length} istilah
+                {cat.terms.length} terms
               </span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4">
@@ -222,8 +222,8 @@ export default function GlossaryView() {
       {grouped.length === 0 && (
         <div className="bg-white rounded-2xl p-12 border border-gray-200 shadow-xs flex flex-col items-center justify-center text-center space-y-2">
           <Search className="w-8 h-8 text-gray-300" />
-          <p className="text-sm font-bold text-gray-500">Tidak ada istilah yang cocok</p>
-          <p className="text-xs text-gray-400">Coba kata kunci lain atau reset filter kategori.</p>
+          <p className="text-sm font-bold text-gray-500">No matching terms</p>
+          <p className="text-xs text-gray-400">Try another keyword or reset the category filter.</p>
         </div>
       )}
     </div>

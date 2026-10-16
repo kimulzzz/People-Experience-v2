@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import TrendChart from './TrendChart';
 import { useAuth } from '../utils/AuthContext';
+import { monthName } from '../utils/months';
 
 // Derived from the real browser clock (not a frozen literal) — only used as a last-resort
 // fallback when App.jsx hasn't passed filterOptions yet.
@@ -70,7 +71,7 @@ export default function Dashboard({
   const subDirectorate = filterOptions?.sub_directorate || 'ALL';
   const isBankwide = directorate === 'ALL';
 
-  const periodLabel = mode === 'YTD' ? `Year-to-Date (YTD) ${year}` : `Month-to-Date (MTD) ${year}-${month}`;
+  const periodLabel = mode === 'YTD' ? `Year-to-Date (YTD) ${year}` : `Month-to-Date (MTD) ${monthName(month) || month} ${year}`;
 
   return (
     <div className="space-y-6">
@@ -96,7 +97,7 @@ export default function Dashboard({
               )}
               {isBankwide && !isAdmin && (
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-200 border border-amber-400/40">
-                  Semua cakupan saya {subDirectorate !== 'ALL' ? `• ${subDirectorate}` : ''}
+                  All my scope {subDirectorate !== 'ALL' ? `• ${subDirectorate}` : ''}
                 </span>
               )}
             </div>
@@ -263,12 +264,12 @@ export default function Dashboard({
                   </div>
                 </div>
 
-                {/* AI Narrative (dynamic via local Ollama, offline rule-based fallback) */}
+                {/* Narrative summary (rule-based since v2.28.0) */}
                 {alert.narrative_summary && (
                   <div className="mt-3 bg-white/80 rounded-lg p-3 border border-gray-200/80 text-xs">
                     <div className="flex items-center space-x-1.5 text-[#231F20] font-bold mb-1.5">
                       <Sparkles className="w-3.5 h-3.5 text-[#ED1C24]" />
-                      <span>Ringkasan Analisis AI (Local Ollama)</span>
+                      <span>Analysis Summary</span>
                     </div>
                     <p className="text-gray-700 leading-relaxed font-medium">
                       {alert.narrative_summary}
@@ -433,7 +434,7 @@ export default function Dashboard({
                           }`}
                           title={
                             isDisabled
-                              ? `Metrik ${m.metric_id} (${m.metric_name}) dinonaktifkan di filter Direktorat (Bankwide External).`
+                              ? `Metric ${m.metric_id} (${m.metric_name}) is disabled under the Directorate filter (Bankwide External).`
                               : `Click to view survey details and questions for ${m.metric_name}`
                           }
                         >

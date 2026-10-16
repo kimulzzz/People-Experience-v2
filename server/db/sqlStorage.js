@@ -318,7 +318,7 @@ function normalizeResponse(r) {
     metric_id: metricId,
     respondent_type: type,
     respondent_id: String(respondentId),
-    respondent_name: r.employee_name ? r.employee_name.trim() : (r.participant_name || r.candidate_name || 'Karyawan CIMB'),
+    respondent_name: r.employee_name ? r.employee_name.trim() : (r.participant_name || r.candidate_name || 'CIMB Employee'),
     respondent_email: String(email),
     org_unit_1: r.directorate ? r.directorate.trim() : (r.university || r.applied_position || 'General'),
     org_unit_2: r.division ? r.division.trim() : (r.major || r.recruitment_channel || 'General'),
@@ -542,6 +542,20 @@ async function seedAppSettings(tx) {
     await run(`IF NOT EXISTS (SELECT 1 FROM dbo.px_app_settings WHERE setting_key = @key)
                  INSERT INTO dbo.px_app_settings (setting_key, setting_value, description) VALUES (@key, @value, @description)`,
       { key, value: T.max(JSON.stringify(def.value)), description: def.description || '' }, tx);
+  }
+}
+
+// v2.30.0: the default option labels became English. Replaces a label ONLY when it is still exactly the old
+// Indonesian default (seed.LEGACY_OPTION_LABELS), so an admin's own edit is never overwritten; values never change.
+async function topUpOptionLabels() {
+  for (const key of Object.keys(seed.LEGACY_OPTION_LABELS || {})) {
+    const rows = await run('SELECT setting_value FROM dbo.px_app_settings WHERE setting_key = @key', { key });
+    if (!rows.length) continue;
+    const next = seed.upgradeLegacyOptionLabels(key, parseJson(rows[0].setting_value, null));
+    if (!next) continue;
+    await run('UPDATE dbo.px_app_settings SET setting_value = @value, updated_at = SYSUTCDATETIME() WHERE setting_key = @key',
+      { key, value: T.max(JSON.stringify(next)) });
+    console.log(`[sqlStorage] Setting '${key}': Indonesian default option labels replaced with the English ones.`);
   }
 }
 
@@ -1004,6 +1018,7 @@ const storage = {
     await applySchema();
     await seedIfEmpty();
     await inTransaction(async tx => { await seedSurveyQuestions(tx); await seedAppSettings(tx); await seedEmailSettings(tx); });
+    await topUpOptionLabels();
     await topUpDirectory();
     await topUpMetricUnits();
     await topUpSurveySource();
@@ -1090,7 +1105,7 @@ const storage = {
   async setSetting(key, value) {
     const rows = await run(`UPDATE dbo.px_app_settings SET setting_value = @value, updated_at = SYSUTCDATETIME()
                             OUTPUT INSERTED.setting_key WHERE setting_key = @key`, { key: String(key), value: T.max(JSON.stringify(value)) });
-    if (!rows.length) throw new Error(`Setting "${key}" tidak ditemukan.`);
+    if (!rows.length) throw new Error(`Setting "${key}" not found.`);
     return value;
   },
 
@@ -1124,7 +1139,7 @@ const storage = {
         return (await withScopes([rowToUser(rows[0])], tx))[0];
       });
     } catch (err) {
-      if (isUniqueViolation(err)) { const e = new Error(`Username "${u.username}" sudah dipakai.`); e.code = 'DUPLICATE_USER'; throw e; }
+      if (isUniqueViolation(err)) { const e = new Error(`Username "${u.username}" is already taken.`); e.code = 'DUPLICATE_USER'; throw e; }
       throw err;
     }
   },
@@ -1216,7 +1231,7 @@ const storage = {
   async updateJourney(journey_id, journeyData) {
     const id = parseInt(journey_id, 10);
     const current = await this.getJourneyById(id);
-    if (!current) throw new Error(`Journey #${id} tidak ditemukan.`);
+    if (!current) throw new Error(`Journey #${id} not found.`);
     const next = {
       ...current,
       journey_code: journeyData.journey_code ? journeyData.journey_code.toUpperCase().trim() : current.journey_code,
@@ -1233,7 +1248,7 @@ const storage = {
   async deleteJourney(journey_id) {
     const id = parseInt(journey_id, 10);
     const current = await this.getJourneyById(id);
-    if (!current) throw new Error(`Journey #${id} tidak ditemukan.`);
+    if (!current) throw new Error(`Journey #${id} not found.`);
     await run('DELETE FROM dbo.px_journeys WHERE journey_id = @id', { id });
     return current;
   },
@@ -1262,7 +1277,7 @@ const storage = {
   async updateCheckpoint(checkpoint_id, cpData) {
     const id = parseInt(checkpoint_id, 10);
     const current = await this.getCheckpointById(id);
-    if (!current) throw new Error(`Checkpoint #${id} tidak ditemukan.`);
+    if (!current) throw new Error(`Checkpoint #${id} not found.`);
     const next = {
       ...current,
       journey_id: cpData.journey_id !== undefined ? parseInt(cpData.journey_id) : current.journey_id,
@@ -1276,7 +1291,7 @@ const storage = {
   async deleteCheckpoint(checkpoint_id) {
     const id = parseInt(checkpoint_id, 10);
     const current = await this.getCheckpointById(id);
-    if (!current) throw new Error(`Checkpoint #${id} tidak ditemukan.`);
+    if (!current) throw new Error(`Checkpoint #${id} not found.`);
     await run('DELETE FROM dbo.px_checkpoints WHERE checkpoint_id = @id', { id });
     return current;
   },
@@ -1356,7 +1371,7 @@ const storage = {
   async updateMetric(metric_id, metricData) {
     const id = parseInt(metric_id, 10);
     const current = await this.getMetricById(id);
-    if (!current) throw new Error(`Metric #${id} tidak ditemukan.`);
+    if (!current) throw new Error(`Metric #${id} not found.`);
 
     const isEmployee = metricData.is_employee_metric !== undefined
       ? Boolean(metricData.is_employee_metric)
@@ -1410,7 +1425,7 @@ const storage = {
   async deleteMetric(metric_id) {
     const id = parseInt(metric_id, 10);
     const current = await this.getMetricById(id);
-    if (!current) throw new Error(`Metric #${id} tidak ditemukan.`);
+    if (!current) throw new Error(`Metric #${id} not found.`);
     await inTransaction(async tx => {
       await run(`DELETE FROM dbo.px_metric_targets WHERE metric_id = @id; DELETE FROM dbo.px_survey_questions WHERE metric_id = @id; DELETE FROM dbo.px_reminder_log WHERE metric_id = @id;
         DELETE FROM dbo.px_survey_uploaded_responses WHERE metric_id = @id;
@@ -1517,7 +1532,7 @@ const storage = {
   },
   async deleteEvent(event_id) {
     const removed = await this.getEventById(event_id);
-    if (!removed) throw new Error(`Event "${event_id}" tidak ditemukan.`);
+    if (!removed) throw new Error(`Event "${event_id}" not found.`);
     // Attendances, feedback, questions and media rows go with it (ON DELETE CASCADE).
     await run('DELETE FROM dbo.px_events WHERE event_id = @id', { id: String(event_id) });
     return removed;
@@ -1547,13 +1562,13 @@ const storage = {
                               OUTPUT INSERTED.* VALUES (@event_id, @nip, @employee_name, @cimb_email, @directorate, @division)`, p);
       return rowToAttendance(rows[0]);
     } catch (err) {
-      if (isUniqueViolation(err)) throw new Error(`NIP ${attendanceData.nip} sudah tercatat absensi di event ini.`);
+      if (isUniqueViolation(err)) throw new Error(`NIP ${attendanceData.nip} has already checked in to this event.`);
       throw err;
     }
   },
   async deleteAttendance(event_id, nip) {
     const rows = await run('DELETE FROM dbo.px_attendances OUTPUT DELETED.* WHERE event_id = @event_id AND nip = @nip', { event_id: String(event_id), nip: String(nip) });
-    if (!rows.length) throw new Error(`Data absensi NIP ${nip} pada event "${event_id}" tidak ditemukan.`);
+    if (!rows.length) throw new Error(`Attendance record of NIP ${nip} in event "${event_id}" not found.`);
     return rowToAttendance(rows[0]);
   },
 
@@ -1576,7 +1591,7 @@ const storage = {
     return rows.length ? rows.map(rowToQuestion) : this.getMasterQuestions();
   },
   async saveEventQuestions(event_id, questions) {
-    if (!(await this.getEventById(event_id))) throw new Error(`Event "${event_id}" tidak ditemukan.`);
+    if (!(await this.getEventById(event_id))) throw new Error(`Event "${event_id}" not found.`);
     await inTransaction(async tx => {
       await run('DELETE FROM dbo.px_event_questions WHERE event_id = @id', { id: String(event_id) }, tx);
       for (let i = 0; i < questions.length; i++) {
@@ -1599,13 +1614,13 @@ const storage = {
       });
       return rowToFeedback(rows[0]);
     } catch (err) {
-      if (isUniqueViolation(err)) throw new Error(`NIP ${feedbackData.nip} sudah mengisi kuesioner evaluasi untuk event ini.`);
+      if (isUniqueViolation(err)) throw new Error(`NIP ${feedbackData.nip} has already filled in the evaluation questionnaire for this event.`);
       throw err;
     }
   },
   async deleteFeedbackResponse(event_id, nip) {
     const rows = await run('DELETE FROM dbo.px_feedback_responses OUTPUT DELETED.* WHERE event_id = @event_id AND nip = @nip', { event_id: String(event_id), nip: String(nip) });
-    if (!rows.length) throw new Error(`Feedback NIP ${nip} pada event "${event_id}" tidak ditemukan.`);
+    if (!rows.length) throw new Error(`Feedback of NIP ${nip} in event "${event_id}" not found.`);
     return rowToFeedback(rows[0]);
   },
 
@@ -1806,7 +1821,7 @@ const storage = {
   },
   async saveSurveyQuestions(metric_id, questions) {
     const id = parseInt(metric_id, 10);
-    if (!Array.isArray(questions)) throw new Error('Format pertanyaan harus berupa array.');
+    if (!Array.isArray(questions)) throw new Error('The questions must be an array.');
     await inTransaction(tx => replaceSurveyQuestions(tx, id, questions, true));
     return this.getSurveyQuestions(id);
   },

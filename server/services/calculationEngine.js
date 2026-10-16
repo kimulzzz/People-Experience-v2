@@ -157,9 +157,9 @@ function normalizeDateString(dateVal) {
   return str;
 }
 
-const MONTH_NAMES_ID = [
-  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
 /**
@@ -304,7 +304,7 @@ async function computeMonthlyTrends(filterOptions = {}) {
 
     return {
       month_code: code,
-      month_name: MONTH_NAMES_ID[idx],
+      month_name: MONTH_NAMES[idx],
       year: yearStr,
       has_actual_data: responseCount > 0,
       response_count: responseCount,
@@ -767,7 +767,7 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
       responses.forEach(r => {
         if (r.ratings && r.ratings[q.key] && typeof r.ratings[q.key] === 'string' && r.ratings[q.key].trim()) {
           textResponses.push({
-            employee_name: r.participant_name || r.candidate_name || r.employee_name || 'Responden',
+            employee_name: r.participant_name || r.candidate_name || r.employee_name || 'Respondent',
             division: r.major || r.recruitment_channel || r.division || 'General',
             survey_date: r.survey_date || r.created_at,
             text: r.ratings[q.key].trim()
@@ -914,7 +914,7 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
         percent_neutral: avgNeut,
         percent_unfavorable: avgUnfav,
         questions_count: scorableQuestions.length,
-        description: 'Data ESS merupakan rangkuman skor kepuasan (% Favorable) dari butir-butir pertanyaan survei sentimen karyawan tahunan.'
+        description: 'ESS data is a summary of satisfaction scores (% Favorable) from the questions of the annual employee sentiment survey.'
       };
     }
   }

@@ -20,7 +20,7 @@ async function generateSurveyCsvTemplate(metric_id = 'ALL') {
   if (metric_id && metric_id !== 'ALL') {
     const targetMetric = metrics.find(m => m.metric_id === parseInt(metric_id));
     if (!targetMetric) {
-      throw new Error(`Survey metric with ID ${metric_id} tidak ditemukan.`);
+      throw new Error(`Survey metric with ID ${metric_id} not found.`);
     }
 
     const questions = await storage.getSurveyQuestions(targetMetric.metric_id);

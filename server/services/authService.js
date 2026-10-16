@@ -14,7 +14,7 @@ const COOKIE_NAME = 'px_session';
 const ROLES = ['ADMIN', 'USER'];
 const SCRYPT = { N: 16384, r: 8, p: 1, keylen: 64 };
 const MAX_PASSWORD_LENGTH = 128;
-const GENERIC_LOGIN_ERROR = 'Username atau password salah, atau akun tidak dapat digunakan saat ini.';
+const GENERIC_LOGIN_ERROR = 'Incorrect username or password, or the account cannot be used right now.';
 
 // ------------------------------------------------------------------ password hashing
 const scryptAsync = (password, salt, opts) => new Promise((resolve, reject) => {
@@ -72,11 +72,11 @@ function makeInitialPassword() {
 
 // Returns an error message, or null when the password is acceptable.
 function validateNewPassword(password, user) {
-  if (typeof password !== 'string') return 'Password baru wajib diisi.';
-  if (password.length < 10) return 'Password baru minimal 10 karakter.';
-  if (password.length > MAX_PASSWORD_LENGTH) return `Password baru maksimal ${MAX_PASSWORD_LENGTH} karakter.`;
-  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) return 'Password baru harus mengandung huruf dan angka.';
-  if (user && password.toLowerCase() === String(user.username).toLowerCase()) return 'Password tidak boleh sama dengan username.';
+  if (typeof password !== 'string') return 'A new password is required.';
+  if (password.length < 10) return 'The new password must be at least 10 characters.';
+  if (password.length > MAX_PASSWORD_LENGTH) return `The new password must be at most ${MAX_PASSWORD_LENGTH} characters.`;
+  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) return 'The new password must contain letters and digits.';
+  if (user && password.toLowerCase() === String(user.username).toLowerCase()) return 'The password must not be the same as the username.';
   return null;
 }
 
@@ -183,13 +183,13 @@ function rowsForViewer(user, metric, rows) {
 async function requirePicMetric(req, res, metricRef, { required = true } = {}) {
   if (req.user.role === 'ADMIN') return { metric: null };
   const mine = await picMetrics(req.user);
-  if (!mine.length) { res.status(403).json({ error: 'Hanya Admin atau PIC metrik yang dapat menggunakan fitur ini.' }); return null; }
+  if (!mine.length) { res.status(403).json({ error: 'Only an Admin or the metric PIC can use this feature.' }); return null; }
   if (metricRef === undefined || metricRef === null || metricRef === '' || metricRef === 'ALL') {
-    if (required) { res.status(400).json({ error: 'metric_id wajib diisi (pilih salah satu metrik PIC Anda).' }); return null; }
+    if (required) { res.status(400).json({ error: 'metric_id is required (choose one of your PIC metrics).' }); return null; }
     return { metric: null, mine };
   }
   const metric = await getPicMetric(req.user, metricRef);
-  if (!metric) { res.status(403).json({ error: 'Anda bukan PIC metrik tersebut.' }); return null; }
+  if (!metric) { res.status(403).json({ error: 'You are not the PIC of that metric.' }); return null; }
   return { metric, mine };
 }
 
@@ -218,17 +218,17 @@ function resolveScope(user, requestedDirectorate, requestedDivision) {
   const divReq = requestedDivision && requestedDivision !== 'ALL' ? String(requestedDivision) : 'ALL';
   if (!user || user.role === 'ADMIN') return { directorate: dirReq, sub_directorate: divReq, scopes: null };
   const mine = normalizeScopes(user.scopes);
-  if (!mine.length) return { error: 'Akun Anda belum memiliki cakupan data. Hubungi Admin.' };
+  if (!mine.length) return { error: 'Your account has no data scope yet. Contact an Admin.' };
 
   let applicable = mine;
   if (dirReq !== 'ALL') {
     applicable = mine.filter(s => s.directorate === dirReq);
-    if (!applicable.length) return { error: 'Direktorat tersebut di luar cakupan data Anda.' };
+    if (!applicable.length) return { error: 'That directorate is outside your data scope.' };
   }
   if (divReq !== 'ALL') {
     // keep only the entries that allow this division
     applicable = applicable.filter(s => scopeAllows([s], s.directorate, divReq) && (s.divisions === null || s.divisions.includes(divReq)));
-    if (!applicable.length) return { error: 'Sub-direktorat/divisi tersebut di luar cakupan data Anda.' };
+    if (!applicable.length) return { error: 'That sub-directorate/division is outside your data scope.' };
   }
   return {
     directorate: applicable.length === 1 ? applicable[0].directorate : 'ALL',
@@ -333,14 +333,14 @@ async function authGate(req, res, next) {
     const path = req.baseUrl + req.path;
     await attachUser(req);
     if (isPublicRoute(req.method, path)) return next();
-    if (!req.user) return res.status(401).json({ error: 'Silakan login terlebih dahulu.', code: 'AUTH_REQUIRED' });
+    if (!req.user) return res.status(401).json({ error: 'Please sign in first.', code: 'AUTH_REQUIRED' });
     if (req.user.must_change_password && !PASSWORD_CHANGE_ROUTES.test(path)) {
-      return res.status(403).json({ error: 'Anda harus mengganti password sementara terlebih dahulu.', code: 'PASSWORD_CHANGE_REQUIRED' });
+      return res.status(403).json({ error: 'You must change your temporary password first.', code: 'PASSWORD_CHANGE_REQUIRED' });
     }
     next();
   } catch (err) {
     console.error('[auth] gate error:', err.message);
-    res.status(500).json({ error: 'Gagal memeriksa sesi login.' });
+    res.status(500).json({ error: 'Failed to check the login session.' });
   }
 }
 
@@ -348,24 +348,24 @@ async function authGate(req, res, next) {
 async function requireLogin(req, res, next) {
   try {
     await attachUser(req);
-    if (!req.user) return res.status(401).json({ error: 'Silakan login terlebih dahulu.', code: 'AUTH_REQUIRED' });
-    if (req.user.must_change_password) return res.status(403).json({ error: 'Anda harus mengganti password sementara terlebih dahulu.', code: 'PASSWORD_CHANGE_REQUIRED' });
+    if (!req.user) return res.status(401).json({ error: 'Please sign in first.', code: 'AUTH_REQUIRED' });
+    if (req.user.must_change_password) return res.status(403).json({ error: 'You must change your temporary password first.', code: 'PASSWORD_CHANGE_REQUIRED' });
     next();
   } catch (err) {
-    res.status(500).json({ error: 'Gagal memeriksa sesi login.' });
+    res.status(500).json({ error: 'Failed to check the login session.' });
   }
 }
 
 const requireRole = (...roles) => (req, res, next) => {
-  if (!req.user) return res.status(401).json({ error: 'Silakan login terlebih dahulu.', code: 'AUTH_REQUIRED' });
-  if (!roles.includes(req.user.role)) return res.status(403).json({ error: 'Anda tidak memiliki akses ke fitur ini.' });
+  if (!req.user) return res.status(401).json({ error: 'Please sign in first.', code: 'AUTH_REQUIRED' });
+  if (!roles.includes(req.user.role)) return res.status(403).json({ error: 'You do not have access to this feature.' });
   next();
 };
 
 async function requireEventManager(req, res, next) {
   try {
-    if (!req.user) return res.status(401).json({ error: 'Silakan login terlebih dahulu.', code: 'AUTH_REQUIRED' });
-    if (!(await isEventManager(req.user))) return res.status(403).json({ error: 'Hanya Admin dan direktorat pengelola event yang dapat mengelola Signature Event.' });
+    if (!req.user) return res.status(401).json({ error: 'Please sign in first.', code: 'AUTH_REQUIRED' });
+    if (!(await isEventManager(req.user))) return res.status(403).json({ error: 'Only Admins and the event-managing directorates can manage Signature Events.' });
     next();
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -391,25 +391,25 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // or { error }. `scopes` is [{ directorate, divisions: [..] | null | [] }] (null / [] = every division).
 // An ADMIN has no scope (a non-empty list is refused); a USER needs at least one.
 async function validateAssignment(role, scopesInput) {
-  if (!ROLES.includes(role)) return { error: 'Role harus ADMIN atau USER.' };
+  if (!ROLES.includes(role)) return { error: 'Role must be ADMIN or USER.' };
   if (role === 'ADMIN') {
-    if (Array.isArray(scopesInput) && scopesInput.length) return { error: 'Role ADMIN tidak memiliki cakupan data (Admin membaca semua data). Kosongkan cakupan.' };
+    if (Array.isArray(scopesInput) && scopesInput.length) return { error: 'The ADMIN role has no data scope (Admin reads all data). Leave the scope empty.' };
     return { scopes: [] };
   }
-  if (!Array.isArray(scopesInput) || scopesInput.length === 0) return { error: 'User wajib memiliki minimal satu cakupan (direktorat).' };
+  if (!Array.isArray(scopesInput) || scopesInput.length === 0) return { error: 'A User must have at least one scope (directorate).' };
   const directory = await storage.getDirectorates();
   for (const item of scopesInput) {
-    if (!item || typeof item !== 'object' || typeof item.directorate !== 'string' || !item.directorate.trim()) return { error: 'Setiap cakupan harus memiliki nama direktorat.' };
+    if (!item || typeof item !== 'object' || typeof item.directorate !== 'string' || !item.directorate.trim()) return { error: 'Every scope must have a directorate name.' };
     if (item.divisions !== undefined && item.divisions !== null && !(Array.isArray(item.divisions) && item.divisions.every(v => typeof v === 'string'))) {
-      return { error: 'Daftar divisi pada cakupan harus berupa array nama divisi (atau kosong/null = semua divisi).' };
+      return { error: 'The division list of a scope must be an array of division names (or empty/null = all divisions).' };
     }
     const d = directory.find(x => x.directorate_name === item.directorate.trim());
-    if (!d) return { error: `Direktorat "${item.directorate}" tidak valid (pilih dari daftar direktorat).` };
+    if (!d) return { error: `Directorate "${item.directorate}" is not valid (choose from the directorate list).` };
     const bad = (item.divisions || []).map(v => v.trim()).filter(Boolean).find(v => !(d.divisions || []).includes(v));
-    if (bad) return { error: `Divisi "${bad}" bukan bagian dari direktorat ${d.directorate_name}.` };
+    if (bad) return { error: `Division "${bad}" is not part of directorate ${d.directorate_name}.` };
   }
   const scopes = normalizeScopes(scopesInput);
-  return scopes.length ? { scopes } : { error: 'User wajib memiliki minimal satu cakupan (direktorat).' };
+  return scopes.length ? { scopes } : { error: 'A User must have at least one scope (directorate).' };
 }
 
 // Cakupan from a request body: `scopes`, or (v2.26.0 clients) directorate + division as a single scope - there
@@ -420,7 +420,7 @@ function scopesFromBody(b, role) {
   if (b.scopes !== undefined) return { scopes: b.scopes === null ? [] : b.scopes };
   if (b.directorate !== undefined || b.division !== undefined) {
     if (role === 'ADMIN') return { scopes: [] };
-    if (!b.directorate || !b.division) return { error: 'Divisi wajib diisi bersama direktorat (atau kirim "scopes" untuk memilih beberapa direktorat / semua divisi).' };
+    if (!b.directorate || !b.division) return { error: 'A division is required together with the directorate (or send "scopes" to choose several directorates / all divisions).' };
     return { scopes: [{ directorate: b.directorate, divisions: [b.division] }] };
   }
   return { scopes: undefined };
@@ -428,8 +428,8 @@ function scopesFromBody(b, role) {
 
 // Short, secret-free text of a scope list for the audit trail.
 const describeScopes = scopes => (scopes && scopes.length
-  ? scopes.map(s => `${s.directorate}${s.divisions === null ? ' (semua)' : ` [${s.divisions.join(', ')}]`}`).join('; ')
-  : '(tanpa cakupan)');
+  ? scopes.map(s => `${s.directorate}${s.divisions === null ? ' (all)' : ` [${s.divisions.join(', ')}]`}`).join('; ')
+  : '(no scope)');
 
 function registerAuthRoutes(app) {
   app.use('/api', authGate);
@@ -446,15 +446,15 @@ function registerAuthRoutes(app) {
       const settings = await getAuthSettings();
       if (loginLimiter.isBlocked(ip, settings.rateLimitPerMinute)) {
         res.set('Retry-After', String(Math.ceil(loginLimiter.retryAfterMs(ip) / 1000)));
-        return res.status(429).json({ error: 'Terlalu banyak percobaan login. Coba lagi beberapa saat lagi.' });
+        return res.status(429).json({ error: 'Too many login attempts. Please try again in a moment.' });
       }
       const { username, password } = req.body || {};
       if (typeof username !== 'string' || typeof password !== 'string' || !username.trim() || !password || username.length > 100 || password.length > 256) {
-        return res.status(400).json({ error: 'Username dan password wajib diisi.' });
+        return res.status(400).json({ error: 'Username and password are required.' });
       }
       const fail = async (action, user) => {
         loginLimiter.record(ip);
-        await audit(req, action, user ? { user } : { user: { user_id: null, username: null }, target: '(username tidak dikenal)' });
+        await audit(req, action, user ? { user } : { user: { user_id: null, username: null }, target: '(unknown username)' });
         return res.status(401).json({ error: GENERIC_LOGIN_ERROR });
       };
 
@@ -484,7 +484,7 @@ function registerAuthRoutes(app) {
       res.json(await sessionPayload(updated));
     } catch (err) {
       console.error('[auth] login error:', err.message);
-      res.status(500).json({ error: 'Login gagal diproses. Coba lagi.' });
+      res.status(500).json({ error: 'Login could not be processed. Please try again.' });
     }
   });
 
@@ -511,17 +511,17 @@ function registerAuthRoutes(app) {
     try {
       const { current_password, new_password } = req.body || {};
       if (typeof current_password !== 'string' || !current_password || current_password.length > 256) {
-        return res.status(400).json({ error: 'Password saat ini wajib diisi.' });
+        return res.status(400).json({ error: 'The current password is required.' });
       }
       const user = await storage.getUserById(req.user.user_id);
       if (!(await verifyPassword(current_password, user.password_hash))) {
         await audit(req, 'PASSWORD_CHANGE_FAILED');
-        return res.status(400).json({ error: 'Password saat ini salah.' });
+        return res.status(400).json({ error: 'The current password is incorrect.' });
       }
       const problem = validateNewPassword(new_password, user);
       if (problem) return res.status(400).json({ error: problem });
-      if (new_password === current_password) return res.status(400).json({ error: 'Password baru harus berbeda dari password saat ini.' });
-      if (new_password === getDefaultInitialPassword()) return res.status(400).json({ error: 'Password baru tidak boleh sama dengan password awal standar. Pilih password lain.' });
+      if (new_password === current_password) return res.status(400).json({ error: 'The new password must be different from the current password.' });
+      if (new_password === getDefaultInitialPassword()) return res.status(400).json({ error: 'The new password must not be the same as the standard initial password. Choose another password.' });
       const updated = await storage.updateUser(user.user_id, { password_hash: await hashPassword(new_password), must_change_password: false });
       await storage.deleteSessionsForUser(user.user_id, req.sessionHash);
       await audit(req, 'PASSWORD_CHANGE');
@@ -556,9 +556,9 @@ function registerAuthRoutes(app) {
       const username = typeof b.username === 'string' ? b.username.trim() : '';
       const fullName = typeof b.full_name === 'string' ? b.full_name.trim() : '';
       const email = typeof b.email === 'string' ? b.email.trim() : '';
-      if (!USERNAME_RE.test(username)) return res.status(400).json({ error: 'Username/NIP 3-50 karakter (huruf, angka, titik, minus, garis bawah).' });
-      if (!fullName || fullName.length > 200) return res.status(400).json({ error: 'Nama lengkap wajib diisi (maks. 200 karakter).' });
-      if (email && (!EMAIL_RE.test(email) || email.length > 200)) return res.status(400).json({ error: 'Format email tidak valid.' });
+      if (!USERNAME_RE.test(username)) return res.status(400).json({ error: 'Username/NIP must be 3-50 characters (letters, digits, dot, hyphen, underscore).' });
+      if (!fullName || fullName.length > 200) return res.status(400).json({ error: 'Full name is required (max. 200 characters).' });
+      if (email && (!EMAIL_RE.test(email) || email.length > 200)) return res.status(400).json({ error: 'Invalid email format.' });
       const fromBody = scopesFromBody(b, b.role);
       if (fromBody.error) return res.status(400).json({ error: fromBody.error });
       const assign = await validateAssignment(b.role, fromBody.scopes);
@@ -575,7 +575,7 @@ function registerAuthRoutes(app) {
         if (err.code === 'DUPLICATE_USER') return res.status(409).json({ error: err.message });
         throw err;
       }
-      await audit(req, 'USER_CREATE', { target: `${created.username} (${created.role}) cakupan: ${describeScopes(created.scopes)}` });
+      await audit(req, 'USER_CREATE', { target: `${created.username} (${created.role}) scope: ${describeScopes(created.scopes)}` });
       res.status(201).json({ user: toPublicUser(created), temporary_password: temporaryPassword, is_default_password: isDefault });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -585,19 +585,19 @@ function registerAuthRoutes(app) {
   app.put('/api/admin/users/:id', async (req, res) => {
     try {
       const target = await storage.getUserById(req.params.id);
-      if (!target) return res.status(404).json({ error: 'User tidak ditemukan.' });
+      if (!target) return res.status(404).json({ error: 'User not found.' });
       const b = req.body || {};
       const patch = {};
       if (b.full_name !== undefined) {
-        if (typeof b.full_name !== 'string' || !b.full_name.trim() || b.full_name.length > 200) return res.status(400).json({ error: 'Nama lengkap tidak valid.' });
+        if (typeof b.full_name !== 'string' || !b.full_name.trim() || b.full_name.length > 200) return res.status(400).json({ error: 'Invalid full name.' });
         patch.full_name = b.full_name.trim();
       }
       if (b.email !== undefined) {
-        if (typeof b.email !== 'string' || (b.email.trim() && (!EMAIL_RE.test(b.email.trim()) || b.email.length > 200))) return res.status(400).json({ error: 'Format email tidak valid.' });
+        if (typeof b.email !== 'string' || (b.email.trim() && (!EMAIL_RE.test(b.email.trim()) || b.email.length > 200))) return res.status(400).json({ error: 'Invalid email format.' });
         patch.email = b.email.trim();
       }
       if (b.is_active !== undefined) {
-        if (typeof b.is_active !== 'boolean') return res.status(400).json({ error: 'is_active harus true/false.' });
+        if (typeof b.is_active !== 'boolean') return res.status(400).json({ error: 'is_active must be true/false.' });
         patch.is_active = b.is_active;
       }
       let scopeChanged = false;
@@ -617,10 +617,10 @@ function registerAuthRoutes(app) {
       const isSelf = target.user_id === req.user.user_id;
       const losesAdmin = target.role === 'ADMIN' && target.is_active && (patch.is_active === false || (patch.role && patch.role !== 'ADMIN'));
       if (isSelf && (patch.is_active === false || (patch.role && patch.role !== 'ADMIN'))) {
-        return res.status(400).json({ error: 'Anda tidak dapat menonaktifkan atau menurunkan akun Anda sendiri.' });
+        return res.status(400).json({ error: 'You cannot deactivate or demote your own account.' });
       }
       if (losesAdmin && activeAdminCount(await storage.listUsers()) <= 1) {
-        return res.status(400).json({ error: 'Tidak dapat menonaktifkan/menurunkan Admin aktif terakhir.' });
+        return res.status(400).json({ error: 'The last active Admin cannot be deactivated or demoted.' });
       }
 
       const updated = await storage.updateUser(target.user_id, patch);
@@ -638,8 +638,8 @@ function registerAuthRoutes(app) {
   app.post('/api/admin/users/:id/reset-password', async (req, res) => {
     try {
       const target = await storage.getUserById(req.params.id);
-      if (!target) return res.status(404).json({ error: 'User tidak ditemukan.' });
-      if (target.user_id === req.user.user_id) return res.status(400).json({ error: 'Gunakan menu ganti password untuk akun Anda sendiri.' });
+      if (!target) return res.status(404).json({ error: 'User not found.' });
+      if (target.user_id === req.user.user_id) return res.status(400).json({ error: 'Use the change-password menu for your own account.' });
       const { password: temporaryPassword, isDefault } = makeInitialPassword();
       const updated = await storage.updateUser(target.user_id, {
         password_hash: await hashPassword(temporaryPassword), must_change_password: true, failed_attempts: 0, locked_until: null
@@ -655,10 +655,10 @@ function registerAuthRoutes(app) {
   app.delete('/api/admin/users/:id', async (req, res) => {
     try {
       const target = await storage.getUserById(req.params.id);
-      if (!target) return res.status(404).json({ error: 'User tidak ditemukan.' });
-      if (target.user_id === req.user.user_id) return res.status(400).json({ error: 'Anda tidak dapat menghapus akun Anda sendiri.' });
+      if (!target) return res.status(404).json({ error: 'User not found.' });
+      if (target.user_id === req.user.user_id) return res.status(400).json({ error: 'You cannot delete your own account.' });
       if (target.role === 'ADMIN' && target.is_active && activeAdminCount(await storage.listUsers()) <= 1) {
-        return res.status(400).json({ error: 'Tidak dapat menghapus Admin aktif terakhir.' });
+        return res.status(400).json({ error: 'The last active Admin cannot be deleted.' });
       }
       await storage.deleteUser(target.user_id);
       await audit(req, 'USER_DELETE', { target: target.username });
@@ -683,12 +683,12 @@ async function warnIfNoUsers() {
     await storage.purgeExpiredSessions();
     if ((await storage.countUsers()) === 0) {
       console.warn('=======================================================');
-      console.warn('[auth] PERINGATAN: belum ada akun login. Tidak ada yang dapat masuk ke aplikasi.');
+      console.warn('[auth] WARNING: there are no login accounts yet. Nobody can sign in to the application.');
       console.warn('[auth] Buat Admin pertama:  npm run auth:create-admin');
       console.warn('=======================================================');
     }
   } catch (err) {
-    console.error('[auth] gagal memeriksa akun:', err.message);
+    console.error('[auth] failed to check accounts:', err.message);
   }
 }
 

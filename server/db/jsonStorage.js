@@ -13,7 +13,9 @@ const {
   initialSurveyUploadedResponses,
   initialOperationalRecords,
   initialAppSettings,
-  initialEmailSettings
+  initialEmailSettings,
+  LEGACY_OPTION_LABELS,
+  upgradeLegacyOptionLabels
 } = require('./seedData');
 const { parseFilterOptions, normalizeDateString, todayDateString } = require('./filterUtils');
 const { normalizeScopes, rowInScopes, legacyUserScopes } = require('./scopeUtils');
@@ -95,6 +97,12 @@ function getStore() {
         });
         // Backfill any admin setting that was added after this store.json was created.
         store.appSettings = { ...JSON.parse(JSON.stringify(initialAppSettings)), ...(store.appSettings || {}) };
+        // v2.30.0: Indonesian default option labels -> English, only when still exactly the old default (admin edits stay).
+        Object.keys(LEGACY_OPTION_LABELS).forEach(key => {
+          const cur = store.appSettings[key];
+          const next = cur && upgradeLegacyOptionLabels(key, cur.value);
+          if (next) store.appSettings[key] = { ...cur, value: next };
+        });
         if (!store.operationalRecords) {
           store.operationalRecords = JSON.parse(JSON.stringify(initialOperationalRecords));
         }
@@ -192,7 +200,7 @@ const storage = {
   },
   setSetting(key, value) {
     const s = getStore();
-    if (!s.appSettings || !s.appSettings[key]) throw new Error(`Setting "${key}" tidak ditemukan.`);
+    if (!s.appSettings || !s.appSettings[key]) throw new Error(`Setting "${key}" not found.`);
     s.appSettings[key] = { ...s.appSettings[key], value };
     saveStore();
     return value;
@@ -249,7 +257,7 @@ const storage = {
   createUser(u) {
     const a = getAuth();
     if (a.users.some(x => x.username.toLowerCase() === String(u.username).toLowerCase())) {
-      const e = new Error(`Username "${u.username}" sudah dipakai.`);
+      const e = new Error(`Username "${u.username}" is already taken.`);
       e.code = 'DUPLICATE_USER';
       throw e;
     }
@@ -378,7 +386,7 @@ const storage = {
     const id = parseInt(journey_id);
     const idx = s.journeys.findIndex(j => j.journey_id === id);
     if (idx === -1) {
-      throw new Error(`Journey #${id} tidak ditemukan.`);
+      throw new Error(`Journey #${id} not found.`);
     }
     const current = s.journeys[idx];
     s.journeys[idx] = {
@@ -398,7 +406,7 @@ const storage = {
     const id = parseInt(journey_id);
     const idx = s.journeys.findIndex(j => j.journey_id === id);
     if (idx === -1) {
-      throw new Error(`Journey #${id} tidak ditemukan.`);
+      throw new Error(`Journey #${id} not found.`);
     }
     const deleted = s.journeys.splice(idx, 1)[0];
     saveStore();
@@ -429,7 +437,7 @@ const storage = {
     const id = parseInt(checkpoint_id);
     const idx = s.checkpoints.findIndex(c => c.checkpoint_id === id);
     if (idx === -1) {
-      throw new Error(`Checkpoint #${id} tidak ditemukan.`);
+      throw new Error(`Checkpoint #${id} not found.`);
     }
     const current = s.checkpoints[idx];
     s.checkpoints[idx] = {
@@ -446,7 +454,7 @@ const storage = {
     const id = parseInt(checkpoint_id);
     const idx = s.checkpoints.findIndex(c => c.checkpoint_id === id);
     if (idx === -1) {
-      throw new Error(`Checkpoint #${id} tidak ditemukan.`);
+      throw new Error(`Checkpoint #${id} not found.`);
     }
     const deleted = s.checkpoints.splice(idx, 1)[0];
     saveStore();
@@ -525,7 +533,7 @@ const storage = {
     const id = parseInt(metric_id);
     const idx = s.metrics.findIndex(m => m.metric_id === id);
     if (idx === -1) {
-      throw new Error(`Metric #${id} tidak ditemukan.`);
+      throw new Error(`Metric #${id} not found.`);
     }
 
     const current = s.metrics[idx];
@@ -607,7 +615,7 @@ const storage = {
     const id = parseInt(metric_id);
     const idx = s.metrics.findIndex(m => m.metric_id === id);
     if (idx === -1) {
-      throw new Error(`Metric #${id} tidak ditemukan.`);
+      throw new Error(`Metric #${id} not found.`);
     }
 
     const deleted = s.metrics.splice(idx, 1)[0];
@@ -742,7 +750,7 @@ const storage = {
     const s = getStore();
     const idx = s.events.findIndex(e => e.event_id === event_id);
     if (idx === -1) {
-      throw new Error(`Event "${event_id}" tidak ditemukan.`);
+      throw new Error(`Event "${event_id}" not found.`);
     }
     const [removed] = s.events.splice(idx, 1);
     // Clean up everything tied to this event so no orphaned records remain.
@@ -769,7 +777,7 @@ const storage = {
       a => a.event_id === attendanceData.event_id && a.nip === attendanceData.nip
     );
     if (existing) {
-      throw new Error(`NIP ${attendanceData.nip} sudah tercatat absensi di event ini.`);
+      throw new Error(`NIP ${attendanceData.nip} has already checked in to this event.`);
     }
 
     const record = {
@@ -790,7 +798,7 @@ const storage = {
     const s = getStore();
     const idx = s.attendances.findIndex(a => a.event_id === event_id && a.nip === nip);
     if (idx === -1) {
-      throw new Error(`Data absensi NIP ${nip} pada event "${event_id}" tidak ditemukan.`);
+      throw new Error(`Attendance record of NIP ${nip} in event "${event_id}" not found.`);
     }
     const [removed] = s.attendances.splice(idx, 1);
     saveStore();
@@ -826,7 +834,7 @@ const storage = {
       f => f.event_id === feedbackData.event_id && f.nip === feedbackData.nip
     );
     if (existing) {
-      throw new Error(`NIP ${feedbackData.nip} sudah mengisi kuesioner evaluasi untuk event ini.`);
+      throw new Error(`NIP ${feedbackData.nip} has already filled in the evaluation questionnaire for this event.`);
     }
 
     const responseRecord = {
@@ -845,7 +853,7 @@ const storage = {
     const s = getStore();
     const idx = s.feedbackResponses.findIndex(f => f.event_id === event_id && f.nip === nip);
     if (idx === -1) {
-      throw new Error(`Feedback NIP ${nip} pada event "${event_id}" tidak ditemukan.`);
+      throw new Error(`Feedback of NIP ${nip} in event "${event_id}" not found.`);
     }
     const [removed] = s.feedbackResponses.splice(idx, 1);
     saveStore();
@@ -989,7 +997,7 @@ const storage = {
         nip: r.nip ? r.nip.toString().trim() : (r.participant_id || r.candidate_id || ''),
         participant_id: r.participant_id || (r.metric_id === 2 ? r.nip : undefined),
         candidate_id: r.candidate_id || (r.metric_id === 5 ? r.nip : undefined),
-        employee_name: r.employee_name ? r.employee_name.trim() : (r.participant_name || r.candidate_name || 'Karyawan CIMB'),
+        employee_name: r.employee_name ? r.employee_name.trim() : (r.participant_name || r.candidate_name || 'CIMB Employee'),
         participant_name: r.participant_name || (r.metric_id === 2 ? r.employee_name : undefined),
         candidate_name: r.candidate_name || (r.metric_id === 5 ? r.employee_name : undefined),
         cimb_email: r.cimb_email ? r.cimb_email.trim().toLowerCase() : (r.email || ''),
@@ -1119,7 +1127,7 @@ const storage = {
     s.customSurveyQuestions = s.customSurveyQuestions || {};
     const id = parseInt(metric_id);
     if (!Array.isArray(questions)) {
-      throw new Error('Format pertanyaan harus berupa array.');
+      throw new Error('The questions must be an array.');
     }
     s.customSurveyQuestions[id] = questions;
     saveStore();

@@ -75,7 +75,7 @@ async function generateSurveyEvidenceCsv(metric_id, period = 'YTD', options = {}
   if (metric_id && metric_id !== 'ALL') {
     const targetMetric = metrics.find(m => m.metric_id === parseInt(metric_id));
     if (!targetMetric) {
-      throw new Error(`Metric with ID ${metric_id} tidak ditemukan.`);
+      throw new Error(`Metric with ID ${metric_id} not found.`);
     }
 
     const questions = await storage.getSurveyQuestions(targetMetric.metric_id);
@@ -134,7 +134,7 @@ async function generateSurveyEvidenceCsv(metric_id, period = 'YTD', options = {}
       });
 
       const identifier = r.participant_id || r.candidate_id || r.nip || '-';
-      const name = r.participant_name || r.candidate_name || r.employee_name || 'Responden';
+      const name = r.participant_name || r.candidate_name || r.employee_name || 'Respondent';
       const email = r.email || r.cimb_email || '-';
       const dirVal = r.university || r.applied_position || r.directorate || 'General';
       const divVal = r.major || r.recruitment_channel || r.division || 'General';
@@ -187,7 +187,7 @@ async function generateSurveyEvidenceCsv(metric_id, period = 'YTD', options = {}
       const isScale5 = metricObj?.scale_type === 'RATING_5';
 
       const identifier = r.participant_id || r.candidate_id || r.nip || '-';
-      const name = r.participant_name || r.candidate_name || r.employee_name || 'Responden';
+      const name = r.participant_name || r.candidate_name || r.employee_name || 'Respondent';
       const email = r.email || r.cimb_email || '-';
       const dirVal = r.university || r.applied_position || r.directorate || 'General';
       const divVal = r.major || r.recruitment_channel || r.division || 'General';

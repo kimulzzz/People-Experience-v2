@@ -113,7 +113,7 @@ function parseCsvContent(content) {
 async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetMetricId = null, options = {}) {
   const rawLines = parseCsvContent(csvText);
   if (rawLines.length < 2) {
-    throw new Error('File CSV kosong atau tidak memiliki baris data.');
+    throw new Error('The CSV file is empty or has no data rows.');
   }
 
   const rawHeaders = rawLines[0];
@@ -148,7 +148,7 @@ async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetM
   });
 
   if (colSingleScore === -1 && questionColIndices.length === 0) {
-    throw new Error('Kolom nilai rating (atau kolom pertanyaan q1, q2, ...) tidak ditemukan dalam header CSV.');
+    throw new Error('No rating column (or question columns q1, q2, ...) was found in the CSV header.');
   }
 
   const allMetrics = await storage.getMetrics();
@@ -180,11 +180,11 @@ async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetM
 
     // Validation 1: Identifier mandatory
     if (!nip) {
-      const idLabel = metricId === 2 ? 'ID Peserta' : (metricId === 5 ? 'ID Kandidat' : 'NIP');
+      const idLabel = metricId === 2 ? 'Participant ID' : (metricId === 5 ? 'Candidate ID' : 'NIP');
       invalidRows.push({
         row_number: rowNum,
         nip: '-',
-        reason: `${idLabel} wajib diisi dan tidak boleh kosong`
+        reason: `${idLabel} is required and must not be empty`
       });
       return;
     }
@@ -194,7 +194,7 @@ async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetM
       invalidRows.push({
         row_number: rowNum,
         nip,
-        reason: `Metric ID ${metricId || 'N/A'} tidak valid atau bukan metrik bertipe SURVEY`
+        reason: `Metric ID ${metricId || 'N/A'} is invalid or is not a SURVEY metric`
       });
       return;
     }
@@ -247,7 +247,7 @@ async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetM
           } else if (rawVal === '' && matchingQ && !matchingQ.mandatory) {
             // Optional empty
           } else {
-            scoreValidationError = `Nilai untuk pertanyaan '${qCol.key}' harus 'Ya' atau 'Tidak' (${rawVal})`;
+            scoreValidationError = `The value for question '${qCol.key}' must be 'Ya' or 'Tidak' (${rawVal})`;
           }
           return;
         }
@@ -255,11 +255,11 @@ async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetM
         if (qType === 'SCALE_1_10') {
           const numVal = parseFloat(rawVal.replace(/,/g, '.'));
           if (isNaN(numVal)) {
-            scoreValidationError = `Nilai untuk pertanyaan '${qCol.key}' tidak valid (${rawVal})`;
+            scoreValidationError = `The value for question '${qCol.key}' is not valid (${rawVal})`;
             return;
           }
           if (numVal < 1.0 || numVal > 10.0) {
-            scoreValidationError = `Nilai pertanyaan '${qCol.key}' (${numVal}) di luar rentang 1.0 - 10.0`;
+            scoreValidationError = `The value of question '${qCol.key}' (${numVal}) is outside the range 1.0 - 10.0`;
             return;
           }
           ratingsMap[qCol.key] = numVal;
@@ -271,11 +271,11 @@ async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetM
         // Default: SCALE_1_5
         const numVal = parseFloat(rawVal.replace(/,/g, '.'));
         if (isNaN(numVal)) {
-          scoreValidationError = `Nilai untuk pertanyaan '${qCol.key}' tidak valid (${rawVal})`;
+          scoreValidationError = `The value for question '${qCol.key}' is not valid (${rawVal})`;
           return;
         }
         if (numVal < 1.0 || numVal > 5.0) {
-          scoreValidationError = `Nilai pertanyaan '${qCol.key}' (${numVal}) di luar rentang 1.0 - 5.0`;
+          scoreValidationError = `The value of question '${qCol.key}' (${numVal}) is outside the range 1.0 - 5.0`;
           return;
         }
         ratingsMap[qCol.key] = numVal;
@@ -289,11 +289,11 @@ async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetM
       const numVal = parseFloat(rawVal);
 
       if (isNaN(numVal)) {
-        scoreValidationError = `Nilai rating tidak valid (${rawVal})`;
+        scoreValidationError = `The rating value is not valid (${rawVal})`;
       } else if (isScale5 && (numVal < 1.0 || numVal > 5.0)) {
-        scoreValidationError = `Nilai rating (${numVal}) di luar rentang 1.0 - 5.0`;
+        scoreValidationError = `The rating value (${numVal}) is outside the range 1.0 - 5.0`;
       } else if (!isScale5 && (numVal < 0 || numVal > 100)) {
-        scoreValidationError = `Nilai persentase (${numVal}) di luar rentang 0 - 100%`;
+        scoreValidationError = `The percentage value (${numVal}) is outside the range 0 - 100%`;
       } else {
         const defaultQs = activeQuestions;
         const qKey = defaultQs[0] ? defaultQs[0].key : 'q1_overall';
@@ -308,7 +308,7 @@ async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetM
       invalidRows.push({
         row_number: rowNum,
         nip,
-        reason: scoreValidationError || 'Tidak ada nilai pertanyaan yang valid'
+        reason: scoreValidationError || 'There is no valid question value'
       });
       return;
     }
@@ -320,7 +320,7 @@ async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetM
 
     const isMetric2 = metricId === 2;
     const isMetric5 = metricId === 5;
-    const defaultName = isMetric2 ? 'Peserta Campus' : (isMetric5 ? 'Kandidat Pelamar' : 'Karyawan CIMB');
+    const defaultName = isMetric2 ? 'Campus Participant' : (isMetric5 ? 'Job Applicant' : 'CIMB Employee');
     const defaultEmail = isMetric2 ? `${nip.toLowerCase()}@campus.ac.id` : (isMetric5 ? `${nip.toLowerCase()}@candidate.mail` : `${nip}@cimbniaga.co.id`);
     const defaultDir = isMetric2 ? 'Universitas Indonesia' : (isMetric5 ? 'Digital Banking Specialist' : 'General');
     const defaultDiv = isMetric2 ? 'Teknik Informatika' : (isMetric5 ? 'LinkedIn Talent Solutions' : 'General');
@@ -359,7 +359,7 @@ async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetM
   if (validRows.length === 0) {
     return {
       success: false,
-      message: 'Tidak ada baris data yang valid untuk diimpor.',
+      message: 'There are no valid data rows to import.',
       total_rows: dataRows.length,
       valid_rows_count: 0,
       invalid_rows_count: invalidRows.length,
@@ -417,7 +417,7 @@ async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetM
     calculation: updatedPE,
     updated_pe_index: updatedPE.pe_index,
     updated_survey_index: updatedPE.survey_index,
-    message: `Berhasil mengimpor ${validRows.length} respon survei. PE Index terbarui.`
+    message: `Successfully imported ${validRows.length} survey responses. PE Index updated.`
   };
 }
 

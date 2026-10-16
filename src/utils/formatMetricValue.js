@@ -5,8 +5,8 @@
 export function formatMetricValue(rawValue, unit, scaleType) {
   if (rawValue === null || rawValue === undefined || rawValue === '') return '-';
   const num = Number(rawValue);
-  // Hitungan bulat (QUOTA_COUNT) diberi pemisah ribuan ala Indonesia: 4330 -> "4.330" (nilai pecahan tetap apa adanya).
-  const text = scaleType === 'QUOTA_COUNT' && Number.isInteger(num) ? num.toLocaleString('id-ID') : String(rawValue);
+  // Hitungan bulat (QUOTA_COUNT) diberi pemisah ribuan format Inggris: 4330 -> "4,330" (nilai pecahan tetap apa adanya).
+  const text = scaleType === 'QUOTA_COUNT' && Number.isInteger(num) ? num.toLocaleString('en-US') : String(rawValue);
   const u = typeof unit === 'string' ? unit.trim() : '';
   if (!u) return text;
   return u === '%' ? `${text}%` : `${text} ${u}`;

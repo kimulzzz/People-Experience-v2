@@ -181,7 +181,7 @@ export default function PublicCheckInForm({ eventCode, onBackToAdmin }) {
                     onChange={(e) => setFormData({ ...formData, directorate: e.target.value, division: '' })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs bg-white"
                   >
-                    <option value="">Pilih Directorate</option>
+                    <option value="">Select Directorate</option>
                     {directorates.map(d => (
                       <option key={d.name} value={d.name}>{d.name}</option>
                     ))}
@@ -197,7 +197,7 @@ export default function PublicCheckInForm({ eventCode, onBackToAdmin }) {
                     onChange={(e) => setFormData({ ...formData, division: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs bg-white disabled:bg-gray-100"
                   >
-                    <option value="">{formData.directorate ? 'Pilih Division / Unit' : 'Pilih Directorate dulu'}</option>
+                    <option value="">{formData.directorate ? 'Select Division / Unit' : 'Select a Directorate first'}</option>
                     {divisionOptions.map(div => (
                       <option key={div} value={div}>{div}</option>
                     ))}

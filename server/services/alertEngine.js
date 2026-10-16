@@ -79,8 +79,8 @@ async function getAlertsAndRecommendations(scope = {}) {
     const combinedVerbatims = [...metricUploadedVerbatims, ...eventVerbatims];
 
     // Construct synthesized recommendation narrative
-    let actionText = matchedAction ? matchedAction.recommended_action : `Lakukan evaluasi berkala dan koordinasi dengan ${metric.experience_owner} untuk mencapai target ${metric.target_display}.`;
-    let initiatives = matchedAction ? matchedAction.suggested_initiatives : '1. Lakukan audit proses pada checkpoint terkait.\n2. Jadwalkan review bulanan bersama PIC.';
+    let actionText = matchedAction ? matchedAction.recommended_action : `Carry out a periodic evaluation and coordinate with ${metric.experience_owner} to reach the target of ${metric.target_display}.`;
+    let initiatives = matchedAction ? matchedAction.suggested_initiatives : '1. Run a process audit on the related checkpoint.\n2. Schedule a monthly review with the PIC.';
 
     // Dynamic narrative via local Ollama (auto falls back to rule-based sentence if offline)
     const narrative = await generateAlertNarrative(metric, journey, actionText);

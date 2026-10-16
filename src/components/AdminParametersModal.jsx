@@ -26,10 +26,7 @@ import {
 import { formatMetricValue, defaultUnitForScale } from '../utils/formatMetricValue';
 import { SURVEY_SOURCE_OPTIONS, surveySourceLabel, surveySourceBadgeClass } from '../utils/surveySource';
 
-const MONTH_NAMES_ID = [
-  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
-];
+import { MONTH_NAMES } from '../utils/months';
 
 // Converts a metric's raw Target Nilai (stored in its own native scale — e.g. 4.00 on a
 // RATING_5 1-5 scale) into the same 0-100 % scale as Min Threshold, mirroring the backend's
@@ -140,7 +137,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
     setErrorMessage('');
     try {
       const res = await fetch('/api/admin/parameters');
-      if (!res.ok) throw new Error('Gagal mengambil parameter');
+      if (!res.ok) throw new Error('Failed to load parameters');
       const data = await res.json();
       setJourneys(data.journeys || []);
       setCheckpoints(data.checkpoints || []);
@@ -172,14 +169,14 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
         const loggedCount = (result.results || []).filter(r => r.email_status === 'LOGGED_ONLY').length;
         setSaveSuccess(
           result.smtp_configured
-            ? `Reminder terkirim ke ${sentCount} PIC.`
-            : `SMTP belum dikonfigurasi — ${loggedCount} reminder dicatat di log server (tidak ada email yang benar-benar terkirim).`
+            ? `Reminders sent to ${sentCount} PIC(s).`
+            : `SMTP is not configured — ${loggedCount} reminder(s) were recorded in the server log (no email was actually sent).`
         );
         setTimeout(() => setSaveSuccess(''), 4500);
         await fetchUploadReminders();
       }
     } catch (err) {
-      setErrorMessage('Gagal mengirim reminder: ' + err.message);
+      setErrorMessage('Failed to send reminders: ' + err.message);
     } finally {
       setSendingReminders(false);
     }
@@ -235,9 +232,9 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
       }
 
       const result = await res.json();
-      if (!res.ok) throw new Error(result.error || 'Gagal menyimpan Journey');
+      if (!res.ok) throw new Error(result.error || 'Failed to save the Journey');
 
-      setSaveSuccess(`Journey "${journeyFormData.journey_name}" berhasil disimpan!`);
+      setSaveSuccess(`Journey "${journeyFormData.journey_name}" saved successfully!`);
       setTimeout(() => setSaveSuccess(''), 3500);
       setEditingJourney(null);
       setIsAddingJourney(false);
@@ -251,15 +248,15 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
   };
 
   const handleDeleteJourney = async (journeyId, journeyName) => {
-    if (!window.confirm(`Apakah Anda yakin ingin menghapus Journey "${journeyName}"?`)) return;
+    if (!window.confirm(`Are you sure you want to delete Journey "${journeyName}"?`)) return;
     setLoading(true);
     setErrorMessage('');
     try {
       const res = await fetch(`/api/admin/journeys/${journeyId}`, { method: 'DELETE' });
       const result = await res.json();
-      if (!res.ok) throw new Error(result.error || 'Gagal menghapus Journey');
+      if (!res.ok) throw new Error(result.error || 'Failed to delete the Journey');
 
-      setSaveSuccess(`Journey "${journeyName}" berhasil dihapus.`);
+      setSaveSuccess(`Journey "${journeyName}" deleted successfully.`);
       setTimeout(() => setSaveSuccess(''), 3500);
       await fetchParameters();
       if (onParametersUpdated) onParametersUpdated();
@@ -358,9 +355,9 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
       }
 
       const result = await res.json();
-      if (!res.ok) throw new Error(result.error || 'Gagal menyimpan Metric');
+      if (!res.ok) throw new Error(result.error || 'Failed to save the Metric');
 
-      setSaveSuccess(`Metric "${metricFormData.metric_name}" berhasil disimpan!`);
+      setSaveSuccess(`Metric "${metricFormData.metric_name}" saved successfully!`);
       setTimeout(() => setSaveSuccess(''), 3500);
       setEditingMetric(null);
       setIsAddingMetric(false);
@@ -374,17 +371,17 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
   };
 
   const handleDeleteMetric = async (metricId, metricName) => {
-    if (!window.confirm(`Apakah Anda yakin ingin menghapus Metric ${metricId} - "${metricName}"?
+    if (!window.confirm(`Are you sure you want to delete Metric ${metricId} - "${metricName}"?
 
-Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan ikut terhapus.`)) return;
+All survey data (responses) and question settings of this metric will also be deleted.`)) return;
     setLoading(true);
     setErrorMessage('');
     try {
       const res = await fetch(`/api/admin/metrics/${metricId}`, { method: 'DELETE' });
       const result = await res.json();
-      if (!res.ok) throw new Error(result.error || 'Gagal menghapus Metric');
+      if (!res.ok) throw new Error(result.error || 'Failed to delete the Metric');
 
-      setSaveSuccess(`Metric ${metricId} berhasil dihapus.`);
+      setSaveSuccess(`Metric ${metricId} deleted successfully.`);
       setTimeout(() => setSaveSuccess(''), 3500);
       await fetchParameters();
       if (onParametersUpdated) onParametersUpdated();
@@ -404,9 +401,9 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
     try {
       const res = await fetch('/api/admin/parameters/reset', { method: 'POST' });
       const result = await res.json();
-      if (!res.ok) throw new Error(result.error || 'Gagal reset parameter');
+      if (!res.ok) throw new Error(result.error || 'Failed to reset the parameters');
 
-      setSaveSuccess('Parameter Journey, Checkpoint, dan Metric berhasil direset ke standar bawaan!');
+      setSaveSuccess('Journey, Checkpoint, and Metric parameters were reset to the built-in defaults!');
       setTimeout(() => setSaveSuccess(''), 3500);
       setShowResetConfirm(false);
       setEditingJourney(null);
@@ -458,7 +455,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                 </span>
               </div>
               <p className="text-xs text-red-100">
-                Konfigurasi master parameter tahapan Journey, metrik kepuasan, bobot, threshold, dan klasifikasi responden.
+                Configure the master parameters for Journey stages, satisfaction metrics, weights, thresholds, and respondent classification.
               </p>
             </div>
           </div>
@@ -467,7 +464,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
             <button
               onClick={() => setShowResetConfirm(true)}
               className="px-3 py-1.5 text-xs font-semibold text-amber-300 bg-black/40 hover:bg-black/60 border border-amber-600/50 rounded-lg flex items-center space-x-1.5 transition"
-              title="Reset ke parameter default CIMB Niaga"
+              title="Reset to the default CIMB Niaga parameters"
             >
               <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
               <span className="hidden sm:inline">Reset Default</span>
@@ -508,7 +505,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
               }`}
             >
               <Sliders className="w-4 h-4" />
-              <span>Parameter Metric ({metrics.length})</span>
+              <span>Metric Parameters ({metrics.length})</span>
             </button>
 
             <button
@@ -520,7 +517,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
               }`}
             >
               <Layers className="w-4 h-4" />
-              <span>Parameter Journey ({journeys.length})</span>
+              <span>Journey Parameters ({journeys.length})</span>
             </button>
           </div>
 
@@ -531,7 +528,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                 className="px-3 py-1.5 text-xs font-bold text-white bg-[var(--theme-base)] hover:bg-[var(--theme-hover)] rounded-lg flex items-center space-x-1.5 shadow-sm transition"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>Tambah Journey</span>
+                <span>Add Journey</span>
               </button>
             )}
 
@@ -541,7 +538,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                 className="px-3 py-1.5 text-xs font-bold text-white bg-[var(--theme-base)] hover:bg-[var(--theme-hover)] rounded-lg flex items-center space-x-1.5 shadow-sm transition"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>Tambah Metric</span>
+                <span>Add Metric</span>
               </button>
             )}
           </div>
@@ -561,43 +558,43 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                   <div className="flex items-center justify-between pb-3 mb-4 border-b border-gray-200">
                     <h3 className="text-sm font-bold text-gray-900 flex items-center space-x-2">
                       <Sparkles className="w-4 h-4 text-[var(--theme-base)]" />
-                      <span>{editingJourney ? `Edit Journey: ${editingJourney.journey_name}` : 'Tambah Journey Baru'}</span>
+                      <span>{editingJourney ? `Edit Journey: ${editingJourney.journey_name}` : 'Add New Journey'}</span>
                     </h3>
                     <button
                       onClick={() => { setIsAddingJourney(false); setEditingJourney(null); }}
                       className="text-xs text-gray-500 hover:text-gray-800 font-semibold"
                     >
-                      Batal
+                      Cancel
                     </button>
                   </div>
 
                   <form onSubmit={handleSaveJourney} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Kode Journey</label>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">Journey Code</label>
                       <input
                         type="text"
                         required
                         value={journeyFormData.journey_code}
                         onChange={(e) => setJourneyFormData({ ...journeyFormData, journey_code: e.target.value })}
-                        placeholder="Contoh: J1"
+                        placeholder="Example: J1"
                         className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 font-mono"
                       />
                     </div>
 
                     <div className="sm:col-span-2">
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Nama Journey</label>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">Journey Name</label>
                       <input
                         type="text"
                         required
                         value={journeyFormData.journey_name}
                         onChange={(e) => setJourneyFormData({ ...journeyFormData, journey_name: e.target.value })}
-                        placeholder="Contoh: Join Us & Onboarding"
+                        placeholder="Example: Join Us & Onboarding"
                         className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Warna Aksen</label>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">Accent Color</label>
                       <div className="flex items-center space-x-2">
                         <input
                           type="color"
@@ -615,12 +612,12 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                     </div>
 
                     <div className="sm:col-span-3">
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Tagline / Deskripsi Singkat</label>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">Tagline / Short Description</label>
                       <input
                         type="text"
                         value={journeyFormData.tagline}
                         onChange={(e) => setJourneyFormData({ ...journeyFormData, tagline: e.target.value })}
-                        placeholder="Contoh: Pengalaman pelamar dan karyawan baru"
+                        placeholder="Example: Applicant and new-hire experience"
                         className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500"
                       />
                     </div>
@@ -632,7 +629,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                         className="w-full px-4 py-2 text-xs font-bold text-white bg-[var(--theme-base)] hover:bg-[var(--theme-hover)] rounded-lg flex items-center justify-center space-x-1.5 shadow transition"
                       >
                         <Save className="w-3.5 h-3.5" />
-                        <span>{editingJourney ? 'Update Journey' : 'Simpan Journey'}</span>
+                        <span>{editingJourney ? 'Update Journey' : 'Save Journey'}</span>
                       </button>
                     </div>
                   </form>
@@ -656,14 +653,14 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                             {j.journey_code}
                           </span>
                           <span className="text-[11px] font-bold text-gray-500">
-                            {jMetricsCount} Metrik
+                            {jMetricsCount} Metrics
                           </span>
                         </div>
                         <h4 className="text-sm font-bold text-gray-900 mb-1">
                           {j.journey_name}
                         </h4>
                         <p className="text-xs text-gray-500 line-clamp-2 mb-3">
-                          {j.tagline || 'Tidak ada deskripsi'}
+                          {j.tagline || 'No description'}
                         </p>
                       </div>
 
@@ -684,7 +681,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                           <button
                             onClick={() => handleDeleteJourney(j.journey_id, j.journey_name)}
                             className="p-1.5 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
-                            title="Hapus Journey"
+                            title="Delete Journey"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -712,18 +709,18 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                     <div>
                       <h4 className="text-xs font-bold text-amber-900">
                         {uploadReminders.overdue_count > 0
-                          ? `${uploadReminders.overdue_count} Survei Belum Diupload (lewat batas waktu)`
-                          : 'Batas Waktu Upload Survei Hari Ini'}
-                        {uploadReminders.due_today_count > 0 && uploadReminders.overdue_count > 0 && ` & ${uploadReminders.due_today_count} jatuh tempo hari ini`}
+                          ? `${uploadReminders.overdue_count} Surveys Not Yet Uploaded (past the deadline)`
+                          : 'Survey Upload Deadline Today'}
+                        {uploadReminders.due_today_count > 0 && uploadReminders.overdue_count > 0 && ` & ${uploadReminders.due_today_count} due today`}
                       </h4>
                       <ul className="text-[11px] text-amber-800 mt-1 space-y-0.5">
                         {uploadReminders.reminders.slice(0, 4).map(r => (
                           <li key={r.metric_id}>
-                            <strong>{r.metric_name}</strong> — PIC: {r.pic_name} ({r.pic_email || 'email belum diisi'}) — data survei <strong>{r.expected_period_label}</strong> belum ada {r.status === 'OVERDUE' ? `(batas ${r.deadline}, lewat ${r.days_overdue} hari)` : '(batas upload hari ini)'}
+                            <strong>{r.metric_name}</strong> — PIC: {r.pic_name} ({r.pic_email || 'email not filled in'}) — survey data for <strong>{r.expected_period_label}</strong> is not available yet {r.status === 'OVERDUE' ? `(deadline ${r.deadline}, ${r.days_overdue} days overdue)` : '(upload deadline is today)'}
                           </li>
                         ))}
                         {uploadReminders.reminders.length > 4 && (
-                          <li className="italic">+{uploadReminders.reminders.length - 4} metrik lainnya...</li>
+                          <li className="italic">+{uploadReminders.reminders.length - 4} more metrics...</li>
                         )}
                       </ul>
                     </div>
@@ -732,10 +729,10 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                     onClick={handleSendUploadReminders}
                     disabled={sendingReminders}
                     className="px-3 py-1.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg flex items-center space-x-1.5 shadow-sm transition shrink-0 disabled:opacity-60"
-                    title="Kirim email reminder ke seluruh PIC yang tercantum"
+                    title="Send reminder emails to all listed PICs"
                   >
                     <Send className="w-3.5 h-3.5" />
-                    <span>{sendingReminders ? 'Mengirim...' : 'Kirim Reminder Sekarang'}</span>
+                    <span>{sendingReminders ? 'Sending...' : 'Send Reminders Now'}</span>
                   </button>
                 </div>
               )}
@@ -746,31 +743,31 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                   <div className="flex items-center justify-between pb-3 mb-4 border-b border-gray-200">
                     <h3 className="text-sm font-bold text-gray-900 flex items-center space-x-2">
                       <Sparkles className="w-4 h-4 text-[var(--theme-base)]" />
-                      <span>{editingMetric ? `Edit Metric ${editingMetric.metric_id}: ${editingMetric.metric_name}` : 'Tambah Metric Baru'}</span>
+                      <span>{editingMetric ? `Edit Metric ${editingMetric.metric_id}: ${editingMetric.metric_name}` : 'Add New Metric'}</span>
                     </h3>
                     <button
                       onClick={() => { setIsAddingMetric(false); setEditingMetric(null); }}
                       className="text-xs text-gray-500 hover:text-gray-800 font-semibold"
                     >
-                      Batal
+                      Cancel
                     </button>
                   </div>
 
                   <form onSubmit={handleSaveMetric} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div className="sm:col-span-2">
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Nama Metrik</label>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">Metric Name</label>
                       <input
                         type="text"
                         required
                         value={metricFormData.metric_name}
                         onChange={(e) => setMetricFormData({ ...metricFormData, metric_name: e.target.value })}
-                        placeholder="Contoh: Candidate Experience Survey Score"
+                        placeholder="Example: Candidate Experience Survey Score"
                         className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 font-medium"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Tahapan Journey</label>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">Journey Stage</label>
                       <select
                         value={metricFormData.journey_id}
                         onChange={(e) => setMetricFormData({ ...metricFormData, journey_id: parseInt(e.target.value) })}
@@ -785,7 +782,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Tipe Metrik</label>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">Metric Type</label>
                       <select
                         value={metricFormData.metric_type}
                         onChange={(e) => setMetricFormData({ ...metricFormData, metric_type: e.target.value })}
@@ -796,7 +793,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Skala Penilaian</label>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">Rating Scale</label>
                       <select
                         value={metricFormData.scale_type}
                         onChange={(e) => setMetricFormData({ ...metricFormData, scale_type: e.target.value, ...(isAddingMetric ? { unit: defaultUnitForScale(e.target.value) } : {}) })}
@@ -826,7 +823,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                     )}
 
                     <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Bobot Metrik (Weight)</label>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">Metric Weight</label>
                       <input
                         type="number"
                         step="0.1"
@@ -841,7 +838,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
 
                     <div>
                       <label className="block text-xs font-bold text-gray-700 mb-1">
-                        Target Nilai <span className="font-normal text-gray-400">(satuan skala asli — {metricFormData.scale_type === 'RATING_5' ? '1.0 - 5.0' : metricFormData.scale_type === 'PERCENTAGE' ? '0 - 100%' : 'sesuai Quota/Numerik'})</span>
+                        Target Value <span className="font-normal text-gray-400">(native scale unit — {metricFormData.scale_type === 'RATING_5' ? '1.0 - 5.0' : metricFormData.scale_type === 'PERCENTAGE' ? '0 - 100%' : 'per Quota/Numeric'})</span>
                       </label>
                       <input
                         type="number"
@@ -852,13 +849,13 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                         className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 font-mono font-bold"
                       />
                       <div className="text-[10px] text-gray-500 mt-1">
-                        ≈ <span className="font-bold text-gray-700">{computeTargetPercent(metricFormData).toFixed(1)}%</span> dari skala penuh — nilai inilah yang dibandingkan langsung dengan Min Threshold di bawah.
+                        ≈ <span className="font-bold text-gray-700">{computeTargetPercent(metricFormData).toFixed(1)}%</span> of the full scale — this is the value compared directly with the Min Threshold below.
                       </div>
                     </div>
 
                     <div>
                       <label className="block text-xs font-bold text-gray-700 mb-1">
-                        Min Threshold (Batas Kritis) <span className="font-normal text-gray-400">(selalu dalam %, 0 - 100)</span>
+                        Min Threshold (Critical Limit) <span className="font-normal text-gray-400">(always in %, 0 - 100)</span>
                       </label>
                       <input
                         type="number"
@@ -878,14 +875,14 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                         type="text"
                         value={metricFormData.target_display}
                         onChange={(e) => setMetricFormData({ ...metricFormData, target_display: e.target.value })}
-                        placeholder="Contoh: 4.50 / 5.0 atau > 90%"
+                        placeholder="Example: 4.50 / 5.0 or > 90%"
                         className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500"
                       />
                     </div>
 
                     <div>
                       <label className="block text-xs font-bold text-gray-700 mb-1">
-                        Satuan Nilai Aktual <span className="font-normal text-gray-400">(contoh: %, / 5, pax, orang/tahun)</span>
+                        Actual Value Unit <span className="font-normal text-gray-400">(e.g. %, / 5, pax, people/year)</span>
                       </label>
                       <input
                         type="text"
@@ -893,11 +890,11 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                         maxLength={30}
                         value={metricFormData.unit}
                         onChange={(e) => setMetricFormData({ ...metricFormData, unit: e.target.value })}
-                        placeholder="Contoh: orang/tahun"
+                        placeholder="Example: people/year"
                         className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500"
                       />
                       <div className="text-[10px] text-gray-500 mt-1">
-                        Tampil di Explore Metrics &amp; detail metrik, mis. <span className="font-bold text-gray-700">{formatMetricValue(editingMetric ? editingMetric.raw_value : 4330, metricFormData.unit, metricFormData.scale_type)}</span>. Hanya label — tidak mengubah perhitungan skor.
+                        Shown in Explore Metrics &amp; metric details, e.g. <span className="font-bold text-gray-700">{formatMetricValue(editingMetric ? editingMetric.raw_value : 4330, metricFormData.unit, metricFormData.scale_type)}</span>. Label only — does not change the score calculation.
                       </div>
                     </div>
 
@@ -907,7 +904,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                         type="text"
                         value={metricFormData.experience_owner}
                         onChange={(e) => setMetricFormData({ ...metricFormData, experience_owner: e.target.value })}
-                        placeholder="Contoh: HC Talent Acquisition"
+                        placeholder="Example: HC Talent Acquisition"
                         className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500"
                       />
                     </div>
@@ -940,7 +937,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                           className="w-4 h-4 text-red-600 rounded focus:ring-red-500 border-gray-300"
                         />
                         <span className="text-xs font-bold text-gray-800">
-                          Data Terkait Karyawan (Aktif saat filter Direktorat dipilih)
+                          Employee-Related Data (Active when a Directorate filter is selected)
                         </span>
                       </label>
                     </div>
@@ -949,12 +946,12 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                     <div className="sm:col-span-2 lg:col-span-4 pt-3 border-t border-gray-200">
                       <h4 className="text-xs font-bold text-gray-800 flex items-center space-x-1.5 mb-3">
                         <RefreshCw className="w-3.5 h-3.5 text-[var(--theme-base)]" />
-                        <span>Update Data Berkala & Pengingat Upload Survei</span>
+                        <span>Periodic Data Updates & Survey Upload Reminders</span>
                       </h4>
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Frekuensi Update Data</label>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">Data Update Frequency</label>
                       <select
                         value={metricFormData.update_frequency}
                         onChange={(e) => setMetricFormData({ ...metricFormData, update_frequency: e.target.value })}
@@ -963,7 +960,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                         {(optionCatalogs.update_frequencies || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                       </select>
                       <p className="text-[10.5px] text-gray-400 mt-1">
-                        Bulanan: data di-upload/diperbarui tiap bulan. Tahunan: cukup sekali upload, dipakai untuk kalkulasi sepanjang tahun (contoh: metrik ESS).
+                        Monthly: data is uploaded/refreshed every month. Annual: a single upload is enough and is used for calculations throughout the year (e.g. ESS metrics).
                       </p>
                     </div>
 
@@ -978,7 +975,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                             className="w-4 h-4 text-red-600 rounded focus:ring-red-500 border-gray-300 disabled:opacity-60"
                           />
                           <span className="text-xs font-bold text-gray-800">
-                            Survei ini masih diupload manual oleh PIC (aktifkan reminder email)
+                            This survey is still uploaded manually by the PIC (enable email reminders)
                           </span>
                         </label>
                         <p className="text-[10.5px] text-gray-400 ml-3 max-w-xs">
@@ -993,7 +990,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                         <div>
                           <label className="block text-xs font-bold text-gray-700 mb-1 flex items-center space-x-1">
                             <CalendarClock className="w-3 h-3 text-gray-500" />
-                            <span>Batas Tanggal Upload {metricFormData.update_frequency === 'ONE_TIME_ANNUAL' ? '(per Tahun)' : '(per Bulan)'}</span>
+                            <span>Upload Deadline Date {metricFormData.update_frequency === 'ONE_TIME_ANNUAL' ? '(per Year)' : '(per Month)'}</span>
                           </label>
                           <div className="flex items-center space-x-2">
                             {metricFormData.update_frequency === 'ONE_TIME_ANNUAL' && (
@@ -1002,7 +999,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                                 onChange={(e) => setMetricFormData({ ...metricFormData, upload_deadline_month: parseInt(e.target.value) })}
                                 className="flex-1 px-2 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500"
                               >
-                                {MONTH_NAMES_ID.map((name, i) => (
+                                {MONTH_NAMES.map((name, i) => (
                                   <option key={i + 1} value={i + 1}>{name}</option>
                                 ))}
                               </select>
@@ -1019,8 +1016,8 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                           </div>
                           <p className="text-[10.5px] text-gray-400 mt-1">
                             {metricFormData.update_frequency === 'ONE_TIME_ANNUAL'
-                              ? 'Pada tanggal ini setiap tahun, bila belum ada data survei bertanggal tahun berjalan, PIC otomatis diingatkan lewat email.'
-                              : 'Pada tanggal ini setiap bulan, bila belum ada data survei bertanggal bulan SEBELUMNYA (mis. tgl 10 Oktober → data September), PIC otomatis diingatkan lewat email.'}
+                              ? 'On this date every year, if there is no survey data dated in the current year, the PIC is automatically reminded by email.'
+                              : 'On this date every month, if there is no survey data dated in the PREVIOUS month (e.g. on 10 October → September data), the PIC is automatically reminded by email.'}
                           </p>
                         </div>
                     )}
@@ -1028,12 +1025,12 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                     {metricFormData.metric_type === 'SURVEY' && (
                       <>
                         <div>
-                          <label className="block text-xs font-bold text-gray-700 mb-1">Nama PIC Upload</label>
+                          <label className="block text-xs font-bold text-gray-700 mb-1">Upload PIC Name</label>
                           <input
                             type="text"
                             value={metricFormData.pic_name}
                             onChange={(e) => setMetricFormData({ ...metricFormData, pic_name: e.target.value })}
-                            placeholder="Contoh: Talent Partnership Team"
+                            placeholder="Example: Talent Partnership Team"
                             className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500"
                           />
                         </div>
@@ -1041,7 +1038,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                         <div>
                           <label className="block text-xs font-bold text-gray-700 mb-1 flex items-center space-x-1">
                             <Mail className="w-3 h-3 text-gray-500" />
-                            <span>Email PIC (Tujuan Reminder)</span>
+                            <span>PIC Email (Reminder Recipient)</span>
                           </label>
                           <input
                             type="email"
@@ -1052,7 +1049,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                           />
                           {metricFormData.pic_email && metricFormData.pic_email.trim() && !activeAccountEmails.includes(metricFormData.pic_email.trim().toLowerCase()) && (
                             <p className="text-[10.5px] text-amber-700 font-semibold mt-1">
-                              PIC belum punya akun login: belum ada akun aktif dengan email ini (Kelola User), jadi PIC belum dapat mengunggah data sendiri.
+                              The PIC has no login account yet: there is no active account with this email (Manage Users), so the PIC cannot upload data themselves yet.
                             </p>
                           )}
                         </div>
@@ -1065,7 +1062,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                         onClick={() => { setIsAddingMetric(false); setEditingMetric(null); }}
                         className="px-4 py-2 text-xs font-bold text-gray-700 bg-gray-200 hover:bg-gray-300 rounded-lg transition"
                       >
-                        Batal
+                        Cancel
                       </button>
                       <button
                         type="submit"
@@ -1073,7 +1070,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                         className="px-5 py-2 text-xs font-bold text-white bg-[var(--theme-base)] hover:bg-[var(--theme-hover)] rounded-lg flex items-center space-x-1.5 shadow transition"
                       >
                         <Save className="w-3.5 h-3.5" />
-                        <span>{editingMetric ? 'Update Parameter Metrik' : 'Simpan Metrik'}</span>
+                        <span>{editingMetric ? 'Update Metric Parameters' : 'Save Metric'}</span>
                       </button>
                     </div>
                   </form>
@@ -1092,7 +1089,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                     onChange={(e) => setSelectedJourneyFilter(e.target.value)}
                     className="px-2.5 py-1 text-xs font-semibold bg-white border border-white rounded-lg focus:outline-none"
                   >
-                    <option value="ALL">Semua Journey ({metrics.length})</option>
+                    <option value="ALL">All Journeys ({metrics.length})</option>
                     {journeys.map(j => (
                       <option key={j.journey_id} value={j.journey_id}>
                         {j.journey_code} - {j.journey_name}
@@ -1102,21 +1099,21 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
 
                   <div className="flex items-center space-x-1.5 text-xs text-red-50 pl-2 border-l border-white/30">
                     <Users2 className="w-3.5 h-3.5 text-white" />
-                    <span className="font-bold">Filter Responden:</span>
+                    <span className="font-bold">Respondent Filter:</span>
                   </div>
                   <select
                     value={selectedAudienceFilter}
                     onChange={(e) => setSelectedAudienceFilter(e.target.value)}
                     className="px-2.5 py-1 text-xs font-semibold bg-white border border-white rounded-lg focus:outline-none"
                   >
-                    <option value="ALL">Semua Responden ({metrics.length})</option>
-                    <option value="EMPLOYEE">Karyawan Internal ({metrics.filter(m => m.is_employee_metric).length})</option>
-                    <option value="NON_EMPLOYEE">Non-Karyawan / Eksternal ({metrics.filter(m => !m.is_employee_metric).length})</option>
+                    <option value="ALL">All Respondents ({metrics.length})</option>
+                    <option value="EMPLOYEE">Internal Employees ({metrics.filter(m => m.is_employee_metric).length})</option>
+                    <option value="NON_EMPLOYEE">Non-Employee / External ({metrics.filter(m => !m.is_employee_metric).length})</option>
                   </select>
                 </div>
 
                 <div className="text-xs font-semibold text-red-50">
-                  Menampilkan <span className="text-white font-bold">{filteredMetrics.length}</span> dari {metrics.length} metrik
+                  Showing <span className="text-white font-bold">{filteredMetrics.length}</span> of {metrics.length} metrics
                 </div>
               </div>
 
@@ -1126,16 +1123,16 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                   <thead className="bg-[var(--theme-deep)] font-bold text-white">
                     <tr>
                       <th className="py-2.5 px-3 w-12 text-center">ID</th>
-                      <th className="py-2.5 px-3">Nama Metrik</th>
+                      <th className="py-2.5 px-3">Metric Name</th>
                       <th className="py-2.5 px-3">Journey</th>
-                      <th className="py-2.5 px-3 text-center">Tipe</th>
+                      <th className="py-2.5 px-3 text-center">Type</th>
                       <th className="py-2.5 px-3 text-center">Survey Source</th>
-                      <th className="py-2.5 px-3 text-center">Responden</th>
-                      <th className="py-2.5 px-3 text-center">Update Data</th>
-                      <th className="py-2.5 px-3 text-center">Bobot</th>
+                      <th className="py-2.5 px-3 text-center">Respondent</th>
+                      <th className="py-2.5 px-3 text-center">Data Update</th>
+                      <th className="py-2.5 px-3 text-center">Weight</th>
                       <th className="py-2.5 px-3 text-center">Target (%)</th>
                       <th className="py-2.5 px-3 text-center">Threshold (%)</th>
-                      <th className="py-2.5 px-3 text-right">Aksi</th>
+                      <th className="py-2.5 px-3 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-red-900/10 bg-pink-50/70">
@@ -1148,7 +1145,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                           </td>
                           <td className="py-2.5 px-3">
                             <div className="font-bold text-gray-900">{m.metric_name}</div>
-                            <div className="text-[11px] text-gray-500">{m.experience_owner} • {m.scale_type} • satuan: {m.unit || '-'}</div>
+                            <div className="text-[11px] text-gray-500">{m.experience_owner} • {m.scale_type} • unit: {m.unit || '-'}</div>
                           </td>
                           <td className="py-2.5 px-3">
                             <span 
@@ -1180,12 +1177,12 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                             {m.is_employee_metric ? (
                               <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-50 text-green-700 border border-green-200">
                                 <UserCheck className="w-3 h-3" />
-                                <span>Karyawan</span>
+                                <span>Employee</span>
                               </span>
                             ) : (
                               <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
                                 <Users2 className="w-3 h-3" />
-                                <span>Non-Karyawan</span>
+                                <span>Non-Employee</span>
                               </span>
                             )}
                           </td>
@@ -1198,12 +1195,12 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                               }`}
                               title={
                                 m.metric_type === 'SURVEY' && m.requires_manual_upload
-                                  ? `Diupload manual oleh ${m.pic_name || m.experience_owner || 'PIC'} (${m.pic_email || 'email belum diisi'})`
-                                  : 'Tidak memerlukan reminder upload manual'
+                                  ? `Uploaded manually by ${m.pic_name || m.experience_owner || 'PIC'} (${m.pic_email || 'email not filled in'})`
+                                  : 'Does not require manual upload reminders'
                               }
                             >
                               <RefreshCw className="w-2.5 h-2.5" />
-                              <span>{m.update_frequency === 'ONE_TIME_ANNUAL' ? 'Tahunan' : 'Bulanan'}</span>
+                              <span>{m.update_frequency === 'ONE_TIME_ANNUAL' ? 'Annual' : 'Monthly'}</span>
                             </span>
                             {m.metric_type === 'SURVEY' && (m.requires_manual_upload || m.pic_email) && (
                               <div className="text-[9.5px] text-gray-400 mt-0.5">
@@ -1237,7 +1234,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                               <button
                                 onClick={() => handleDeleteMetric(m.metric_id, m.metric_name)}
                                 className="p-1.5 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
-                                title="Hapus Metric"
+                                title="Delete Metric"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
@@ -1258,13 +1255,13 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
         <div className="px-6 py-3 bg-black/15 border-t border-white/15 flex items-center justify-between text-xs text-red-50">
           <div className="flex items-center space-x-2">
             <HelpCircle className="w-4 h-4 text-white" />
-            <span>Perubahan parameter metrik, bobot, dan threshold otomatis tersinkronisasi ke penghitungan PE Index.</span>
+            <span>Changes to metric parameters, weights, and thresholds are automatically synchronized to the PE Index calculation.</span>
           </div>
           <button
             onClick={onClose}
             className="px-4 py-2 text-xs font-bold text-gray-700 bg-white border border-gray-300 hover:bg-gray-100 rounded-lg shadow-2xs transition"
           >
-            Tutup
+            Close
           </button>
         </div>
 
@@ -1276,17 +1273,17 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
           <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl border border-gray-300 animate-in zoom-in-95">
             <div className="flex items-center space-x-3 text-amber-600 mb-3">
               <AlertCircle className="w-6 h-6 shrink-0" />
-              <h3 className="text-base font-bold text-gray-900">Konfirmasi Reset Parameter</h3>
+              <h3 className="text-base font-bold text-gray-900">Confirm Parameter Reset</h3>
             </div>
             <p className="text-xs text-gray-600 mb-5 leading-relaxed">
-              Tindakan ini akan mengembalikan seluruh parameter **6 Journey, Checkpoints, 27 Metrik bawaan, Bobot, Threshold, dan Klasifikasi Responden Non-Karyawan** ke konfigurasi awal bawaan CIMB Niaga. Metrik kustom yang baru ditambahkan akan terhapus. Lanjutkan?
+              This action will restore all parameters — **6 Journeys, Checkpoints, 27 built-in Metrics, Weights, Thresholds, and Non-Employee Respondent Classification** — to the original CIMB Niaga default configuration. Newly added custom metrics will be deleted. Continue?
             </p>
             <div className="flex justify-end space-x-2">
               <button
                 onClick={() => setShowResetConfirm(false)}
                 className="px-4 py-2 text-xs font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition"
               >
-                Batal
+                Cancel
               </button>
               <button
                 onClick={handleResetParameters}
@@ -1294,7 +1291,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                 className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg flex items-center space-x-1.5 shadow transition"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
-                <span>Ya, Reset ke Default</span>
+                <span>Yes, Reset to Default</span>
               </button>
             </div>
           </div>

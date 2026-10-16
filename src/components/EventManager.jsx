@@ -47,7 +47,7 @@ function MediaLightbox({ media, onClose }) {
       <button
         onClick={onClose}
         className="absolute top-4 right-4 p-2 bg-white/15 hover:bg-white/30 text-white rounded-full transition"
-        title="Tutup (Esc)"
+        title="Close (Esc)"
       >
         <X className="w-5 h-5" />
       </button>
@@ -66,7 +66,7 @@ function MediaLightbox({ media, onClose }) {
             className="shrink-0 text-xs font-bold underline underline-offset-2 text-white/80 hover:text-white flex items-center space-x-1"
           >
             <ExternalLink className="w-3.5 h-3.5" />
-            <span>Buka di tab baru</span>
+            <span>Open in new tab</span>
           </a>
         </div>
       </div>
@@ -98,7 +98,7 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
           <div className="text-center text-gray-500 p-2">
             {isVideo ? <Video className="w-8 h-8 mx-auto text-gray-400" /> : <ImageIcon className="w-8 h-8 mx-auto text-gray-400" />}
             <span className="text-[10px] font-bold block mt-1 truncate max-w-[160px]">{med.file_name}</span>
-            <span className="text-[9.5px] block text-gray-400">File tidak tersedia di server</span>
+            <span className="text-[9.5px] block text-gray-400">File not available on the server</span>
           </div>
         ) : isVideo ? (
           <video
@@ -124,7 +124,7 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
           <button
             onClick={openLarge}
             className="absolute top-2 left-2 p-1 bg-black/55 hover:bg-black/75 text-white rounded-md opacity-0 group-hover:opacity-100 transition"
-            title={isVideo ? 'Putar di layar besar' : 'Lihat ukuran penuh'}
+            title={isVideo ? 'Play full screen' : 'View full size'}
           >
             <Maximize2 className="w-3.5 h-3.5" />
           </button>
@@ -149,7 +149,7 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
       {isVideo && med.transcript_status === 'PROCESSING' && (
         <div className="bg-gray-50 rounded p-2 text-[10px] text-gray-600 border border-gray-100 flex items-center space-x-1.5">
           <Loader2 className="w-3 h-3 animate-spin shrink-0" style={{ color: 'var(--theme-base)' }} />
-          <span>Transkrip AI sedang diproses… bisa memakan beberapa menit, halaman ini akan terisi otomatis.</span>
+          <span>AI transcript is being processed… this can take a few minutes; this page will fill in automatically.</span>
         </div>
       )}
 
@@ -157,7 +157,7 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
         <div className="bg-red-50 rounded p-2 text-[10px] text-red-700 border border-red-100 space-y-1">
           <div className="flex items-start space-x-1.5">
             <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
-            <span>Transkrip AI gagal: {med.transcript_error || 'alasan tidak diketahui'}</span>
+            <span>AI transcript failed: {med.transcript_error || 'unknown reason'}</span>
           </div>
           {canManage && <button
             onClick={() => onRetryTranscript(med.media_id)}
@@ -165,11 +165,11 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
             className="inline-flex items-center space-x-1 px-2 py-0.5 bg-white border border-red-200 rounded font-bold hover:bg-red-100 transition disabled:opacity-60 disabled:cursor-wait"
           >
             <RefreshCw className={`w-3 h-3 ${retrying ? 'animate-spin' : ''}`} />
-            <span>{retrying ? 'Memproses ulang…' : 'Coba lagi'}</span>
+            <span>{retrying ? 'Reprocessing…' : 'Try again'}</span>
           </button>}
           {retryNotice && (
             <p className="text-[9.5px] text-red-600 font-semibold">
-              Dicoba ulang pukul {retryNotice.at}: {retryNotice.text}
+              Retried at {retryNotice.at}: {retryNotice.text}
             </p>
           )}
         </div>
@@ -197,7 +197,7 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
             <div className="flex items-center space-x-1.5">
               {med.summary_status === 'DONE' && (
                 <span className={`px-1.5 py-0.5 rounded font-bold text-[9px] ${med.summary_source === 'AI' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
-                  {med.summary_source === 'AI' ? `AI${med.summary_model ? ` • ${med.summary_model}` : ''}` : 'Otomatis (aturan)'}
+                  {med.summary_source === 'AI' ? `AI${med.summary_model ? ` • ${med.summary_model}` : ''}` : 'Automatic (rule-based)'}
                 </span>
               )}
               <ChevronDown className="w-3 h-3 text-gray-400 transition-transform group-open:rotate-180" />
@@ -208,7 +208,7 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
           {med.summary_status === 'PROCESSING' && (
             <div className="flex items-center space-x-1.5 text-gray-600">
               <Loader2 className="w-3 h-3 animate-spin shrink-0" style={{ color: 'var(--theme-base)' }} />
-              <span>Ringkasan AI sedang dibuat… bisa sekitar satu menit atau lebih, halaman ini akan terisi otomatis.</span>
+              <span>AI summary is being generated… this can take a minute or more; this page will fill in automatically.</span>
             </div>
           )}
 
@@ -221,11 +221,11 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
                 </ul>
               )}
               <p className="text-[9px] text-gray-400">
-                {med.summary_generated_at ? `Dibuat ${new Date(med.summary_generated_at).toLocaleString('id-ID')}` : ''}
+                {med.summary_generated_at ? `Generated ${new Date(med.summary_generated_at).toLocaleString('en-US')}` : ''}
                 {med.summary_language ? ` • ${med.summary_language.toUpperCase()}` : ''}
               </p>
               {med.summary_source === 'AI' && (
-                <p className="text-[9px] text-gray-400 italic">Dibuat otomatis oleh AI — periksa kembali dengan transkrip.</p>
+                <p className="text-[9px] text-gray-400 italic">Generated automatically by AI — please check it against the transcript.</p>
               )}
               {med.summary_source !== 'AI' && med.summary_error && (
                 <p className="text-[9.5px] text-amber-700">{med.summary_error}</p>
@@ -236,16 +236,16 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
           {med.summary_status === 'FAILED' && (
             <div className="flex items-start space-x-1.5 text-red-700">
               <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
-              <span>Ringkasan AI gagal: {med.summary_error || 'alasan tidak diketahui'}</span>
+              <span>AI summary failed: {med.summary_error || 'unknown reason'}</span>
             </div>
           )}
 
           {med.summary_status === 'INSUFFICIENT' && (
-            <p className="text-gray-500 italic">{med.summary_error || 'Transkrip belum cukup untuk diringkas.'}</p>
+            <p className="text-gray-500 italic">{med.summary_error || 'The transcript is not long enough to summarize.'}</p>
           )}
 
           {!med.summary_status && (
-            <p className="text-gray-500 italic">Belum ada ringkasan untuk video ini.</p>
+            <p className="text-gray-500 italic">No summary yet for this video.</p>
           )}
 
           {canManage && med.summary_status !== 'PROCESSING' && med.summary_status !== 'INSUFFICIENT' && (!med.summary_status || med.summary_status === 'FAILED' || med.summary_source !== 'AI') && (
@@ -255,11 +255,11 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
               className="inline-flex items-center space-x-1 px-2 py-0.5 bg-gray-50 border border-gray-200 rounded font-bold text-gray-700 hover:bg-gray-100 transition disabled:opacity-60 disabled:cursor-wait"
             >
               <RefreshCw className={`w-3 h-3 ${summarizing ? 'animate-spin' : ''}`} />
-              <span>{summarizing ? 'Memproses…' : (med.summary_status ? 'Buat ulang ringkasan' : 'Buat ringkasan')}</span>
+              <span>{summarizing ? 'Processing…' : (med.summary_status ? 'Regenerate summary' : 'Generate summary')}</span>
             </button>
           )}
           {summaryNotice && (
-            <p className="text-[9.5px] text-red-600 font-semibold">Dicoba pukul {summaryNotice.at}: {summaryNotice.text}</p>
+            <p className="text-[9.5px] text-red-600 font-semibold">Attempted at {summaryNotice.at}: {summaryNotice.text}</p>
           )}
           </div>
         </details>
@@ -271,7 +271,7 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
             <span className="flex items-center space-x-1">
               <FileText className="w-3 h-3 inline" />
               <span>
-                Transkrip AI lengkap
+                Full AI transcript
                 {med.duration_seconds ? ` • ${formatTimestamp(med.duration_seconds)}` : ''}
                 {med.transcript_language ? ` • ${med.transcript_language.toUpperCase()}` : ''}
               </span>
@@ -280,10 +280,10 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
           </summary>
           <div className="px-2 pb-2 max-h-56 overflow-y-auto space-y-1.5">
             {/* Full transcript = the API's `text` field */}
-            <div className="font-bold text-gray-500 uppercase tracking-wide text-[9px]">Teks lengkap</div>
+            <div className="font-bold text-gray-500 uppercase tracking-wide text-[9px]">Full text</div>
             <p className="whitespace-pre-line text-gray-700 leading-snug">{med.transcript}</p>
             {Array.isArray(med.transcript_segments) && med.transcript_segments.length > 0 && (
-              <div className="font-bold text-gray-500 uppercase tracking-wide text-[9px] pt-1">Per segmen (klik untuk memutar dari bagian ini)</div>
+              <div className="font-bold text-gray-500 uppercase tracking-wide text-[9px] pt-1">Per segment (click to play from this part)</div>
             )}
             {Array.isArray(med.transcript_segments) && med.transcript_segments.length > 0 && (
               med.transcript_segments.map((seg, i) => (
@@ -291,7 +291,7 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
                   key={i}
                   onClick={() => seekTo(seg.start)}
                   className="w-full text-left flex items-start space-x-1.5 hover:bg-white rounded px-1 py-0.5 transition"
-                  title="Putar video dari bagian ini"
+                  title="Play the video from this part"
                 >
                   <span className="font-mono font-bold text-gray-400 shrink-0">{formatTimestamp(seg.start)}</span>
                   <span>{seg.text}</span>
@@ -386,11 +386,11 @@ export default function EventManager({
         fetchEventDetail(selectedEvent.event_id);
       } else {
         const data = await res.json().catch(() => ({}));
-        alert(data.error || `Upload gagal (HTTP ${res.status}).`);
+        alert(data.error || `Upload failed (HTTP ${res.status}).`);
       }
     } catch (err) {
       console.error('Media upload error:', err);
-      alert('Upload gagal: ' + err.message);
+      alert('Upload failed: ' + err.message);
     } finally {
       setUploadingMedia(false);
       // Allow picking the same file again after a failed/finished upload.
@@ -406,19 +406,19 @@ export default function EventManager({
   const [retryNotices, setRetryNotices] = useState({});
   const handleRetryTranscript = async (mediaId) => {
     const started = Date.now();
-    const nowLabel = () => new Date().toLocaleTimeString('id-ID');
+    const nowLabel = () => new Date().toLocaleTimeString('en-US');
     setRetryingIds(prev => ({ ...prev, [mediaId]: true }));
     setRetryNotices(prev => ({ ...prev, [mediaId]: null }));
     try {
       const res = await fetch(`/api/media/${mediaId}/transcribe`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setRetryNotices(prev => ({ ...prev, [mediaId]: { at: nowLabel(), text: data.error || `Gagal memulai transkrip (HTTP ${res.status}).` } }));
+        setRetryNotices(prev => ({ ...prev, [mediaId]: { at: nowLabel(), text: data.error || `Failed to start the transcript (HTTP ${res.status}).` } }));
       } else if (data.media) {
         setEventDetail(prev => (prev ? { ...prev, media: (prev.media || []).map(m => (m.media_id === mediaId ? data.media : m)) } : prev));
       }
     } catch (err) {
-      setRetryNotices(prev => ({ ...prev, [mediaId]: { at: nowLabel(), text: 'Gagal memulai transkrip: ' + err.message } }));
+      setRetryNotices(prev => ({ ...prev, [mediaId]: { at: nowLabel(), text: 'Failed to start the transcript: ' + err.message } }));
     } finally {
       // keep the spinner visible long enough to be noticed
       const wait = Math.max(0, 700 - (Date.now() - started));
@@ -437,12 +437,12 @@ export default function EventManager({
       const res = await fetch(`/api/media/${mediaId}/summarize`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setSummaryNotices(prev => ({ ...prev, [mediaId]: { at: new Date().toLocaleTimeString('id-ID'), text: data.error || `Gagal memulai ringkasan (HTTP ${res.status}).` } }));
+        setSummaryNotices(prev => ({ ...prev, [mediaId]: { at: new Date().toLocaleTimeString('en-US'), text: data.error || `Failed to start the summary (HTTP ${res.status}).` } }));
       } else if (data.media) {
         setEventDetail(prev => (prev ? { ...prev, media: (prev.media || []).map(m => (m.media_id === mediaId ? data.media : m)) } : prev));
       }
     } catch (err) {
-      setSummaryNotices(prev => ({ ...prev, [mediaId]: { at: new Date().toLocaleTimeString('id-ID'), text: 'Gagal memulai ringkasan: ' + err.message } }));
+      setSummaryNotices(prev => ({ ...prev, [mediaId]: { at: new Date().toLocaleTimeString('en-US'), text: 'Failed to start the summary: ' + err.message } }));
     } finally {
       const wait = Math.max(0, 700 - (Date.now() - started));
       setTimeout(() => setSummarizingIds(prev => ({ ...prev, [mediaId]: false })), wait);
@@ -762,7 +762,7 @@ export default function EventManager({
                   {eventDetail?.feedbacks?.map((fb) => (
                     <div key={fb.response_id} className="p-3 bg-white border border-white/40 rounded-xl text-xs space-y-1">
                       <div className="flex items-center justify-between">
-                        <span className="font-bold text-gray-700">{fb.nip ? `NIP: ${fb.nip}` : 'Responden anonim'}</span>
+                        <span className="font-bold text-gray-700">{fb.nip ? `NIP: ${fb.nip}` : 'Anonymous respondent'}</span>
                         <span className="text-[10px] text-gray-400">
                           {new Date(fb.submitted_at).toLocaleDateString('en-US', { hour: '2-digit', minute: '2-digit' })}
                         </span>

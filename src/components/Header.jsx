@@ -21,6 +21,7 @@ import {
 import CimbLogo from './CimbLogo';
 import { THEME_PRESETS, applyTheme, getSavedThemeId } from '../utils/theme';
 import { useAuth } from '../utils/AuthContext';
+import { MONTH_NAMES } from '../utils/months';
 
 // Derived from the real browser clock (not a frozen literal) — only used as a last-resort
 // fallback when App.jsx hasn't passed filterOptions/availableYears yet.
@@ -42,7 +43,7 @@ export default function Header({
   const { user, isAdmin, logout } = useAuth();
   // A USER's filters only offer their data scope (one or more directorates, each all or some divisions);
   // "ALL" then means "all my scope". The server enforces the same rule.
-  const userScopes = isAdmin ? null : (user.scopes || []);
+  const userScopes = isAdmin ? null : (user?.scopes || []);
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [activeThemeId, setActiveThemeId] = useState(getSavedThemeId());
 
@@ -52,20 +53,7 @@ export default function Header({
     setShowThemePicker(false);
   };
 
-  const months = [
-    { value: '01', label: '01 - Januari' },
-    { value: '02', label: '02 - Februari' },
-    { value: '03', label: '03 - Maret' },
-    { value: '04', label: '04 - April' },
-    { value: '05', label: '05 - Mei' },
-    { value: '06', label: '06 - Juni' },
-    { value: '07', label: '07 - Juli' },
-    { value: '08', label: '08 - Agustus' },
-    { value: '09', label: '09 - September' },
-    { value: '10', label: '10 - Oktober' },
-    { value: '11', label: '11 - November' },
-    { value: '12', label: '12 - Desember' }
-  ];
+  const months = MONTH_NAMES.map((name, i) => ({ value: String(i + 1).padStart(2, '0'), label: name }));
 
   // Years the database actually has survey data for (from `/api/metrics/calculate`'s
   // `available_years`, sourced from `storage.getAvailableSurveyYears()`) — falls back to just
@@ -133,11 +121,11 @@ export default function Header({
       <div className="h-1.5 bg-gradient-to-r from-[var(--theme-base)] via-[var(--theme-hover)] to-[var(--theme-edge)]" />
 
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Main Header Top Row */}
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between py-2.5 gap-3 border-b border-gray-100">
-          
+        {/* Main Header Top Row: brand on the left, signed-in user + Sign out in the top-right corner */}
+        <div className="flex items-center justify-between pt-2.5 pb-1.5 gap-3">
+
           {/* Logo & Brand Title */}
-          <div className="flex items-center space-x-3 sm:space-x-4 shrink-0">
+          <div className="flex items-center space-x-3 sm:space-x-4 min-w-0">
             <CimbLogo className="h-8" />
             <div className="border-l border-gray-300 pl-3 py-0.5">
               <div className="flex items-center space-x-2">
@@ -154,8 +142,35 @@ export default function Header({
             </div>
           </div>
 
-          {/* Filter Bar Controls & Quick Actions */}
-          <div className="flex flex-wrap items-center gap-2">
+          {/* Logged-in user (name, role) + Sign out: top-right corner. Narrow screens: avatar + icon-only button. */}
+          {user && (
+            <div className="flex items-center gap-2 shrink-0 min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <UserCircle2 className="w-6 h-6 text-gray-400 shrink-0" />
+                <div className="leading-tight hidden sm:block max-w-[220px] min-w-0">
+                  <div className="text-[11px] font-bold text-gray-900 truncate" title={user.full_name}>
+                    {user.username || user.full_name} <span className="text-gray-400">·</span> {isAdmin ? 'Admin' : 'User'}
+                  </div>
+                  <div className="text-[9px] font-bold text-gray-500 uppercase tracking-wide truncate" title={isAdmin ? user.full_name : (user.scopes || []).map(s => `${s.directorate}${s.divisions ? ` (${s.divisions.join(', ')})` : ''}`).join('; ')}>
+                    {isAdmin ? user.full_name : (user.scopes || []).length === 1 ? user.scopes[0].directorate : `${(user.scopes || []).length} directorates`}
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={logout}
+                className="px-2.5 py-1 text-xs font-bold text-gray-800 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg flex items-center space-x-1.5 transition shadow-2xs shrink-0"
+                title="Sign out of the application"
+                aria-label="Sign out"
+              >
+                <LogOut className="w-3.5 h-3.5 text-[#ED1C24]" />
+                <span className="hidden sm:inline">Sign out</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Filter Bar Controls & Quick Actions */}
+        <div className="flex flex-wrap items-center lg:justify-end gap-2 pb-2.5 border-b border-gray-100">
 
             {/* 1. Mode Tampilan (YTD vs MTD) */}
             <div className="flex items-center bg-gray-100 p-0.5 rounded-lg border border-gray-300 shadow-2xs">
@@ -167,7 +182,7 @@ export default function Header({
                     ? 'bg-[#ED1C24] text-white shadow-xs'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
-                title="Year-to-Date: Mengkalkulasikan data tahun berjalan"
+                title="Year-to-Date: Calculates data for the current year"
               >
                 YTD
               </button>
@@ -179,7 +194,7 @@ export default function Header({
                     ? 'bg-[#ED1C24] text-white shadow-xs'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
-                title="Month-to-Date: Mengkalkulasikan data di bulan yang dipilih"
+                title="Month-to-Date: Calculates data for the selected month"
               >
                 MTD
               </button>
@@ -213,10 +228,10 @@ export default function Header({
                 className={`text-xs font-bold bg-transparent focus:outline-none ${
                   filterOptions.mode === 'YTD' ? 'cursor-not-allowed text-gray-400' : 'cursor-pointer text-gray-900'
                 }`}
-                title={filterOptions.mode === 'YTD' ? 'Filter bulan dinonaktifkan pada mode YTD' : 'Pilih Bulan'}
+                title={filterOptions.mode === 'YTD' ? 'Month filter is disabled in YTD mode' : 'Select Month'}
               >
                 {filterOptions.mode === 'YTD' ? (
-                  <option value="01">Semua Bulan (YTD)</option>
+                  <option value="01">All Months (YTD)</option>
                 ) : (
                   months.map(m => (
                     <option key={m.value} value={m.value}>{m.label}</option>
@@ -226,15 +241,15 @@ export default function Header({
             </div>
 
             {/* 4. Filter Direktorat */}
-            <div className="flex items-center space-x-1 px-2.5 py-1 bg-gray-50 border border-gray-300 rounded-lg shadow-2xs max-w-[200px] sm:max-w-none">
+            <div className="flex items-center space-x-1 px-2.5 py-1 bg-gray-50 border border-gray-300 rounded-lg shadow-2xs min-w-0 max-w-[200px] sm:max-w-none">
               <Building2 className="w-3.5 h-3.5 text-[#ED1C24] shrink-0" />
               <select
                 value={filterOptions.directorate}
                 onChange={(e) => handleDirectorateChange(e.target.value)}
-                className="text-xs font-bold text-gray-900 bg-transparent focus:outline-none truncate cursor-pointer"
-                title={isAdmin ? 'Pilih Direktorat (Default: All Bankwide)' : 'Pilih direktorat dalam cakupan data akun Anda'}
+                className="min-w-0 max-w-full text-xs font-bold text-gray-900 bg-transparent focus:outline-none truncate cursor-pointer"
+                title={isAdmin ? 'Select Directorate (Default: All Bankwide)' : 'Select a directorate within your account data scope'}
               >
-                <option value="ALL">{isAdmin ? 'Direktorat: All (Bankwide)' : 'Semua cakupan saya'}</option>
+                <option value="ALL">{isAdmin ? 'Directorate: All (Bankwide)' : 'All my scope'}</option>
                 {selectableDirectorates.map(d => (
                   <option key={d.name} value={d.name}>
                     {d.name}
@@ -244,7 +259,7 @@ export default function Header({
             </div>
 
             {/* 5. Filter Sub Direktorat (Divisi) */}
-            <div className={`flex items-center space-x-1 px-2.5 py-1 border rounded-lg shadow-2xs transition max-w-[180px] sm:max-w-none ${
+            <div className={`flex items-center space-x-1 px-2.5 py-1 border rounded-lg shadow-2xs transition min-w-0 max-w-[180px] sm:max-w-none ${
               filterOptions.directorate === 'ALL'
                 ? 'bg-gray-100 border-gray-200 text-gray-400 opacity-60 cursor-not-allowed'
                 : 'bg-gray-50 border-gray-300 text-gray-900'
@@ -254,10 +269,10 @@ export default function Header({
                 value={filterOptions.sub_directorate}
                 disabled={filterOptions.directorate === 'ALL'}
                 onChange={(e) => handleSubDirectorateChange(e.target.value)}
-                className={`text-xs font-bold bg-transparent focus:outline-none truncate ${
+                className={`min-w-0 max-w-full text-xs font-bold bg-transparent focus:outline-none truncate ${
                   filterOptions.directorate === 'ALL' ? 'cursor-not-allowed text-gray-400' : 'cursor-pointer text-gray-900'
                 }`}
-                title={filterOptions.directorate === 'ALL' ? 'Pilih Direktorat terlebih dahulu' : 'Pilih Sub-Direktorat (Divisi)'}
+                title={filterOptions.directorate === 'ALL' ? 'Select a Directorate first' : 'Select Sub-Directorate (Division)'}
               >
                 <option value="ALL">Sub-Dir: All</option>
                 {availableSubDirectorates.map(div => (
@@ -271,10 +286,10 @@ export default function Header({
             <button
               onClick={onOpenAdminParametersModal}
               className="px-2.5 py-1 text-xs font-bold text-gray-800 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg flex items-center space-x-1.5 transition shadow-2xs"
-              title="Admin Menu: Kelola Parameter Journey & Metric (Bobot, Target, Threshold)"
+              title="Admin Menu: Manage Journey & Metric Parameters (Weight, Target, Threshold)"
             >
               <Sliders className="w-3.5 h-3.5 text-[#ED1C24]" />
-              <span className="hidden sm:inline">Parameter Admin</span>
+              <span className="hidden sm:inline">Admin Parameters</span>
             </button>
 
             {/* Admin Menu: Survey Templates */}
@@ -291,20 +306,20 @@ export default function Header({
             <button
               onClick={onOpenEmailSettingsModal}
               className="px-2.5 py-1 text-xs font-bold text-gray-800 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg flex items-center space-x-1.5 transition shadow-2xs"
-              title="Admin Menu: Setting Email pengirim reminder upload survei ke PIC"
+              title="Admin Menu: Email Settings for the sender of survey-upload reminders to PICs"
             >
               <Mail className="w-3.5 h-3.5 text-[#ED1C24]" />
-              <span className="hidden md:inline">Setting Email</span>
+              <span className="hidden md:inline">Email Settings</span>
             </button>
 
             {/* Admin Menu: Kelola User (login accounts) */}
             <button
               onClick={onOpenUserManagementModal}
               className="px-2.5 py-1 text-xs font-bold text-gray-800 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg flex items-center space-x-1.5 transition shadow-2xs"
-              title="Admin Menu: Kelola akun login (tambah user, reset password, aktif/nonaktif)"
+              title="Admin Menu: Manage login accounts (add user, reset password, activate/deactivate)"
             >
               <Users className="w-3.5 h-3.5 text-[#ED1C24]" />
-              <span className="hidden md:inline">Kelola User</span>
+              <span className="hidden md:inline">Manage Users</span>
             </button>
             </>)}
 
@@ -323,10 +338,10 @@ export default function Header({
               <button
                 onClick={() => setShowThemePicker(v => !v)}
                 className="px-2.5 py-1 text-xs font-bold text-gray-800 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg flex items-center space-x-1.5 transition shadow-2xs"
-                title="Pilih warna tema tampilan website (tersimpan di browser ini saja)"
+                title="Choose the website accent color (saved in this browser only)"
               >
                 <Palette className="w-3.5 h-3.5" style={{ color: 'var(--theme-base)' }} />
-                <span className="hidden lg:inline">Tema</span>
+                <span className="hidden lg:inline">Theme</span>
               </button>
 
               {showThemePicker && (
@@ -334,7 +349,7 @@ export default function Header({
                   <div className="fixed inset-0 z-40" onClick={() => setShowThemePicker(false)} />
                   <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-xl shadow-lg z-50 p-2 space-y-1">
                     <p className="text-[10px] font-bold text-gray-400 uppercase px-2 pt-1 pb-1.5">
-                      Warna Tema Website
+                      Website Theme Color
                     </p>
                     {THEME_PRESETS.map(preset => (
                       <button
@@ -356,29 +371,6 @@ export default function Header({
                 </>
               )}
             </div>
-
-            {/* Logged-in user + logout */}
-            {user && (
-              <div className="flex items-center space-x-2 pl-2 ml-1 border-l border-gray-200">
-                <UserCircle2 className="w-5 h-5 text-gray-400 shrink-0" />
-                <div className="leading-tight hidden sm:block max-w-[170px]">
-                  <div className="text-[11px] font-bold text-gray-900 truncate" title={user.full_name}>{user.full_name}</div>
-                  <div className="text-[9px] font-bold text-gray-500 uppercase tracking-wide truncate" title={isAdmin ? 'Admin' : (user.scopes || []).map(s => `${s.directorate}${s.divisions ? ` (${s.divisions.join(', ')})` : ''}`).join('; ')}>
-                    {isAdmin ? 'Admin' : `User - ${(user.scopes || []).length === 1 ? user.scopes[0].directorate : `${(user.scopes || []).length} direktorat`}`}
-                  </div>
-                </div>
-                <button
-                  onClick={logout}
-                  className="px-2.5 py-1 text-xs font-bold text-gray-800 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg flex items-center space-x-1.5 transition shadow-2xs"
-                  title="Keluar dari aplikasi"
-                >
-                  <LogOut className="w-3.5 h-3.5 text-[#ED1C24]" />
-                  <span>Keluar</span>
-                </button>
-              </div>
-            )}
-
-          </div>
 
         </div>
 

@@ -18,7 +18,6 @@ import {
   HelpCircle,
   ArrowRight,
   TrendingUp,
-  SlidersHorizontal,
   ChevronLeft,
   ChevronRight,
   Maximize2,
@@ -27,6 +26,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { formatMetricValue } from '../utils/formatMetricValue';
+import { monthName } from '../utils/months';
 
 function normalizeDateString(dateVal) {
   if (!dateVal) return null;
@@ -91,8 +91,7 @@ export default function Calculator({
   selectedJourneyFilter = 'ALL', 
   setSelectedJourneyFilter,
   onSelectMetric,
-  onOpenSurveyImport,
-  onOpenAdminSettings
+  onOpenSurveyImport
 }) {
   const { isAdmin } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
@@ -154,7 +153,7 @@ export default function Calculator({
   };
 
   const isFit = tableDensity === 'fit';
-  const periodLabel = period === 'YTD' ? `Year-to-Date ${year}` : `Month ${period}`;
+  const periodLabel = period === 'YTD' ? `Year-to-Date ${year}` : `Month ${/^\d{4}-\d{2}$/.test(String(period)) ? `${monthName(String(period).slice(5))} ${String(period).slice(0, 4)}` : period}`;
 
   return (
     <div className="space-y-5">
@@ -425,7 +424,7 @@ export default function Calculator({
                       }`}
                       title={
                         isDisabled
-                          ? `Metrik ${m.metric_id} (${m.metric_name}) dinonaktifkan untuk perhitungan Direktorat karena merupakan metrik non-karyawan / bankwide eksternal.`
+                          ? `Metric ${m.metric_id} (${m.metric_name}) is disabled for Directorate calculations because it is a non-employee / external bankwide metric.`
                           : `Click to view full drilldown for metric ${m.metric_id} (${m.metric_name})`
                       }
                     >
@@ -449,7 +448,7 @@ export default function Calculator({
                         <div className="flex items-center gap-1 mt-0.5">
                           {isDisabled && (
                             <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-bold bg-gray-200 text-gray-600">
-                              Bankwide Only (Non-Karyawan)
+                              Bankwide Only (Non-Employee)
                             </span>
                           )}
                           {isSurvey && m.survey_source && (
@@ -648,18 +647,6 @@ export default function Calculator({
                                 <Database className="w-3 h-3 text-slate-500 shrink-0" />
                                 <span>View Data</span>
                               </button>
-
-                              {isAdmin && <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (onOpenAdminSettings) onOpenAdminSettings();
-                                }}
-                                className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
-                                title={`Configure Target and Threshold for ${m.metric_name}`}
-                              >
-                                <SlidersHorizontal className="w-3 h-3 text-slate-500 shrink-0" />
-                                <span>Target</span>
-                              </button>}
                             </>
                           )}
                         </div>

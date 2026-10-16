@@ -75,11 +75,11 @@ export function deriveThemeVars(baseHex) {
 // Preset bases reuse CIMB's own existing brand/journey colors (docs/05 §4) so every option
 // still reads as "part of this app" rather than an arbitrary color.
 export const THEME_PRESETS = [
-  { id: 'red', label: 'Merah CIMB', base: '#ED1C24' },
-  { id: 'blue', label: 'Biru', base: '#2563EB' },
+  { id: 'red', label: 'Crimson', base: '#ED1C24' },
+  { id: 'blue', label: 'Royal Blue', base: '#2563EB' },
   { id: 'teal', label: 'Teal', base: '#0D9488' },
-  { id: 'purple', label: 'Ungu', base: '#6716C4' },
-  { id: 'orange', label: 'Oranye', base: '#F7901E' }
+  { id: 'purple', label: 'Violet', base: '#6716C4' },
+  { id: 'orange', label: 'Tangerine', base: '#F7901E' }
 ];
 
 export function applyTheme(presetId) {

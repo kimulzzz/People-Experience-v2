@@ -32,6 +32,7 @@ import {
   LayoutGrid
 } from 'lucide-react';
 import { formatMetricValue } from '../utils/formatMetricValue';
+import { monthName } from '../utils/months';
 import { surveySourceLabel, surveySourceBadgeClass } from '../utils/surveySource';
 
 function normalizeDateString(dateVal) {
@@ -220,7 +221,7 @@ export default function MetricDetailModal({
                   </span>
                 )}
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 border border-gray-200">
-                  Period: {period === 'YTD' ? `Year-to-Date ${detailData?.filter_options?.year || ''}` : period}
+                  Period: {period === 'YTD' ? `Year-to-Date ${detailData?.filter_options?.year || ''}` : (/^\d{4}-\d{2}$/.test(String(period)) ? `${monthName(String(period).slice(5))} ${String(period).slice(0, 4)}` : period)}
                 </span>
               </div>
               <h2 className="text-xl font-black text-gray-900 mt-1">
@@ -708,7 +709,7 @@ export default function MetricDetailModal({
                                       <div key={sIdx} className="p-2 bg-white rounded-lg border border-gray-200 text-[11px] text-gray-700 italic">
                                         "{samp.text}"
                                         <div className="text-[9px] text-gray-400 not-italic mt-1 font-semibold">
-                                          — {samp.employee_name || 'Anonim'} ({samp.division})
+                                          — {samp.employee_name || 'Anonymous'} ({samp.division})
                                         </div>
                                       </div>
                                     ))}
@@ -991,7 +992,7 @@ export default function MetricDetailModal({
                                   </div>
                                 </td>
                                 <td className="py-3 px-3.5">
-                                  <div className="font-bold text-gray-900">{displayName || <span className="italic font-medium text-gray-400">Identitas disembunyikan</span>}</div>
+                                  <div className="font-bold text-gray-900">{displayName || <span className="italic font-medium text-gray-400">Identity hidden</span>}</div>
                                   {(displayId || displayEmail) && (
                                     <div className="flex items-center space-x-1.5 text-[10px] text-gray-500 mt-0.5 font-mono">
                                       <span>{displayId}</span>
@@ -1151,7 +1152,7 @@ export default function MetricDetailModal({
                                   {item.registered_at ? new Date(item.registered_at).toLocaleString('en-US') : '-'}
                                 </td>
                                 <td className="py-2.5 px-3.5">
-                                  <div className="font-bold text-gray-900">{item.employee_name || <span className="italic font-medium text-gray-400">Identitas disembunyikan</span>}</div>
+                                  <div className="font-bold text-gray-900">{item.employee_name || <span className="italic font-medium text-gray-400">Identity hidden</span>}</div>
                                   {item.nip && <div className="text-[10px] text-gray-500 font-mono">{item.nip} • {item.cimb_email}</div>}
                                 </td>
                                 <td className="py-2.5 px-3.5 text-gray-700">

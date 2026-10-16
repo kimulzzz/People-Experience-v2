@@ -16,7 +16,7 @@ experience ("Kejar Mimpi" framework: 70% Survey Index + 30% Outcome Index).
 - **Local AI**: Ollama + Gemma 3 4B (`localAiService.js`, `mediaSummaryService.js`) ONLY for the AI Summary of event
   videos (since v2.28.0); alert/event narratives are rule-based — always has a rule-based fallback, never required
 - **Email**: `nodemailer` (`reminderService.js`) for Survey Upload Reminder emails to PICs. The sender
-  account is configured in the **Setting Email** menu and stored in SQL Server (`px_email_settings`, password
+  account is configured in the **Email Settings** menu and stored in SQL Server (`px_email_settings`, password
   AES-256-GCM encrypted, never returned by the API); legacy `SMTP_*` env vars are only a fallback. On-premise
   SMTP is the target; Gmail was enabled only temporarily at the user's request (cloud — conflicts with the
   100% on-premise rule); gracefully no-ops (logs only) when unconfigured
@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(207-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(217-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (207 cases on SQL, 189 on JSON) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (217 cases on SQL; JSON 195 at QC before the last 4 tests of Module 40, not re-run) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (29 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules |
 
@@ -102,7 +102,7 @@ domain model, not just descriptive:
   code changes require a manual browser refresh (F5) to appear; re-enable only after
   root-causing the loop.
 - **v2.9.1** (2026-09-18, see `CHANGELOG.md` and `docs/07_TESTING_AND_QUALITY_ASSURANCE.md` §4):
-  Parameter Admin Edit-button bug fixed (form opened off-screen when the metrics table was
+  Admin Parameters Edit-button bug fixed (form opened off-screen when the metrics table was
   scrolled), removed the `#` prefix from metric numbering app-wide, color-coded the
   Dashboard journey metric mini-pills by status (green/amber/red), and unified the
   Explore Metrics "Actions & Evidence" button colors to a neutral **Slate** tone
@@ -115,7 +115,7 @@ domain model, not just descriptive:
   fallback when offline); the Performance Trend chart's seed data auto-extends through the
   current calendar month (was flat/projected from April onward) and `computeMonthlyTrends`'
   Outcome Index no longer flatlines; every metric gained an `update_frequency` parameter
-  (**Bulanan**/**Tahunan** — "Frekuensi Update Data", 11 ESS metrics default to Tahunan); and
+  (**Monthly**/**Annual** — "Data Update Frequency", formerly Bulanan/Tahunan, 11 ESS metrics default to Tahunan); and
   SURVEY metrics gained manual-upload reminder settings (`requires_manual_upload`,
   `upload_deadline_day`/`_month`, `pic_name`, `pic_email`) with a new `reminderService.js` that
   emails overdue/due-soon PICs (daily auto-check + `POST /api/admin/upload-reminders/send`,
@@ -306,7 +306,7 @@ domain model, not just descriptive:
 
 - **v2.19.0** (2026-09-25, see `CHANGELOG.md` and `docs/03_SYSTEM_ARCHITECTURE_AND_DATA_FLOW.md` §4):
   User asked for 3 things: rename the "Glossary" menu to "About"; remove the "Tgl" prefix
-  from the "Batas Tanggal Upload" dropdown options in Parameter Admin → Parameter Metric for
+  from the "Upload Deadline Date" dropdown options in Admin Parameters → Parameter Metric for
   SURVEY metrics; and investigate a "Failed to fetch" notification seen while using the app.
   (1) and (2) were simple label changes in `Header.jsx` and `AdminParametersModal.jsx`
   respectively (component/tab internals like `GlossaryView.jsx` and the `'glossary'` tab key
@@ -337,7 +337,7 @@ domain model, not just descriptive:
   `max-w-[1600px]` (verified no-scroll at 1440px/1700px) and refined the row styling to match
   mockup "3. (V.1) ALL JOURNEY SECTION" (left-to-right gradient, bold maroon ID numbers)
   without touching any button or label. Follow-up #2 (commit `c912abb`): user wants a
-  user-selectable website accent color — added a "Tema" picker in `Header.jsx` (5 presets,
+  user-selectable website accent color — added a "Theme" picker in `Header.jsx` (5 presets,
   localStorage-only, never server-side) backed by 13 new CSS custom properties in
   `src/index.css` (`--theme-*`) that `src/utils/theme.js` derives per-preset from one base hex
   via HSL math, applied across every surface from the reskin above. Journey accent colors,
@@ -409,10 +409,10 @@ domain model, not just descriptive:
   manual-upload reminders, and (3) test it with the user's Gmail — they pasted their Gmail address AND
   password in chat. Claude deliberately did NOT use or store that password (real credential for another
   service; typing credentials is off-limits) — it built the whole feature and the user enters an App Password
-  themselves in the menu, then clicks "Kirim Email Test". New: `EmailSettingsModal.jsx` (Header "Setting Email"),
+  themselves in the menu, then clicks "Kirim Email Test". New: `EmailSettingsModal.jsx` (Header "Email Settings"),
   `px_email_settings`, `emailSettingsService.js`, `secretBox.js` (AES-256-GCM, key `SETTINGS_ENCRYPTION_KEY`
   auto-added to `.env` — back it up with the DB), routes `/api/admin/email-settings[/test]`; `reminderService`
-  now builds its transporter per send from the DB. Option catalogs for Parameter Admin / Survey Questions
+  now builds its transporter per send from the DB. Option catalogs for Admin Parameters / Survey Questions
   (`metric_types`, `scale_types`, `target_audiences`, `update_frequencies`, `question_types`) moved to
   `px_app_settings` (labels editable only — values drive logic). Tests: Module 30 (8 tests, includes a fake
   in-process SMTP server so the full send path is verified without a real account; auto-skips when a real
@@ -426,7 +426,7 @@ domain model, not just descriptive:
   Rewrote `reminderService.js`: monthly → on/after the deadline day, no `survey_date` in month M-1 for that metric
   (`storage.hasSurveyDataInPeriod`) → email; annual → from the deadline date if no data that year. Scheduler runs at
   boot + every 30 min from `reminder_send_hour` (default 8), dedupe/follow-ups via new `px_reminder_log` +
-  `reminder_repeat_days` (default 1, 0 = once). Setting Email modal got the schedule + sent history. Found &
+  `reminder_repeat_days` (default 1, 0 = once). Email Settings modal got the schedule + sent history. Found &
   fixed while testing: deleting a metric left its survey responses (a new metric reusing the max+1 id inherited
   them) → delete now cascades; `secretBox` minted a new SETTINGS_ENCRYPTION_KEY in every process that hadn't
   loaded .env (tests → 9 keys in .env, stored password unreadable) → now reuses the existing key (+
@@ -452,7 +452,7 @@ domain model, not just descriptive:
   Root cause: `Calculator.jsx`/`MetricDetailModal.jsx` hardcoded the unit (`RATING_5 → "/ 5"`, `metric_id === 11 → "pax"`, everything else
   "%"), and metrics had no unit in the DB. Fix (built by the `developer` agent): new `px_metrics.unit` column (idempotent ALTER + boot top-up
   that only fills NULLs, so admin edits are never overwritten; JSON backfill too), seeded (`/ 5`, `pax`, `orang/tahun` for #14, `%`),
-  editable in Parameter Admin, exposed as `unit` by calculate/detail/parameters, rendered via `src/utils/formatMetricValue.js`.
+  editable in Admin Parameters, exposed as `unit` by calculate/detail/parameters, rendered via `src/utils/formatMetricValue.js`.
   Scores/status untouched. Proof nothing else moved: previous commit (temp git worktree, other port, same DB) vs new code → 58/58
   GET endpoints identical except `unit`; displayed raw-value text for 27 metrics: 26 identical, only #14 changed. Module 33 (8 tests)
   → 138/138 on SQL (x2) and JSON. NOT changed (reported): #14's name still has "%", #1 keeps "%", #11 shows "2.5 pax" vs target 500.
@@ -490,7 +490,7 @@ domain model, not just descriptive:
   survey upload by PIC, respondent data visible to the PIC.
 
 - **v2.27.1** (2026-10-15, see `CHANGELOG.md` [2.27.1], `docs/04`, `docs/06`): login stage 2b - a metric's PIC is linked to a login account. The PIC is
-  still assigned in Parameter Admin (`pic_name`/`pic_email`); a USER account is PIC of SURVEY metric M (since v2.29.0 ANY SURVEY metric; originally only those with `requires_manual_upload`) when its e-mail equals
+  still assigned in Admin Parameters (`pic_name`/`pic_email`); a USER account is PIC of SURVEY metric M (since v2.29.0 ANY SURVEY metric; originally only those with `requires_manual_upload`) when its e-mail equals
   M's `pic_email` (case-insensitive, trimmed), read from the DB on every request (effective immediately, no cache). A PIC may use template/upload/history/
   evidence/responses/respondent identity ONLY for own metrics (`authService.requirePicMetric/getPicMetric/canSeeRespondentData` - now async - `rowsForViewer`/
   `respondentScopeFor`); employee-metric identities only for rows in the account's own directorate/division scope, non-employee metrics bankwide. `metric_id`
@@ -529,13 +529,28 @@ domain model, not just descriptive:
   `enforceEssManualUpload`; logika bersama di `server/db/surveySource.js`, UI di `src/utils/surveySource.js`). ESS (metrik 9,13,15,16,17,18,21,22,24,25,27)
   dideteksi dari kolom (teks `source_of_data` hanya fallback bila NULL), skor 27 metrik tidak berubah; ESS selalu `requires_manual_upload` (false -> 400).
   KOREKSI v2.27.1: `authService.isPicMetric` = setiap metrik SURVEY, jadi Admin dan PIC (e-mail akun = `pic_email`) boleh Template/Evidence/Upload untuk semua
-  survei; `requires_manual_upload` kini HANYA menentukan pengingat e-mail. UI: dropdown Survey Source di Parameter Admin, badge ESS Template/System di Explore
+  survei; `requires_manual_upload` kini HANYA menentukan pengingat e-mail. UI: dropdown Survey Source di Admin Parameters, badge ESS Template/System di Explore
   Metrics (judul/chip filter dihitung dari data), AI Summary video bisa dilipat dan "AI Description" disembunyikan untuk video, awalan "Documentation " nama media
   dihapus, tombol Survey Templates wrap. v2.28.1 (UI Explore Metrics) punya entri CHANGELOG sendiri. Tes: Modul 39 (10) + Modul 36 disesuaikan -> SQL 207/207,
   JSON 189/189 (Modul 37/38 skip; top-up boot SQL di Modul 39 skip); selisih 2 dari penjumlahan 195+10 belum dijelaskan. QC: LULUS DENGAN CATATAN, 0 bug fungsional.
   Temuan lama BELUM diperbaiki: importer Admin dengan `metric_id` form non-numerik jatuh ke metrik SURVEY pertama (rendah-sedang); "Latest Survey Date" modal detail
   memakai hari ini; `PUT /api/admin/metrics/<tak ada>` -> 400 bukan 404; NIP kembar belum ditolak. Branch `wip/v2.29.0-ui-english` = pekerjaan belum selesai (UI bahasa
-  Inggris, nama tema, filter bulan, awal log proses/Activity Log/limit 120 menit) - hanya referensi, akan dikerjakan ulang/dibawa nanti.
+  Inggris, nama tema, filter bulan, awal log proses/Activity Log/limit 120 menit) - hanya referensi; UI Inggris/tema/bulan/limit sudah diterapkan ulang di v2.30.0, Activity Log & log proses belum.
+
+- **v2.30.0** (2026-10-16, see `CHANGELOG.md` [2.30.0], `docs/04` "Catatan v2.30.0", `docs/05`, `docs/06`, `docs/07` §23, `docs/08` §15): UI seluruhnya bahasa Inggris. Nama menu
+  baru: Manage Users (dulu Kelola User), Email Settings (Setting Email), Admin Parameters (Parameter Admin), Theme (Tema; preset Crimson/Royal Blue/Teal/Violet/Tangerine, id
+  & localStorage tak berubah), Upload Deadline Date, Data Update Frequency, Monthly/Annual; dropdown bulan nama Inggris tanpa angka (`src/utils/months.js`); ~215 pesan backend
+  & `month_name` Inggris; label `px_app_settings` (`metric_types`/`scale_types`/`target_audiences`/`update_frequencies`) diganti saat boot hanya bila masih persis default
+  Indonesia lama (`LEGACY_OPTION_LABELS`/`upgradeLegacyOptionLabels`/`topUpOptionLabels()`; value & edit admin aman). Batas 120 menit (7200000 ms): `TRANSCRIBE_TIMEOUT_MS`,
+  `OLLAMA_TIMEOUT_MS`, `SUMMARY_JOB_TIMEOUT_MS` (baru, total satu job ringkasan), `REQUEST_TIMEOUT_MS` (baru, `server.requestTimeout`; default Node 5 mnt memotong upload
+  video). Tombol Target (Admin, baris OUTCOME) di Explore Metrics dihapus (akses lewat Admin Parameters); Header: user + Sign out di pojok kanan atas. BUG FIX sejak v2.27.0:
+  form publik `?checkin=`/`?survey=` crash tanpa login (`reading 'scopes'`) karena kode publik diisi lewat `useEffect` -> karyawan tidak bisa check-in/feedback via QR
+  selama v2.27.0-v2.29.0; kini mode publik sinkron dari URL (`src/utils/publicRoute.js`) + `user?.scopes`. **Sengaja tetap Indonesia**: isi 44 istilah About, nama metrik/
+  journey/direktorat/program, katalog pertanyaan survei, header CSV evidence, template/isi e-mail pengingat, prompt & validator Gemma, data DB (Action Library dll.).
+  Tes: Modul 40 (10) -> SQL 217/217 (developer, tanpa skip); JSON 195/195 pada QC SEBELUM 4 tes Modul 40 terakhir (Modul 37/38 skip), belum dijalankan ulang untuk total
+  baru. QC pertama LULUS DENGAN CATATAN, lanjutan LULUS. Harness: JANGAN set `TEST_ADMIN_USER`/`TEST_ADMIN_PASSWORD` saat menjalankan suite di SQL. Sisa temuan: `?survey=`
+  dengan kode pre-event menampilkan form tanpa pertanyaan (severity rendah). Belum dikerjakan: Activity Log + log proses/durasi (ada di branch `wip/v2.29.0-ui-english`
+  - hanya UI Inggris/tema/bulan/limit yang sudah dibawa ke v2.30.0). Hitungan statis `await runTest(` (207) tidak sama dengan 217 - selisih 10 belum dijelaskan (pola sama v2.29.0).
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

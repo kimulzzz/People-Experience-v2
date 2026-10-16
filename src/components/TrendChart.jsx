@@ -14,10 +14,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 
-const MONTH_NAMES_ID = [
-  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
-];
+import { MONTH_NAMES, monthName, monthShort } from '../utils/months';
 
 // Mirrors calculationEngine.js's getLastCompleteMonth() so the range-picker dropdowns can
 // populate instantly (no network round-trip) — the server is still the authority and clamps
@@ -48,7 +45,7 @@ export default function TrendChart({
   const [errorMsg, setErrorMsg] = useState('');
 
   // Period-range filter — start/end each carry their OWN year, so the range can genuinely
-  // cross a year boundary (e.g. November 2025 s/d Februari 2026). null = not yet initialized
+  // cross a year boundary (e.g. November 2025 to February 2026). null = not yet initialized
   // from the server's default range.
   const [rangeStartYear, setRangeStartYear] = useState(null);
   const [rangeStartMonth, setRangeStartMonth] = useState(null);
@@ -73,7 +70,7 @@ export default function TrendChart({
       if (range?.endMonth) params.set('endMonth', range.endMonth);
 
       const res = await fetchWithRetry(`/api/metrics/trends?${params.toString()}`);
-      if (!res.ok) throw new Error('Gagal memuat data tren');
+      if (!res.ok) throw new Error('Failed to load trend data');
       const data = await res.json();
 
       setTrendData(data.trends || []);
@@ -90,7 +87,7 @@ export default function TrendChart({
       if (!range?.endMonth) setRangeEndMonth(data.last_complete_month);
     } catch (err) {
       console.error('Failed to fetch trend data:', err);
-      setErrorMsg('Gagal memuat data tren. Periksa koneksi ke server dan coba lagi.');
+      setErrorMsg('Failed to load trend data. Check the server connection and try again.');
       setTrendData([]);
     } finally {
       setLoading(false);
@@ -146,7 +143,7 @@ export default function TrendChart({
   if (!trendData || trendData.length === 0) {
     return (
       <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-xs text-center text-xs text-gray-400">
-        {errorMsg || 'Belum ada bulan lengkap yang tersedia untuk ditampilkan pada periode ini.'}
+        {errorMsg || 'No complete months are available to display for this period yet.'}
       </div>
     );
   }
@@ -203,8 +200,8 @@ export default function TrendChart({
             </div>
             <p className="text-xs text-gray-500">
               {isMtd
-                ? 'Pergerakan skor bulanan berdiri sendiri (MTD) — setiap titik murni data bulan tersebut, tanpa akumulasi dari bulan sebelumnya'
-                : 'Progresi kumulatif Year-to-Date — setiap titik adalah rata-rata berjalan dari Januari hingga bulan tersebut'} (PX Index 100%, Survey 70%, Outcome 30% — Skala 0% – 100%). Hanya bulan yang sudah lengkap yang ditampilkan.
+                ? 'Standalone monthly score movement (MTD) — each point is purely the data of that month, with no accumulation from previous months'
+                : 'Cumulative Year-to-Date progression — each point is the running average from January up to that month'} (PX Index 100%, Survey 70%, Outcome 30% — Scale 0% – 100%). Only fully completed months are shown.
             </p>
           </div>
         </div>
@@ -233,11 +230,11 @@ export default function TrendChart({
       </div>
 
       {/* Period Range Filter — start and end each carry their own Year + Month, so the
-          range can genuinely cross a year boundary (e.g. November 2025 s/d Februari 2026) */}
+          range can genuinely cross a year boundary (e.g. November 2025 to February 2026) */}
       <div className="flex flex-wrap items-center gap-2.5 p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs">
         <div className="flex items-center space-x-1.5 text-gray-500 font-bold shrink-0">
           <Filter className="w-3.5 h-3.5 text-[#ED1C24]" />
-          <span>Rentang Periode:</span>
+          <span>Period Range:</span>
         </div>
 
         {/* Start Year + Month */}
@@ -262,12 +259,12 @@ export default function TrendChart({
             className="px-2 py-1.5 bg-white border border-gray-300 rounded-lg font-semibold focus:outline-none focus:ring-2 focus:ring-red-500"
           >
             {Array.from({ length: Math.max(clientLastCompleteMonth(rangeStartYear || year), 1) }, (_, i) => String(i + 1).padStart(2, '0')).map(m => (
-              <option key={m} value={m}>{MONTH_NAMES_ID[parseInt(m, 10) - 1]}</option>
+              <option key={m} value={m}>{MONTH_NAMES[parseInt(m, 10) - 1]}</option>
             ))}
           </select>
         </div>
 
-        <span className="text-gray-400 font-bold">s/d</span>
+        <span className="text-gray-400 font-bold">to</span>
 
         {/* End Year + Month */}
         <div className="flex items-center space-x-1">
@@ -291,7 +288,7 @@ export default function TrendChart({
             className="px-2 py-1.5 bg-white border border-gray-300 rounded-lg font-semibold focus:outline-none focus:ring-2 focus:ring-red-500"
           >
             {Array.from({ length: Math.max(clientLastCompleteMonth(rangeEndYear || year), 1) }, (_, i) => String(i + 1).padStart(2, '0')).map(m => (
-              <option key={m} value={m}>{MONTH_NAMES_ID[parseInt(m, 10) - 1]}</option>
+              <option key={m} value={m}>{MONTH_NAMES[parseInt(m, 10) - 1]}</option>
             ))}
           </select>
         </div>
@@ -300,7 +297,7 @@ export default function TrendChart({
           <button
             onClick={handleResetRange}
             className="inline-flex items-center space-x-1 px-2.5 py-1.5 text-[#ED1C24] hover:bg-red-50 border border-red-200 rounded-lg font-bold transition"
-            title="Kembalikan ke rentang default (Awal Tahun s/d Bulan Terakhir Sebelum Bulan Ini)"
+            title="Restore the default range (start of year up to the last complete month before this month)"
           >
             <RotateCcw className="w-3 h-3" />
             <span>Reset</span>
@@ -308,11 +305,11 @@ export default function TrendChart({
         )}
 
         {loading && (
-          <span className="text-gray-400 italic">Memuat...</span>
+          <span className="text-gray-400 italic">Loading...</span>
         )}
 
         <span className="text-gray-400 ml-auto">
-          Rentang bisa lintas tahun (mis. Nov {year ? parseInt(year, 10) - 1 : ''} s/d Feb {year})
+          Range can span years (e.g. Nov {year ? parseInt(year, 10) - 1 : ''} to Feb {year})
         </span>
       </div>
 
@@ -452,7 +449,7 @@ export default function TrendChart({
                     fill={isSelected ? '#ED1C24' : '#4B5563'}
                     textAnchor="middle"
                   >
-                    {spansMultipleYears ? `${d.month_name.slice(0, 3)} '${d.year.slice(2)}` : d.month_name.slice(0, 3)}
+                    {spansMultipleYears ? `${monthShort(d.month_code.slice(5))} '${d.year.slice(2)}` : monthShort(d.month_code.slice(5))}
                   </text>
                 </g>
               );
@@ -469,12 +466,12 @@ export default function TrendChart({
           </div>
           <div>
             <span className="text-gray-500 font-medium">
-              {activeHover ? `Period Detail (${activeHover.month_name} ${activeHover.year}):` : 'Active Period Summary:'}
+              {activeHover ? `Period Detail (${monthName(activeHover.month_code.slice(5))} ${activeHover.year}):` : 'Active Period Summary:'}
             </span>
             <div className="font-extrabold text-[#231F20] text-sm">
               {activeHover
-                ? `${activeHover.month_name} ${activeHover.year} (PX Index: ${activeHover.px_index || activeHover.pe_index}%)`
-                : (selectedPeriod === 'YTD' ? `Year-to-Date ${year} (PX Index: ${ytdPeIndex || '-'}%)` : `Month ${selectedPeriod}`)}
+                ? `${monthName(activeHover.month_code.slice(5))} ${activeHover.year} (PX Index: ${activeHover.px_index || activeHover.pe_index}%)`
+                : (selectedPeriod === 'YTD' ? `Year-to-Date ${year} (PX Index: ${ytdPeIndex || '-'}%)` : `Month ${selectedPeriod.includes('-') ? `${monthName(selectedPeriod.split('-')[1])} ${selectedPeriod.split('-')[0]}` : selectedPeriod}`)}
             </div>
           </div>
         </div>

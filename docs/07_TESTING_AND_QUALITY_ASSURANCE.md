@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    39 MODUL PENGUJIAN    │     207 AUTOMATED TESTS     │       100% PASS RATE          │
+│    40 MODUL PENGUJIAN    │     217 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -786,3 +786,27 @@ Tes menghapus metrik ujinya lewat `tempMetricIds36` (metrik beserta datanya) di 
 
 **Tidak diuji / tidak terverifikasi**: tampilan UI (diperiksa QC di Browser pane; mobile tidak); backfill JSON; pengiriman e-mail pengingat asli. **Temuan lama yang belum diperbaiki**: importer dengan `metric_id` form non-numerik jatuh ke metrik SURVEY pertama (rendah-sedang); "Latest Survey Date" modal detail memakai hari ini; `PUT /api/admin/metrics/<tak ada>` -> 400 bukan 404; NIP kembar belum ditolak.
 
+---
+
+## 🌐 23. UI Inggris, Label Opsi DB, Batas 120 Menit & Form Publik - v2.30.0 (2026-10-16)
+
+**Regression suite: 217 test di SQL Server** (angka dari laporan developer, tanpa skip; penulis dokumen ini tidak menjalankan ulang suite). **JSON: 195/195 pada QC sebelum 4 tes Modul 40 terakhir ditambahkan** (Modul 37/38 di-skip di JSON, bagian top-up boot SQL dari Modul 39 di-skip); suite JSON **belum dijalankan ulang** untuk total terbaru, jadi tidak ada angka JSON yang diverifikasi untuk 217. QC pertama: LULUS DENGAN CATATAN; QC lanjutan: LULUS. **Modul 40 = 10 tes** (berjalan di SQL dan JSON); tes lama yang meng-assert teks Indonesia (pesan error, `month_name`, label) disesuaikan ke teks Inggris. Catatan hitungan: hitungan statis `await runTest(` di `tests/regressionTest.js` kini 207, sedangkan hasil developer 217 - selisih 10 yang sama polanya dengan v2.29.0 (statis 197 vs 207 hasil QC) dan belum dijelaskan; angka resmi mengikuti laporan developer/QC.
+
+| # | Jenis | Yang diuji (Modul 40) |
+| :-: | :---: | :--- |
+| 1 | Positif | Katalog opsi di database (`metric_types`, `scale_types`, `target_audiences`, `update_frequencies`) tidak lagi membawa label default Indonesia; `value` tidak berubah (`SURVEY`/`OUTCOME`, `MONTHLY`/`ONE_TIME_ANNUAL`) |
+| 2 | Positif | `upgradeLegacyOptionLabels()` mengganti HANYA label yang persis default Indonesia lama; hasil edit admin (termasuk beda satu spasi) dan seluruh `value` tetap; sudah Inggris -> `null`; katalog di luar daftar (`event_types`) tidak disentuh |
+| 3 | Negatif | Input sampah (`null`, `undefined`, teks, angka, `{}`, `[null]`, `[{ value }]` tanpa label) tidak membuat `upgradeLegacyOptionLabels` melempar; key yang tidak dikenal -> `null` |
+| 4 | Positif | `month_name` tren = nama bulan Inggris (`January` ... `December`); `month_code` `YYYY-MM` tidak berubah |
+| 5 | Negatif | Sembilan respons 4xx (`POST /api/auth/login` kosong; `PUT /api/admin/settings/` dengan nilai tidak valid, key tak dikenal, dan `value` katalog diubah; `POST /api/surveys/upload` kosong; `POST /api/admin/survey-questions/99999`; `POST /api/media/<tak ada>/summarize`; login salah; `GET /api/metrics/calculate` tanpa login) berisi pesan Inggris tanpa kata Indonesia (regex `INDONESIAN` di tes) |
+| 6 | Positif | Default batas waktu 120 menit = 7.200.000 ms: `DEFAULT_AI_TIMEOUT_MS`, `DEFAULT_TIMEOUT_MS` (transkrip); `OLLAMA_TIMEOUT_MS`, `TIMEOUT_MS`, `SUMMARY_JOB_TIMEOUT_MS` memakai default bila env tidak di-set (env masih bisa meng-override) |
+| 7 | Positif | Mode publik dihitung sinkron dari URL: `getPublicCodes('?checkin=...')`, `getPublicCodes('?survey=...')`, `isPublicRoute()`; `App.jsx` memakai initializer `useState(() => getPublicCodes().checkin / .survey)` dan tidak lagi mengisi kode publik dari efek |
+| 8 | Negatif | URL normal / parameter kosong / tidak terkait **bukan** halaman publik (gerbang login tetap berlaku) |
+| 9 | Negatif | `Header.jsx` tidak membaca `user.scopes/full_name/username/role` di luar blok `{user && (...)}` dan memakai `user?.scopes` (regresi v2.27.0: crash saat `user` null) |
+| 10 | Positif | Teks sisa menjadi Inggris: aturan Username/NIP (`authService.js`), `Password is too long.` (`emailSettingsService.js`), deskripsi ESS (`calculationEngine.js`), label PPT `[ Documentation #`, pemangkasan awalan `Documentation`/`Dokumentasi` di PPT, caption default media bukan Indonesia |
+
+Tes 7-10 membaca kode sumber (`App.jsx`, `Header.jsx`, `pptGenerator.js`, `server.js`) dan mengimpor `publicRoute.js` sebagai modul ES; **bukan** render di browser.
+
+**Harness**: jangan men-set `TEST_ADMIN_USER` / `TEST_ADMIN_PASSWORD` saat menjalankan suite di SQL Server (suite membuat admin sementara sendiri); keduanya hanya untuk backend JSON. Suite tetap mengotori backend aktif (di SQL: `node server/db/migrate.js --reset` - lihat catatan v2.24.1 tentang data video asli).
+
+**Tidak diuji / tidak terverifikasi**: tampilan UI Inggris, header kanan atas, dan select Directorate/Sub-Dir pada lebar <= 500px (diperiksa QC di Browser pane; mobile tidak diuji di perangkat); batas 120 menit sungguhan (tes hanya memeriksa nilai default, tidak menunggu 2 jam); upload video besar lewat koneksi lambat; teks slide PPT secara visual. **Diketahui, belum diperbaiki**: `?survey=` dengan kode event pre-event menampilkan form tanpa pertanyaan (severity rendah); temuan lama v2.29.0 (importer `metric_id` form non-numerik, NIP kembar, dll.) tetap berlaku.

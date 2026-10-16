@@ -81,13 +81,17 @@ graph TD
 ---
 
 ### 3.2 Header & Kontrol Periode ([`src/components/Header.jsx`](file:///d:/Mul/Project/Anti%20Gravity/People%20Experience/src/components/Header.jsx))
-- Menyajikan logo resmi CIMB Niaga via [`CimbLogo.jsx`](file:///d:/Mul/Project/Anti%20Gravity/People%20Experience/src/components/CimbLogo.jsx) dan identitas *"People Experience (PX)"*.
+- Menyajikan logo resmi CIMB Niaga via [`CimbLogo.jsx`](file:///d:/Mul/Project/Anti%20Gravity/People%20Experience/src/components/CimbLogo.jsx) dan identitas *"People Experience (PX)"* di baris pertama sebelah kiri.
+- **Info user + Sign out di pojok kanan atas (sejak v2.30.0)**: baris pertama Header = brand (kiri) dan, bila ada user login, `username · Role` + nama (Admin) / direktorat (User; "N directorates" bila lebih dari satu cakupan) + tombol **Sign out** (kanan; dulu tombol "Keluar" ada di baris filter). Layar < 640px (`sm`): hanya avatar + tombol ikon. Fungsi logout (`useAuth().logout`) tidak berubah.
 - **Dropdown Filter Periode**: Memilih secara instan antara tampilan akumulatif *Year-to-Date (YTD)* atau bulan berjalan (*Month-to-Date*). Dropdown **Tahun** kini diisi secara dinamis dari `available_years` pada response `/api/metrics/calculate` (bersumber dari `storage.getAvailableSurveyYears()` — tahun yang benar-benar punya data survei di database), bukan lagi daftar statis `['2026', '2025']` di kode frontend.
 - **Tombol Aksi Cepat Admin**:
+  - 📊 **Admin Parameters** (dulu Parameter Admin): Membuka `AdminParametersModal` (parameter journey/metrik, target, threshold, bobot).
   - 📝 **Survey Templates**: Membuka *AdminSurveyQuestionsModal*.
-  - 🎯 **Set Targets**: Membuka *AdminSettingsModal*.
-  - ⚖️ **Adjust Weights**: Membuka *WeightsModal*.
-  - 📤 **Bulk Survey CSV**: Membuka *SurveyImportModal*.
+  - ✉️ **Email Settings** (dulu Setting Email): Membuka `EmailSettingsModal`.
+  - 👥 **Manage Users** (dulu Kelola User): Membuka `UserManagementModal`.
+  - 🎨 **Theme** (dulu Tema): Pemilih warna aksen per-browser (§4.1).
+  - Keempat tombol Admin hanya tampil untuk role Admin (`isAdmin`). Pada lebar <= 500px select Directorate / Sub-Dir tidak lagi tumpang tindih (`min-w-0 max-w-full`).
+- **Dropdown bulan (sejak v2.30.0)**: hanya nama bulan Inggris tanpa angka (`January` ... `December`, dari `src/utils/months.js`); nilai internal tetap `01`..`12`. Pada mode YTD opsi pertama "All Months (YTD)".
 
 ---
 
@@ -128,7 +132,7 @@ graph TD
   - 📄 **Evidence**: Download CSV rekapitulasi data jawaban responden dan tanggal transaksi.
   - 📤 **Upload**: Modal impor cepat data jawaban CSV responden.
   - 🔍 **Detail**: Modal deep-dive butir soal, dimensi ESS, dan audit trail.
-  - 🗄️ **View Data** / ⚙️ **Target** (metrik Outcome): Melihat data HR internal dan mengatur target/threshold.
+  - 🗄️ **View Data** (metrik Outcome): Melihat data HR internal. Tombol ⚙️ **Target** (khusus Admin, baris Outcome) **dihapus di v2.30.0**; target/threshold diatur lewat menu **Admin Parameters** di Header.
 
 ---
 
@@ -154,10 +158,10 @@ graph TD
 ---
 
 ### 3.7 Modal Parameter Journey & Metric ([`src/components/AdminParametersModal.jsx`](file:///d:/Mul/Project/Anti%20Gravity/People%20Experience/src/components/AdminParametersModal.jsx))
-- **Tab Parameter Metric**: Tabel CRUD lengkap (Nama, Journey, Tipe, Responden, Bobot, Target, Threshold) dengan kolom **Update Data** menampilkan badge frekuensi (*Bulanan*/*Tahunan*) dan nama PIC upload.
+- **Tab Parameter Metric**: Tabel CRUD lengkap (Nama, Journey, Tipe, Responden, Bobot, Target, Threshold) dengan kolom **Update Data** menampilkan badge frekuensi (*Monthly*/*Annual*; dulu *Bulanan*/*Tahunan*) dan nama PIC upload.
 - **Kolom Target & Threshold dalam Satuan Sama (sejak v2.15.0)**: kolom "Target (%)" menampilkan `target_value_normalized` dari API (mis. **80.0%** untuk metrik RATING_5 bertarget 4.00/5) sebagai nilai utama, dengan bentuk asli (`target_display`, mis. "> 4.00/5") sebagai subteks kecil — langsung sebanding dengan kolom "Threshold (%)" di sebelahnya, tidak lagi mencampur skala mentah (1-5) dengan persen (0-100). Fallback klien `computeTargetPercent()` mereplikasi konversi backend `normalizeTarget()` jika field belum tersedia di response.
-- **Update Data Berkala & Pengingat Upload Survei** (bagian form Tambah/Edit Metric): dropdown *Frekuensi Update Data*, toggle *"Survei ini masih diupload manual oleh PIC"* (khusus metrik Survey), input *Nama PIC*, *Email PIC*, dan *Batas Tanggal Upload* (tanggal, + bulan untuk metrik Tahunan). Input *Target Nilai* dan *Min Threshold* kini diberi label satuan eksplisit ("satuan skala asli — 1.0-5.0" vs "selalu dalam %, 0-100") plus hint hidup di bawah *Target Nilai* menunjukkan persentase ekivalennya secara real-time.
-- **Panel Survey Upload Reminders**: Banner kuning otomatis muncul di atas tabel saat ada metrik berstatus *DUE_SOON*/*OVERDUE*, menampilkan daftar PIC & deadline terkait plus tombol **"Kirim Reminder Sekarang"** (memanggil `POST /api/admin/upload-reminders/send`).
+- **Update Data Berkala & Pengingat Upload Survei** (bagian form Tambah/Edit Metric): dropdown *Data Update Frequency* (dulu Frekuensi Update Data), toggle *"This survey is still uploaded manually by the PIC (enable email reminders)"* (khusus metrik Survey), input PIC Name, PIC Email, dan *Upload Deadline Date* (dulu Batas Tanggal Upload; tanggal, + bulan untuk metrik Annual). Input *Target Nilai* dan *Min Threshold* kini diberi label satuan eksplisit ("satuan skala asli — 1.0-5.0" vs "selalu dalam %, 0-100") plus hint hidup di bawah *Target Nilai* menunjukkan persentase ekivalennya secara real-time.
+- **Panel Survey Upload Reminders**: Banner kuning otomatis muncul di atas tabel saat ada metrik berstatus *DUE_SOON*/*OVERDUE*, menampilkan daftar PIC & deadline terkait plus tombol **"Send Reminders Now"** (dulu "Kirim Reminder Sekarang"; memanggil `POST /api/admin/upload-reminders/send`).
 - **Auto-Scroll Form Edit/Tambah**: Body modal otomatis scroll ke atas saat form Edit/Tambah dibuka (fix bug tombol Edit "tidak merespons" ketika tabel sudah di-scroll — lihat `docs/07_TESTING_AND_QUALITY_ASSURANCE.md` §4).
 
 ---
@@ -185,7 +189,7 @@ graph TD
 | **Primary** | **Primary Red** | `R255 G0 B0` (`#ED1C24` / `#FF0000`) | Aksen utama brand, PX Index Consolidated Score (100%), tombol CTA primer, garis tab aktif |
 | **Primary** | **Deep Maroon** | `R120 G0 B0` (`#780000`) | Garis batas target threshold (85%), gradient header, aksen penekanan eksekutif |
 | **Primary** | **Cool Gray** | `R167 G169 B172` (`#A7A9AC`) | Garis grid tabel, batas badge non-aktif, teks metadata sekunder |
-| **Primary** | **Slate (Soft Corporate)** | Tailwind `slate-100`/`slate-700` | Tombol *Actions & Evidence* di Explore Metrics (Template/Evidence/Upload/Detail/View Data/Target) — netral, dipisahkan dari palet warna status |
+| **Primary** | **Slate (Soft Corporate)** | Tailwind `slate-100`/`slate-700` | Tombol *Actions & Evidence* di Explore Metrics (Template/Evidence/Upload/Detail/View Data; tombol Target dihapus di v2.30.0) — netral, dipisahkan dari palet warna status |
 | **Secondary** | **Pure White** | `R255 G255 B255` (`#FFFFFF`) | Permukaan kartu, kontainer scorecard, background modal |
 | **Secondary** | **Royal Blue** | `R37 G99 B235` (`#2563EB`) | **Outcome Metrics (30%)**, garis tren Outcome pada Trend Chart, badge database HRIS |
 | **Secondary** | **Blush Pink** | `R248 G177 B176` (`#F8B1B0`) | Titik data proyeksi benchmark & efek hover halus baris tabel |
@@ -208,8 +212,8 @@ Warna-warna di permukaan tersebut **tidak lagi hex statis** — 13 variabel CSS 
 (`src/index.css` `:root`, prefix `--theme-*`: `deep`, `dark`, `mid`, `strong`, `base`, `hover`,
 `edge`, `row-start/mid/end` + varian hover-nya, `tint-50`/`tint-100`) dipakai di seluruh
 komponen tersebut lewat sintaks Tailwind arbitrary-value `[var(--theme-xxx)]`. Nilai variabel
-ini bisa diganti saat runtime oleh viewer lewat tombol **"Tema"** di `Header.jsx` (5 preset:
-Merah CIMB/Biru/Teal/Ungu/Oranye) — `src/utils/theme.js` men-derive ke-13 variabel dari satu
+ini bisa diganti saat runtime oleh viewer lewat tombol **"Theme"** di `Header.jsx` (5 preset sejak v2.30.0 bernama
+`Crimson`/`Royal Blue`/`Teal`/`Violet`/`Tangerine`; `id` preset dan kunci localStorage tidak berubah) — `src/utils/theme.js` men-derive ke-13 variabel dari satu
 warna dasar preset via konversi HSL, lalu `applyTheme()` menulisnya ke
 `document.documentElement.style` dan menyimpan pilihan ke `localStorage` (key
 `px_theme_preset`, per-browser, tidak pernah dikirim ke server). `initTheme()` dipanggil di
@@ -223,7 +227,9 @@ ini (`MetricDetailModal.jsx`, `TrendChart.jsx`, `SurveyImportModal.jsx`, `Create
 
 ---
 
-## 📧 Catatan v2.23.0 — `EmailSettingsModal.jsx` ("Setting Email")
+## 📧 Catatan v2.23.0 — `EmailSettingsModal.jsx` ("Email Settings")
+
+> Sejak v2.30.0 seluruh teks UI berbahasa Inggris dan menu bernama **Email Settings** (dulu Setting Email); bagian **Kirim Email Test** = **Send Test Email**. Teks di paragraf berikut ditulis dengan nama lama.
 
 Tombol **Setting Email** di Header (sebelah Survey Templates) membuka modal: toggle aktif, provider (Gmail / SMTP internal), akun, password (write-only — placeholder menunjukkan apakah sudah ada password tersimpan; tombol "Hapus password tersimpan"), nama/email pengirim, banner peringatan Gmail (cloud, App Password), dan bagian **Kirim Email Test** (default ke email pengirim sendiri; opsi PIC dari metric manual-upload atau alamat lain). Modal dikelola `App.jsx` (`isEmailSettingsOpen`). `AdminParametersModal` dan `AdminSurveyQuestionsModal` kini mengambil daftar pilihan (tipe metrik, skala, responden, frekuensi, tipe pertanyaan) dari `GET /api/settings`.
 
@@ -231,7 +237,7 @@ Tombol **Setting Email** di Header (sebelah Survey Templates) membuka modal: tog
 
 ## ⏰ Catatan v2.24.0
 
-`EmailSettingsModal` kini juga memuat **Jadwal Reminder Otomatis** (jam mulai kirim, ulangi tiap N hari → `PUT /api/admin/settings/:key`) dan **Riwayat Reminder Terkirim** (dari `GET /api/admin/upload-reminders`). Panel peringatan di `AdminParametersModal` menampilkan periode data yang kosong (`expected_period_label`) dan status `DUE_TODAY`/`OVERDUE`; teks bantu di bawah "Batas Tanggal Upload" menjelaskan aturan "bulan sebelumnya". Konfirmasi hapus metrik menyebut bahwa data surveinya ikut terhapus.
+`EmailSettingsModal` kini juga memuat **Jadwal Reminder Otomatis** (UI: *Automatic Reminder Schedule*; jam mulai kirim, ulangi tiap N hari → `PUT /api/admin/settings/:key`) dan **Riwayat Reminder Terkirim** (UI: *Sent Reminder History*; dari `GET /api/admin/upload-reminders`). Panel peringatan di `AdminParametersModal` menampilkan periode data yang kosong (`expected_period_label`) dan status `DUE_TODAY`/`OVERDUE`; teks bantu di bawah "Upload Deadline Date" (dulu "Batas Tanggal Upload") menjelaskan aturan "bulan sebelumnya". Konfirmasi hapus metrik menyebut bahwa data surveinya ikut terhapus.
 
 ---
 
@@ -252,7 +258,7 @@ Tombol **Setting Email** di Header (sebelah Survey Templates) membuka modal: tog
 | File | Fungsi |
 | :--- | :--- |
 | `src/components/AuthScreens.jsx` | `LoginPage` (form username/password, pesan galat generik, notifikasi "Sesi Anda berakhir") dan `ChangePasswordScreen` (wajib saat memakai password sementara) |
-| `src/components/UserManagementModal.jsx` | Menu **Kelola User** (Admin): daftar akun, tambah/ubah (role + **editor cakupan data**, lihat v2.27.0; direktorat & divisi dari `/api/directorates`), aktif/nonaktif, reset password (password sementara tampil sekali dengan tombol salin), riwayat audit login. **Belum ada tombol hapus** |
+| `src/components/UserManagementModal.jsx` | Menu **Manage Users** (dulu Kelola User; Admin): daftar akun, tambah/ubah (role + **editor cakupan data**, lihat v2.27.0; direktorat & divisi dari `/api/directorates`), aktif/nonaktif, reset password (password sementara tampil sekali dengan tombol salin), riwayat audit login. **Belum ada tombol hapus** |
 | `src/utils/AuthContext.jsx` | `AuthContext` / `useAuth()` → `{ user, isAdmin, canManageEvents, logout }` |
 | `src/utils/apiClient.js` | Membungkus `window.fetch` untuk `/api`, `/uploads`, `/exports`: `credentials: 'same-origin'`; respons 401 (selain login) memicu event `px:unauthorized` |
 | `src/App.jsx` | `AuthGate` memeriksa `/api/auth/me`; anon → `LoginPage`; `must_change_password` → `ChangePasswordScreen`; selain itu aplikasi. URL `?checkin=` / `?survey=` melewati `AuthGate` (form publik tanpa login) |
@@ -261,12 +267,12 @@ Menu per role (penegakan sebenarnya di server, lihat `docs/04`):
 
 | Elemen | ADMIN | USER |
 | :--- | :---: | :---: |
-| Parameter Admin, Survey Templates, Setting Email, Kelola User (Header) | tampil | disembunyikan |
+| Admin Parameters, Survey Templates, Email Settings, Manage Users (Header; dulu Parameter Admin, Setting Email, Kelola User) | tampil | disembunyikan |
 | Filter direktorat Header | bebas | terkunci ke direktoratnya (label "User - <direktorat>") |
 | Tombol upload/pengaturan survei di Explore Metrics & MetricDetailModal, acknowledge alert | tampil | disembunyikan |
 | Detail metrik: data per responden | tampil | disembunyikan (`respondent_data_hidden`) |
 | Signature Events: buat/hapus event, unggah media, transkrip, PPT | tampil | hanya bila `canManageEvents` (direktorat di `event_manager_directorates`) |
-| Logout (Header) | tampil | tampil |
+| Sign out (Header, pojok kanan atas sejak v2.30.0) | tampil | tampil |
 
 ## 🎯 Catatan v2.27.0 — Cakupan Data User
 
@@ -291,7 +297,7 @@ Muncul di `MediaCard` untuk video yang `transcript_status = DONE` dan punya tran
 | `summary_status` | Tampilan |
 | :--- | :--- |
 | `PROCESSING` | Spinner "Ringkasan AI sedang dibuat…"; polling `GET /api/events/:id` tiap 4 dtk kini juga aktif selama ada ringkasan `PROCESSING` |
-| `DONE` | Ringkasan + poin; badge `AI • <model>` (hijau) atau **Otomatis (aturan)** (amber); waktu dibuat dan kode bahasa; untuk sumber `AI` teks "Dibuat otomatis oleh AI — periksa kembali dengan transkrip."; untuk `RULE` alasan fallback (`summary_error`) |
+| `DONE` | Ringkasan + poin; badge `AI • <model>` (hijau) atau **Automatic (rule-based)** (amber; dulu "Otomatis (aturan)"); waktu dibuat dan kode bahasa; untuk sumber `AI` teks "Dibuat otomatis oleh AI — periksa kembali dengan transkrip."; untuk `RULE` alasan fallback (`summary_error`) |
 | `FAILED` | "Ringkasan AI gagal: <alasan>" |
 | `INSUFFICIENT` | Pesan "transkrip belum cukup" (< 20 kata); tanpa tombol |
 | kosong | "Belum ada ringkasan untuk video ini." |
@@ -313,3 +319,38 @@ Tombol **Buat ringkasan / Buat ulang ringkasan** (`handleSummarize` -> `POST /ap
 
 Tidak diuji otomatis: seluruh tampilan di atas (diperiksa QC di Browser pane); tampilan mobile. Pekerjaan UI Inggris penuh / nama tema / filter bulan / Activity Log ada di branch `wip/v2.29.0-ui-english` dan bukan bagian rilis ini.
 
+---
+
+## Catatan v2.30.0 - UI Seluruhnya Berbahasa Inggris, Bulan Tanpa Angka, Form Publik
+
+**Bahasa UI**: semua teks antarmuka di `src/**` berbahasa Inggris (label, tombol, judul modal, placeholder, tooltip, header tabel, empty state), termasuk blok AI Summary / Transcript di `EventManager.jsx` ("AI Summary", "Generate summary" / "Regenerate summary", "Full text", "Per segment (click to play from this part)", "Try again", badge "Automatic (rule-based)") dan judul narasi alert Dashboard **"Analysis Summary"**. Nilai internal yang menggerakkan logika tidak berubah. **Sengaja tetap Indonesia**: isi 44 istilah di tab About (`GlossaryView.jsx`), nama metrik / journey / direktorat / divisi / program, katalog pertanyaan survei, dan data dari database (mis. Action Library). Label opsi dropdown Parameter Admin (tipe metrik, skala, responden, frekuensi) datang dari `px_app_settings` dan kini berlabel Inggris (lihat `docs/08`).
+
+| Nama lama (docs sebelum v2.30.0) | Nama di UI sekarang |
+| :--- | :--- |
+| Parameter Admin | Admin Parameters |
+| Setting Email / Kirim Email Test | Email Settings / Send Test Email |
+| Kelola User | Manage Users |
+| Tema | Theme |
+| Frekuensi Update Data (Bulanan / Tahunan) | Data Update Frequency (Monthly / Annual) |
+| Batas Tanggal Upload | Upload Deadline Date |
+| Kirim Reminder Sekarang | Send Reminders Now |
+| Keluar | Sign out |
+
+**Nama tema** (`src/utils/theme.js`, `THEME_PRESETS`): `Crimson` (`red`, `#ED1C24`), `Royal Blue` (`blue`, `#2563EB`), `Teal`, `Violet`, `Tangerine` (`orange`, `#F7901E`). Hanya label yang berubah; `id` dan kunci `px_theme_preset` tetap, sehingga pilihan tersimpan di browser tetap berlaku.
+
+**Filter bulan & label periode** - `src/utils/months.js` (baru): `MONTH_NAMES` (January ... December), `MONTH_SHORT` (Jan ... Dec), `monthName(m)`, `monthShort(m)` (menerima `'03'`, `3`, `'3'`; di luar 1-12 -> `''`). Dipakai `Header`, `Dashboard`, `TrendChart`, `Calculator`, `MetricDetailModal`, `AdminParametersModal`. Dropdown bulan hanya berisi nama (tanpa angka); nilai yang dikirim ke API tetap `01`..`12`. Sumbu grafik tren memakai singkatan Inggris yang diturunkan dari `month_code`; label periode MTD: **"Month-to-Date (MTD) March 2026"**, YTD: "Year-to-Date (YTD) 2026".
+
+**Header** - lihat §3.2: info user + **Sign out** di pojok kanan atas; select Directorate / Sub-Dir tidak tumpang tindih pada lebar <= 500px.
+
+**Explore Metrics** - tombol **Target** (Admin, baris Outcome) dihapus; baris Outcome hanya punya **View Data** (§3.4).
+
+**Mode publik (form check-in & feedback tanpa login)** - `src/utils/publicRoute.js` (baru):
+
+| Fungsi | Perilaku |
+| :--- | :--- |
+| `getPublicCodes(search?)` | Membaca query string -> `{ checkin, survey }` (`null` bila kosong / tidak ada); default `window.location.search` |
+| `isPublicRoute(search?)` | `true` bila `?checkin=` atau `?survey=` berisi kode |
+
+`App.jsx` memakai `getPublicCodes()` sebagai **initializer `useState`** untuk `publicCheckinCode` / `publicSurveyCode` dan `isPublicRoute()` di `App()`, sehingga render pertama sudah tahu halaman ini publik dan `AuthGate` / `Header` tidak dirender. Sebelumnya kode diisi lewat `useEffect` (render pertama masih memuat `Header` dengan `user === null`) dan form publik crash dengan `Cannot read properties of null (reading 'scopes')` - bug sejak v2.27.0, form publik tidak bisa dipakai karyawan selama v2.27.0 s.d. v2.29.0. Pertahanan kedua: `Header.jsx` memakai `user?.scopes` dan semua pembacaan `user.*` ada di dalam blok `{user && (...)}`; `App.jsx` memakai `user?.user_id`. Hanya dua rute publik yang ada. **Diketahui**: `?survey=` dengan kode event yang masih pre-event menampilkan form feedback tanpa pertanyaan (severity rendah, belum diperbaiki).
+
+**Tidak diuji otomatis**: tampilan visual (diperiksa QC di Browser pane); mobile hanya sebatas aturan CSS di atas, tidak diuji di perangkat. Modul 40 menguji logika `publicRoute.js`, initializer di `App.jsx` dan pembacaan `user.*` di `Header.jsx` lewat pemeriksaan kode sumber, bukan render browser.

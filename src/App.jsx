@@ -22,6 +22,7 @@ import { LoginPage, ChangePasswordScreen } from './components/AuthScreens';
 import { AuthContext, useAuth } from './utils/AuthContext';
 import { UNAUTHORIZED_EVENT } from './utils/apiClient';
 import { fetchWithRetry } from './utils/fetchWithRetry';
+import { getPublicCodes, isPublicRoute } from './utils/publicRoute';
 
 // Derived from the real browser clock (not a frozen literal) so the Dashboard's default year
 // tracks forward automatically instead of silently staying on a past year — this mirrors the
@@ -45,7 +46,7 @@ function AuthGate({ children }) {
       })
       .catch(() => { if (alive) setAuth('anon'); });
     const onUnauthorized = () => {
-      if (statusRef.current === 'authed') setNotice('Sesi Anda berakhir. Silakan login kembali.');
+      if (statusRef.current === 'authed') setNotice('Your session has expired. Please sign in again.');
       setAuth('anon');
     };
     window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
@@ -59,7 +60,7 @@ function AuthGate({ children }) {
   };
 
   if (state.status === 'loading') {
-    return <div className="min-h-screen flex items-center justify-center bg-[#F8F9FA] text-sm text-gray-500">Memuat...</div>;
+    return <div className="min-h-screen flex items-center justify-center bg-[#F8F9FA] text-sm text-gray-500">Loading...</div>;
   }
   if (state.status === 'anon') {
     return <LoginPage notice={notice} onLoggedIn={(session) => { setNotice(''); setAuth('authed', session); }} />;
@@ -80,8 +81,7 @@ function AuthGate({ children }) {
 
 export default function App() {
   // The public check-in / feedback forms (?checkin= / ?survey=) never need a login.
-  const params = new URLSearchParams(window.location.search);
-  if (params.get('checkin') || params.get('survey')) return <AppContent />;
+  if (isPublicRoute()) return <AppContent />;
   return <AuthGate><AppContent /></AuthGate>;
 }
 
@@ -124,18 +124,12 @@ function AppContent() {
   const [qrModalConfig, setQrModalConfig] = useState({ isOpen: false, code: '', title: '', eventName: '', isSurvey: false });
 
   // Public Form URL parameters (e.g. ?checkin=CODE or ?survey=CODE)
-  const [publicCheckinCode, setPublicCheckinCode] = useState(null);
-  const [publicSurveyCode, setPublicSurveyCode] = useState(null);
+  // Initialised synchronously from the URL (not in an effect): on a public page the first render must already
+  // return the public form, otherwise the authenticated Header would render with user === null and crash.
+  const [publicCheckinCode, setPublicCheckinCode] = useState(() => getPublicCodes().checkin);
+  const [publicSurveyCode, setPublicSurveyCode] = useState(() => getPublicCodes().survey);
 
   useEffect(() => {
-    // Check URL search parameters
-    const params = new URLSearchParams(window.location.search);
-    const checkin = params.get('checkin');
-    const survey = params.get('survey');
-
-    if (checkin) setPublicCheckinCode(checkin);
-    if (survey) setPublicSurveyCode(survey);
-
     // Fetch directorates list once on mount
     fetchWithRetry('/api/directorates')
       .then(res => res.json())
@@ -336,7 +330,6 @@ function AppContent() {
               setPreSelectedSurveyMetricId(metricId);
               setIsSurveyImportOpen(true);
             }}
-            onOpenAdminSettings={() => setIsAdminParametersOpen(true)}
           />
         )}
 
@@ -451,7 +444,7 @@ function AppContent() {
         <UserManagementModal
           isOpen={isUserManagementOpen}
           onClose={() => setIsUserManagementOpen(false)}
-          currentUserId={user.user_id}
+          currentUserId={user?.user_id}
         />
       )}
 

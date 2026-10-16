@@ -2,7 +2,7 @@
 // AI Summary of an uploaded Signature Program event VIDEO, made from its transcript by the local Gemma model
 // (Ollama). Product rule: this is the ONLY thing the model is used for, and it runs only
 //   - right after the transcript of a NEWLY uploaded video is DONE (transcribeService), and
-//   - when an event manager presses "Buat ulang ringkasan" (POST /api/media/:id/summarize).
+//   - when an event manager presses "Regenerate summary" (POST /api/media/:id/summarize).
 // It never runs on a page load, when an event is opened, at boot for old videos, for photos, PPT or a timer.
 //
 // A 4B model likes to invent details, so nothing it writes is trusted blindly:
@@ -10,17 +10,20 @@
 //   * numbers, capitalised names and (id/en) content words in the answer must be traceable to the transcript;
 //   * a rejected answer is retried ONCE with the offending words named; if that fails too, a deterministic
 //     extractive summary (sentences taken from the transcript, nothing invented) is stored instead and
-//     labelled summary_source = 'RULE' ('Otomatis (aturan)') versus 'AI';
+//     labelled summary_source = 'RULE' ('Automatic (rule-based)') versus 'AI';
 //   * a transcript that is empty/too short is not sent to the model at all (summary_status = 'INSUFFICIENT');
 //   * a long transcript is summarised part by part, then combined.
 // Jobs run one at a time on the shared AI queue; Ollama being off never blocks the upload or the transcript.
 const storage = require('../db/storage');
 const aiQueue = require('./aiQueue');
-const { queryLocalOllama, DEFAULT_LLM_MODEL } = require('./localAiService');
+const { queryLocalOllama, DEFAULT_LLM_MODEL, OLLAMA_TIMEOUT_MS, DEFAULT_AI_TIMEOUT_MS } = require('./localAiService');
 
 const MIN_WORDS = 20;            // fewer words than this: "transcript not sufficient", the model is not called
 const CHUNK_CHARS = 5000;        // safe for a 4096-token context together with the instructions
 const MAX_CHUNKS = 12;           // longer than this (about 60,000 characters): rule-based summary instead
+// Total time limit of ONE summary job (all parts + the retry together): 120 minutes (override: SUMMARY_JOB_TIMEOUT_MS).
+// Each Ollama call is limited by OLLAMA_TIMEOUT_MS and by what is left of this budget.
+const SUMMARY_JOB_TIMEOUT_MS = parseInt(process.env.SUMMARY_JOB_TIMEOUT_MS || String(DEFAULT_AI_TIMEOUT_MS), 10);
 const MAX_POINTS = 5;
 const MIN_POINTS = 2;
 
@@ -308,36 +311,40 @@ function ruleBasedSummary(transcript) {
 // ------------------------------------------------------------------ the model run
 function friendlyError(err) {
   const msg = String((err && err.message) || err || '');
-  if (/not found/i.test(msg) && /model/i.test(msg)) return `Model ${DEFAULT_LLM_MODEL} belum terpasang di Ollama (jalankan: ollama pull ${DEFAULT_LLM_MODEL}).`;
+  if (/not found/i.test(msg) && /model/i.test(msg)) return `Model ${DEFAULT_LLM_MODEL} is not installed in Ollama (run: ollama pull ${DEFAULT_LLM_MODEL}).`;
   return msg.slice(0, 480);
 }
 
-async function askModel(prompt, attempt, media) {
-  return queryLocalOllama(prompt, { scope: 'EVENT_VIDEO_SUMMARY', subject: media, temperature: attempt === 1 ? 0.1 : 0.2, seed: 40 + attempt });
+async function askModel(prompt, attempt, media, deadline) {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new Error(`The AI summary exceeded the ${Math.round(SUMMARY_JOB_TIMEOUT_MS / 60000)} minutes limit`);
+  return queryLocalOllama(prompt, { scope: 'EVENT_VIDEO_SUMMARY', subject: media, temperature: attempt === 1 ? 0.1 : 0.2, seed: 40 + attempt, timeoutMs: Math.min(OLLAMA_TIMEOUT_MS, remaining) });
 }
 
 // Model answer that passed the validator, or throws (Ollama problems or a twice-rejected answer).
 async function summarizeWithAi(media, lang) {
   const transcript = media.transcript;
+  const deadline = Date.now() + SUMMARY_JOB_TIMEOUT_MS;
   const parts = splitTranscript(transcript);
-  if (parts.length > MAX_CHUNKS) throw new Error('Transkrip terlalu panjang untuk diringkas AI; ditampilkan ringkasan otomatis (aturan).');
+  if (parts.length > MAX_CHUNKS) throw new Error('The transcript is too long for the AI summary; the automatic (rule-based) summary is shown.');
   let partSummaries = null;
   if (parts.length > 1) {
     partSummaries = [];
     for (let i = 0; i < parts.length; i++) {
-      partSummaries.push(cleanLine(await askModel(buildPartPrompt(parts[i], lang, i + 1, parts.length), 1, media)));
+      partSummaries.push(cleanLine(await askModel(buildPartPrompt(parts[i], lang, i + 1, parts.length), 1, media, deadline)));
     }
   }
   let feedback = '';
   let reason = 'jawaban tidak sesuai format';
   for (let attempt = 1; attempt <= 2; attempt++) {
     const prompt = partSummaries ? buildCombinePrompt(partSummaries, lang, feedback) : buildPrompt(transcript, lang, feedback);
-    const answer = parseModelAnswer(await askModel(prompt, attempt, media));
+    const answer = parseModelAnswer(await askModel(prompt, attempt, media, deadline));
     reason = answer ? validateAnswer(answer, transcript, lang) : 'jawaban tidak sesuai format RINGKASAN/POIN';
     if (!reason) return answer;
     feedback = reason;
   }
-  throw new Error(`Ringkasan AI ditolak validator (${reason}); ditampilkan ringkasan otomatis (aturan).`);
+  console.warn(`AI summary for ${media.media_id} rejected by the validator: ${reason}`);
+  throw new Error('The AI summary was rejected by the validator; the automatic (rule-based) summary is shown.');
 }
 
 async function runSummaryJob(media_id) {
@@ -381,7 +388,7 @@ async function queueMediaSummary(media_id) {
     await storage.updateMedia(media_id, {
       summary: null, summary_points: [], summary_status: 'INSUFFICIENT', summary_source: null, summary_model: null,
       summary_language: summaryLanguageFor(media.transcript_language), summary_generated_at: new Date().toISOString(),
-      summary_error: `Transkrip belum cukup untuk diringkas (kurang dari ${MIN_WORDS} kata).`
+      summary_error: `The transcript is not long enough to summarize (fewer than ${MIN_WORDS} words).`
     });
     return 'insufficient';
   }
@@ -401,7 +408,7 @@ async function queueMediaSummary(media_id) {
     await storage.updateMedia(media_id, {
       summary: result.summary, summary_points: result.points, summary_status: 'DONE', summary_source: 'RULE', summary_model: null,
       summary_language: summaryLanguageFor(media.transcript_language), summary_generated_at: new Date().toISOString(),
-      summary_error: 'Antrian AI sedang penuh; tekan "Buat ulang ringkasan" nanti.'
+      summary_error: 'The AI queue is full; press "Regenerate summary" later.'
     });
   }
   return 'queued';
@@ -417,6 +424,7 @@ async function resumeInterruptedSummaries() {
 
 module.exports = {
   MIN_WORDS,
+  SUMMARY_JOB_TIMEOUT_MS,
   queueMediaSummary,
   resumeInterruptedSummaries,
   isSummaryInFlight,

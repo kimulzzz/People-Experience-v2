@@ -1337,32 +1337,32 @@ const initialAppSettings = {
   // values drive calculation logic (normalisation, reminders, who is an "employee" metric...).
   metric_types: {
     value: [
-      { value: 'SURVEY', label: 'SURVEY (Koresponden Respon)' },
+      { value: 'SURVEY', label: 'SURVEY (Respondent Responses)' },
       { value: 'OUTCOME', label: 'OUTCOME (Operational HR Data)' }
     ],
     description: 'Pilihan Tipe Metrik di Parameter Admin'
   },
   scale_types: {
     value: [
-      { value: 'RATING_5', label: 'Rating Skala 1.0 - 5.0' },
-      { value: 'PERCENTAGE', label: 'Persentase (0 - 100%)' },
-      { value: 'QUOTA_COUNT', label: 'Quota Count / Numerik' }
+      { value: 'RATING_5', label: 'Rating Scale 1.0 - 5.0' },
+      { value: 'PERCENTAGE', label: 'Percentage (0 - 100%)' },
+      { value: 'QUOTA_COUNT', label: 'Quota Count / Numeric' }
     ],
     description: 'Pilihan Skala Penilaian di Parameter Admin'
   },
   target_audiences: {
     value: [
-      { value: 'EMPLOYEE', label: 'Karyawan Internal CIMB Niaga' },
-      { value: 'CAMPUS_STUDENTS', label: 'Mahasiswa Kampus (CIMB Goes to Campus)' },
-      { value: 'JOB_APPLICANTS', label: 'Kandidat Pelamar Kerja (Candidate Exp)' },
-      { value: 'EXTERNAL_MARKET', label: 'Eksternal Market / Public' }
+      { value: 'EMPLOYEE', label: 'Internal CIMB Niaga Employees' },
+      { value: 'CAMPUS_STUDENTS', label: 'Campus Students (CIMB Goes to Campus)' },
+      { value: 'JOB_APPLICANTS', label: 'Job Applicant Candidates (Candidate Exp)' },
+      { value: 'EXTERNAL_MARKET', label: 'External Market / Public' }
     ],
     description: 'Pilihan Target Responden di Parameter Admin'
   },
   update_frequencies: {
     value: [
-      { value: 'MONTHLY', label: 'Bulanan (Update Berkala Tiap Bulan)' },
-      { value: 'ONE_TIME_ANNUAL', label: 'Tahunan (Sekali Upload untuk Full Year)' }
+      { value: 'MONTHLY', label: 'Monthly (Periodic Update Every Month)' },
+      { value: 'ONE_TIME_ANNUAL', label: 'Annual (One Upload for the Full Year)' }
     ],
     description: 'Pilihan Frekuensi Update Data di Parameter Admin'
   },
@@ -1407,6 +1407,43 @@ const initialAppSettings = {
   }
 };
 
+// v2.30.0: the option labels above were Indonesian before. A boot top-up (both backends) replaces a label ONLY when it
+// is still exactly the old Indonesian default, so an admin's own edit is never overwritten. Values never change.
+const LEGACY_OPTION_LABELS = {
+  metric_types: { SURVEY: 'SURVEY (Koresponden Respon)' },
+  scale_types: {
+    RATING_5: 'Rating Skala 1.0 - 5.0',
+    PERCENTAGE: 'Persentase (0 - 100%)',
+    QUOTA_COUNT: 'Quota Count / Numerik'
+  },
+  target_audiences: {
+    EMPLOYEE: 'Karyawan Internal CIMB Niaga',
+    CAMPUS_STUDENTS: 'Mahasiswa Kampus (CIMB Goes to Campus)',
+    JOB_APPLICANTS: 'Kandidat Pelamar Kerja (Candidate Exp)',
+    EXTERNAL_MARKET: 'Eksternal Market / Public'
+  },
+  update_frequencies: {
+    MONTHLY: 'Bulanan (Update Berkala Tiap Bulan)',
+    ONE_TIME_ANNUAL: 'Tahunan (Sekali Upload untuk Full Year)'
+  }
+};
+
+// Returns the upgraded option list for `settingKey`, or null when nothing needs to change.
+function upgradeLegacyOptionLabels(settingKey, currentValue) {
+  const legacy = LEGACY_OPTION_LABELS[settingKey];
+  const target = initialAppSettings[settingKey];
+  if (!legacy || !target || !Array.isArray(currentValue)) return null;
+  let changed = false;
+  const next = currentValue.map(opt => {
+    if (!opt || legacy[opt.value] === undefined || opt.label !== legacy[opt.value]) return opt;
+    const fresh = target.value.find(o => o.value === opt.value);
+    if (!fresh) return opt;
+    changed = true;
+    return { ...opt, label: fresh.label };
+  });
+  return changed ? next : null;
+}
+
 // Default sender settings for the reminder e-mails (px_email_settings, single row). No account and
 // no password here — the admin fills those in the "Setting Email" menu.
 const initialEmailSettings = {
@@ -1423,6 +1460,8 @@ const initialEmailSettings = {
 
 module.exports = {
   initialAppSettings,
+  LEGACY_OPTION_LABELS,
+  upgradeLegacyOptionLabels,
   initialEmailSettings,
   initialJourneys,
   initialCheckpoints,

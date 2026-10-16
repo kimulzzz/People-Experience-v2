@@ -26,7 +26,7 @@
 const storage = require('../db/storage');
 const { buildTransport } = require('./emailSettingsService');
 
-const MONTH_NAMES_ID = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const CYCLE_INTERVAL_MS = 30 * 60 * 1000;
 const MAX_FAILED_ATTEMPTS_PER_DAY = 3;
 const DEFAULT_SEND_HOUR = 8;
@@ -60,7 +60,7 @@ function expectedPeriod(metric, today) {
     return {
       deadline: ymd(deadline),
       key: String(year),
-      label: `tahun ${year}`,
+      label: `year ${year}`,
       start: `${year}-01-01`,
       end: `${year + 1}-01-01`
     };
@@ -73,7 +73,7 @@ function expectedPeriod(metric, today) {
   return {
     deadline: ymd(deadline),
     key: `${prevYear}-${pad(prevMonth0 + 1)}`,
-    label: `${MONTH_NAMES_ID[prevMonth0]} ${prevYear}`,
+    label: `${MONTH_NAMES[prevMonth0]} ${prevYear}`,
     start: `${prevYear}-${pad(prevMonth0 + 1)}-01`,
     end: `${year}-${pad(month0 + 1)}-01`
   };
@@ -139,7 +139,7 @@ async function decideSend(reminder, todayStr, repeatDays) {
 function buildEmail(reminder, sentBefore) {
   const deadlineHuman = (() => {
     const [y, m, d] = reminder.deadline.split('-').map(Number);
-    return `${d} ${MONTH_NAMES_ID[m - 1]} ${y}`;
+    return `${d} ${MONTH_NAMES[m - 1]} ${y}`;
   })();
   const statusLine = reminder.status === 'DUE_TODAY'
     ? 'Hari ini adalah batas waktu upload.'

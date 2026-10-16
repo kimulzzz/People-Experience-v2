@@ -338,7 +338,7 @@ export default function SurveyImportModal({
               <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-3">
                 <div className="flex items-center space-x-2 text-emerald-900 font-extrabold text-sm">
                   <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                  <span>{uploadResult.calculation || uploadResult.updated_pe_index !== undefined ? 'Upload Successful & PX Index Recalculated!' : 'Upload berhasil!'}</span>
+                  <span>{uploadResult.calculation || uploadResult.updated_pe_index !== undefined ? 'Upload Successful & PX Index Recalculated!' : 'Upload successful!'}</span>
                 </div>
 
                 <div className="grid grid-cols-3 gap-2 text-xs">

@@ -9,8 +9,9 @@ const https = require('https');
 
 const OLLAMA_HOST = (process.env.OLLAMA_HOST || 'http://localhost:11434').replace(/\/+$/, '');
 const DEFAULT_LLM_MODEL = process.env.OLLAMA_MODEL || 'gemma3:4b';
-// One generation may take a minute or more on this CPU-only server.
-const OLLAMA_TIMEOUT_MS = parseInt(process.env.OLLAMA_TIMEOUT_MS || String(5 * 60 * 1000), 10);
+// One generation may take a long time on this CPU-only server: limit 120 minutes (override: OLLAMA_TIMEOUT_MS).
+const DEFAULT_AI_TIMEOUT_MS = 120 * 60 * 1000;
+const OLLAMA_TIMEOUT_MS = parseInt(process.env.OLLAMA_TIMEOUT_MS || String(DEFAULT_AI_TIMEOUT_MS), 10);
 
 /**
  * Checks if local Ollama server is active (lists the installed models only - it runs no model).
@@ -50,9 +51,9 @@ function postJson(urlString, body, timeoutMs) {
         reject(new Error(`Ollama: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`));
       });
     });
-    req.setTimeout(timeoutMs, () => req.destroy(new Error(`Ollama melebihi batas waktu ${Math.round(timeoutMs / 1000)} detik`)));
+    req.setTimeout(timeoutMs, () => req.destroy(new Error(`Ollama did not answer within the ${Math.round(timeoutMs / 60000)} minutes limit`)));
     req.on('error', (err) => {
-      if (err.code === 'ECONNREFUSED') return reject(new Error(`Ollama tidak aktif di ${OLLAMA_HOST}`));
+      if (err.code === 'ECONNREFUSED') return reject(new Error(`Ollama is not running at ${OLLAMA_HOST}`));
       reject(err);
     });
     req.write(payload);
@@ -62,14 +63,14 @@ function postJson(urlString, body, timeoutMs) {
 
 // PRODUCT RULE (fixed by the owner): the local model (Gemma) may run for exactly one thing for now -
 //  EVENT_VIDEO_SUMMARY: the summary of a NEWLY uploaded Signature Program event VIDEO once its transcript is DONE
-//  (plus the explicit "Buat ulang ringkasan" button of an event manager).
+//  (plus the explicit "Regenerate summary" button of an event manager).
 // Page loads, opening an event, boot back-fill, photos, PPT, dashboard, alerts and timers never call it.
 // This is the single guard: queryLocalOllama refuses any call that does not name an allowed scope with a
 // matching subject (a VIDEO that has a transcript), so no other code path can reach the model.
 const AI_SCOPES = ['EVENT_VIDEO_SUMMARY'];
 function assertAiAllowed(scope, subject) {
-  if (!AI_SCOPES.includes(scope)) throw new Error(`Pemanggilan AI lokal ditolak: scope "${scope}" tidak diizinkan (hanya ${AI_SCOPES.join(' / ')}).`);
-  if (!(subject && subject.file_type === 'VIDEO' && subject.transcript)) throw new Error('Pemanggilan AI lokal ditolak: ringkasan AI hanya untuk video event yang sudah punya transkrip, bukan foto atau data lain.');
+  if (!AI_SCOPES.includes(scope)) throw new Error(`Local AI call refused: scope "${scope}" is not allowed (only ${AI_SCOPES.join(' / ')}).`);
+  if (!(subject && subject.file_type === 'VIDEO' && subject.transcript)) throw new Error('Local AI call refused: the AI summary is only for event videos that already have a transcript, not photos or other data.');
 }
 
 /**
@@ -82,7 +83,7 @@ async function queryLocalOllama(prompt, { model = DEFAULT_LLM_MODEL, timeoutMs =
   if (seed !== undefined) body.options.seed = seed; // fixed seed: the same transcript gives the same wording
   const data = await postJson(`${OLLAMA_HOST}/api/generate`, body, timeoutMs);
   const text = typeof data.response === 'string' ? data.response.trim() : '';
-  if (!text) throw new Error('Ollama mengembalikan jawaban kosong');
+  if (!text) throw new Error('Ollama returned an empty answer');
   return text;
 }
 
@@ -110,23 +111,23 @@ async function generateEventSummary(event, attendances, feedbacks, mediaList) {
   const hasRatings = ratingCount > 0;
   const avgRating = hasRatings ? (totalRating / ratingCount).toFixed(2) : null;
   const scorePercent = hasRatings ? ((parseFloat(avgRating) / 5.0) * 100).toFixed(1) : null;
-  const satisfactionSummary = hasRatings ? `${avgRating}/5.00 (${scorePercent}%)` : 'Belum ada data evaluasi';
+  const satisfactionSummary = hasRatings ? `${avgRating}/5.00 (${scorePercent}%)` : 'No evaluation data yet';
 
   const verbatims = feedbacks.map(f => f.verbatim).filter(Boolean);
 
   // The local model is not used here (see the product rule above): the rule engine is the answer.
   // Fallback High-Quality On-Premise Rule Engine (Always Works Offline)
   return `### Executive Summary
-Program **${event.event_name}** (${event.program_category}) telah sukses diselenggarakan dengan format **${event.event_type}** pada ${new Date(event.event_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}. Kegiatan ini mencatatkan partisipasi sebanyak **${totalPax} karyawan** (${paxPercent}% dari target ${targetPax} pax)${hasRatings ? ` dengan indeks kepuasan acara mencapai **${scorePercent}%** (rata-rata rating **${avgRating} / 5.00**).` : ', namun belum ada data evaluasi kepuasan yang masuk hingga laporan ini dibuat.'}
+The program **${event.event_name}** (${event.program_category}) was held successfully in **${event.event_type}** format on ${new Date(event.event_date).toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' })}. The event recorded **${totalPax} employees** attending (${paxPercent}% of the ${targetPax} pax target)${hasRatings ? ` with an event satisfaction index of **${scorePercent}%** (average rating **${avgRating} / 5.00**).` : ', but no satisfaction evaluation data had come in by the time this report was created.'}
 
 ### Key Highlights
-1. **Engagement & Antusiasme Tinggi:** Tingkat kehadiran memenuhi target keikutsertaan lintas direktorat, mencerminkan tingginya minat karyawan terhadap pengembangan karir dan kultur inklusif di CIMB Niaga.
-2. **Kualitas Konten & Narasumber:** Peserta memberikan sentimen positif terhadap relevansi topik, kejelasan materi, serta sesi dialog interaktif.
-3. **Penyelenggaraan Hybrid yang Efektif:** Kombinasi kehadiran onsite di venue dan partisipasi interaktif streaming online berjalan lancar dan terstruktur.
+1. **High Engagement & Enthusiasm:** Attendance met the cross-directorate participation target, reflecting strong employee interest in career development and an inclusive culture at CIMB Niaga.
+2. **Content & Speaker Quality:** Participants gave positive sentiment on topic relevance, clarity of the material, and the interactive dialogue sessions.
+3. **Effective Hybrid Delivery:** The combination of onsite attendance at the venue and interactive online streaming participation ran smoothly and in an orderly way.
 
 ### Strategic Recommendations
-- Alokasikan ruang tanya jawab (Q&A) yang lebih panjang pada sesi breakout untuk mengakomodasi antusiasme peserta.
-- Lakukan follow-up materi pembelajaran dan toolkit implementasi melalui portal LoG+ & Arjuna pasca-event.`;
+- Allocate a longer Q&A slot in breakout sessions to accommodate participant enthusiasm.
+- Follow up with learning materials and an implementation toolkit through the LoG+ & Arjuna portals after the event.`;
 }
 
 /**
@@ -136,7 +137,7 @@ Program **${event.event_name}** (${event.program_category}) telah sukses diselen
  */
 async function generateAlertNarrative(metric, journey, actionText) {
   // Fallback rule-based narrative (always works offline)
-  return `Metrik "${metric.metric_name}" pada Journey ${journey ? journey.journey_name : ''} berada pada skor ${metric.normalized_score}% (Target: ${metric.target_display}, Ambang Minimum: ${metric.min_threshold}%). Gap defisit sebesar ${metric.gap}%. Diperlukan intervensi segera oleh ${metric.experience_owner}.`;
+  return `Metric "${metric.metric_name}" in the ${journey ? journey.journey_name : ''} Journey is at a score of ${metric.normalized_score}% (Target: ${metric.target_display}, Minimum Threshold: ${metric.min_threshold}%). The deficit gap is ${metric.gap}%. Immediate intervention by ${metric.experience_owner} is required.`;
 }
 
 /**
@@ -150,9 +151,9 @@ async function generateMediaNarratives(mediaItems, eventName) {
 
     // Contextual local rule generation
     const fallbacks = [
-      `Momen pembukaan dan pemaparan inspiratif oleh Senior Leaders dalam ${eventName}, menekankan pentingnya continuous learning dan kolaborasi.`,
-      `Sesi diskusi interaktif dan tanya jawab, memperlihatkan sinergi aktif antara peserta hybrid dengan panelis.`,
-      `Antusiasme peserta dalam sesi workshop interaktif dan komitmen bersama dalam mendorong People Experience yang positif di CIMB Niaga.`
+      `Opening moment and inspiring talk by Senior Leaders at ${eventName}, stressing the importance of continuous learning and collaboration.`,
+      `Interactive discussion and Q&A session, showing active synergy between the hybrid participants and the panelists.`,
+      `Participant enthusiasm in the interactive workshop session and a shared commitment to driving a positive People Experience at CIMB Niaga.`
     ];
 
     return {
@@ -165,6 +166,7 @@ async function generateMediaNarratives(mediaItems, eventName) {
 module.exports = {
   OLLAMA_HOST,
   DEFAULT_LLM_MODEL,
+  DEFAULT_AI_TIMEOUT_MS,
   OLLAMA_TIMEOUT_MS,
   AI_SCOPES,
   assertAiAllowed,

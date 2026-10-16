@@ -21,8 +21,8 @@ function defaultUnitForScale(scaleType) {
 // tanpa satuan, angka mentah tampil "telanjang" dan ambigu.
 function parseUnit(value) {
   const text = String(value === undefined || value === null ? '' : value).trim();
-  if (!text) throw new Error('Satuan nilai tidak boleh kosong.');
-  if (text.length > MAX_UNIT_LENGTH) throw new Error(`Satuan nilai maksimal ${MAX_UNIT_LENGTH} karakter.`);
+  if (!text) throw new Error('The unit must not be empty.');
+  if (text.length > MAX_UNIT_LENGTH) throw new Error(`The unit must be at most ${MAX_UNIT_LENGTH} characters.`);
   return text;
 }
 

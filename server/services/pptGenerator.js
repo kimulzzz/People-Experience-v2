@@ -130,7 +130,7 @@ async function generateEventPPT(event_id, options = {}) {
     fontFace: 'Arial'
   });
 
-  slide1.addText(`Program Category: ${event.program_category}  |  Format: ${event.event_type}  |  Date: ${new Date(event.event_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`, {
+  slide1.addText(`Program Category: ${event.program_category}  |  Format: ${event.event_type}  |  Date: ${new Date(event.event_date).toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' })}`, {
     x: 1.0,
     y: 5.3,
     w: 11.0,
@@ -186,7 +186,7 @@ async function generateEventPPT(event_id, options = {}) {
     color: CIMB_COLORS.primaryRed,
     fontFace: 'Arial'
   });
-  slide2.addText(`Program: ${event.event_name}\nTarget Peserta: ${event.target_participants} pax\nTotal Hadir: ${attendances.length} pax (${((attendances.length / (event.target_participants || 500)) * 100).toFixed(0)}%)\nEvaluasi Masuk: ${feedbacks.length} responden\n\nSignature Program ini berkontribusi langsung pada Check Point "Culture & Engagement" (Journey Belong) untuk memperkuat rasa kebersamaan, keterbukaan, dan psychological safety karyawan CIMB Niaga.`, {
+  slide2.addText(`Program: ${event.event_name}\nTarget Participants: ${event.target_participants} pax\nTotal Attended: ${attendances.length} pax (${((attendances.length / (event.target_participants || 500)) * 100).toFixed(0)}%)\nEvaluations Received: ${feedbacks.length} respondents\n\nThis Signature Program contributes directly to the "Culture & Engagement" Check Point (Belong Journey) to strengthen a sense of togetherness, openness, and psychological safety among CIMB Niaga employees.`, {
     x: 1.1,
     y: 2.3,
     w: 5.0,
@@ -218,7 +218,7 @@ async function generateEventPPT(event_id, options = {}) {
   });
 
   const sampleQuotes = feedbacks.map(f => `• "${f.verbatim}"`).slice(0, 3).join('\n\n');
-  slide2.addText(sampleQuotes || '• Tingkat partisipasi hybrid aktif dari berbagai divisi.\n\n• Materi sangat relevan dengan kebutuhan akselerasi karir.\n\n• Sesi interaktif Q&A mendapat apresiasi positif dari karyawan.', {
+  slide2.addText(sampleQuotes || '• Active hybrid participation from various divisions.\n\n• The material is highly relevant to career acceleration needs.\n\n• The interactive Q&A session received positive appreciation from employees.', {
     x: 7.1,
     y: 2.3,
     w: 5.1,
@@ -250,9 +250,9 @@ async function generateEventPPT(event_id, options = {}) {
   // 3 Metric Stat Boxes
   const statBoxWidth = 3.6;
   const stats = [
-    { label: 'Total Kehadiran', val: `${attendances.length} Pax`, sub: `Target: ${event.target_participants} pax`, color: CIMB_COLORS.primaryRed },
-    { label: 'Pencapaian Kuota', val: `${((attendances.length / (event.target_participants || 500)) * 100).toFixed(0)}%`, sub: metric11 ? `Metric ${metric11.metric_id} (${metric11Journey?.journey_name || ''})` : 'Kuota Partisipasi', color: CIMB_COLORS.tealAccent },
-    { label: 'Feedback Response Rate', val: `${attendances.length > 0 ? ((feedbacks.length / attendances.length) * 100).toFixed(0) : 0}%`, sub: `${feedbacks.length} Responden`, color: CIMB_COLORS.darkCharcoal }
+    { label: 'Total Attendance', val: `${attendances.length} Pax`, sub: `Target: ${event.target_participants} pax`, color: CIMB_COLORS.primaryRed },
+    { label: 'Quota Achievement', val: `${((attendances.length / (event.target_participants || 500)) * 100).toFixed(0)}%`, sub: metric11 ? `Metric ${metric11.metric_id} (${metric11Journey?.journey_name || ''})` : 'Participation Quota', color: CIMB_COLORS.tealAccent },
+    { label: 'Feedback Response Rate', val: `${attendances.length > 0 ? ((feedbacks.length / attendances.length) * 100).toFixed(0) : 0}%`, sub: `${feedbacks.length} Respondents`, color: CIMB_COLORS.darkCharcoal }
   ];
 
   stats.forEach((st, idx) => {
@@ -279,7 +279,7 @@ async function generateEventPPT(event_id, options = {}) {
     fill: { color: CIMB_COLORS.lightGrey },
     line: { color: 'E2E8F0', width: 1 }
   });
-  slide3.addText('Distribusi Partisipan Berdasarkan Direktorat / Unit Kerja', {
+  slide3.addText('Participant Distribution by Directorate / Work Unit', {
     x: 1.1,
     y: 3.8,
     w: 10.0,
@@ -298,15 +298,15 @@ async function generateEventPPT(event_id, options = {}) {
 
   const divRows = Object.entries(divisionCounts).map(([div, cnt]) => [
     { text: div, options: { bold: false, color: CIMB_COLORS.darkCharcoal } },
-    { text: `${cnt} Peserta`, options: { bold: true, color: CIMB_COLORS.primaryRed } },
+    { text: `${cnt} Participants`, options: { bold: true, color: CIMB_COLORS.primaryRed } },
     { text: `${((cnt / Math.max(attendances.length, 1)) * 100).toFixed(1)}%`, options: { color: CIMB_COLORS.slateGrey } }
   ]);
 
   slide3.addTable([
     [
-      { text: 'Direktorat / Divisi', options: { bold: true, fill: { color: 'E5E7EB' }, color: CIMB_COLORS.darkCharcoal } },
-      { text: 'Jumlah Partisipan', options: { bold: true, fill: { color: 'E5E7EB' }, color: CIMB_COLORS.darkCharcoal } },
-      { text: 'Persentase (%)', options: { bold: true, fill: { color: 'E5E7EB' }, color: CIMB_COLORS.darkCharcoal } }
+      { text: 'Directorate / Division', options: { bold: true, fill: { color: 'E5E7EB' }, color: CIMB_COLORS.darkCharcoal } },
+      { text: 'Participant Count', options: { bold: true, fill: { color: 'E5E7EB' }, color: CIMB_COLORS.darkCharcoal } },
+      { text: 'Percentage (%)', options: { bold: true, fill: { color: 'E5E7EB' }, color: CIMB_COLORS.darkCharcoal } }
     ],
     ...divRows.slice(0, 4)
   ], {
@@ -358,14 +358,14 @@ async function generateEventPPT(event_id, options = {}) {
   const metric12TargetDisplay = metric12Target.target_display || metric12?.target_display || `> ${metric12TargetValue.toFixed(2)} / 5`;
   const metric12MinThreshold = metric12Target.min_threshold !== undefined ? metric12Target.min_threshold : metric12?.min_threshold;
   const metric12NormalizedTarget = (metric12TargetValue / 5.0) * 100;
-  let satisfactionStatus = 'Belum Ada Data';
+  let satisfactionStatus = 'No Data Yet';
   if (normalizedScore !== null) {
     if (metric12MinThreshold !== undefined && normalizedScore < metric12MinThreshold) {
-      satisfactionStatus = 'Di Bawah Target (Critical)';
+      satisfactionStatus = 'Below Target (Critical)';
     } else if (normalizedScore < metric12NormalizedTarget) {
-      satisfactionStatus = 'Mendekati Target (Warning)';
+      satisfactionStatus = 'Approaching Target (Warning)';
     } else {
-      satisfactionStatus = 'Memenuhi Target (Healthy)';
+      satisfactionStatus = 'Meeting Target (Healthy)';
     }
   }
   const metric12JourneyLabel = metric12Journey ? `Journey ${metric12Journey.journey_id} (${metric12Journey.journey_name})` : 'Journey';
@@ -380,9 +380,9 @@ async function generateEventPPT(event_id, options = {}) {
     fill: { color: CIMB_COLORS.darkCharcoal }
   });
   slide4.addText('Signature Program Satisfaction', { x: 1.1, y: 1.8, w: 4.0, h: 0.3, fontSize: 13, color: 'D1D5DB', fontFace: 'Arial' });
-  slide4.addText(hasFeedbackScores ? `${avgRating} / 5.00` : 'Belum ada data', { x: 1.1, y: 2.2, w: 4.0, h: 0.8, fontSize: 36, bold: true, color: CIMB_COLORS.pureWhite, fontFace: 'Arial' });
-  slide4.addText(hasFeedbackScores ? `Indeks Kepuasan: ${satisfactionIndex}%` : 'Indeks Kepuasan: -', { x: 1.1, y: 3.1, w: 4.0, h: 0.4, fontSize: 16, bold: true, color: CIMB_COLORS.primaryRed, fontFace: 'Arial' });
-  slide4.addText(`Target Parameter: ${metric12TargetDisplay} (> ${metric12NormalizedTarget.toFixed(0)}%)\nStatus: ${satisfactionStatus}\n\nKontribusi ke PE Index:\n${metric12JourneyLabel} -> ${metric12CheckpointLabel}`, {
+  slide4.addText(hasFeedbackScores ? `${avgRating} / 5.00` : 'No data yet', { x: 1.1, y: 2.2, w: 4.0, h: 0.8, fontSize: 36, bold: true, color: CIMB_COLORS.pureWhite, fontFace: 'Arial' });
+  slide4.addText(hasFeedbackScores ? `Satisfaction Index: ${satisfactionIndex}%` : 'Satisfaction Index: -', { x: 1.1, y: 3.1, w: 4.0, h: 0.4, fontSize: 16, bold: true, color: CIMB_COLORS.primaryRed, fontFace: 'Arial' });
+  slide4.addText(`Target Parameter: ${metric12TargetDisplay} (> ${metric12NormalizedTarget.toFixed(0)}%)\nStatus: ${satisfactionStatus}\n\nContribution to the PE Index:\n${metric12JourneyLabel} -> ${metric12CheckpointLabel}`, {
     x: 1.1,
     y: 3.7,
     w: 3.9,
@@ -402,7 +402,7 @@ async function generateEventPPT(event_id, options = {}) {
     fill: { color: CIMB_COLORS.lightGrey },
     line: { color: 'E2E8F0', width: 1 }
   });
-  slide4.addText('Rincian Skor Evaluasi per Aspek', { x: 5.9, y: 1.8, w: 6.0, h: 0.3, fontSize: 14, bold: true, color: CIMB_COLORS.darkCharcoal, fontFace: 'Arial' });
+  slide4.addText('Evaluation Score Breakdown by Aspect', { x: 5.9, y: 1.8, w: 6.0, h: 0.3, fontSize: 14, bold: true, color: CIMB_COLORS.darkCharcoal, fontFace: 'Arial' });
 
   const aspects = metric12Questions.map(q => {
     let sum = 0;
@@ -421,7 +421,7 @@ async function generateEventPPT(event_id, options = {}) {
     const pct = aspectHasData ? (avg / 5.0) * 100 : 0;
     return {
       name: q.label || q.text,
-      score: aspectHasData ? `${avg.toFixed(2)} / 5.00` : 'Belum ada data',
+      score: aspectHasData ? `${avg.toFixed(2)} / 5.00` : 'No data yet',
       pct: aspectHasData ? `${pct.toFixed(1)}%` : '-',
       ratio: aspectHasData ? Math.min(pct / 100, 1) : 0
     };
@@ -485,7 +485,7 @@ async function generateEventPPT(event_id, options = {}) {
       h: 2.2,
       fill: { color: 'CBD5E1' }
     });
-    slide5.addText(`[ Dokumentasi #${idx + 1} ]\n${item.file_name}`, {
+    slide5.addText(`[ Documentation #${idx + 1} ]\n${item.file_name}`, {
       x: xP + 0.2,
       y: 2.3,
       w: cardW - 0.4,
@@ -497,7 +497,9 @@ async function generateEventPPT(event_id, options = {}) {
     });
 
     // Caption & AI narrative
-    slide5.addText(item.caption || `Dokumentasi Sesi #${idx + 1}`, {
+    // Older media were saved with a "Documentation "/"Dokumentasi " prefix; the UI hides it (captionText), so does the slide.
+    const slideCaption = String(item.caption || '').replace(/^(Documentation|Dokumentasi)\s+/i, '');
+    slide5.addText(slideCaption || `Session Documentation #${idx + 1}`, {
       x: xP + 0.2,
       y: 4.0,
       w: cardW - 0.4,
@@ -510,9 +512,9 @@ async function generateEventPPT(event_id, options = {}) {
 
     // A video with an AI Summary of its transcript shows that (read from the database, never generated here).
     const videoSummary = item.file_type === 'VIDEO' && item.summary_status === 'DONE' && item.summary
-      ? `Ringkasan${item.summary_source === 'AI' ? ' AI' : ' otomatis'}: ${clipAtWord(item.summary, 300)}`
+      ? `${item.summary_source === 'AI' ? 'AI summary' : 'Automatic summary'}: ${clipAtWord(item.summary, 300)}`
       : null;
-    slide5.addText(videoSummary || item.ai_generated_description || 'Momen kebersamaan peserta dalam sesi program.', {
+    slide5.addText(videoSummary || item.ai_generated_description || 'A moment of togetherness among participants during the program session.', {
       x: xP + 0.2,
       y: 4.8,
       w: cardW - 0.4,
@@ -544,20 +546,20 @@ async function generateEventPPT(event_id, options = {}) {
 
   const actions = [
     {
-      title: '1. Perluasan Durasi Q&A & Interaktivitas Live',
-      desc: 'Berdasarkan masukan responden, tambahkan alokasi waktu tanya jawab langsung minimal 25 menit serta sediakan live voting di aplikasi internal.',
+      title: '1. Extended Q&A Duration & Live Interactivity',
+      desc: 'Based on respondent feedback, allocate at least 25 minutes for live Q&A and provide live voting in the internal application.',
       pic: 'PXCWB & Event Committee',
       priority: 'HIGH PRIORITY'
     },
     {
-      title: '2. Distribusi Summary & Rekaman di Portal LoG+',
-      desc: 'Unggah rekaman sesi dan modul ringkas ke platform LoG+ dalam waktu H+2 pasca-event agar dapat diakses karyawan yang berhalangan hadir.',
+      title: '2. Summary & Recording Distribution on the LoG+ Portal',
+      desc: 'Upload the session recording and a short module to the LoG+ platform within 2 days after the event so employees who could not attend can access them.',
       pic: 'Learning & Development',
       priority: 'MEDIUM'
     },
     {
-      title: '3. Follow-up Community of Practice per Direktorat',
-      desc: 'Bentuk grup diskusi tindak lanjut untuk mengaplikasikan wawasan program ke dalam rutinitas kerja sehari-hari.',
+      title: '3. Community of Practice Follow-up per Directorate',
+      desc: 'Form follow-up discussion groups to apply the program insights to day-to-day work routines.',
       pic: 'HRBP & Culture Champions',
       priority: 'HIGH PRIORITY'
     }

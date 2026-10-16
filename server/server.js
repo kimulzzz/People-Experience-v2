@@ -66,7 +66,7 @@ const mediaUpload = multer({
   limits: { fileSize: MEDIA_MAX_MB * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (/^(image|video)\//.test(file.mimetype)) return cb(null, true);
-    const err = new Error('Format file tidak didukung. Unggah foto (JPG/PNG/GIF/WEBP) atau video (MP4/MOV/WEBM).');
+    const err = new Error('Unsupported file format. Upload a photo (JPG/PNG/GIF/WEBP) or a video (MP4/MOV/WEBM).');
     err.code = 'UNSUPPORTED_MEDIA_TYPE';
     cb(err);
   }
@@ -111,12 +111,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.29.0' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.30.0' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.29.0',
+    version: '2.30.0',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',
@@ -128,12 +128,12 @@ app.get('/api/health', async (req, res) => {
 
 const NUMERIC_SETTINGS = {
   px_index_target: { min: 0, max: 100, integer: false, label: 'Target PX Index' },
-  reminder_send_hour: { min: 0, max: 23, integer: true, label: 'Jam pengiriman reminder' },
-  reminder_repeat_days: { min: 0, max: 31, integer: true, label: 'Interval pengulangan reminder (hari)' },
-  session_hours: { min: 1, max: 72, integer: true, label: 'Masa berlaku sesi login (jam)' },
-  login_max_attempts: { min: 3, max: 20, integer: true, label: 'Batas gagal login' },
-  login_lockout_minutes: { min: 1, max: 1440, integer: true, label: 'Lama penguncian akun (menit)' },
-  login_rate_limit_per_minute: { min: 5, max: 200, integer: true, label: 'Batas percobaan login gagal per IP per menit' }
+  reminder_send_hour: { min: 0, max: 23, integer: true, label: 'Reminder send hour' },
+  reminder_repeat_days: { min: 0, max: 31, integer: true, label: 'Reminder repeat interval (days)' },
+  session_hours: { min: 1, max: 72, integer: true, label: 'Login session lifetime (hours)' },
+  login_max_attempts: { min: 3, max: 20, integer: true, label: 'Failed login limit' },
+  login_lockout_minutes: { min: 1, max: 1440, integer: true, label: 'Account lockout duration (minutes)' },
+  login_rate_limit_per_minute: { min: 5, max: 200, integer: true, label: 'Failed login attempt limit per IP per minute' }
 };
 const LABEL_ONLY_SETTINGS = new Set(['metric_types', 'scale_types', 'target_audiences', 'update_frequencies', 'question_types']);
 
@@ -151,23 +151,23 @@ app.put('/api/admin/settings/:key', async (req, res) => {
     const { key } = req.params;
     const { value } = req.body || {};
     const current = (await storage.getSettings())[key];
-    if (current === undefined) return res.status(404).json({ error: `Setting "${key}" tidak ditemukan.` });
+    if (current === undefined) return res.status(404).json({ error: `Setting "${key}" not found.` });
     if (NUMERIC_SETTINGS[key]) {
       const { min, max, integer, label } = NUMERIC_SETTINGS[key];
       const n = Number(value);
       if (value === '' || value === null || !Number.isFinite(n) || n < min || n > max || (integer && !Number.isInteger(n))) {
-        return res.status(400).json({ error: `${label} harus ${integer ? 'bilangan bulat' : 'angka'} ${min} - ${max}.` });
+        return res.status(400).json({ error: `${label} must be ${integer ? 'a whole number' : 'a number'} between ${min} and ${max}.` });
       }
       return res.json({ key, value: await storage.setSetting(key, n) });
     }
     const validList = Array.isArray(value) && value.length > 0 &&
       value.every(o => o && typeof o.value === 'string' && o.value.trim() && typeof o.label === 'string' && o.label.trim());
-    if (!validList) return res.status(400).json({ error: 'Nilai harus berupa daftar { value, label } yang tidak kosong.' });
+    if (!validList) return res.status(400).json({ error: 'The value must be a non-empty list of { value, label }.' });
     // Option catalogs whose values drive calculation logic: only the labels may be edited.
     if (LABEL_ONLY_SETTINGS.has(key)) {
       const before = (current || []).map(o => o.value).sort().join('|');
       const after = value.map(o => o.value.trim()).sort().join('|');
-      if (before !== after) return res.status(400).json({ error: `Nilai (value) pada "${key}" tidak boleh ditambah/diubah — hanya label yang dapat diedit.` });
+      if (before !== after) return res.status(400).json({ error: `The values of "${key}" cannot be added or changed — only the labels can be edited.` });
     }
     res.json({ key, value: await storage.setSetting(key, value.map(o => ({ value: o.value.trim(), label: o.label.trim(), ...(typeof o.desc === 'string' ? { desc: o.desc } : {}) }))) });
   } catch (err) {
@@ -428,7 +428,7 @@ app.post('/api/admin/parameters/reset', async (req, res) => {
     const calculation = await calculatePEIndex('YTD');
     res.json({
       success: true,
-      message: 'Seluruh parameter Journey, Checkpoint, dan Metric berhasil direset ke konfigurasi default!',
+      message: 'All Journey, Checkpoint and Metric parameters were reset to the default configuration!',
       data: resetData,
       calculation
     });
@@ -508,11 +508,11 @@ app.post('/api/admin/survey-questions/:metric_id', async (req, res) => {
     if (!Array.isArray(questions)) {
       return res.status(400).json({ error: 'questions must be an array' });
     }
-    if (!(await storage.getMetricById(metric_id))) return res.status(404).json({ error: `Metric #${metric_id} tidak ditemukan.` });
+    if (!(await storage.getMetricById(metric_id))) return res.status(404).json({ error: `Metric #${metric_id} not found.` });
     const saved = await storage.saveSurveyQuestions(metric_id, questions);
     res.json({
       success: true,
-      message: `Pertanyaan survei untuk Metric ID ${metric_id} berhasil disimpan`,
+      message: `Survey questions for Metric ID ${metric_id} saved successfully`,
       questions: saved
     });
   } catch (err) {
@@ -523,11 +523,11 @@ app.post('/api/admin/survey-questions/:metric_id', async (req, res) => {
 app.post('/api/admin/survey-questions/:metric_id/reset', async (req, res) => {
   try {
     const metric_id = parseInt(req.params.metric_id);
-    if (!(await storage.getMetricById(metric_id))) return res.status(404).json({ error: `Metric #${metric_id} tidak ditemukan.` });
+    if (!(await storage.getMetricById(metric_id))) return res.status(404).json({ error: `Metric #${metric_id} not found.` });
     const reset = await storage.resetSurveyQuestions(metric_id);
     res.json({
       success: true,
-      message: `Pertanyaan survei untuk Metric ID ${metric_id} berhasil direset ke template default`,
+      message: `Survey questions for Metric ID ${metric_id} reset to the default template`,
       questions: reset
     });
   } catch (err) {
@@ -557,7 +557,7 @@ app.post('/api/admin/upload-reminders/send', async (req, res) => {
     // { automatic: true } runs it exactly like the scheduler would (dedupe + repeat interval) instead of "send now".
     const { reference_date, dry_run, automatic, metric_id } = req.body || {};
     if (reference_date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(String(reference_date))) {
-      return res.status(400).json({ error: 'reference_date harus berformat YYYY-MM-DD.' });
+      return res.status(400).json({ error: 'reference_date must be in YYYY-MM-DD format.' });
     }
     const result = await sendPendingUploadReminders({ referenceDate: reference_date, dryRun: !!dry_run, force: !automatic, metricId: metric_id !== undefined ? parseInt(metric_id, 10) : null });
     res.json({ success: true, ...result });
@@ -637,8 +637,8 @@ app.post('/api/action-library', ADMIN_ONLY, async (req, res) => {
 // Clean 400 / 404 for a malformed or unknown metric id (reached by the Admin; a PIC is refused earlier with 403).
 async function checkMetricRef(res, ref, { allowAll = false } = {}) {
   if (allowAll && ref === 'ALL') return true;
-  if (typeof ref !== 'string' || !/^\d{1,9}$/.test(ref)) { res.status(400).json({ error: 'metric_id tidak valid.' }); return false; }
-  if (!(await storage.getMetrics()).some(m => String(m.metric_id) === String(parseInt(ref, 10)))) { res.status(404).json({ error: `Metrik ${ref} tidak ditemukan.` }); return false; }
+  if (typeof ref !== 'string' || !/^\d{1,9}$/.test(ref)) { res.status(400).json({ error: 'Invalid metric_id.' }); return false; }
+  if (!(await storage.getMetrics()).some(m => String(m.metric_id) === String(parseInt(ref, 10)))) { res.status(404).json({ error: `Metric ${ref} not found.` }); return false; }
   return true;
 }
 
@@ -646,7 +646,7 @@ async function checkMetricRef(res, ref, { allowAll = false } = {}) {
 const PIC_OR_ADMIN = async (req, res, next) => {
   try {
     if (req.user.role === 'ADMIN' || (await auth.picMetrics(req.user)).length) return next();
-    res.status(403).json({ error: 'Hanya Admin atau PIC metrik yang dapat menggunakan fitur ini.' });
+    res.status(403).json({ error: 'Only an Admin or the metric PIC can use this feature.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -687,7 +687,7 @@ app.get('/api/surveys/template', async (req, res) => {
 app.get('/api/surveys/evidence', async (req, res) => {
   try {
     const { metric_id = 'ALL', period = 'YTD' } = req.query;
-    if (!(await auth.canSeeRespondentData(req.user, metric_id))) return res.status(403).json({ error: 'Evidence survei memuat data pribadi responden dan hanya dapat diunduh oleh Admin atau PIC metrik tersebut.' });
+    if (!(await auth.canSeeRespondentData(req.user, metric_id))) return res.status(403).json({ error: 'The survey evidence contains personal respondent data and can only be downloaded by an Admin or the PIC of that metric.' });
     if (!(await checkMetricRef(res, metric_id, { allowAll: true }))) return;
     const picMetric = req.user.role === 'ADMIN' ? null : await auth.getPicMetric(req.user, metric_id);
     const csvContent = await generateSurveyEvidenceCsv(metric_id, period, { scopes: picMetric ? auth.respondentScopeFor(req.user, picMetric) : null });
@@ -705,8 +705,8 @@ app.get('/api/surveys/evidence', async (req, res) => {
 
 const csvUploadSingle = (req, res, next) => upload.single('csvFile')(req, res, err => {
   if (!err) return next();
-  if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'Ukuran file CSV melebihi batas 50 MB.' });
-  return res.status(400).json({ error: 'File upload tidak dapat diproses.' });
+  if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'The CSV file exceeds the 50 MB limit.' });
+  return res.status(400).json({ error: 'The uploaded file could not be processed.' });
 });
 
 app.post('/api/surveys/upload', PIC_OR_ADMIN, csvUploadSingle, async (req, res) => {
@@ -728,7 +728,7 @@ app.post('/api/surveys/upload', PIC_OR_ADMIN, csvUploadSingle, async (req, res) 
       csvText = req.body.csvText;
       fileName = req.body.fileName || 'manual_survey_input.csv';
     } else {
-      return res.status(400).json({ error: 'File CSV atau data teks CSV wajib disertakan.' });
+      return res.status(400).json({ error: 'A CSV file or CSV text data is required.' });
     }
 
     const targetMetricId = gate.metric ? gate.metric.metric_id : (metricField ? parseInt(metricField) : null);
@@ -736,7 +736,7 @@ app.post('/api/surveys/upload', PIC_OR_ADMIN, csvUploadSingle, async (req, res) 
     const result = await processSurveyCsv(csvText, fileName, targetMetricId, { uploadedBy });
 
     // Audit trail: who uploaded into which metric and how many rows - never the respondents' data.
-    if (result.success) await auth.audit(req, 'SURVEY_UPLOAD', { target: `metrik ${targetMetricId === null ? '(dari kolom metric_id)' : targetMetricId}; ${result.valid_rows_count} baris valid, ${result.invalid_rows_count} ditolak; batch ${result.upload_id}` });
+    if (result.success) await auth.audit(req, 'SURVEY_UPLOAD', { target: `metric ${targetMetricId === null ? '(from the metric_id column)' : targetMetricId}; ${result.valid_rows_count} valid rows, ${result.invalid_rows_count} rejected; batch ${result.upload_id}` });
     // The PE Index recalculation below the import is bankwide; a PIC only gets what concerns the upload itself.
     if (req.user.role !== 'ADMIN') {
       delete result.calculation; delete result.updated_pe_index; delete result.updated_survey_index;
@@ -765,7 +765,7 @@ app.get('/api/surveys/history', async (req, res) => {
 
 app.get('/api/surveys/responses/:metric_id', async (req, res) => {
   try {
-    if (!(await auth.canSeeRespondentData(req.user, req.params.metric_id))) return res.status(403).json({ error: 'Data responden hanya dapat dilihat oleh Admin atau PIC metrik tersebut.' });
+    if (!(await auth.canSeeRespondentData(req.user, req.params.metric_id))) return res.status(403).json({ error: 'Respondent data can only be viewed by an Admin or the PIC of that metric.' });
     if (!(await checkMetricRef(res, req.params.metric_id))) return;
     const responses = await storage.getUploadedResponsesByMetric(req.params.metric_id);
     if (req.user.role === 'ADMIN') return res.json(responses);
@@ -916,17 +916,17 @@ app.post('/api/events/:id/attendance', async (req, res) => {
   try {
     const { nip, employee_name, cimb_email, directorate, division } = req.body;
     if (!nip || !employee_name || !cimb_email) {
-      return res.status(400).json({ error: 'NIP, Nama Karyawan, dan Email CIMB wajib diisi.' });
+      return res.status(400).json({ error: 'NIP, Employee Name and CIMB Email are required.' });
     }
 
     // Format validation
     if (!/^[a-zA-Z0-9]{4,15}$/.test(nip.trim())) {
-      return res.status(400).json({ error: 'Format NIP tidak valid. Masukkan 4-15 karakter alfanumerik.' });
+      return res.status(400).json({ error: 'Invalid NIP format. Enter 4-15 alphanumeric characters.' });
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(cimb_email.trim())) {
-      return res.status(400).json({ error: 'Format email tidak valid.' });
+      return res.status(400).json({ error: 'Invalid email format.' });
     }
 
     const record = await storage.addAttendance({
@@ -941,7 +941,7 @@ app.post('/api/events/:id/attendance', async (req, res) => {
     // Auto-recalculate PE Index in real-time
     await calculatePEIndex();
 
-    res.status(201).json({ success: true, message: 'Absensi berhasil tercatat!', attendance: record });
+    res.status(201).json({ success: true, message: 'Attendance recorded successfully!', attendance: record });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -951,7 +951,7 @@ app.post('/api/events/:id/feedback', async (req, res) => {
   try {
     const { nip, ratings, verbatim } = req.body;
     if (!nip) {
-      return res.status(400).json({ error: 'NIP wajib diisi untuk verifikasi partisipasi.' });
+      return res.status(400).json({ error: 'NIP is required to verify participation.' });
     }
 
     const record = await storage.addFeedbackResponse({
@@ -964,7 +964,7 @@ app.post('/api/events/:id/feedback', async (req, res) => {
     // Auto-recalculate PE Index in real-time
     await calculatePEIndex();
 
-    res.status(201).json({ success: true, message: 'Terima kasih, evaluasi kepuasan Anda telah berhasil dikirim!', response: record });
+    res.status(201).json({ success: true, message: 'Thank you, your satisfaction evaluation was submitted successfully!', response: record });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -995,7 +995,7 @@ app.post('/api/events/:id/media', EVENT_MANAGER, (req, res, next) => {
   mediaUpload.single('mediaFile')(req, res, (err) => {
     if (!err) return next();
     if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(413).json({ error: `Ukuran file melebihi batas ${MEDIA_MAX_MB} MB.` });
+      return res.status(413).json({ error: `The file exceeds the ${MEDIA_MAX_MB} MB limit.` });
     }
     if (err.code === 'UNSUPPORTED_MEDIA_TYPE') {
       return res.status(415).json({ error: err.message });
@@ -1020,7 +1020,7 @@ app.post('/api/events/:id/media', EVENT_MANAGER, (req, res, next) => {
       file_name: originalName,
       file_path: mediaPath,
       file_type: detectedType,
-      caption: caption || `Dokumentasi ${event ? event.event_name : 'Event'}`,
+      caption: caption || `Documentation ${event ? event.event_name : 'Event'}`,
       transcript_status: detectedType === 'VIDEO' && file ? 'PROCESSING' : undefined
     });
 
@@ -1041,12 +1041,12 @@ app.post('/api/events/:id/media', EVENT_MANAGER, (req, res, next) => {
 app.post('/api/media/:id/transcribe', EVENT_MANAGER, async (req, res) => {
   try {
     const media = await storage.getMediaById(req.params.id);
-    if (!media) return res.status(404).json({ error: 'Media tidak ditemukan.' });
+    if (!media) return res.status(404).json({ error: 'Media not found.' });
     if (media.file_type !== 'VIDEO') {
-      return res.status(400).json({ error: 'Transkrip AI hanya tersedia untuk file video.' });
+      return res.status(400).json({ error: 'The AI transcript is only available for video files.' });
     }
     if (media.transcript_status === 'PROCESSING') {
-      return res.status(409).json({ error: 'Transkrip sedang diproses.' });
+      return res.status(409).json({ error: 'The transcript is already being processed.' });
     }
     // Tell the user right away (instead of flipping PROCESSING → FAILED in a few milliseconds) when the
     // Video Extractor is not running.
@@ -1065,12 +1065,12 @@ app.post('/api/media/:id/transcribe', EVENT_MANAGER, async (req, res) => {
 app.post('/api/media/:id/summarize', EVENT_MANAGER, async (req, res) => {
   try {
     const media = await storage.getMediaById(req.params.id);
-    if (!media) return res.status(404).json({ error: 'Media tidak ditemukan.' });
-    if (media.file_type !== 'VIDEO') return res.status(400).json({ error: 'Ringkasan AI hanya tersedia untuk file video.' });
+    if (!media) return res.status(404).json({ error: 'Media not found.' });
+    if (media.file_type !== 'VIDEO') return res.status(400).json({ error: 'The AI summary is only available for video files.' });
     if (media.transcript_status !== 'DONE' || !media.transcript) {
-      return res.status(409).json({ error: 'Transkrip video belum selesai, ringkasan belum bisa dibuat.' });
+      return res.status(409).json({ error: 'The video transcript is not finished yet, so the summary cannot be created.' });
     }
-    if (media.summary_status === 'PROCESSING' || isSummaryInFlight(media.media_id)) return res.status(409).json({ error: 'Ringkasan sedang diproses.' });
+    if (media.summary_status === 'PROCESSING' || isSummaryInFlight(media.media_id)) return res.status(409).json({ error: 'The summary is already being processed.' });
     await queueMediaSummary(media.media_id);
     res.status(202).json({ success: true, media: await storage.getMediaById(media.media_id) });
   } catch (err) {
@@ -1139,8 +1139,8 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
   if (res.headersSent) return next(err);
   const status = err && Number.isInteger(err.status) && err.status >= 400 && err.status < 600 ? err.status : 500;
   if (status === 500) console.error('Unhandled error:', err && err.message);
-  const messages = { 400: 'Permintaan tidak valid.', 413: 'Ukuran permintaan melebihi batas.' };
-  res.status(status).json({ error: err && err.code === 'LIMIT_FILE_SIZE' ? 'Ukuran file melebihi batas.' : (messages[status] || 'Terjadi kesalahan pada server.') });
+  const messages = { 400: 'Invalid request.', 413: 'The request exceeds the size limit.' };
+  res.status(status).json({ error: err && err.code === 'LIMIT_FILE_SIZE' ? 'The file exceeds the size limit.' : (messages[status] || 'A server error occurred.') });
 });
 
 // Serve frontend dist assets for production
@@ -1158,7 +1158,12 @@ if (fs.existsSync(DIST_DIR)) {
 // Start Server — after the storage backend is ready (a no-op for the JSON file store; for SQL
 // Server it opens the connection pool, verifies the schema and tops up the seed data).
 const storageReady = Promise.resolve(typeof storage.init === 'function' ? storage.init() : null);
-storageReady.then(() => app.listen(PORT, () => {
+// Node's default requestTimeout is 5 minutes for receiving ONE whole request; a large event video over a slow link can
+// need longer, so it follows the 120-minute job limit (override: REQUEST_TIMEOUT_MS). headersTimeout / keepAliveTimeout
+// keep Node's defaults (they only concern the header and idle keep-alive connections, not long uploads or jobs; the
+// transcript and summary jobs run in the background and the HTTP answer of their routes is immediate).
+const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS || String(120 * 60 * 1000), 10);
+storageReady.then(() => { const httpServer = app.listen(PORT, () => {
   console.log(`=======================================================`);
   console.log(`🚀 CIMB Niaga People Experience Backend is running`);
   console.log(`📡 URL: http://localhost:${PORT}`);
@@ -1178,7 +1183,7 @@ storageReady.then(() => app.listen(PORT, () => {
 
   // Warn loudly when there is no login account yet (create one with `npm run auth:create-admin`).
   auth.warnIfNoUsers();
-})).catch(err => {
+}); httpServer.requestTimeout = REQUEST_TIMEOUT_MS; }).catch(err => {
   console.error('Storage backend failed to start:', err.message);
   console.error('Set STORAGE_BACKEND=json in .env to fall back to the JSON file store.');
   process.exit(1);

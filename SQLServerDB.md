@@ -135,13 +135,13 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 | Pertanyaan survei tiap metric | `px_survey_questions` | menu Survey Templates / Question Settings (tombol "Reset" mengembalikan template default) |
 | Target PX Index (garis chart), opsi kategori & format event | `px_app_settings` | `PUT /api/admin/settings/:key` (mis. `{"value": 90}`) atau langsung di tabel |
 | Direktorat & divisi (filter Header, form check-in) | `px_directorates`, `px_divisions` | langsung di tabel; entri seed yang hilang ditambahkan otomatis saat server start |
-| Jadwal reminder otomatis (jam kirim, ulangi tiap N hari) | `px_app_settings` (`reminder_send_hour`, `reminder_repeat_days`) | menu **Setting Email** |
-| Riwayat email reminder yang terkirim | `px_reminder_log` | otomatis; ditampilkan di menu Setting Email |
-| Akun pengirim email reminder PIC (password terenkripsi) | `px_email_settings` | menu **Setting Email** di Header |
-| Daftar pilihan Parameter Admin & Survey Questions (tipe metrik, skala, responden, frekuensi, tipe pertanyaan) | `px_app_settings` | `PUT /api/admin/settings/:key` (hanya label) |
-| Satuan nilai aktual tiap metrik (`px_metrics.unit`) | `px_metrics` | Parameter Admin → field "Satuan Nilai Aktual" |
-| Sumber survei tiap metrik SURVEY (`px_metrics.survey_source`: `SYSTEM` / `ESS`) | `px_metrics` | Parameter Admin → dropdown "Survey Source" |
-| Parameter journey/checkpoint/metric/target/bobot | `px_journeys`, `px_checkpoints`, `px_metrics`, `px_metric_targets` | menu Parameter Admin |
+| Jadwal reminder otomatis (jam kirim, ulangi tiap N hari) | `px_app_settings` (`reminder_send_hour`, `reminder_repeat_days`) | menu **Email Settings** |
+| Riwayat email reminder yang terkirim | `px_reminder_log` | otomatis; ditampilkan di menu Email Settings |
+| Akun pengirim email reminder PIC (password terenkripsi) | `px_email_settings` | menu **Email Settings** di Header |
+| Daftar pilihan Admin Parameters & Survey Questions (tipe metrik, skala, responden, frekuensi, tipe pertanyaan) | `px_app_settings` | `PUT /api/admin/settings/:key` (hanya label) |
+| Satuan nilai aktual tiap metrik (`px_metrics.unit`) | `px_metrics` | Admin Parameters → field "Actual Value Unit" |
+| Sumber survei tiap metrik SURVEY (`px_metrics.survey_source`: `SYSTEM` / `ESS`) | `px_metrics` | Admin Parameters → dropdown "Survey Source" |
+| Parameter journey/checkpoint/metric/target/bobot | `px_journeys`, `px_checkpoints`, `px_metrics`, `px_metric_targets` | menu Admin Parameters |
 
 > **Perhatian:** `node server/db/migrate.js --reset` menghapus semua tabel `px_*` termasuk `px_email_settings` — pengaturan email harus diisi ulang setelahnya.
 
@@ -177,3 +177,8 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 - Pemeriksaan: `SELECT metric_id, survey_source, requires_manual_upload FROM dbo.px_metrics WHERE metric_type = 'SURVEY' ORDER BY metric_id;`. Backup `.bak` ikut memuat kolom ini; `node server/db/migrate.js --reset` memuat ulang dari `store.json` (JSON mengisi kolomnya sendiri saat dimuat).
 - Rollback ke JSON tidak memerlukan langkah khusus.
 
+## 14. Label Katalog Opsi Inggris (v2.30.0)
+
+- Tidak ada perubahan skema. Label empat katalog di `px_app_settings` (`metric_types`, `scale_types`, `target_audiences`, `update_frequencies`) diganti ke Inggris saat server start (`topUpOptionLabels()`), **hanya** untuk label yang masih persis default Indonesia lama; hasil edit admin dan `value` tidak pernah ditimpa. Aman diulang. Rollback ke JSON tidak memerlukan langkah khusus.
+- Pemeriksaan: `SELECT setting_key, setting_value FROM dbo.px_app_settings WHERE setting_key IN ('metric_types','scale_types','target_audiences','update_frequencies');`
+- Batas waktu 120 menit (transkrip, Gemma, upload) diatur di `.env` (`TRANSCRIBE_TIMEOUT_MS`, `OLLAMA_TIMEOUT_MS`, `SUMMARY_JOB_TIMEOUT_MS`, `REQUEST_TIMEOUT_MS`; semua opsional) - tidak ada hubungannya dengan koneksi database.

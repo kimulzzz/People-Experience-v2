@@ -87,7 +87,7 @@ Buka berkas CSV di Microsoft Excel atau editor teks dan isi baris data:
 ### Langkah 2: Membagikan QR Code / Link Peserta
 - **QR Absensi Pra-Event**: Klik tombol QR Absensi untuk menampilkan kode QR di layar proyektor atau membagikan URL `http://.../checkin/:event_id` kepada peserta.
 - **QR Evaluasi Pasca-Event**: Di akhir sesi, tampilkan QR Evaluasi agar peserta mengisi rating pembicara, materi, dan kepuasan event.
-- **Dokumentasi Foto/Video & Transkrip AI**: Di bagian *Photo Gallery & Event Documentation* klik **Upload Photo / Video** (foto JPG/PNG/GIF/WEBP atau video MP4/MOV/WEBM, maks. 200 MB). Foto dan video langsung bisa dilihat/diputar di kartu (atau diperbesar lewat tombol *Perbesar*). Untuk video, sistem otomatis membuat **transkrip teks Bahasa Indonesia** lewat API transkrip lokal — prosesnya bisa beberapa menit (kartu menampilkan "sedang diproses" dan terisi sendiri). Buka *Transkrip AI lengkap* untuk membaca per segmen; klik sebuah baris untuk memutar video dari bagian itu. Jika gagal (mis. API transkrip belum dijalankan), klik **Coba lagi** setelah API aktif di `http://127.0.0.1:8000`. Setelah transkrip selesai, video **baru** otomatis mendapat **AI Summary** (lihat bagian "AI Summary Video" di bawah).
+- **Dokumentasi Foto/Video & Transkrip AI**: Di bagian *Photo Gallery & Event Documentation* klik **Upload Photo / Video** (foto JPG/PNG/GIF/WEBP atau video MP4/MOV/WEBM, maks. 200 MB). Foto dan video langsung bisa dilihat/diputar di kartu (atau diperbesar lewat tombol *Perbesar*). Untuk video, sistem otomatis membuat **transkrip teks Bahasa Indonesia** lewat API transkrip lokal — prosesnya bisa beberapa menit (kartu menampilkan "sedang diproses" dan terisi sendiri). Buka *Full AI transcript* (dulu "Transkrip AI lengkap") untuk membaca teks lengkap dan per segmen; klik sebuah baris untuk memutar video dari bagian itu. Jika gagal (mis. API transkrip belum dijalankan), klik **Try again** (dulu "Coba lagi") setelah API aktif di `http://127.0.0.1:8000`. Setelah transkrip selesai, video **baru** otomatis mendapat **AI Summary** (lihat bagian "AI Summary Video" di bawah).
 
 ### Langkah 3: Menghasilkan Executive Report PPT (.pptx)
 1. Pada kartu event, klik tombol **"Generate Executive PPT"**.
@@ -116,28 +116,28 @@ Setiap metrik memiliki parameter **"Update Data Berkala"** yang menentukan seber
 metrik tersebut perlu diperbarui, serta (khusus metrik Survey) pengaturan pengingat email ke PIC
 yang bertanggung jawab meng-upload data secara manual.
 
-### 7.1 Frekuensi Update Data
-Buka **Parameter Admin → Parameter Metric → Edit** pada metrik yang dituju, lalu pada bagian
-*"Update Data Berkala & Pengingat Upload Survei"* pilih salah satu:
+### 7.1 Frekuensi Update Data (*Data Update Frequency*)
+Buka **Admin Parameters → Metric Parameters → Edit** pada metrik yang dituju, lalu pada bagian
+*"Update Data Berkala & Pengingat Upload Survei"* pilih salah satu pada dropdown **Data Update Frequency**:
 
 | Pilihan | Kapan Dipakai |
 | :--- | :--- |
-| **Bulanan (Update Berkala Tiap Bulan)** | Metrik yang datanya perlu di-upload/diperbarui setiap bulan (default untuk sebagian besar metrik). |
-| **Tahunan (Sekali Upload untuk Full Year)** | Metrik yang cukup diupload sekali dan dipakai untuk kalkulasi sepanjang tahun — contoh default: 11 metrik **ESS (Employee Sentiment Survey)**. |
+| **Monthly (Periodic Update Every Month)** (dulu Bulanan) | Metrik yang datanya perlu di-upload/diperbarui setiap bulan (default untuk sebagian besar metrik). |
+| **Annual (One Upload for the Full Year)** (dulu Tahunan) | Metrik yang cukup diupload sekali dan dipakai untuk kalkulasi sepanjang tahun — contoh default: 11 metrik **ESS (Employee Sentiment Survey)**. |
 
 ### 7.2 Pengingat Upload Survei Manual (Reminder Email PIC)
-Khusus metrik bertipe **Survey**, tersedia toggle **"Survei ini masih diupload manual oleh PIC"**.
+Khusus metrik bertipe **Survey**, tersedia toggle **"This survey is still uploaded manually by the PIC (enable email reminders)"**.
 Sejak v2.29.0 toggle ini **hanya mengatur pengingat e-mail**; semua metrik Survey tetap bisa diunggah manual (lihat bagian *Survey Source* di bawah).
 Jika diaktifkan:
 1. Isi **Nama PIC Upload** dan **Email PIC (Tujuan Reminder)**.
-2. Tentukan **Batas Tanggal Upload** — tanggal (1–28) setiap bulan untuk metrik Bulanan, atau
-   bulan + tanggal untuk metrik Tahunan (default: 25 November).
+2. Tentukan **Upload Deadline Date** — tanggal (1–28) setiap bulan untuk metrik Monthly, atau
+   bulan + tanggal untuk metrik Annual (default: 25 November).
 3. Sistem otomatis mendeteksi jika data belum diupload untuk siklus berjalan (bulan ini, atau
    tahun ini untuk metrik Tahunan), dan menandai status:
    - **Segera Jatuh Tempo (DUE_SOON)** — ≤5 hari sebelum batas waktu.
    - **Terlambat (OVERDUE)** — sudah melewati batas waktu.
 4. Metrik yang berstatus DUE_SOON/OVERDUE muncul otomatis sebagai **banner kuning** di atas
-   tabel Parameter Metric, lengkap dengan tombol **"Kirim Reminder Sekarang"** untuk mengirim
+   tabel Metric Parameters, lengkap dengan tombol **"Send Reminders Now"** untuk mengirim
    email ke seluruh PIC terkait via SMTP internal perusahaan (dikonfigurasi lewat variabel
    lingkungan `SMTP_HOST`, dsb. — lihat `.env.example`). Server juga otomatis mengecek dan
    mengirim reminder setiap 24 jam tanpa perlu diklik manual.
@@ -156,34 +156,34 @@ mengubahnya; sudah diperbaiki di v2.12.0 (lihat `CHANGELOG.md`).
 
 ## 📧 Mengatur Email Pengirim Reminder PIC (v2.23.0)
 
-1. Klik **Setting Email** di Header.
+1. Klik **Email Settings** di Header.
 2. **Gmail (sementara/uji coba)**: pilih provider *Gmail*, isi alamat Gmail, lalu isi **App Password** — bukan password akun biasa. Cara: akun Google → Keamanan → aktifkan *Verifikasi 2 Langkah* → *Sandi aplikasi* → buat satu → salin 16 karakternya ke kolom password.
 3. **SMTP internal (target akhir, sesuai kebijakan on-premise)**: pilih provider *SMTP Server*, isi host, port, TLS, akun, dan password dari tim infrastruktur.
-4. Centang **Aktifkan**, klik **Simpan**, lalu **Kirim Email Test** (default ke email pengirim sendiri) dan periksa kotak masuk.
-5. Setelah aktif, reminder ke PIC (pengecekan harian otomatis + tombol *Kirim Reminder* di Parameter Admin) memakai akun ini. Password tersimpan terenkripsi di database dan tidak pernah ditampilkan kembali.
+4. Centang **Aktifkan**, klik **Simpan**, lalu **Send Test Email** (default ke email pengirim sendiri) dan periksa kotak masuk.
+5. Setelah aktif, reminder ke PIC (pengecekan harian otomatis + tombol *Send Reminders Now* di Admin Parameters) memakai akun ini. Password tersimpan terenkripsi di database dan tidak pernah ditampilkan kembali.
 
 ---
 
 ## ⏰ Cara Kerja Reminder Otomatis Upload Survei (v2.24.0)
 
-1. Di **Parameter Admin → Edit Metrik (SURVEY)**: aktifkan *upload manual*, isi **Batas Tanggal Upload** (mis. 10), **Nama PIC** dan **Email PIC**.
-2. Di **Setting Email**: isi akun pengirim & aktifkan; atur *jam mulai kirim* (default 08:00) dan *ulangi setiap N hari* (default 1; 0 = hanya sekali).
+1. Di **Admin Parameters → Edit Metrik (SURVEY)**: aktifkan *upload manual*, isi **Upload Deadline Date** (mis. 10), **Nama PIC** dan **Email PIC**.
+2. Di **Email Settings**: isi akun pengirim & aktifkan; atur *jam mulai kirim* (default 08:00) dan *ulangi setiap N hari* (default 1; 0 = hanya sekali).
 3. Setiap hari, mulai tanggal batas, sistem memeriksa tabel survei metrik itu: **adakah data bertanggal survei di bulan SEBELUMNYA?** Contoh: tanggal batas 10, hari ini 10 Oktober → cari data September. Bila **tidak ada**, PIC otomatis diemail ("data survei September 2026 belum ada"); bila ada, tidak ada email.
 4. Email diulang sesuai pengaturan sampai data periode itu terunggah. Tidak ada email ganda pada hari yang sama meski server di-restart; bila server mati pada tanggal batas, email dikirim begitu server hidup kembali.
-5. Pantau di **Setting Email → Riwayat Reminder Terkirim** dan panel peringatan di Parameter Admin; tombol **Kirim Reminder Sekarang** mengirim manual ke semua PIC yang masih pending.
+5. Pantau di **Email Settings → Sent Reminder History** dan panel peringatan di Admin Parameters; tombol **Send Reminders Now** mengirim manual ke semua PIC yang masih pending.
 
 > Metrik **Tahunan** diingatkan pada tanggal+bulan batas tahun itu bila belum ada data bertanggal tahun tersebut. Data bulan berjalan tidak dihitung untuk metrik bulanan.
 
 ---
 
-## 🔐 Login, Akun & Kelola User (v2.26.0)
+## 🔐 Login, Akun & Manage Users (v2.26.0; menu bernama "Kelola User" sebelum v2.30.0)
 
 **Membuat Admin pertama** (sekali, setelah instalasi / pada database baru):
 1. Di folder proyek jalankan `npm run auth:create-admin` (opsi: `-- --username 8801923 --name "Nama" --email nama@...`; default username `admin`).
 2. Catat **password sementara** yang tampil di konsol — hanya muncul sekali. Tidak ada password bawaan di kode/repo; namun bila env `DEFAULT_INITIAL_PASSWORD` di `.env` terisi (opsional, v2.27.2), password awal standar itulah yang dipakai (tidak dicetak di konsol) dan tetap wajib diganti saat login pertama. Login dengan akun itu; aplikasi langsung meminta ganti password (min 10 karakter, ada huruf dan angka).
 3. Lupa password Admin / semua Admin terkunci: `npm run auth:create-admin -- --username <akun> --reset-password`.
 
-**Kelola User** (menu Header, hanya Admin):
+**Manage Users** (menu Header, hanya Admin):
 - **Tambah user**: isi username/NIP, nama, email (opsional), role. Role **User** wajib memiliki minimal satu cakupan data (lihat bawah); role **Admin** tidak terikat cakupan. Setelah disimpan, **password sementara tampil sekali** — salin dan sampaikan ke yang bersangkutan; saat login pertama ia wajib menggantinya. Bila `DEFAULT_INITIAL_PASSWORD` terisi, yang tampil adalah password awal standar dengan catatan "Password awal standar — wajib diganti saat login pertama". **Risiko**: sebelum pemilik akun login pertama, siapa pun yang tahu password awal itu dapat masuk ke akun tersebut — minta ganti segera. Password pengganti tetap harus lolos kebijakan dan tidak boleh sama dengan password awal.
 - **Reset password**: password sementara baru (sekali tampil; password awal standar bila env terisi). Reset juga **membuka kunci akun** dan mengeluarkan semua sesi user itu.
 - **Kunci akun**: 5 kali salah password berturut-turut mengunci akun 15 menit; Admin dapat membukanya lewat reset password. Batas dapat diubah di setting `login_max_attempts` / `login_lockout_minutes`.
@@ -203,9 +203,9 @@ Yang dilihat User: pilihan filter "Semua cakupan saya" menampilkan **data gabung
 
 ## 🧑‍💼 Menjadikan Akun User sebagai PIC Metrik (v2.27.1)
 
-1. Buat akun **User** di **Kelola User** dan **isi emailnya** (opsional di form, tetapi wajib agar akun bisa menjadi PIC).
-2. Buka **Parameter Admin** → metrik SURVEY (sejak v2.29.0 metrik SURVEY mana pun, tidak harus ber-toggle upload manual) → isi **Email PIC** dengan email akun tadi (huruf besar/kecil tidak berpengaruh). Penetapan PIC tetap lewat sini; tidak ada pengaturan PIC di Kelola User. Bila tidak ada akun aktif ber-email itu, muncul peringatan "PIC belum punya akun login".
-3. Berlaku **langsung** pada request berikutnya — tanpa login ulang. Mengubah Email PIC, email akun, atau menonaktifkan akun mencabut/memberi hak dengan cara yang sama. Kelola User menampilkan "PIC metrik" tiap akun.
+1. Buat akun **User** di **Manage Users** dan **isi emailnya** (opsional di form, tetapi wajib agar akun bisa menjadi PIC).
+2. Buka **Admin Parameters** → metrik SURVEY (sejak v2.29.0 metrik SURVEY mana pun, tidak harus ber-toggle upload manual) → isi **Email PIC** dengan email akun tadi (huruf besar/kecil tidak berpengaruh). Penetapan PIC tetap lewat sini; tidak ada pengaturan PIC di Manage Users. Bila tidak ada akun aktif ber-email itu, muncul peringatan "PIC belum punya akun login".
+3. Berlaku **langsung** pada request berikutnya — tanpa login ulang. Mengubah Email PIC, email akun, atau menonaktifkan akun mencabut/memberi hak dengan cara yang sama. Manage Users menampilkan "PIC metrik" tiap akun.
 
 Yang bisa dilakukan PIC, hanya untuk metrik miliknya: unduh template, **upload CSV** (metrik ditentukan dari form; kolom `metric_id` di CSV diabaikan), lihat riwayat upload, unduh evidence, dan lihat identitas responden. Untuk metrik karyawan, identitas/evidence hanya responden dalam **cakupan direktorat/divisi akun PIC**. Hasil upload PIC tidak menampilkan PE Index bankwide. Setiap upload tercatat di riwayat audit (`SURVEY_UPLOAD`) dan di riwayat batch sebagai `Nama (username)`. Reminder email tetap ke Email PIC.
 
@@ -215,14 +215,14 @@ Perhatian (belum diputuskan): importer belum menolak NIP kembar dalam satu CSV a
 
 ## 🗂️ Survey Source (System / ESS) & Upload Manual untuk Semua Survei (v2.29.0)
 
-**Mengatur Survey Source** - Parameter Admin -> Parameter Metric -> Edit / Tambah metrik **SURVEY** -> dropdown **Survey Source**:
+**Mengatur Survey Source** - Admin Parameters -> Metric Parameters -> Edit / Tambah metrik **SURVEY** -> dropdown **Survey Source**:
 
 | Pilihan | Arti |
 | :--- | :--- |
 | **System** (default untuk metrik baru) | Data berasal dari sistem atau form lain (mis. form evaluasi event, sistem rekrutmen). |
 | **ESS Template** | Employee Sentiment Survey: data diunggah dari template ESS. Menampilkan ringkasan dimensi ESS di detail metrik. |
 
-Metrik OUTCOME tidak punya Survey Source (dropdown tidak muncul). Pilihan tampil sebagai badge **ESS Template** / **System** di Explore Metrics, sebagai kolom di tabel Parameter Metric, dan sebagai chip "Survey Source" di detail metrik. Data saat ini: ESS = metrik 9, 13, 15, 16, 17, 18, 21, 22, 24, 25, 27; System = 2, 5, 6, 7, 8, 10, 12, 23, 26. Mengubahnya tidak mengubah skor.
+Metrik OUTCOME tidak punya Survey Source (dropdown tidak muncul). Pilihan tampil sebagai badge **ESS Template** / **System** di Explore Metrics, sebagai kolom di tabel Metric Parameters, dan sebagai chip "Survey Source" di detail metrik. Data saat ini: ESS = metrik 9, 13, 15, 16, 17, 18, 21, 22, 24, 25, 27; System = 2, 5, 6, 7, 8, 10, 12, 23, 26. Mengubahnya tidak mengubah skor.
 
 **ESS selalu diunggah manual**: pada metrik ESS checkbox "Survei ini masih diupload manual oleh PIC" otomatis tercentang dan terkunci; server menolak (400) permintaan yang mematikannya. Jadi metrik ESS selalu ikut pengingat e-mail PIC.
 
@@ -240,10 +240,10 @@ Catatan / belum diperbaiki: importer Admin yang menerima `metric_id` form non-nu
 
 ### Cara kerja
 - Setiap video **baru** yang transkripnya selesai otomatis diringkas oleh model lokal **Gemma 3 4B** (Ollama di mesin yang sama; tidak ada data keluar). Kartu video menampilkan blok **AI Summary**: ringkasan, poin utama, dan label sumber.
-- **Label sumber**: `AI • gemma3:4b` = jawaban model yang lolos pemeriksaan otomatis; **Otomatis (aturan)** = model gagal/mati atau jawabannya ditolak pemeriksaan (angka, nama, atau bahasa tidak sesuai transkrip), sehingga sistem menampilkan kalimat yang diambil langsung dari transkrip. Ringkasan AI **dibuat otomatis — selalu periksa kembali dengan transkrip**; pemeriksaan otomatis tidak menjamin ketepatan makna (nuansa dan penafian bisa keliru).
+- **Label sumber**: `AI • gemma3:4b` = jawaban model yang lolos pemeriksaan otomatis; **Automatic (rule-based)** = model gagal/mati atau jawabannya ditolak pemeriksaan (angka, nama, atau bahasa tidak sesuai transkrip), sehingga sistem menampilkan kalimat yang diambil langsung dari transkrip. Ringkasan AI **dibuat otomatis — selalu periksa kembali dengan transkrip**; pemeriksaan otomatis tidak menjamin ketepatan makna (nuansa dan penafian bisa keliru).
 - Transkrip kurang dari 20 kata tidak diringkas ("Transkrip belum cukup").
 - Pembuatan bisa sekitar satu menit atau lebih (CPU); kartu terisi sendiri.
-- **Tombol "Buat / Buat ulang ringkasan"** (hanya Admin/pengelola event): muncul bila video belum punya ringkasan, ringkasan gagal, atau hasilnya "Otomatis (aturan)" (mis. setelah Ollama dinyalakan). Ringkasan AI yang sudah jadi tidak punya tombol. Bila sedang diproses/antri, sistem menolak dengan pesan 409.
+- **Tombol "Generate summary" / "Regenerate summary"** (dulu "Buat / Buat ulang ringkasan") (hanya Admin/pengelola event): muncul bila video belum punya ringkasan, ringkasan gagal, atau hasilnya "Automatic (rule-based)" (mis. setelah Ollama dinyalakan). Ringkasan AI yang sudah jadi tidak punya tombol. Bila sedang diproses/antri, sistem menolak dengan pesan 409.
 - Video lama (diunggah sebelum v2.28.0) **tidak** diringkas otomatis; tekan tombol bila perlu. Gemma tidak dipanggil saat membuka halaman, dashboard, alerts, foto, atau PPT; PPT hanya menampilkan ringkasan yang sudah tersimpan.
 - Ollama mati tidak menghalangi upload maupun transkrip.
 
@@ -252,4 +252,42 @@ Catatan / belum diperbaiki: importer Admin yang menerima `metric_id` form non-nu
 winget install Ollama.Ollama
 ollama pull gemma3:4b
 ```
-Lalu di `.env` (tidak dikomit): `OLLAMA_MODEL=gemma3:4b`. Opsional: `OLLAMA_HOST` (default `http://localhost:11434`), `OLLAMA_TIMEOUT_MS` (default 300000), `AI_QUEUE_MAX` (default 50). Restart backend. Cek status: `GET /api/health?check_ai=1` (login) -> `local_ai.ollama_status`. Model diunduh sekali dari registri Ollama saat `ollama pull` (satu-satunya akses internet; setelahnya semuanya berjalan lokal) — pada jaringan tertutup, pasang model dari sumber internal sesuai kebijakan TI.
+Lalu di `.env` (tidak dikomit): `OLLAMA_MODEL=gemma3:4b`. Opsional: `OLLAMA_HOST` (default `http://localhost:11434`), `OLLAMA_TIMEOUT_MS` (default 7200000 = 120 menit sejak v2.30.0; dulu 300000), `SUMMARY_JOB_TIMEOUT_MS` (default 7200000; batas total satu job ringkasan), `AI_QUEUE_MAX` (default 50). Restart backend. Cek status: `GET /api/health?check_ai=1` (login) -> `local_ai.ollama_status`. Model diunduh sekali dari registri Ollama saat `ollama pull` (satu-satunya akses internet; setelahnya semuanya berjalan lokal) — pada jaringan tertutup, pasang model dari sumber internal sesuai kebijakan TI.
+
+---
+
+## 🌐 Bahasa UI, Tema & Batas Waktu Proses (v2.30.0)
+
+**Bahasa antarmuka**: seluruh menu, tombol, dan pesan di aplikasi kini berbahasa Inggris. Panduan ini memakai nama menu **di layar** (Inggris); nama lama ditulis di sebelahnya bila perlu.
+
+| Nama lama | Nama di layar sekarang |
+| :--- | :--- |
+| Parameter Admin | **Admin Parameters** |
+| Setting Email, Kirim Email Test | **Email Settings**, **Send Test Email** |
+| Kelola User | **Manage Users** |
+| Tema | **Theme** |
+| Batas Tanggal Upload | **Upload Deadline Date** |
+| Frekuensi Update Data: Bulanan / Tahunan | **Data Update Frequency**: **Monthly** / **Annual** |
+| Kirim Reminder Sekarang | **Send Reminders Now** |
+| Keluar | **Sign out** (pojok kanan atas) |
+
+Yang **sengaja tetap Indonesia**: isi 44 istilah di tab About, nama metrik / journey / direktorat / divisi / program, pertanyaan survei, header kolom CSV evidence, isi e-mail pengingat ke PIC, dan data seperti Action Library.
+
+**Memilih tema**: klik **Theme** di Header lalu pilih salah satu dari 5 warna: **Crimson**, **Royal Blue**, **Teal**, **Violet**, **Tangerine**. Pilihan hanya tersimpan di browser Anda (tidak di server) dan pilihan lama tetap berlaku karena hanya nama tampilan yang berubah.
+
+**Filter bulan**: dropdown bulan hanya berisi nama bulan (January ... December) tanpa angka; label periode bulanan berbentuk "Month-to-Date (MTD) March 2026".
+
+**Tombol Target di Explore Metrics dihapus**: untuk metrik Outcome, target dan threshold diubah lewat **Admin Parameters** di Header (bukan tombol di baris metrik); baris Outcome kini hanya punya **View Data**.
+
+**Batas waktu proses panjang (120 menit)**: transkrip video, pembuatan AI Summary oleh Gemma (satu job penuh, termasuk video panjang yang dipecah beberapa bagian dan satu percobaan ulang), dan penerimaan satu upload video oleh server kini masing-masing diberi batas 120 menit. Sebelumnya transkrip 30 menit, satu panggilan Gemma 5 menit, dan upload dipotong Node pada 5 menit. Bila video sangat besar atau komputer sangat lambat, tidak perlu mengubah apa pun; untuk mengubah batas, isi di `.env` (dalam milidetik; hapus baris atau kosongkan untuk kembali ke default):
+
+| Variabel `.env` | Default | Mengatur |
+| :--- | :--- | :--- |
+| `TRANSCRIBE_TIMEOUT_MS` | 7200000 | menunggu satu transkrip dari API lokal |
+| `OLLAMA_TIMEOUT_MS` | 7200000 | satu panggilan Gemma |
+| `SUMMARY_JOB_TIMEOUT_MS` | 7200000 | total waktu satu job ringkasan (semua bagian + percobaan ulang) |
+| `REQUEST_TIMEOUT_MS` | 7200000 | menerima SATU permintaan upload utuh |
+
+Setelah mengubah `.env`, restart backend. Bila batas ringkasan habis, kartu video menampilkan ringkasan **Automatic (rule-based)**; Admin dapat menekan **Regenerate summary**.
+
+**Form check-in / feedback via QR**: pada v2.27.0 s.d. v2.29.0 halaman `?checkin=` dan `?survey=` gagal terbuka bagi peserta yang belum login (error `reading 'scopes'`). Sudah diperbaiki di v2.30.0; bila ada event yang berjalan pada rentang itu, absensi/feedback peserta perlu dikumpulkan ulang. Satu hal yang diketahui: tautan `?survey=` untuk event yang masih pre-event menampilkan form feedback tanpa pertanyaan.

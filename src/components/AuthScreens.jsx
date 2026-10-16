@@ -69,7 +69,7 @@ export function LoginPage({ onLoggedIn, notice }) {
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!username.trim() || !password) { setError('Username dan password wajib diisi.'); return; }
+    if (!username.trim() || !password) { setError('Username and password are required.'); return; }
     setBusy(true);
     setError('');
     try {
@@ -79,18 +79,18 @@ export function LoginPage({ onLoggedIn, notice }) {
         body: JSON.stringify({ username: username.trim(), password })
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { setError(data.error || 'Login gagal. Coba lagi.'); setPassword(''); return; }
+      if (!res.ok) { setError(data.error || 'Login failed. Please try again.'); setPassword(''); return; }
       setPassword('');
       onLoggedIn(data);
     } catch (_) {
-      setError('Tidak dapat terhubung ke server. Periksa koneksi lalu coba lagi.');
+      setError('Unable to connect to the server. Check your connection and try again.');
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <AuthFrame title="Masuk" subtitle="Gunakan akun PX yang diberikan oleh Admin.">
+    <AuthFrame title="Sign In" subtitle="Use the PX account issued by your Admin.">
       <form onSubmit={submit} className="space-y-4">
         {notice && !error && <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 font-medium">{notice}</div>}
         <ErrorBox message={error} />
@@ -98,7 +98,7 @@ export function LoginPage({ onLoggedIn, notice }) {
         <Field label="Password" icon={Lock} type="password" value={password} onChange={setPassword} autoComplete="current-password" />
         <button type="submit" disabled={busy} className={submitClass}>
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
-          <span>{busy ? 'Memeriksa...' : 'Masuk'}</span>
+          <span>{busy ? 'Checking...' : 'Sign In'}</span>
         </button>
       </form>
     </AuthFrame>
@@ -115,7 +115,7 @@ export function ChangePasswordScreen({ user, onChanged, onLogout }) {
 
   const submit = async (e) => {
     e.preventDefault();
-    if (next !== confirm) { setError('Konfirmasi password baru tidak sama.'); return; }
+    if (next !== confirm) { setError('The new password confirmation does not match.'); return; }
     setBusy(true);
     setError('');
     try {
@@ -125,29 +125,29 @@ export function ChangePasswordScreen({ user, onChanged, onLogout }) {
         body: JSON.stringify({ current_password: current, new_password: next })
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { setError(data.error || 'Password gagal diganti.'); return; }
+      if (!res.ok) { setError(data.error || 'Failed to change the password.'); return; }
       onChanged(data);
     } catch (_) {
-      setError('Tidak dapat terhubung ke server.');
+      setError('Unable to connect to the server.');
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <AuthFrame title="Ganti Password" subtitle={`Halo ${user.full_name}. Password sementara dari Admin harus diganti sebelum Anda melanjutkan.`}>
+    <AuthFrame title="Change Password" subtitle={`Hello ${user.full_name}. The temporary password issued by your Admin must be changed before you continue.`}>
       <form onSubmit={submit} className="space-y-4">
         <ErrorBox message={error} />
-        <Field label="Password Saat Ini (sementara)" icon={Lock} type="password" value={current} onChange={setCurrent} autoComplete="current-password" autoFocus />
-        <Field label="Password Baru" icon={KeyRound} type="password" value={next} onChange={setNext} autoComplete="new-password" hint="Minimal 10 karakter, mengandung huruf dan angka." />
-        <Field label="Ulangi Password Baru" icon={KeyRound} type="password" value={confirm} onChange={setConfirm} autoComplete="new-password" />
+        <Field label="Current Password (temporary)" icon={Lock} type="password" value={current} onChange={setCurrent} autoComplete="current-password" autoFocus />
+        <Field label="New Password" icon={KeyRound} type="password" value={next} onChange={setNext} autoComplete="new-password" hint="At least 10 characters, containing letters and digits." />
+        <Field label="Repeat New Password" icon={KeyRound} type="password" value={confirm} onChange={setConfirm} autoComplete="new-password" />
         <button type="submit" disabled={busy} className={submitClass}>
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
-          <span>{busy ? 'Menyimpan...' : 'Simpan Password Baru'}</span>
+          <span>{busy ? 'Saving...' : 'Save New Password'}</span>
         </button>
         <button type="button" onClick={onLogout} className="w-full py-2 text-xs font-bold text-gray-500 hover:text-gray-800 flex items-center justify-center space-x-1.5">
           <LogOut className="w-3.5 h-3.5" />
-          <span>Keluar</span>
+          <span>Sign Out</span>
         </button>
       </form>
     </AuthFrame>

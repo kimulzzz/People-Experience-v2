@@ -202,7 +202,7 @@ backend boot) tanpa perlu dipicu manual — lihat `server.js` bagian `app.listen
 
 ---
 
-## 📧 Catatan v2.23.0 — Setting Email Reminder
+## 📧 Catatan v2.23.0 — Setting Email Reminder (menu di UI kini bernama **Email Settings** sejak v2.30.0)
 
 - **`GET /api/admin/email-settings`** → `{ enabled, provider, smtp_host, smtp_port, smtp_secure, smtp_user, from_name, from_email, has_password, updated_at, env_fallback_available }` — **tidak pernah** memuat password.
 - **`PUT /api/admin/email-settings`** body: field di atas + `smtp_password` (opsional; kosong = pertahankan yang tersimpan) + `clear_password`. Provider `GMAIL` mengunci host/port ke smtp.gmail.com:465; `SMTP` memakai host/port/secure yang dikirim. Validasi → 400 (provider, port 1–65535, format email, mengaktifkan tanpa host/akun/password).
@@ -345,12 +345,12 @@ Tidak diubah / belum diputuskan: importer tidak menolak NIP kembar (dalam satu C
 - Konstanta: `MIN_WORDS = 20`, `CHUNK_CHARS = 5000`, `MAX_CHUNKS = 12`, poin 2-5. Format keluaran model: teks `RINGKASAN:` + `POIN:` (bukan JSON).
 - Validator menolak: angka atau kata bilangan/kata satuan frekuensi yang tidak ada di transkrip, nama/akronim berkapital yang tidak ada di transkrip, bahasa salah (id/en), frasa meta, dan kata isi baru (>= 3 kata dan > 20% kata isi; hanya untuk bahasa id/en). Ditolak -> satu retry dengan alasan; gagal lagi, Ollama mati/timeout/model belum terpasang, atau transkrip > 12 bagian -> `RULE` dengan `summary_error`. Antrian penuh -> `RULE` langsung.
 - `aiQueue.js`: satu job berjalan pada satu waktu; `enqueue(key, run)` -> `queued`/`duplicate`/`full`; batas antrian `AI_QUEUE_MAX` (default 50).
-- `localAiService.js`: `queryLocalOllama(prompt, { scope, subject, ... })` memanggil `POST {OLLAMA_HOST}/api/generate` memakai modul `http` inti (bukan `fetch`, agar tidak terkena batas header 5 menit); timeout `OLLAMA_TIMEOUT_MS` (default 300000). `generateAlertNarrative` dan `generateEventSummary` kini rule-based.
+- `localAiService.js`: `queryLocalOllama(prompt, { scope, subject, ... })` memanggil `POST {OLLAMA_HOST}/api/generate` memakai modul `http` inti (bukan `fetch`, agar tidak terkena batas header 5 menit); timeout `OLLAMA_TIMEOUT_MS` (default 7.200.000 ms = 120 menit sejak v2.30.0; dulu 300000). `generateAlertNarrative` dan `generateEventSummary` kini rule-based.
 - `transcribeService.js`: memicu `queueMediaSummary` setelah transkrip `DONE` (kegagalan memulai ringkasan tidak mengubah transkrip yang sudah selesai); memulai transkrip ulang mengosongkan semua field `summary_*`.
 - `pptGenerator.js`: slide media (3 slot) memprioritaskan video ber-ringkasan `DONE`; teks "Ringkasan AI/otomatis: ..." dipotong di batas kata (300 karakter), dibaca dari database.
 - `server.js`: `PX_DISABLE_SCHEDULERS=1` melewati `startReminderScheduler()` (hanya untuk backend kedua milik suite).
 
-**Env (opsional)**: `OLLAMA_HOST` (default `http://localhost:11434`), `OLLAMA_MODEL` (default `gemma3:4b`), `OLLAMA_TIMEOUT_MS`, `AI_QUEUE_MAX`.
+**Env (opsional)**: `OLLAMA_HOST` (default `http://localhost:11434`), `OLLAMA_MODEL` (default `gemma3:4b`), `OLLAMA_TIMEOUT_MS`, `SUMMARY_JOB_TIMEOUT_MS` (sejak v2.30.0), `AI_QUEUE_MAX`.
 
 **Tidak dicakup**: analisis metrik WARNING/CRITICAL oleh Gemma (langkah berikutnya); validator tidak menjamin ketepatan makna (lihat `CHANGELOG.md` [2.28.0]).
 
@@ -382,3 +382,33 @@ Tidak diubah / belum diputuskan: importer tidak menolak NIP kembar (dalam satu C
 
 **Tidak diubah / diketahui**: importer Admin dengan `metric_id` form non-numerik jatuh ke metrik SURVEY pertama (`surveyImportService.js`); NIP kembar belum ditolak importer; `last_survey_date` kosong di detail metrik ditampilkan UI sebagai hari ini.
 
+---
+
+## Catatan v2.30.0 - Pesan Backend Inggris & Batas Waktu 120 Menit
+
+Perubahan kontrak API terbatas pada **teks**, bukan struktur: nama field, kode status, enum, dan nilai internal (`MONTHLY`, `ONE_TIME_ANNUAL`, `PROCESSING`, dst.) tidak berubah. Klien yang mencocokkan string pesan lama (Indonesia) harus disesuaikan.
+
+| Area | Perubahan |
+| :--- | :--- |
+| Pesan `error` / `message` | Seluruh respons error dan pesan validasi (login/password, 401/403/404, validasi form, upload) berbahasa Inggris. Sekitar 215 pesan menurut developer (tidak dihitung ulang). Contoh: `Username/NIP must be 3-50 characters ...` (`authService.js`), `Password is too long.` (`emailSettingsService.js`). |
+| `month_name` (`/api/metrics/trends`, `monthly_trends` pada `/api/metrics/calculate`) | Nama bulan Inggris: `January` ... `December` (`calculationEngine.js`); `month_code` (`YYYY-MM`) tidak berubah. Sumbu grafik memakai singkatan yang diturunkan di klien dari `month_code` (`src/utils/months.js`). |
+| `expected_period_label` (`/api/admin/upload-reminders`) | Periode yang kosong memakai nama bulan Inggris, mis. `September 2026`; reminder tahunan: `year 2026` (dulu `tahun 2026`). Isi e-mail pengingat ke PIC **tetap berbahasa Indonesia** (hanya nama bulan di dalamnya yang Inggris). |
+| Narasi alert & event summary | Rule-based, kini kalimat Inggris (`alertEngine.js`, `localAiService.js`). |
+| Alasan baris CSV ditolak (`surveyImportService.js`) | Inggris. Header CSV evidence dan template **tetap Indonesia**. |
+| Ringkasan video (`mediaSummaryService.js`) | Ringkasan `RULE` dan `INSUFFICIENT` serta `summary_error` berbahasa Inggris (mis. `The transcript is not long enough to summarize (fewer than 20 words).`, `The AI queue is full; press "Regenerate summary" later.`). Alasan penolakan validator (Indonesia, juga dipakai sebagai umpan balik ke Gemma pada percobaan kedua) **hanya ditulis ke console server**; `summary_error` berisi kalimat umum: `The AI summary was rejected by the validator; the automatic (rule-based) summary is shown.` Prompt dan validator Gemma tetap Indonesia. |
+| Slide PPT (`pptGenerator.js`) | Teks slide Inggris; label media `[ Documentation #N ]`; slide 5 memangkas awalan `Documentation ` / `Dokumentasi ` pada caption media lama. |
+| Caption media baru (`POST /api/events/:id/media`) | Default caption `Documentation <nama event>` (dulu `Dokumentasi ...`). |
+| Label opsi `GET /api/settings` | `metric_types`, `scale_types`, `target_audiences`, `update_frequencies` berlabel Inggris. Top-up saat boot (SQL: `topUpOptionLabels()`; JSON: blok di `jsonStorage.js`) hanya mengganti label yang masih **persis** default Indonesia lama (`seedData.LEGACY_OPTION_LABELS` + `upgradeLegacyOptionLabels()`); `value` dan hasil edit admin tidak ditimpa. |
+
+**Batas waktu (env opsional, default 7.200.000 ms = 120 menit)**
+
+| Env | Dulu | Sekarang | Dipakai oleh |
+| :--- | :--- | :--- | :--- |
+| `TRANSCRIBE_TIMEOUT_MS` | 1.800.000 | 7.200.000 | `transcribeService.js` - batas idle socket HTTP satu permintaan transkrip (diekspor `DEFAULT_TIMEOUT_MS`, `TIMEOUT_MS`) |
+| `OLLAMA_TIMEOUT_MS` | 300.000 | 7.200.000 | `localAiService.queryLocalOllama()` - satu panggilan Gemma (diekspor `DEFAULT_AI_TIMEOUT_MS`, `OLLAMA_TIMEOUT_MS`) |
+| `SUMMARY_JOB_TIMEOUT_MS` | (baru) | 7.200.000 | `mediaSummaryService.js` - deadline bersama **seluruh** satu job ringkasan (semua chunk + retry); tiap panggilan Gemma dibatasi `min(OLLAMA_TIMEOUT_MS, sisa anggaran)`; habis -> error `The AI summary exceeded the 120 minutes limit` -> fallback `RULE` |
+| `REQUEST_TIMEOUT_MS` | (baru) | 7.200.000 | `server.js`: `httpServer.requestTimeout`. Default bawaan Node (5 menit untuk menerima SATU request utuh) memotong upload video besar di koneksi lambat. `headersTimeout`/`keepAliveTimeout` tidak diubah |
+
+`.env` user tidak meng-override keempatnya, jadi default 120 menit berlaku. `.env.example` memuat contoh dan komentarnya.
+
+**Tidak berubah**: kolom CSV, isi e-mail pengingat, nama metrik/journey/direktorat/program, data Action Library, dan seluruh logika skor/status.

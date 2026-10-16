@@ -12,8 +12,11 @@ const { queueMediaSummary } = require('./mediaSummaryService');
 
 const API_URL = (process.env.TRANSCRIBE_API_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '');
 const DEFAULT_LANGUAGE = process.env.TRANSCRIBE_LANGUAGE || 'id';
-// Whisper on CPU is slow and the first request also downloads/loads the model — be generous.
-const TIMEOUT_MS = parseInt(process.env.TRANSCRIBE_TIMEOUT_MS || String(30 * 60 * 1000), 10);
+// Whisper on CPU is slow and the first request also downloads/loads the model — be generous:
+// limit 120 minutes (override: TRANSCRIBE_TIMEOUT_MS). It is the idle limit of the HTTP socket, and the
+// Video Extractor sends nothing until the transcript is complete, so it is also the total limit.
+const DEFAULT_TIMEOUT_MS = 120 * 60 * 1000;
+const TIMEOUT_MS = parseInt(process.env.TRANSCRIBE_TIMEOUT_MS || String(DEFAULT_TIMEOUT_MS), 10);
 const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
 const DESCRIPTION_EXCERPT_CHARS = 280;
 
@@ -39,10 +42,10 @@ function postJson(urlString, body, timeoutMs) {
         reject(new Error(typeof detail === 'string' ? detail : JSON.stringify(detail)));
       });
     });
-    req.setTimeout(timeoutMs, () => req.destroy(new Error(`Transkrip melebihi batas waktu ${Math.round(timeoutMs / 60000)} menit`)));
+    req.setTimeout(timeoutMs, () => req.destroy(new Error(`The transcript exceeded the ${Math.round(timeoutMs / 60000)} minutes limit`)));
     req.on('error', (err) => {
       if (err.code === 'ECONNREFUSED') {
-        return reject(new Error(`Layanan transkrip tidak aktif di ${API_URL}. Jalankan API Video Extractor lalu coba lagi.`));
+        return reject(new Error(`The transcript service is not running at ${API_URL}. Start the Video Extractor API and try again.`));
       }
       reject(err);
     });
@@ -78,7 +81,7 @@ function isTranscribeApiReachable(timeoutMs = 3000) {
   });
 }
 
-const unreachableMessage = () => `Layanan transkrip tidak aktif di ${API_URL}. Jalankan API Video Extractor lalu coba lagi.`;
+const unreachableMessage = () => `The transcript service is not running at ${API_URL}. Start the Video Extractor API and try again.`;
 
 function excerpt(text) {
   const clean = (text || '').replace(/\s+/g, ' ').trim();
@@ -114,7 +117,7 @@ async function queueMediaTranscription(media_id) {
   (async () => {
     try {
       const abs = resolveUploadPath(media.file_path);
-      if (!abs || !fs.existsSync(abs)) throw new Error('File video tidak ditemukan di server');
+      if (!abs || !fs.existsSync(abs)) throw new Error('The video file was not found on the server');
 
       const result = await transcribeLocalFile(abs);
       const segments = Array.isArray(result.segments) ? result.segments : [];
@@ -130,7 +133,7 @@ async function queueMediaTranscription(media_id) {
         transcript_segments: segments,
         transcript_language: result.language || DEFAULT_LANGUAGE,
         duration_seconds: result.duration || null,
-        ai_generated_description: text ? `Transkrip otomatis: ${excerpt(text)}` : 'Tidak ada ucapan yang terdeteksi pada video ini.'
+        ai_generated_description: text ? `Automatic transcript: ${excerpt(text)}` : 'No speech was detected in this video.'
       });
       // The ONE automatic trigger of the local AI (Gemma): a video's transcript just finished. A failure here must
       // never turn a finished transcript into a failed one.
@@ -165,6 +168,8 @@ async function resumeInterruptedTranscriptions() {
 }
 
 module.exports = {
+  DEFAULT_TIMEOUT_MS,
+  TIMEOUT_MS,
   transcribeLocalFile,
   isTranscribeApiReachable,
   unreachableMessage,

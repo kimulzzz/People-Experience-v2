@@ -43,7 +43,7 @@ async function getPublicSettings() {
 async function updateSettings(input = {}) {
   const current = await storage.getEmailSettings();
   const provider = String(input.provider || current.provider || 'GMAIL').toUpperCase();
-  if (!Object.prototype.hasOwnProperty.call(PROVIDERS, provider)) throw new SettingsError('Provider harus GMAIL atau SMTP.');
+  if (!Object.prototype.hasOwnProperty.call(PROVIDERS, provider)) throw new SettingsError('Provider must be GMAIL or SMTP.');
 
   const next = { ...current, provider, enabled: input.enabled !== undefined ? !!input.enabled : !!current.enabled };
   next.smtp_user = input.smtp_user !== undefined ? String(input.smtp_user).trim() : current.smtp_user;
@@ -56,25 +56,25 @@ async function updateSettings(input = {}) {
     next.smtp_host = input.smtp_host !== undefined ? String(input.smtp_host).trim() : current.smtp_host;
     next.smtp_port = input.smtp_port !== undefined ? parseInt(input.smtp_port, 10) : current.smtp_port;
     next.smtp_secure = input.smtp_secure !== undefined ? !!input.smtp_secure : !!current.smtp_secure;
-    if (!Number.isInteger(next.smtp_port) || next.smtp_port < 1 || next.smtp_port > 65535) throw new SettingsError('Port harus angka 1 - 65535.');
+    if (!Number.isInteger(next.smtp_port) || next.smtp_port < 1 || next.smtp_port > 65535) throw new SettingsError('Port must be a number between 1 and 65535.');
   }
 
   if (next.smtp_user.length > 200 || next.from_name.length > 200 || next.from_email.length > 200 || (next.smtp_host || '').length > 200) {
-    throw new SettingsError('Isian terlalu panjang (maksimal 200 karakter).');
+    throw new SettingsError('A field is too long (maximum 200 characters).');
   }
-  if (next.from_email && !EMAIL_RE.test(next.from_email)) throw new SettingsError('Format "Email Pengirim" tidak valid.');
-  if (provider === 'GMAIL' && next.smtp_user && !EMAIL_RE.test(next.smtp_user)) throw new SettingsError('Username Gmail harus berupa alamat email.');
+  if (next.from_email && !EMAIL_RE.test(next.from_email)) throw new SettingsError('The "Sender Email" format is not valid.');
+  if (provider === 'GMAIL' && next.smtp_user && !EMAIL_RE.test(next.smtp_user)) throw new SettingsError('The Gmail username must be an email address.');
 
   if (input.clear_password) next.smtp_password_enc = '';
   else if (typeof input.smtp_password === 'string' && input.smtp_password.length > 0) {
-    if (input.smtp_password.length > 200) throw new SettingsError('Password terlalu panjang.');
+    if (input.smtp_password.length > 200) throw new SettingsError('Password is too long.');
     next.smtp_password_enc = encrypt(input.smtp_password);
   }
 
   if (next.enabled) {
-    if (!next.smtp_host) throw new SettingsError('SMTP Host wajib diisi.');
-    if (!next.smtp_user) throw new SettingsError('Username / Email akun pengirim wajib diisi.');
-    if (!next.smtp_password_enc) throw new SettingsError('Password (untuk Gmail: App Password) wajib diisi sebelum email diaktifkan.');
+    if (!next.smtp_host) throw new SettingsError('SMTP Host is required.');
+    if (!next.smtp_user) throw new SettingsError('The sender account Username / Email is required.');
+    if (!next.smtp_password_enc) throw new SettingsError('A password (for Gmail: an App Password) is required before email can be enabled.');
   }
   await storage.saveEmailSettings(next);
   return getPublicSettings();
@@ -119,23 +119,23 @@ function explainError(err, provider) {
   const code = err && err.code;
   if (code === 'EAUTH') {
     return provider === 'GMAIL'
-      ? 'Login ditolak oleh Gmail. Gmail tidak menerima password akun biasa — aktifkan Verifikasi 2 Langkah lalu buat "App Password" (16 karakter) dan isi di kolom password.'
-      : 'Login ditolak oleh server email (username/password salah).';
+      ? 'Login was rejected by Gmail. Gmail does not accept a normal account password — turn on 2-Step Verification, create an "App Password" (16 characters) and enter it in the password field.'
+      : 'Login was rejected by the email server (wrong username/password).';
   }
   if (code === 'ECONNECTION' || code === 'ETIMEDOUT' || code === 'ESOCKET' || code === 'ENOTFOUND') {
-    return `Tidak dapat terhubung ke server email (${err.message}). Periksa koneksi internet / host / port.`;
+    return `Could not connect to the email server (${err.message}). Check the network connection / host / port.`;
   }
-  return err && err.message ? err.message : 'Gagal mengirim email.';
+  return err && err.message ? err.message : 'Failed to send the email.';
 }
 
 async function sendTestEmail(to) {
   const s = await storage.getEmailSettings();
   const recipient = String(to || s.from_email || s.smtp_user || '').trim();
-  if (!EMAIL_RE.test(recipient)) throw new SettingsError('Alamat email tujuan test tidak valid.');
+  if (!EMAIL_RE.test(recipient)) throw new SettingsError('The test recipient email address is not valid.');
 
   const t = await buildTransport();
   if (!t.transporter) {
-    return { sent: false, error: 'Email belum dikonfigurasi atau belum diaktifkan. Isi akun pengirim lalu aktifkan terlebih dahulu.' };
+    return { sent: false, error: 'Email is not configured or not enabled yet. Fill in the sender account and enable it first.' };
   }
   try {
     const info = await t.transporter.sendMail({

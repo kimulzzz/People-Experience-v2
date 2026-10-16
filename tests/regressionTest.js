@@ -137,7 +137,7 @@ async function runRegressionSuite() {
 
     const jan = trends[0];
     assert.strictEqual(jan.month_code, '2026-01');
-    assert.strictEqual(jan.month_name, 'Januari');
+    assert.strictEqual(jan.month_name, 'January');
     assert(jan.px_index > 0 || jan.pe_index > 0, 'Jan PX Index must be > 0');
     assert(jan.survey_index > 0, 'Jan Survey Index must be > 0');
     assert(jan.outcome_index > 0, 'Jan Outcome Index must be > 0');
@@ -1059,7 +1059,7 @@ async function runRegressionSuite() {
     assert.strictEqual(res.status, 200);
     const data = await res.json();
     assert.strictEqual(data.trends.length, 1, 'A single-month range must return exactly one point');
-    assert.strictEqual(data.trends[0].month_name, 'Mei');
+    assert.strictEqual(data.trends[0].month_name, 'May');
   });
 
   await runTest('[NEGATIVE] endMonth is hard-clamped to the last complete month even if a later month is requested', async () => {
@@ -1519,7 +1519,7 @@ async function runRegressionSuite() {
     });
     assert.ok(res.status >= 400 && res.status < 500, `Expected a 4xx rejection, got ${res.status}`);
     const body = await res.json();
-    assert.ok(/sudah/i.test(body.error || ''), `Expected the "sudah tercatat" message, got: ${body.error}`);
+    assert.ok(/already/i.test(body.error || ''), `Expected the "already checked in" message, got: ${body.error}`);
   });
 
   await runTest('[NEGATIVE] Lookups of non-existent records return clean 404/empty results on either backend (no crash, no 500)', async () => {
@@ -1742,7 +1742,7 @@ async function runRegressionSuite() {
     const body = await res.json();
     assert.strictEqual(res.status, 502);
     assert.strictEqual(body.sent, false);
-    assert.ok(body.error && /belum dikonfigurasi/i.test(body.error));
+    assert.ok(body.error && /not configured/i.test(body.error));
   });
 
   await runTest('[NEGATIVE] Invalid email settings are rejected with 400 (provider, port, address format, enabling without a password)', async () => {
@@ -1832,7 +1832,7 @@ async function runRegressionSuite() {
       assert.strictEqual(later.expected_period, '2026-09');
       const jan = findIn(await remind({ reference_date: '2027-01-12', dry_run: true }), id);
       assert.strictEqual(jan.expected_period, '2026-12');
-      assert.strictEqual(jan.expected_period_label, 'Desember 2026');
+      assert.strictEqual(jan.expected_period_label, 'December 2026');
     } finally { await deleteMetric(id); }
   });
 
@@ -2000,11 +2000,11 @@ async function runRegressionSuite() {
     try {
       const failed = await waitSettled(media.media_id);
       assert.strictEqual(failed.transcript_status, 'FAILED', 'API is down → first attempt FAILED');
-      assert.ok(/tidak aktif/i.test(failed.transcript_error));
+      assert.ok(/not running/i.test(failed.transcript_error));
 
       const down = await fetch(`${BASE_URL}/api/media/${media.media_id}/transcribe`, { method: 'POST' });
       assert.strictEqual(down.status, 503, 'Retry while the service is down must say so immediately');
-      assert.ok(/tidak aktif/i.test((await down.json()).error));
+      assert.ok(/not running/i.test((await down.json()).error));
       assert.strictEqual((await getMedia(media.media_id)).transcript_status, 'FAILED', 'A refused retry must not change the state');
 
       fake = await startFakeTranscribeApi(mode);
@@ -2532,7 +2532,7 @@ async function runRegressionSuite() {
         if (Array.isArray(v)) return v.forEach(collect);
         if (v && typeof v === 'object') {
           for (const [k, x] of Object.entries(v)) {
-            if (['employee_name', 'participant_name', 'candidate_name'].includes(k) && typeof x === 'string' && x.length >= 5 && x !== 'Responden') names.add(x);
+            if (['employee_name', 'participant_name', 'candidate_name'].includes(k) && typeof x === 'string' && x.length >= 5 && x !== 'Respondent') names.add(x);
             else collect(x);
           }
         }
@@ -2805,7 +2805,7 @@ async function runRegressionSuite() {
       assert.strictEqual(listed.total_attendees, ev.attendances.length, 'list counts follow the same scope');
       const names = new Set();
       [...(await aj('/api/metrics/8/detail?period=YTD')).responses, ...(await aj('/api/metrics/5/detail?period=YTD')).questions.flatMap(q => q.verbatim_samples || [])]
-        .forEach(r => { if (typeof r.employee_name === 'string' && r.employee_name.length >= 5 && r.employee_name !== 'Responden') names.add(r.employee_name); });
+        .forEach(r => { if (typeof r.employee_name === 'string' && r.employee_name.length >= 5 && r.employee_name !== 'Respondent') names.add(r.employee_name); });
       adm.attendances.forEach(a => { if (a.employee_name && a.employee_name.length >= 5) names.add(a.employee_name); });
       assert.ok(names.size > 3);
       const payload = [await (await uget(u, '/api/metrics/8/detail?period=YTD')).text(), await (await uget(u, '/api/metrics/5/detail?period=YTD')).text(),
@@ -3066,9 +3066,9 @@ async function runRegressionSuite() {
         const mine = hist.filter(h => h.metric_id === P && h.uploaded_by.includes(picUser.username));
         assert.ok(mine.length >= 2, 'uploaded_by records the login account');
         const log = await aj('/api/admin/audit-log?limit=100');
-        const entry = log.find(e => e.action === 'SURVEY_UPLOAD' && e.username === picUser.username && e.target.includes(`metrik ${P};`));
+        const entry = log.find(e => e.action === 'SURVEY_UPLOAD' && e.username === picUser.username && e.target.includes(`metric ${P};`));
         assert.ok(entry, 'SURVEY_UPLOAD audited');
-        assert.ok(/1 baris valid/.test(entry.target));
+        assert.ok(/1 valid rows/.test(entry.target));
         const logText = JSON.stringify(log);
         for (const secret of ['Nama Audit Rahasia', 'Nama File Rahasia', 'rahasia@cimbniaga', `${nipTag}1`]) assert.ok(!logText.includes(secret), `audit log must not hold respondent data (${secret})`);
       });
@@ -3123,7 +3123,7 @@ async function runRegressionSuite() {
         const body = await res.json();
         assert.strictEqual(body.valid_rows_count, 1);
         assert.strictEqual(body.invalid_rows_count, 2);
-        assert.ok(body.errors.some(e => /NIP/.test(e.reason)) && body.errors.some(e => /rentang/.test(e.reason)));
+        assert.ok(body.errors.some(e => /NIP/.test(e.reason)) && body.errors.some(e => /range/.test(e.reason)));
         assert.strictEqual((await aj(`/api/surveys/responses/${P}`)).length, pBefore + 1);
         const allBad = await post36(picUser, { metric_id: String(P), csvText: csv36([`,Tanpa NIP,t@cimbniaga.co.id,${A},${divX},${day},4`]) });
         assert.strictEqual((await allBad.json()).success, false);
@@ -3467,7 +3467,7 @@ async function runRegressionSuite() {
           const body = await up.json();
           assert.strictEqual(body.valid_rows_count, 1); assert.strictEqual(body.calculation, undefined, 'no bankwide calculation for a PIC');
           const log = await aj('/api/admin/audit-log?limit=100');
-          assert.ok(log.some(e => e.action === 'SURVEY_UPLOAD' && e.username === picUser.username && e.target.includes(`metrik ${id};`)), 'audited');
+          assert.ok(log.some(e => e.action === 'SURVEY_UPLOAD' && e.username === picUser.username && e.target.includes(`metric ${id};`)), 'audited');
           assert.strictEqual((await uget(picUser, `/api/surveys/evidence?metric_id=${id}&period=YTD`)).status, 200);
           // a non-PIC User: 403 everywhere
           assert.strictEqual((await csvFor(plainUser, id)).status, 403);
@@ -3610,7 +3610,7 @@ async function runRegressionSuite() {
           const cookie2 = ck(await post('/api/auth/login', { username: u.username, password: mid }));
           const r = await post('/api/auth/change-password', { current_password: mid, new_password: DEFAULT_PW }, cookie2);
           assert.strictEqual(r.status, 400);
-          assert.ok(/awal standar/i.test((await r.json()).error));
+          assert.ok(/standard initial/i.test((await r.json()).error));
           assert.strictEqual((await post('/api/auth/login', { username: u.username, password: mid })).status, 200, 'password unchanged');
         });
 
@@ -3927,7 +3927,7 @@ async function runRegressionSuite() {
           const media = await uploadVideo(TEXT_SHORT);
           const done = await waitFor(media.media_id, m => m.summary_status);
           assert.strictEqual(done.summary_status, 'INSUFFICIENT');
-          assert.ok(/belum cukup/i.test(done.summary_error));
+          assert.ok(/not long enough/i.test(done.summary_error));
           await sleep38(500);
           assert.strictEqual(oll.calls.length, 0);
         });
@@ -3978,7 +3978,7 @@ async function runRegressionSuite() {
           assert.strictEqual(file.status, 200);
           const zip = await require('jszip').loadAsync(Buffer.from(await file.arrayBuffer()));
           const xml = await zip.file('ppt/slides/slide5.xml').async('string');
-          assert.ok(xml.includes('Ringkasan AI:'), 'slide 5 must carry the video summary');
+          assert.ok(xml.includes('AI summary:'), 'slide 5 must carry the video summary');
           assert.ok(/[Pp]rogram mentoring/.test(xml), 'summary text of the video');
           assert.ok(!/\u00e2\u20ac|\u00c3/.test(xml), 'no mojibake in slide 5');
         });
@@ -3993,6 +3993,151 @@ async function runRegressionSuite() {
         await new Promise(r => fakeTranscribe.close(r));
       }
     }
+  }
+
+  // --- MODULE 40 (v2.30.0): ENGLISH UI TEXT FROM THE BACKEND, ENGLISH OPTION LABELS, 120-MINUTE LIMITS ---
+  console.log('\n📦 MODULE 40: English backend messages & option labels, month names, 120-minute AI/transcript limits (Positive & Negative Testing)');
+  {
+    const seed40 = require('../server/db/seedData');
+    const INDONESIAN = /\b(tidak|wajib|salah|harus|ditemukan|silakan|gagal|berhasil|hanya|sudah|belum|diisi|melebihi|terlalu|tersebut)\b/i;
+    const call40 = async (method, p, body) => {
+      const res = await fetch(`${BASE_URL}${p}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+      let json = null; try { json = await res.json(); } catch (_) { /* no body */ }
+      return { status: res.status, body: json };
+    };
+
+    await runTest('[POSITIVE] The option catalogs in the database no longer carry an Indonesian default label (values untouched)', async () => {
+      const s = await (await fetch(`${BASE_URL}/api/settings`)).json();
+      for (const key of Object.keys(seed40.LEGACY_OPTION_LABELS)) {
+        assert.ok(Array.isArray(s[key]) && s[key].length > 0, `${key} must be served from the database`);
+        for (const opt of s[key]) {
+          assert.notStrictEqual(opt.label, seed40.LEGACY_OPTION_LABELS[key][opt.value], `${key}.${opt.value} still has the old Indonesian label`);
+        }
+      }
+      // the logic-driving values are exactly the ones the code expects
+      assert.deepStrictEqual(s.metric_types.map(o => o.value), ['SURVEY', 'OUTCOME']);
+      assert.deepStrictEqual(s.update_frequencies.map(o => o.value), ['MONTHLY', 'ONE_TIME_ANNUAL']);
+    });
+
+    await runTest('[POSITIVE] The label top-up replaces ONLY a label that is still exactly the old Indonesian default; an admin edit and every value stay', async () => {
+      const key = 'update_frequencies';
+      const fresh = seed40.initialAppSettings[key].value;
+      const legacy = seed40.LEGACY_OPTION_LABELS[key];
+      const upgraded = seed40.upgradeLegacyOptionLabels(key, [
+        { value: 'MONTHLY', label: legacy.MONTHLY },                 // old default -> replaced
+        { value: 'ONE_TIME_ANNUAL', label: 'My own wording' }         // admin edit -> kept
+      ]);
+      assert.deepStrictEqual(upgraded, [
+        { value: 'MONTHLY', label: fresh.find(o => o.value === 'MONTHLY').label },
+        { value: 'ONE_TIME_ANNUAL', label: 'My own wording' }
+      ]);
+      assert.strictEqual(seed40.upgradeLegacyOptionLabels(key, fresh), null, 'already English: nothing to change');
+      assert.strictEqual(seed40.upgradeLegacyOptionLabels(key, [{ value: 'MONTHLY', label: `${legacy.MONTHLY} ` }]), null, 'a near-miss (admin edit) is not touched');
+      assert.strictEqual(seed40.upgradeLegacyOptionLabels('event_types', [{ value: 'HYBRID', label: 'x' }]), null, 'catalogs outside the list are never touched');
+    });
+
+    await runTest('[NEGATIVE] The label top-up ignores garbage input without throwing', async () => {
+      for (const bad of [null, undefined, 'text', 42, {}, [null], [{ value: 'MONTHLY' }]]) {
+        assert.doesNotThrow(() => seed40.upgradeLegacyOptionLabels('update_frequencies', bad));
+      }
+      assert.strictEqual(seed40.upgradeLegacyOptionLabels('does_not_exist', [{ value: 'a', label: 'b' }]), null);
+    });
+
+    await runTest('[POSITIVE] month_name is the English month name (the trend X-axis abbreviations are derived client-side from month_code)', async () => {
+      const first = (await (await fetch(`${BASE_URL}/api/metrics/trends?mode=MTD&startMonth=01&endMonth=01`)).json()).trends[0];
+      assert.strictEqual(first.month_name, 'January');
+      assert.ok(/^\d{4}-01$/.test(first.month_code));
+      const dec = await (await fetch(`${BASE_URL}/api/metrics/trends?mode=MTD&startYear=2025&startMonth=12&endYear=2025&endMonth=12`)).json();
+      assert.strictEqual(dec.trends[0].month_name, 'December');
+    });
+
+    await runTest('[NEGATIVE] Common error responses are English, with no Indonesian text left', async () => {
+      const probes = [
+        await call40('POST', '/api/auth/login', {}),
+        await call40('PUT', '/api/admin/settings/px_index_target', { value: 'abc' }),
+        await call40('PUT', '/api/admin/settings/no_such_setting', { value: 1 }),
+        await call40('PUT', '/api/admin/settings/metric_types', { value: [{ value: 'NEW', label: 'New' }] }),
+        await call40('POST', '/api/surveys/upload', {}),
+        await call40('POST', '/api/admin/survey-questions/99999', { questions: [] }),
+        await call40('POST', '/api/media/does-not-exist/summarize')
+      ];
+      const loginBad = await realFetch(`${BASE_URL}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'nobody-rt40', password: 'WrongPassword123' }) });
+      probes.push({ status: loginBad.status, body: await loginBad.json() });
+      const anon = await realFetch(`${BASE_URL}/api/metrics/calculate`);
+      probes.push({ status: anon.status, body: await anon.json() });
+      for (const p of probes) {
+        assert.ok(p.status >= 400 && p.status < 500, `expected a 4xx, got ${p.status}: ${JSON.stringify(p.body)}`);
+        const text = String(p.body && p.body.error);
+        assert.ok(text && text !== 'undefined', 'an error message is returned');
+        assert.ok(!INDONESIAN.test(text), `Indonesian text left in: ${text}`);
+      }
+    });
+
+    await runTest('[POSITIVE] The transcript and the Gemma summary job limits default to 120 minutes (env can still override)', async () => {
+      const MIN120 = 120 * 60 * 1000;
+      assert.strictEqual(MIN120, 7200000);
+      const ai = require('../server/services/localAiService');
+      const tr = require('../server/services/transcribeService');
+      const sm = require('../server/services/mediaSummaryService');
+      assert.strictEqual(ai.DEFAULT_AI_TIMEOUT_MS, MIN120);
+      assert.strictEqual(tr.DEFAULT_TIMEOUT_MS, MIN120);
+      if (!process.env.OLLAMA_TIMEOUT_MS) assert.strictEqual(ai.OLLAMA_TIMEOUT_MS, MIN120);
+      if (!process.env.TRANSCRIBE_TIMEOUT_MS) assert.strictEqual(tr.TIMEOUT_MS, MIN120);
+      if (!process.env.SUMMARY_JOB_TIMEOUT_MS) assert.strictEqual(sm.SUMMARY_JOB_TIMEOUT_MS, MIN120);
+    });
+
+    // Public (no-login) pages: the public mode must be known on the very first render, and the Header must survive user === null.
+    const fs40 = require('fs');
+    const path40 = require('path');
+    const readSrc40 = (...p) => fs40.readFileSync(path40.join(__dirname, '..', ...p), 'utf8');
+    const loadPublicRoute40 = async () => {
+      const code = readSrc40('src', 'utils', 'publicRoute.js');
+      return import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+    };
+
+    await runTest('[POSITIVE] Public mode is computed synchronously from the URL (?checkin= / ?survey=), so the first render is already the public form', async () => {
+      const pr = await loadPublicRoute40();
+      assert.deepStrictEqual(pr.getPublicCodes('?checkin=PERSPEKTIF-2024-Q1'), { checkin: 'PERSPEKTIF-2024-Q1', survey: null });
+      assert.deepStrictEqual(pr.getPublicCodes('?survey=ABC'), { checkin: null, survey: 'ABC' });
+      assert.strictEqual(pr.isPublicRoute('?checkin=X'), true);
+      assert.strictEqual(pr.isPublicRoute('?survey=X'), true);
+      const app = readSrc40('src', 'App.jsx');
+      assert.ok(/useState\(\(\) => getPublicCodes\(\)\.checkin\)/.test(app) && /useState\(\(\) => getPublicCodes\(\)\.survey\)/.test(app), 'public codes must be state initialisers, not set in an effect');
+      assert.ok(!/setPublicCheckinCode\(checkin\)|setPublicSurveyCode\(survey\)/.test(app), 'public codes must not be set from an effect after the first render');
+      assert.ok(/isPublicRoute\(\)/.test(app), 'App() decides public mode through isPublicRoute');
+    });
+
+    await runTest('[NEGATIVE] Normal URLs and empty/unrelated parameters are NOT public pages (the login gate stays in force)', async () => {
+      const pr = await loadPublicRoute40();
+      for (const s of ['', '?', '?checkin=', '?survey=', '?foo=bar', '?tab=checkin']) {
+        assert.strictEqual(pr.isPublicRoute(s), false, `"${s}" must not be public`);
+      }
+    });
+
+    await runTest('[NEGATIVE] Header never reads user.* unguarded in a way that crashes when user is null (public-mode regression of v2.27.0)', async () => {
+      const header = readSrc40('src', 'components', 'Header.jsx');
+      // allowed only inside the `{user && (...)}` block; every such line must come after that block starts
+      const blockStart = header.split(/\r?\n/).findIndex(l => /\{user && \(/.test(l));
+      assert.ok(blockStart >= 0, 'the user card must be wrapped in {user && (...)}');
+      const lines = header.split(/\r?\n/);
+      lines.forEach((l, i) => {
+        if (/(?<![?\w.])user\.(scopes|full_name|username|role)/.test(l)) {
+          assert.ok(i > blockStart, `Header.jsx line ${i + 1} reads user.* outside the {user && ...} guard: ${l.trim()}`);
+        }
+      });
+      assert.ok(/user\?\.scopes/.test(header), 'userScopes must use user?.scopes');
+    });
+
+    await runTest('[POSITIVE] Leftover Indonesian texts are English: username rule, e-mail password length, ESS description, PPT documentation label', async () => {
+      const src = (...p) => readSrc40('server', ...p);
+      assert.ok(!/Username\/NIP 3-50 karakter/.test(src('services', 'authService.js')));
+      assert.ok(!/Password terlalu panjang/.test(src('services', 'emailSettingsService.js')));
+      assert.ok(!/Data ESS merupakan/.test(src('services', 'calculationEngine.js')));
+      const ppt = src('services', 'pptGenerator.js');
+      assert.ok(!/\[ Dokumentasi #/.test(ppt) && /\[ Documentation #/.test(ppt));
+      assert.ok(/replace\(\/\^\(Documentation\|Dokumentasi\)\\s\+\/i, ''\)/.test(ppt), 'PPT strips the old caption prefix like the UI does');
+      assert.ok(!/`Dokumentasi \$\{/.test(src('server.js')), 'default media caption must not be Indonesian');
+    });
   }
 
   // --- SUMMARY ---
