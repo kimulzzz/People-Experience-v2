@@ -4140,6 +4140,599 @@ async function runRegressionSuite() {
     });
   }
 
+  // --- MODULE 41 (v2.30.1): A FINISHED VIDEO FILE IS RENAMED TO ITS ORIGINAL UPLOAD NAME ---
+  // Uploads are stored under a random temporary name (media-<time>-<random>.<ext>). When the whole pipeline of a video is
+  // over (transcript + AI summary done, or a final failure) the physical file gets the name it was uploaded with and
+  // px_media.file_path follows. Uses real files in server/uploads (every test file carries a unique stamp and is removed),
+  // never the real Gemma / Video Extractor (a second backend with in-process fakes). SQL backend only for the in-process part.
+  console.log('\n📦 MODULE 41: Video file renamed to its original upload name after the pipeline (Positive & Negative Testing)');
+  {
+    const fs41 = require('fs');
+    const path41 = require('path');
+    const st41 = require('../server/db/storage');
+    const fileSvc = require('../server/services/mediaFileService');
+    const UP = fileSvc.UPLOADS_DIR;
+    const EVENT = 'ev-perspektif-2024-q1';
+    const stamp41 = Date.now().toString(36);
+    const TINY_PNG41 = TINY_PNG;
+    const sleep41 = ms => new Promise(r => setTimeout(r, ms));
+    const webPath = name => `/uploads/${encodeURIComponent(name)}`;
+
+    await runTest('[POSITIVE] Name rules: basename only, illegal Windows characters removed, reserved names, dots/spaces trimmed, 150-character stem, extension kept or taken from the temporary name', async () => {
+      const S = (name, cur = 'media-1-abc.mp4') => fileSvc.sanitizeVideoFileName(name, cur);
+      assert.deepStrictEqual(S('Rekaman Tim.mp4'), { stem: 'Rekaman Tim', ext: '.mp4' });
+      assert.deepStrictEqual(S('../../x.mp4'), { stem: 'x', ext: '.mp4' });
+      assert.deepStrictEqual(S('C:\\Users\\me\\video final.MOV'), { stem: 'video final', ext: '.MOV' });
+      assert.deepStrictEqual(S('a:b?<c>"d"|e*.mp4'), { stem: 'abcde', ext: '.mp4' });
+      assert.deepStrictEqual(S('CON.mp4'), { stem: '_CON', ext: '.mp4' });
+      assert.deepStrictEqual(S('nul.txt.mp4'), { stem: '_nul.txt', ext: '.mp4' });
+      assert.deepStrictEqual(S('LPT1.mp4'), { stem: '_LPT1', ext: '.mp4' });
+      assert.deepStrictEqual(S('  ..hidden video.. .mp4'), { stem: 'hidden video', ext: '.mp4' });
+      assert.deepStrictEqual(S("Tim 'Q1' (final) ünggul #1.webm"), { stem: "Tim 'Q1' (final) ünggul #1", ext: '.webm' });
+      assert.deepStrictEqual(S('bad\u0000na\u202eme\n.mp4'), { stem: 'badname', ext: '.mp4' }, 'control and bidi characters are removed');
+      const long = fileSvc.sanitizeVideoFileName(`${'a'.repeat(400)}.mp4`, 'media-1-abc.mp4');
+      assert.strictEqual(long.stem.length, 150);
+      assert.strictEqual(long.ext, '.mp4');
+      const cjk = fileSvc.sanitizeVideoFileName(`${'\u4e2d'.repeat(300)}.mp4`, 'media-1-abc.mp4');
+      assert.ok(`/uploads/${encodeURIComponent(`${cjk.stem} (999)${cjk.ext}`)}`.length <= 480, 'the URL-encoded path must fit the 500-character column');
+      // an unknown / dangerous extension is never kept: the temporary name's video extension is appended
+      assert.deepStrictEqual(S('clip.exe'), { stem: 'clip.exe', ext: '.mp4' });
+      assert.deepStrictEqual(S('page.html'), { stem: 'page.html', ext: '.mp4' });
+      // no known video extension anywhere -> no rename at all (a final name always ends in a video extension)
+      assert.strictEqual(S('noext', 'media-1-abc'), null);
+      assert.strictEqual(S('evil.html', 'media-1-abc'), null);
+      for (const name of ['evil.html', 'clip.exe', 'a.svg', 'x.js', 'a.html.mp4', 'a.mp4.html', 'b.exe.', 'c.php.webm']) {
+        const r = S(name);
+        assert.ok(r && fileSvc.VIDEO_EXTENSIONS.has(r.ext.toLowerCase()), `${name} -> ${JSON.stringify(r)} must end in a video extension`);
+      }
+    });
+
+    await runTest('[NEGATIVE] Names with nothing usable left are refused (the random name is kept): empty, dots only, only illegal characters, extension only', async () => {
+      for (const bad of ['', '...', '   ', '???.mp4', '<>:|.mp4', '.mp4', '..mp4', '/', '\\', null, undefined]) {
+        assert.strictEqual(fileSvc.sanitizeVideoFileName(bad, 'media-1-abc.mp4'), null, JSON.stringify(bad));
+      }
+    });
+
+    await runTest('[POSITIVE] A UTF-8 name that busboy read as latin1 is repaired; ASCII, already-correct and ambiguous names are never changed', async () => {
+      const original = 'Rekaman Tim Ünggul – Año 2026 🎬.mp4';
+      assert.strictEqual(fileSvc.repairUploadedName(Buffer.from(original, 'utf8').toString('latin1')), original);
+      assert.strictEqual(fileSvc.repairUploadedName('Rekaman Tim.mp4'), 'Rekaman Tim.mp4');
+      assert.strictEqual(fileSvc.repairUploadedName('Ünggul.mp4'), 'Ünggul.mp4', 'a correctly decoded name must stay');
+      assert.strictEqual(fileSvc.repairUploadedName(original), original, 'characters above U+00FF mean it was decoded correctly already');
+      assert.strictEqual(fileSvc.repairUploadedName('caf\u00e9 \u00ff.mp4'), 'caf\u00e9 \u00ff.mp4', 'invalid UTF-8 when re-read stays as it is');
+      assert.strictEqual(fileSvc.repairUploadedName(''), '');
+      assert.strictEqual(fileSvc.repairUploadedName(undefined), '');
+    });
+
+    await runTest('[POSITIVE] /uploads paths are URL-decoded safely; anything outside the uploads folder resolves to null', async () => {
+      assert.strictEqual(fileSvc.resolveUploadPath('/uploads/media-1-abc.mp4'), path41.join(UP, 'media-1-abc.mp4'));
+      assert.strictEqual(fileSvc.resolveUploadPath(webPath("My Video 'Q1' #1 ünggul.mp4")), path41.join(UP, "My Video 'Q1' #1 ünggul.mp4"));
+      assert.strictEqual(fileSvc.resolveUploadPath('/uploads/100%25 done.mp4'), path41.join(UP, '100% done.mp4'));
+      for (const bad of [null, '', '/etc/passwd', '/uploads/', '/uploads/..', '/uploads/%2e%2e', '/uploads/a%00b.mp4', 'uploads/x.mp4', '/other/x.mp4']) {
+        assert.strictEqual(fileSvc.resolveUploadPath(bad), null, String(bad));
+      }
+      // traversal tries are cut down to a file name inside the uploads folder - never outside it
+      for (const tricky of ['/uploads/../../.env', '/uploads/..%2f..%2fserver.js', '/uploads/..%5c..%5cserver.js']) {
+        const abs = fileSvc.resolveUploadPath(tricky);
+        assert.ok(abs === null || path41.dirname(abs) === UP, `${tricky} -> ${abs}`);
+      }
+    });
+
+    await runTest('[POSITIVE] Upload allowlist: only the LAST extension counts; html/exe/svg/js/no extension are not media; every allowed extension is a plain photo/video type', async () => {
+      const K = fileSvc.mediaKindOfName;
+      for (const n of ['a.mp4', 'a.MOV', 'a.webm', 'a.html.mp4', 'x y (1).mkv', 'ü.m4v']) assert.strictEqual(K(n), 'VIDEO', n);
+      for (const n of ['a.jpg', 'a.JPEG', 'a.png', 'a.gif', 'a.webp', 'a.bmp', 'a.avif', 'a.php.png']) assert.strictEqual(K(n), 'IMAGE', n);
+      for (const n of ['evil.html', 'clip.exe', 'a.svg', 'a.svgz', 'x.js', 'a.mp4.html', 'a.png.svg', 'noext', '', null, undefined, 'a.mp4 ', 'a.mp4.', '.mp4x', 'a.htm', 'a.xhtml', 'a.shtml', 'a.hta', 'a.bat']) assert.strictEqual(K(n), null, String(n));
+      for (const e of [...fileSvc.IMAGE_EXTENSIONS, ...fileSvc.VIDEO_EXTENSIONS]) assert.ok(!['.svg', '.html', '.htm', '.js', '.exe', '.xml'].includes(e), e);
+      assert.ok(![...fileSvc.IMAGE_EXTENSIONS].some(e => fileSvc.VIDEO_EXTENSIONS.has(e)), 'an extension is either photo or video');
+    });
+
+    await runTest('[POSITIVE] Frontend: MediaCard resets its "file not available" state when file_path changes (renamed video), and the photo/video element is re-created for the new path', async () => {
+      const src = fs41.readFileSync(path41.join(__dirname, '..', 'src', 'components', 'EventManager.jsx'), 'utf8');
+      const card = src.slice(src.indexOf('function MediaCard('), src.indexOf('function MediaCard(') + 6000);
+      assert.ok(/useEffect\(\(\) => \{ setBroken\(false\); \}, \[med\.file_path\]\)/.test(card), 'broken must be reset by an effect keyed on med.file_path');
+      assert.ok(/<video\s+key=\{med\.file_path\}/.test(card), '<video> must be keyed by file_path');
+      assert.ok(/<img\s+key=\{med\.file_path\}/.test(card), '<img> must be keyed by file_path');
+      // the error handlers still exist: a seed photo that was never on disk keeps showing "File not available" (its path never changes -> no reload loop)
+      assert.strictEqual((card.match(/onError=\{\(\) => setBroken\(true\)\}/g) || []).length, 2);
+      assert.ok(/File not available on the server/.test(card));
+      assert.ok(!/accept="image\/\*,video\/\*"/.test(src), 'the file picker must not offer SVG through image/*');
+    });
+
+    if (st41.backend !== 'sql') {
+      console.log('  ⏭️  SKIP: Module 41 file/pipeline tests need the SQL backend (they use the database directly and a second backend)');
+      await runTest('[POSITIVE] Both storage backends allow updateMedia to change file_path (and only through that whitelist)', async () => {
+        const read = f => fs41.readFileSync(path41.join(__dirname, '..', 'server', 'db', f), 'utf8');
+        assert.ok(/setIf\('file_path'/.test(read('sqlStorage.js')));
+        assert.ok(/'caption', 'file_path'/.test(read('jsonStorage.js')));
+      });
+    } else {
+      const http41 = require('http');
+      const { spawn } = require('child_process');
+      const crypto41 = require('crypto');
+      const auth41 = require('../server/services/authService');
+      const aiQueue41 = require('../server/services/aiQueue');
+      const ids = new Set();
+      const userIds = [];
+      let child = null;
+      let seq = 0;
+      const before = new Set(fs41.readdirSync(UP));
+
+      // A video record + a real (tiny) file under a temporary media-... name, in the given pipeline state.
+      const DONE_AI = { transcript_status: 'DONE', transcript: 'x', summary_status: 'DONE', summary_source: 'AI' };
+      const DONE_RULE = { transcript_status: 'DONE', transcript: 'x', summary_status: 'DONE', summary_source: 'RULE' };
+      const INSUFFICIENT = { transcript_status: 'DONE', transcript: 'x', summary_status: 'INSUFFICIENT' };
+      const SUMMARY_FAILED = { transcript_status: 'DONE', transcript: 'x', summary_status: 'FAILED' };
+      const TRANSCRIPT_FAILED = { transcript_status: 'FAILED' };
+      const mkVideo = async (name, state, { create = true, type = 'VIDEO', bytes } = {}) => {
+        const tmp = `media-rt41-${stamp41}-${++seq}.mp4`;
+        const abs = path41.join(UP, tmp);
+        if (create) fs41.writeFileSync(abs, bytes || `bytes of ${tmp}`);
+        const m = await st41.addMedia({ event_id: EVENT, file_name: name, file_path: `/uploads/${tmp}`, file_type: type, caption: 'rt41', transcript_status: 'DONE' });
+        ids.add(m.media_id);
+        await st41.updateMedia(m.media_id, state);
+        return { id: m.media_id, tmp, abs, content: bytes || `bytes of ${tmp}` };
+      };
+      const current = async v => await st41.getMediaById(v.id);
+      const diskPath = async v => fileSvc.resolveUploadPath((await current(v)).file_path);
+
+      try {
+        for (const [label, state] of [['summary DONE (AI)', DONE_AI], ['summary DONE (RULE)', DONE_RULE], ['summary INSUFFICIENT', INSUFFICIENT], ['summary FAILED', SUMMARY_FAILED], ['transcript FAILED', TRANSCRIPT_FAILED]]) {
+          await runTest(`[POSITIVE] Final state "${label}": the file is renamed to the original upload name, file_path follows (URL-encoded), content intact, served with 200`, async () => {
+            const name = `rt41-${stamp41} Video Tim (final) 'Q1' ünggul #${++seq}.mp4`;
+            const v = await mkVideo(name, state);
+            const r = await fileSvc.finalizeMediaFileName(v.id);
+            assert.strictEqual(r.renamed, true, JSON.stringify(r));
+            const m = await current(v);
+            assert.strictEqual(m.file_path, webPath(name));
+            assert.ok(!fs41.existsSync(v.abs), 'the temporary file must be gone');
+            assert.strictEqual(fs41.readFileSync(path41.join(UP, name), 'utf8'), v.content);
+            assert.strictEqual(await diskPath(v), path41.join(UP, name));
+            const served = await fetch(`${BASE_URL}${m.file_path}`);
+            assert.strictEqual(served.status, 200, 'the static route must serve spaces, quotes, # and unicode');
+            assert.strictEqual(await served.text(), v.content);
+          });
+        }
+
+        await runTest('[POSITIVE] Idempotent: a second call changes nothing', async () => {
+          const name = `rt41-${stamp41} idempotent.mp4`;
+          const v = await mkVideo(name, DONE_AI);
+          assert.strictEqual((await fileSvc.finalizeMediaFileName(v.id)).renamed, true);
+          const again = await fileSvc.finalizeMediaFileName(v.id);
+          assert.strictEqual(again.renamed, false);
+          assert.strictEqual(again.reason, 'already-named');
+          assert.strictEqual((await current(v)).file_path, webPath(name));
+          assert.ok(fs41.existsSync(path41.join(UP, name)));
+          assert.strictEqual(fs41.readdirSync(UP).filter(f => f.includes(`idempotent`) && f.includes(stamp41)).length, 1, 'no extra copy / suffix');
+        });
+
+        await runTest('[NEGATIVE] Never while the pipeline is not final: transcript PROCESSING, summary PROCESSING, summary not made yet (old video), photo, summary job queued/running', async () => {
+          const cases = [
+            ['transcript-processing', { transcript_status: 'PROCESSING' }, 'VIDEO'],
+            ['summary-processing', { transcript_status: 'DONE', transcript: 'x', summary_status: 'PROCESSING' }, 'VIDEO'],
+            ['old-video-no-summary', { transcript_status: 'DONE', transcript: 'x' }, 'VIDEO'],
+            ['no-transcript-status', { transcript_status: null }, 'VIDEO'],
+            ['photo', { transcript_status: null }, 'IMAGE']
+          ];
+          for (const [label, state, type] of cases) {
+            const v = await mkVideo(`rt41-${stamp41} ${label}.mp4`, state, { type });
+            const r = await fileSvc.finalizeMediaFileName(v.id);
+            assert.strictEqual(r.renamed, false, label);
+            assert.strictEqual((await current(v)).file_path, `/uploads/${v.tmp}`, label);
+            assert.ok(fs41.existsSync(v.abs), `${label}: file must stay`);
+          }
+          // a summary job that is queued or running in this process blocks the rename even when the record already says DONE
+          const v = await mkVideo(`rt41-${stamp41} queued.mp4`, DONE_AI);
+          let release;
+          assert.strictEqual(aiQueue41.enqueue(`media:${v.id}`, () => new Promise(r => { release = r; })), 'queued');
+          await sleep41(50);
+          const busy = await fileSvc.finalizeMediaFileName(v.id);
+          assert.deepStrictEqual([busy.renamed, busy.reason], [false, 'busy']);
+          assert.ok(fs41.existsSync(v.abs));
+          release();
+          await sleep41(100);
+          assert.strictEqual((await fileSvc.finalizeMediaFileName(v.id)).renamed, true, 'free again once the job is over');
+          // ... but the job's own last step may call it while it is still "running"
+          const w = await mkVideo(`rt41-${stamp41} self.mp4`, DONE_AI);
+          let done;
+          const finished = new Promise(r => { done = r; });
+          aiQueue41.enqueue(`media:${w.id}`, async () => { done(await fileSvc.finalizeMediaFileName(w.id, { ignoreSummaryJob: true })); });
+          assert.strictEqual((await finished).renamed, true);
+        });
+
+        await runTest('[POSITIVE] Name collision: an existing file is never overwritten - " (1)", " (2)" are added; two jobs finishing together get different names', async () => {
+          const base = `rt41-${stamp41} same name`;
+          fs41.writeFileSync(path41.join(UP, `${base}.mp4`), 'UNRELATED FILE');     // not a media record at all
+          const a = await mkVideo(`${base}.mp4`, DONE_AI);
+          const b = await mkVideo(`${base}.mp4`, DONE_RULE);
+          const c = await mkVideo(`${base}.mp4`, INSUFFICIENT);
+          const results = await Promise.all([a, b, c].map(v => fileSvc.finalizeMediaFileName(v.id)));
+          assert.ok(results.every(r => r.renamed), JSON.stringify(results));
+          const names = [];
+          for (const v of [a, b, c]) names.push(path41.basename(await diskPath(v)));
+          assert.deepStrictEqual([...names].sort(), [`${base} (1).mp4`, `${base} (2).mp4`, `${base} (3).mp4`]);
+          assert.strictEqual(fs41.readFileSync(path41.join(UP, `${base}.mp4`), 'utf8'), 'UNRELATED FILE', 'the existing file is untouched');
+          for (const v of [a, b, c]) assert.strictEqual(fs41.readFileSync(await diskPath(v), 'utf8'), v.content, 'each video keeps its own bytes');
+        });
+
+        await runTest('[NEGATIVE] A name another record already points to (its file missing) is not reused; case differences count as the same name on Windows', async () => {
+          const base = `rt41-${stamp41} claimed`;
+          const ghost = await mkVideo(`${base}.mp4`, DONE_AI, { create: false });   // record only, no file
+          await st41.updateMedia(ghost.id, { file_path: webPath(`${base}.mp4`) });
+          const v = await mkVideo(`${base}.mp4`, DONE_AI);
+          assert.strictEqual((await fileSvc.finalizeMediaFileName(v.id)).renamed, true);
+          assert.strictEqual(path41.basename(await diskPath(v)), `${base} (1).mp4`);
+          if (process.platform === 'win32') {
+            fs41.writeFileSync(path41.join(UP, `${base} CASE.mp4`), 'OTHER');
+            const w = await mkVideo(`${base} case.mp4`, DONE_AI);
+            assert.strictEqual((await fileSvc.finalizeMediaFileName(w.id)).renamed, true);
+            assert.strictEqual(fs41.readFileSync(path41.join(UP, `${base} CASE.mp4`), 'utf8'), 'OTHER');
+            assert.notStrictEqual(path41.basename(await diskPath(w)).toLowerCase(), `${base} case.mp4`.toLowerCase());
+          }
+        });
+
+        await runTest('[NEGATIVE] Dangerous original names stay inside server/uploads and follow the name rules (../../x.mp4, a:b?.mp4, CON.mp4, 400-character name, only-illegal name)', async () => {
+          const outside = path41.join(UP, '..', `rt41-${stamp41}-escape.mp4`);
+          const long = `rt41-${stamp41} ${'L'.repeat(400)}.mp4`;
+          const cases = [
+            [`../../rt41-${stamp41}-escape.mp4`, `rt41-${stamp41}-escape.mp4`],
+            [`a:b?${stamp41}.mp4`, `ab${stamp41}.mp4`],
+            [`..\\..\\rt41-${stamp41}-win.mp4`, `rt41-${stamp41}-win.mp4`],
+            ['CON.mp4', '_CON.mp4'],
+            [long, `${long.slice(0, 150)}.mp4`]
+          ];
+          for (const [original, expected] of cases) {
+            const v = await mkVideo(original, DONE_AI);
+            const r = await fileSvc.finalizeMediaFileName(v.id);
+            assert.strictEqual(r.renamed, true, `${original}: ${JSON.stringify(r)}`);
+            const abs = await diskPath(v);
+            assert.strictEqual(path41.dirname(abs), UP, `${original} must stay in the uploads folder`);
+            assert.strictEqual(path41.basename(abs), expected);
+            assert.ok(fs41.existsSync(abs));
+          }
+          assert.ok(!fs41.existsSync(outside), 'nothing may be written outside server/uploads');
+          const bad = await mkVideo('???.mp4', DONE_AI);
+          const rb = await fileSvc.finalizeMediaFileName(bad.id);
+          assert.deepStrictEqual([rb.renamed, rb.reason], [false, 'no-usable-name']);
+          assert.strictEqual((await current(bad)).file_path, `/uploads/${bad.tmp}`);
+        });
+
+        await runTest('[NEGATIVE] File missing on disk: no error, nothing renamed, the record is left as it was', async () => {
+          const v = await mkVideo(`rt41-${stamp41} missing.mp4`, DONE_AI, { create: false });
+          const r = await fileSvc.finalizeMediaFileName(v.id);
+          assert.deepStrictEqual([r.renamed, r.reason], [false, 'missing-file']);
+          assert.strictEqual((await current(v)).file_path, `/uploads/${v.tmp}`);
+          const none = await fileSvc.finalizeMediaFileName('med-does-not-exist');
+          assert.strictEqual(none.renamed, false);
+        });
+
+        await runTest('[NEGATIVE] Rename refused by the OS (EPERM/EACCES): warning only, file_path unchanged; a short EBUSY is retried once and then succeeds', async () => {
+          const warn = console.warn; console.warn = () => {};
+          const realRename = fs41.promises.rename;
+          try {
+            const v = await mkVideo(`rt41-${stamp41} locked.mp4`, DONE_AI);
+            fs41.promises.rename = async () => { const e = new Error('EPERM: operation not permitted'); e.code = 'EPERM'; throw e; };
+            const r = await fileSvc.finalizeMediaFileName(v.id);
+            assert.strictEqual(r.renamed, false);
+            assert.strictEqual((await current(v)).file_path, `/uploads/${v.tmp}`);
+            assert.ok(fs41.existsSync(v.abs));
+            let calls = 0;
+            fs41.promises.rename = async (a, b) => { if (++calls === 1) { const e = new Error('EBUSY'); e.code = 'EBUSY'; throw e; } return realRename(a, b); };
+            const retried = await fileSvc.finalizeMediaFileName(v.id);
+            assert.strictEqual(retried.renamed, true, JSON.stringify(retried));
+            assert.strictEqual(calls, 2);
+            assert.ok(fs41.existsSync(await diskPath(v)));
+          } finally { fs41.promises.rename = realRename; console.warn = warn; }
+        });
+
+        await runTest('[NEGATIVE] Database update fails after the rename: the file name is restored, the record never points to a missing file', async () => {
+          const warn = console.warn; console.warn = () => {};
+          const realUpdate = st41.updateMedia;
+          try {
+            const v = await mkVideo(`rt41-${stamp41} rollback.mp4`, DONE_AI);
+            st41.updateMedia = async () => { throw new Error('simulated database failure'); };
+            const r = await fileSvc.finalizeMediaFileName(v.id);
+            st41.updateMedia = realUpdate;
+            assert.strictEqual(r.renamed, false);
+            assert.ok(fs41.existsSync(v.abs), 'the temporary name is back');
+            assert.ok(!fs41.existsSync(path41.join(UP, `rt41-${stamp41} rollback.mp4`)));
+            assert.strictEqual((await current(v)).file_path, `/uploads/${v.tmp}`);
+            assert.strictEqual((await fileSvc.finalizeMediaFileName(v.id)).renamed, true, 'a later call works normally');
+          } finally { st41.updateMedia = realUpdate; console.warn = warn; }
+        });
+
+        await runTest('[POSITIVE] Deleting a renamed video removes the file under its NEW name; deleting a never-renamed one still works', async () => {
+          const v = await mkVideo(`rt41-${stamp41} to delete.mp4`, DONE_AI);
+          await fileSvc.finalizeMediaFileName(v.id);
+          const abs = await diskPath(v);
+          assert.ok(fs41.existsSync(abs));
+          const removed = await fileSvc.deleteMediaAndFile(v.id);
+          assert.ok(removed);
+          assert.ok(!fs41.existsSync(abs), 'renamed file removed');
+          assert.strictEqual(await st41.getMediaById(v.id), null);
+          const w = await mkVideo(`rt41-${stamp41} not renamed.mp4`, { transcript_status: 'PROCESSING' });
+          await fileSvc.deleteMediaAndFile(w.id);
+          assert.ok(!fs41.existsSync(w.abs));
+          assert.strictEqual(await fileSvc.deleteMediaAndFile('med-does-not-exist'), null);
+        });
+
+        // ------------------------------------------------------------ end-to-end through a second backend (fake Ollama + fake Video Extractor)
+        const EVENT_ID = EVENT;
+        const TEXT_ID = 'Hari ini kami membahas program mentoring untuk karyawan baru di kantor pusat. Setiap mentor mendampingi peserta selama enam bulan pertama, bertemu secara rutin, dan membantu mereka memahami budaya kerja. Peserta merasa lebih percaya diri setelah mengikuti sesi tersebut dan ingin program ini diteruskan.';
+        const GOOD_ID = 'RINGKASAN: Program mentoring untuk karyawan baru di kantor pusat dibahas. Mentor mendampingi peserta selama enam bulan pertama dan membantu mereka memahami budaya kerja. Peserta merasa lebih percaya diri dan ingin program diteruskan.\n\nPOIN:\n- Program mentoring untuk karyawan baru di kantor pusat.\n- Mentor mendampingi peserta dan bertemu secara rutin.\n- Peserta ingin program ini diteruskan.';
+        const oll = { calls: 0, delay: 0 };
+        const fakeOllama = http41.createServer((req, res) => {
+          req.resume();
+          req.on('end', () => {
+            oll.calls++;
+            res.setHeader('Content-Type', 'application/json');
+            setTimeout(() => res.end(JSON.stringify({ response: GOOD_ID, done: true })), oll.delay);
+          });
+        });
+        const tr = { text: TEXT_ID, fail: false, sources: [], delay: 0 };
+        const fakeTranscribe = http41.createServer((req, res) => {
+          const chunks = [];
+          req.on('data', c => chunks.push(c));
+          req.on('end', () => {
+            res.setHeader('Content-Type', 'application/json');
+            if (req.method === 'POST' && req.url === '/transcribe') {
+              let body = {}; try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch (_) { /* ignore */ }
+              tr.sources.push(body.source);
+              return setTimeout(() => {
+                if (tr.fail) { res.statusCode = 500; return res.end('{"detail":"boom"}'); }
+                res.end(JSON.stringify({ text: tr.text, language: 'id', duration: 30, segments: [{ start: 0, end: 30, text: tr.text }] }));
+              }, tr.delay);
+            }
+            res.end('{"status":"ok"}');
+          });
+        });
+        const listen = srv => new Promise(resolve => srv.listen(0, '127.0.0.1', () => resolve(srv.address().port)));
+        const ollamaPort = await listen(fakeOllama);
+        const trPort = await listen(fakeTranscribe);
+        const freePort = await (async () => { const s = http41.createServer(); const p = await listen(s); await new Promise(r => s.close(r)); return p; })();
+        const CHILD = `http://127.0.0.1:${freePort}`;
+        const pw = crypto41.randomBytes(9).toString('hex') + 'Aa1';
+        const cookieOf = r => (r.headers.getSetCookie() || []).map(c => c.split(';')[0]).find(c => c.startsWith('px_session='));
+        let cookie = null;
+        const api = (p, opts = {}) => realFetch(`${CHILD}${p}`, { ...opts, headers: { ...(opts.headers || {}), ...(cookie ? { Cookie: cookie } : {}) } });
+        const eventMedia = async id => (await (await api(`/api/events/${EVENT_ID}`)).json()).media.find(m => m.media_id === id);
+        const waitFor = async (id, pred, ms = 20000) => {
+          for (let i = 0; i < ms / 200; i++) { const m = await eventMedia(id); if (m && pred(m)) return m; await sleep41(200); }
+          return await eventMedia(id);
+        };
+        const upload = async (name, mime = 'video/mp4') => {
+          const form = new FormData();
+          form.append('mediaFile', new Blob([Buffer.from(`video bytes ${name}`)], { type: mime }), name);
+          const res = await api(`/api/events/${EVENT_ID}/media`, { method: 'POST', body: form });
+          const body = await res.json();
+          if (body.media) ids.add(body.media.media_id);
+          return { res, media: body.media };
+        };
+        const renamedTo = (m, name) => m.file_path === webPath(name);
+
+        // An interrupted summary exists BEFORE the second backend boots: with PX_DISABLE_RESUME=1 it must not be touched.
+        const interrupted = await mkVideo(`rt41-${stamp41} interrupted.mp4`, { transcript_status: 'DONE', transcript: TEXT_ID, transcript_language: 'id', summary_status: 'PROCESSING' });
+        // An "old" video: finished long ago, still under its random name.
+        const oldVideo = await mkVideo(`rt41-${stamp41} old video.mp4`, { transcript_status: 'DONE', transcript: TEXT_ID, transcript_language: 'id', summary_status: 'DONE', summary_source: 'AI', summary: 'x'.repeat(50), summary_points: ['a', 'b'] });
+        try {
+          const u = await st41.createUser({ username: `rt41a${stamp41}`, full_name: 'Regression 41', email: '', role: 'ADMIN', password_hash: await auth41.hashPassword(pw), must_change_password: false });
+          userIds.push(u.user_id);
+          child = spawn(process.execPath, [path41.join(__dirname, '..', 'server', 'server.js')], {
+            cwd: path41.join(__dirname, '..'),
+            env: { ...process.env, PORT: String(freePort), OLLAMA_HOST: `http://127.0.0.1:${ollamaPort}`, OLLAMA_MODEL: 'gemma3:4b', TRANSCRIBE_API_URL: `http://127.0.0.1:${trPort}`, PX_DISABLE_SCHEDULERS: '1', PX_DISABLE_RESUME: '1' },
+            stdio: 'ignore'
+          });
+          let booted = false;
+          for (let i = 0; i < 120 && !booted; i++) { try { booted = (await realFetch(`${CHILD}/api/health`)).ok; } catch (_) { await sleep41(500); } }
+          assert.ok(booted, 'second backend did not start');
+          const login = await realFetch(`${CHILD}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u.username, password: pw }) });
+          assert.strictEqual(login.status, 200);
+          cookie = cookieOf(login);
+          await sleep41(1500);
+
+          await runTest('[POSITIVE] PX_DISABLE_RESUME=1: a second backend does not take over a video that is being processed (no Ollama call, status untouched)', async () => {
+            assert.strictEqual(oll.calls, 0);
+            assert.strictEqual((await current(interrupted)).summary_status, 'PROCESSING');
+            assert.strictEqual((await current(interrupted)).file_path, `/uploads/${interrupted.tmp}`);
+            assert.ok(fs41.existsSync(interrupted.abs));
+          });
+
+          await runTest('[POSITIVE] A page load / opening the event / listing events never renames an old video (GET is read-only)', async () => {
+            for (const p of ['/api/events', `/api/events/${EVENT_ID}`, '/api/metrics/calculate', '/api/alerts', '/api/health']) assert.strictEqual((await api(p)).status, 200, p);
+            await sleep41(300);
+            assert.strictEqual((await current(oldVideo)).file_path, `/uploads/${oldVideo.tmp}`);
+            assert.ok(fs41.existsSync(oldVideo.abs));
+          });
+
+          await runTest('[POSITIVE] New video end to end: the temporary name is kept while the transcript and the AI summary run, then the file takes the uploaded name', async () => {
+            tr.text = TEXT_ID; tr.fail = false; tr.delay = 600; oll.delay = 2000;
+            const name = `rt41-${stamp41} e2e ünggul (1).mp4`;
+            const up = await upload(name);
+            assert.strictEqual(up.res.status, 201);
+            assert.strictEqual(up.media.file_name, name);
+            assert.ok(/^\/uploads\/media-\d+-[a-z0-9]+\.mp4$/.test(up.media.file_path), `temporary name expected, got ${up.media.file_path}`);
+            const tmpAbs = fileSvc.resolveUploadPath(up.media.file_path);
+            const mid1 = await waitFor(up.media.media_id, m => m.transcript_status === 'DONE' && m.summary_status === 'PROCESSING', 8000);
+            assert.strictEqual(mid1.summary_status, 'PROCESSING');
+            assert.strictEqual(mid1.file_path, up.media.file_path, 'no rename while the summary is processing');
+            assert.ok(fs41.existsSync(tmpAbs));
+            const done = await waitFor(up.media.media_id, m => m.summary_status === 'DONE' && m.file_path !== up.media.file_path);
+            tr.delay = 0; oll.delay = 0;
+            assert.strictEqual(done.summary_status, 'DONE');
+            assert.ok(renamedTo(done, name), `file_path ${done.file_path}`);
+            assert.ok(!fs41.existsSync(tmpAbs));
+            assert.ok(fs41.existsSync(path41.join(UP, name)));
+            assert.strictEqual(tr.sources[tr.sources.length - 1].replace(/\\/g, '/'), tmpAbs.replace(/\\/g, '/'), 'the Video Extractor was given the temporary file (it was still processing)');
+            const served = await api(done.file_path);
+            assert.strictEqual(served.status, 200);
+          });
+
+          await runTest('[POSITIVE] Mojibake-proof: a UTF-8 file name is stored and used as written (file_name and the renamed file)', async () => {
+            const name = `rt41-${stamp41} Tim Ünggul – Año.mp4`;
+            const up = await upload(name);
+            assert.strictEqual(up.media.file_name, name);
+            const done = await waitFor(up.media.media_id, m => m.summary_status === 'DONE' && m.file_path !== up.media.file_path);
+            assert.ok(renamedTo(done, name), done.file_path);
+            assert.ok(fs41.readdirSync(UP).includes(name));
+          });
+
+          await runTest('[POSITIVE] Two uploads with the same name at the same time are both safe: random temporary names, final names differ (" (1)")', async () => {
+            const name = `rt41-${stamp41} twin.mp4`;
+            const [a, b] = await Promise.all([upload(name), upload(name)]);
+            assert.notStrictEqual(a.media.file_path, b.media.file_path);
+            const [da, db] = await Promise.all([a, b].map(x => waitFor(x.media.media_id, m => m.summary_status === 'DONE' && m.file_path !== x.media.file_path)));
+            assert.deepStrictEqual([da.file_path, db.file_path].sort(), [webPath(name), webPath(`rt41-${stamp41} twin (1).mp4`)].sort());
+            assert.ok(fs41.existsSync(path41.join(UP, name)) && fs41.existsSync(path41.join(UP, `rt41-${stamp41} twin (1).mp4`)));
+          });
+
+          await runTest('[POSITIVE] A too-short transcript (INSUFFICIENT, no Gemma call) also ends with the original name', async () => {
+            tr.text = 'Halo semuanya terima kasih.';
+            const before = oll.calls;
+            const name = `rt41-${stamp41} short.mp4`;
+            const up = await upload(name);
+            const done = await waitFor(up.media.media_id, m => m.summary_status === 'INSUFFICIENT' && m.file_path !== up.media.file_path);
+            tr.text = TEXT_ID;
+            assert.strictEqual(done.summary_status, 'INSUFFICIENT');
+            assert.ok(renamedTo(done, name), done.file_path);
+            assert.strictEqual(oll.calls, before);
+          });
+
+          await runTest('[POSITIVE] Transcript FAILED is final: the file is renamed, and "Try again" then uses the NEW path and completes normally', async () => {
+            tr.fail = true;
+            const name = `rt41-${stamp41} failed first.mp4`;
+            const up = await upload(name);
+            const failed = await waitFor(up.media.media_id, m => m.transcript_status === 'FAILED' && m.file_path !== up.media.file_path);
+            assert.strictEqual(failed.transcript_status, 'FAILED');
+            assert.ok(renamedTo(failed, name), failed.file_path);
+            assert.ok(fs41.existsSync(path41.join(UP, name)));
+            tr.fail = false; tr.text = TEXT_ID;
+            const retry = await api(`/api/media/${up.media.media_id}/transcribe`, { method: 'POST' });
+            assert.strictEqual(retry.status, 202);
+            const done = await waitFor(up.media.media_id, m => m.summary_status === 'DONE');
+            assert.strictEqual(done.transcript_status, 'DONE');
+            assert.strictEqual(tr.sources[tr.sources.length - 1].replace(/\\/g, '/'), path41.join(UP, name).replace(/\\/g, '/'), 'Try again must send the renamed file');
+            assert.ok(renamedTo(done, name));
+            assert.ok(fs41.existsSync(path41.join(UP, name)));
+          });
+
+          await runTest('[POSITIVE] Manual "Regenerate summary" on an old video is an explicit action: when it finishes the old random name becomes the original name', async () => {
+            const before = oll.calls;
+            const r = await api(`/api/media/${oldVideo.id}/summarize`, { method: 'POST' });
+            assert.strictEqual(r.status, 202);
+            const done = await waitFor(oldVideo.id, m => m.summary_status === 'DONE' && m.file_path !== `/uploads/${oldVideo.tmp}`);
+            assert.ok(renamedTo(done, `rt41-${stamp41} old video.mp4`), done.file_path);
+            assert.ok(!fs41.existsSync(oldVideo.abs));
+            assert.strictEqual(oll.calls, before + 1);
+          });
+
+          await runTest('[POSITIVE] DELETE /api/media/:id removes the renamed file from disk', async () => {
+            const name = `rt41-${stamp41} api delete.mp4`;
+            const up = await upload(name);
+            const done = await waitFor(up.media.media_id, m => m.summary_status === 'DONE' && m.file_path !== up.media.file_path);
+            const abs = fileSvc.resolveUploadPath(done.file_path);
+            assert.ok(fs41.existsSync(abs));
+            assert.strictEqual((await api(`/api/media/${up.media.media_id}`, { method: 'DELETE' })).status, 200);
+            await sleep41(200);
+            assert.ok(!fs41.existsSync(abs));
+            assert.strictEqual(await eventMedia(up.media.media_id), undefined);
+          });
+
+          const rawUpload = async (name, mime, content = '<script>alert(1)</script>') => {
+            const form = new FormData();
+            form.append('mediaFile', new Blob([content], { type: mime }), name);
+            const res = await api(`/api/events/${EVENT_ID}/media`, { method: 'POST', body: form });
+            const body = await res.json().catch(() => ({}));
+            if (body.media) ids.add(body.media.media_id);
+            return { res, body };
+          };
+          const allMediaIds = async () => new Set((await st41.getAllMedia()).map(m => m.media_id));
+
+          await runTest('[NEGATIVE] Dangerous uploads are refused with 415 and NOTHING is stored: evil.html / clip.exe / x.js sent as video/mp4 or image/png, SVG (any MIME), no extension, MIME vs extension mismatch, an illegal extension (.m<p4)', async () => {
+            const filesBefore = new Set(fs41.readdirSync(UP));
+            const mediaBefore = await allMediaIds();
+            const cases = [
+              ['evil.html', 'video/mp4'], ['evil.html', 'image/png'], ['evil.html', 'text/html'], ['clip.exe', 'video/mp4'], ['x.js', 'video/mp4'],
+              ['EVIL.HTM', 'video/mp4'], ['x.svg', 'image/svg+xml'], ['x.svg', 'image/png'], ['x.png', 'image/svg+xml'], ['x.svg', 'video/mp4'],
+              ['video', 'video/mp4'], ['a.mp4.html', 'video/mp4'], ['photo.png', 'video/mp4'], ['clip.mp4', 'image/png'], ['x.mp4', 'application/octet-stream'],
+              ['odd.m<p4', 'video/mp4']
+            ];
+            for (const [name, mime] of cases) {
+              const { res, body } = await rawUpload(`rt41-${stamp41} ${name}`, mime);
+              assert.strictEqual(res.status, 415, `${name} as ${mime} -> ${res.status}`);
+              assert.ok(body.error && /SVG|format/i.test(body.error));
+            }
+            assert.deepStrictEqual(fs41.readdirSync(UP).filter(f => !filesBefore.has(f)), [], 'no file may be written for a refused upload');
+            assert.deepStrictEqual([...(await allMediaIds())].filter(id => !mediaBefore.has(id)), [], 'no media record may be created for a refused upload');
+          });
+
+          await runTest('[POSITIVE] Normal MP4 and JPG still upload (201), the stored names keep their allowlisted extension, illegal characters in the stem are dropped from the final name, the JPG is served as an image', async () => {
+            const v = await rawUpload(`rt41-${stamp41} odd<x.MP4`, 'video/mp4', 'video bytes');
+            assert.strictEqual(v.res.status, 201);
+            assert.strictEqual(v.body.media.file_type, 'VIDEO');
+            assert.ok(/^\/uploads\/media-\d+-[a-z0-9]+\.mp4$/.test(v.body.media.file_path), v.body.media.file_path);
+            const p = await rawUpload(`rt41-${stamp41} photo.JPG`, 'image/jpeg', TINY_PNG41);
+            assert.strictEqual(p.res.status, 201);
+            assert.strictEqual(p.body.media.file_type, 'IMAGE');
+            assert.ok(/\.jpg$/.test(p.body.media.file_path), p.body.media.file_path);
+            const served = await api(p.body.media.file_path);
+            assert.strictEqual(served.status, 200);
+            assert.ok((served.headers.get('content-type') || '').startsWith('image/'));
+            const done = await waitFor(v.body.media.media_id, m => m.summary_status === 'DONE' && m.file_path !== v.body.media.file_path);
+            assert.ok(renamedTo(done, `rt41-${stamp41} oddx.MP4`), done.file_path);
+          });
+
+          await runTest('[POSITIVE] A double extension is allowed when the LAST one is video (a.html.mp4): stored as .mp4 and the final name keeps ".html" inside the name, never as the extension', async () => {
+            const name = `rt41-${stamp41} a.html.mp4`;
+            const up = await upload(name);
+            assert.strictEqual(up.res.status, 201);
+            assert.ok(/^\/uploads\/media-\d+-[a-z0-9]+\.mp4$/.test(up.media.file_path), up.media.file_path);
+            const done = await waitFor(up.media.media_id, m => m.summary_status === 'DONE' && m.file_path !== up.media.file_path);
+            assert.ok(renamedTo(done, name), done.file_path);
+            assert.ok(/\.mp4$/.test(path41.basename(fileSvc.resolveUploadPath(done.file_path))));
+            const served = await api(done.file_path);
+            assert.strictEqual(served.status, 200);
+            assert.ok((served.headers.get('content-type') || '').startsWith('video/'), served.headers.get('content-type'));
+          });
+
+          await runTest('[POSITIVE] /uploads headers: nosniff + sandbox CSP on every file; a non-allowlisted file (legacy .html) is only offered as a download; a video keeps range requests (206) and is not an attachment; no session = 401', async () => {
+            const htmlName = `media-rt41-${stamp41}-legacy.html`;
+            fs41.writeFileSync(path41.join(UP, htmlName), '<script>alert(1)</script>');
+            const h = await api(`/uploads/${htmlName}`);
+            assert.strictEqual(h.status, 200);
+            assert.strictEqual(h.headers.get('x-content-type-options'), 'nosniff');
+            assert.ok(/sandbox/.test(h.headers.get('content-security-policy') || ''));
+            assert.ok(/^attachment/.test(h.headers.get('content-disposition') || ''), 'a non-media file must be a download');
+            await h.text();
+            const vid = await mkVideo(`rt41-${stamp41} range.mp4`, DONE_AI, { bytes: '0123456789abcdef' });
+            const r = await api(`/uploads/${vid.tmp}`, { headers: { Range: 'bytes=2-5' } });
+            assert.strictEqual(r.status, 206);
+            assert.strictEqual(await r.text(), '2345');
+            assert.strictEqual(r.headers.get('content-disposition'), null);
+            assert.strictEqual(r.headers.get('x-content-type-options'), 'nosniff');
+            const anon = await realFetch(`${CHILD}/uploads/${vid.tmp}`);
+            assert.strictEqual(anon.status, 401);
+          });
+        } finally {
+          if (child) child.kill();
+          await sleep41(500);
+          await new Promise(r => fakeOllama.close(r));
+          await new Promise(r => fakeTranscribe.close(r));
+        }
+      } finally {
+        for (const id of ids) { try { await fileSvc.deleteMediaAndFile(id); } catch (_) { /* ignore */ } }
+        for (const id of userIds) { try { await st41.deleteUser(id); } catch (_) { /* ignore */ } }
+        // every file this module made carries the stamp; nothing else in server/uploads is touched
+        for (const f of fs41.readdirSync(UP)) if (f.includes(stamp41) && !before.has(f)) { try { fs41.unlinkSync(path41.join(UP, f)); } catch (_) { /* ignore */ } }
+        try { fs41.unlinkSync(path41.join(UP, '..', `rt41-${stamp41}-escape.mp4`)); } catch (_) { /* never created */ }
+      }
+      await runTest('[POSITIVE] Cleanup: no test record or test file is left behind in server/uploads', async () => {
+        assert.deepStrictEqual(fs41.readdirSync(UP).filter(f => f.includes(stamp41)), []);
+        const left = (await st41.getAllMedia()).filter(m => ids.has(m.media_id));
+        assert.deepStrictEqual(left, []);
+      });
+    }
+  }
+
   // --- SUMMARY ---
   console.log('\n================================================================');
   console.log(`📊 REGRESSION TEST SUMMARY: ${passedTests}/${totalTests} Tests Passed (${failedTests} Failed)`);

@@ -87,7 +87,7 @@ Buka berkas CSV di Microsoft Excel atau editor teks dan isi baris data:
 ### Langkah 2: Membagikan QR Code / Link Peserta
 - **QR Absensi Pra-Event**: Klik tombol QR Absensi untuk menampilkan kode QR di layar proyektor atau membagikan URL `http://.../checkin/:event_id` kepada peserta.
 - **QR Evaluasi Pasca-Event**: Di akhir sesi, tampilkan QR Evaluasi agar peserta mengisi rating pembicara, materi, dan kepuasan event.
-- **Dokumentasi Foto/Video & Transkrip AI**: Di bagian *Photo Gallery & Event Documentation* klik **Upload Photo / Video** (foto JPG/PNG/GIF/WEBP atau video MP4/MOV/WEBM, maks. 200 MB). Foto dan video langsung bisa dilihat/diputar di kartu (atau diperbesar lewat tombol *Perbesar*). Untuk video, sistem otomatis membuat **transkrip teks Bahasa Indonesia** lewat API transkrip lokal — prosesnya bisa beberapa menit (kartu menampilkan "sedang diproses" dan terisi sendiri). Buka *Full AI transcript* (dulu "Transkrip AI lengkap") untuk membaca teks lengkap dan per segmen; klik sebuah baris untuk memutar video dari bagian itu. Jika gagal (mis. API transkrip belum dijalankan), klik **Try again** (dulu "Coba lagi") setelah API aktif di `http://127.0.0.1:8000`. Setelah transkrip selesai, video **baru** otomatis mendapat **AI Summary** (lihat bagian "AI Summary Video" di bawah).
+- **Dokumentasi Foto/Video & Transkrip AI**: Di bagian *Photo Gallery & Event Documentation* klik **Upload Photo / Video** (foto JPG/PNG/GIF/WEBP/BMP/AVIF atau video MP4/MOV/WEBM/MKV/AVI dan sejenisnya, maks. 200 MB; SVG dan HEIC ditolak - lihat "Nama File Video & Format Unggahan Media" di bawah). Foto dan video langsung bisa dilihat/diputar di kartu (atau diperbesar lewat tombol *Perbesar*). Untuk video, sistem otomatis membuat **transkrip teks Bahasa Indonesia** lewat API transkrip lokal — prosesnya bisa beberapa menit (kartu menampilkan "sedang diproses" dan terisi sendiri). Buka *Full AI transcript* (dulu "Transkrip AI lengkap") untuk membaca teks lengkap dan per segmen; klik sebuah baris untuk memutar video dari bagian itu. Jika gagal (mis. API transkrip belum dijalankan), klik **Try again** (dulu "Coba lagi") setelah API aktif di `http://127.0.0.1:8000`. Setelah transkrip selesai, video **baru** otomatis mendapat **AI Summary** (lihat bagian "AI Summary Video" di bawah).
 
 ### Langkah 3: Menghasilkan Executive Report PPT (.pptx)
 1. Pada kartu event, klik tombol **"Generate Executive PPT"**.
@@ -291,3 +291,17 @@ Yang **sengaja tetap Indonesia**: isi 44 istilah di tab About, nama metrik / jou
 Setelah mengubah `.env`, restart backend. Bila batas ringkasan habis, kartu video menampilkan ringkasan **Automatic (rule-based)**; Admin dapat menekan **Regenerate summary**.
 
 **Form check-in / feedback via QR**: pada v2.27.0 s.d. v2.29.0 halaman `?checkin=` dan `?survey=` gagal terbuka bagi peserta yang belum login (error `reading 'scopes'`). Sudah diperbaiki di v2.30.0; bila ada event yang berjalan pada rentang itu, absensi/feedback peserta perlu dikumpulkan ulang. Satu hal yang diketahui: tautan `?survey=` untuk event yang masih pre-event menampilkan form feedback tanpa pertanyaan.
+
+---
+
+## Nama File Video & Format Unggahan Media (v2.30.1)
+
+**Format yang diterima** (Upload Photo / Video, maks. 200 MB): foto **JPG, JPEG, PNG, GIF, WEBP, BMP, AVIF**; video **MP4, M4V, MOV, WEBM, MKV, AVI, OGV, MPG, MPEG, 3GP, WMV, FLV**. Format lain ditolak dengan pesan "Unsupported file format" dan tidak ada yang tersimpan, termasuk **SVG** (bisa membawa script) dan **HEIC/HEIF** (foto iPhone - browser tidak bisa menampilkannya; ubah dulu ke JPG). Jenis file (gambar/video) dan ekstensinya harus cocok: file `.html`, `.exe`, atau `.js` ditolak walau dikirim sebagai video, dan video dengan ekstensi gambar (atau sebaliknya) juga ditolak.
+
+**Nama file video berubah setelah proses selesai**: segera setelah diunggah, file video di `server/uploads` bernama acak (`media-<angka>-<acak>.mp4`) supaya dua unggahan bernama sama tidak bertabrakan selagi diproses. Setelah transkrip dan AI Summary selesai (atau transkrip gagal), sistem otomatis mengganti nama file menjadi **nama file yang Anda unggah**; kartu video menyegarkan dirinya sendiri beberapa detik kemudian. Hal yang perlu diketahui:
+- Selama proses berjalan (status "processing") nama tidak diganti, agar Video Extractor dan Gemma tidak kehilangan file.
+- Karakter yang tidak boleh dipakai Windows (`< > : " | ? *`) dibuang dari nama; nama dipotong bila terlalu panjang (150 karakter); bila sudah ada file bernama sama, ditambahkan ` (1)`, ` (2)` dan seterusnya - file lain tidak pernah tertimpa.
+- Bila penggantian nama gagal (file terkunci, izin ditolak), video tetap bisa diputar dengan nama acak dan hanya muncul peringatan di console server.
+- Video yang diunggah **sebelum v2.30.1** tidak diganti namanya otomatis. Namanya berubah hanya bila Anda menekan **Regenerate summary** atau **Try again** pada video itu dan prosesnya selesai.
+- Daftar/monitoring di layanan Video Extractor tetap menampilkan nama acak untuk video yang sudah pernah dikirim ke sana sebelum diganti namanya.
+- Hapus video lewat tombol hapus di kartu: file dengan nama barunya ikut terhapus dari `server/uploads`.

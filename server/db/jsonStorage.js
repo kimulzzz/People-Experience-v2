@@ -890,13 +890,14 @@ const storage = {
     return newMedia;
   },
   // Whitelisted partial update — used by the background transcription job to record its
-  // progress/result without being able to rewrite identity fields (media_id/event_id/file_path).
+  // progress/result without being able to rewrite identity fields (media_id/event_id). file_path is only changed by
+  // mediaFileService (renaming a finished video to its original upload name).
   updateMedia(media_id, patch) {
     const s = getStore();
     const media = s.media.find(m => m.media_id === media_id);
     if (!media) return null;
     const allowed = [
-      'caption', 'ai_generated_description', 'transcript', 'transcript_segments',
+      'caption', 'file_path', 'ai_generated_description', 'transcript', 'transcript_segments',
       'transcript_status', 'transcript_error', 'transcript_language', 'duration_seconds',
       'summary', 'summary_points', 'summary_status', 'summary_source', 'summary_model',
       'summary_language', 'summary_generated_at', 'summary_error'

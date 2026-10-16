@@ -16,6 +16,7 @@
 // Jobs run one at a time on the shared AI queue; Ollama being off never blocks the upload or the transcript.
 const storage = require('../db/storage');
 const aiQueue = require('./aiQueue');
+const { finalizeMediaFileName } = require('./mediaFileService');
 const { queryLocalOllama, DEFAULT_LLM_MODEL, OLLAMA_TIMEOUT_MS, DEFAULT_AI_TIMEOUT_MS } = require('./localAiService');
 
 const MIN_WORDS = 20;            // fewer words than this: "transcript not sufficient", the model is not called
@@ -390,6 +391,7 @@ async function queueMediaSummary(media_id) {
       summary_language: summaryLanguageFor(media.transcript_language), summary_generated_at: new Date().toISOString(),
       summary_error: `The transcript is not long enough to summarize (fewer than ${MIN_WORDS} words).`
     });
+    await finalizeMediaFileName(media_id); // final state: the file gets its original name (no-op while the transcript job still runs)
     return 'insufficient';
   }
   await storage.updateMedia(media_id, { summary_status: 'PROCESSING', summary_error: '' });
@@ -402,6 +404,9 @@ async function queueMediaSummary(media_id) {
         if (await storage.getMediaById(media_id)) await storage.updateMedia(media_id, { summary_status: 'FAILED', summary_error: friendlyError(err) });
       } catch (_) { /* storage unavailable */ }
     }
+    // The summary (or its failure) is the last step of the pipeline: the video file gets its original upload name.
+    // This job is still "running" on the queue here, hence ignoreSummaryJob.
+    await finalizeMediaFileName(media_id, { ignoreSummaryJob: true });
   });
   if (outcome === 'full') {
     const result = ruleBasedSummary(media.transcript);
@@ -410,6 +415,7 @@ async function queueMediaSummary(media_id) {
       summary_language: summaryLanguageFor(media.transcript_language), summary_generated_at: new Date().toISOString(),
       summary_error: 'The AI queue is full; press "Regenerate summary" later.'
     });
+    await finalizeMediaFileName(media_id);
   }
   return 'queued';
 }

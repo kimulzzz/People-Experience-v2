@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    40 MODUL PENGUJIAN    │     217 AUTOMATED TESTS     │       100% PASS RATE          │
+│    41 MODUL PENGUJIAN    │     251 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -810,3 +810,26 @@ Tes 7-10 membaca kode sumber (`App.jsx`, `Header.jsx`, `pptGenerator.js`, `serve
 **Harness**: jangan men-set `TEST_ADMIN_USER` / `TEST_ADMIN_PASSWORD` saat menjalankan suite di SQL Server (suite membuat admin sementara sendiri); keduanya hanya untuk backend JSON. Suite tetap mengotori backend aktif (di SQL: `node server/db/migrate.js --reset` - lihat catatan v2.24.1 tentang data video asli).
 
 **Tidak diuji / tidak terverifikasi**: tampilan UI Inggris, header kanan atas, dan select Directorate/Sub-Dir pada lebar <= 500px (diperiksa QC di Browser pane; mobile tidak diuji di perangkat); batas 120 menit sungguhan (tes hanya memeriksa nilai default, tidak menunggu 2 jam); upload video besar lewat koneksi lambat; teks slide PPT secara visual. **Diketahui, belum diperbaiki**: `?survey=` dengan kode event pre-event menampilkan form tanpa pertanyaan (severity rendah); temuan lama v2.29.0 (importer `metric_id` form non-numerik, NIP kembar, dll.) tetap berlaku.
+
+---
+
+## 📁 24. Nama File Video Sesuai Unggahan & Allowlist Unggahan - v2.30.1 (2026-10-16)
+
+**Regression suite: 251 test di SQL Server** (angka dari laporan developer, backend kedua, tanpa skip; penulis dokumen ini tidak menjalankan ulang suite). QC pertama (sebelum perbaikan temuan): **SQL 246/246** (Modul 38, khusus SQL, dijalankan penuh) dan **JSON 204/204**, uji end-to-end rename 38/38 - LULUS DENGAN CATATAN. Perbaikan temuan menambah 5 tes (allowlist, tes statis `MediaCard`, unggahan berbahaya, `a.html.mp4`, header `/uploads`): 246 + 5 = 251. **Suite JSON belum dijalankan ulang setelah perbaikan**, jadi tidak ada angka JSON terverifikasi untuk versi akhir. Verifikasi singkat QC atas perbaikan: LULUS DENGAN CATATAN, tanpa bug baru (filter 415, foto valid 201, header `/uploads`, kartu video dan lightbox, foto seed tanpa file tidak loop).
+
+**Modul 41 = 34 tes di SQL Server, 7 di JSON** (dihitung dari kode: 31 pemanggilan `runTest` = 6 umum + 1 khusus JSON + 24 khusus SQL; pemanggilan dalam loop lima keadaan akhir berjalan 5x, jadi di SQL 6 + (24 + 4) = 34; di JSON 6 + 1 = 7 dan sisanya di-skip dengan pesan karena memakai database langsung dan backend kedua). Angka 251 = 217 (v2.30.0) + 34.
+
+| Kelompok | Jenis | Yang diuji |
+| :--- | :---: | :--- |
+| Umum (6, SQL & JSON) | Positif | Aturan nama `sanitizeVideoFileName` (basename, karakter ilegal Windows, nama reservasi, titik/spasi, stem 150 karakter, ekstensi dari nama sementara); perbaikan mojibake latin1->UTF-8 (ASCII dan nama yang sudah benar tidak berubah); `resolveUploadPath` men-decode URL dan menolak di luar `server/uploads`; allowlist `mediaKindOfName` (hanya ekstensi terakhir; html/exe/svg/js/tanpa ekstensi = bukan media); tes statis `EventManager.jsx` (`MediaCard` mereset `broken`, `<video>`/`<img>` ber-`key`, input file tanpa `image/*`) |
+| Umum | Negatif | Nama tanpa isi layak (kosong, titik saja, hanya karakter ilegal, hanya ekstensi) -> `null`, nama acak dipertahankan |
+| JSON saja (1) | Positif | Whitelist `updateMedia` di kedua backend memuat `file_path` (pemeriksaan kode sumber) |
+| SQL (5, loop) | Positif | Keadaan akhir `summary DONE (AI)`, `DONE (RULE)`, `INSUFFICIENT`, `FAILED`, dan `transcript FAILED`: file di-rename, `file_path` ter-encode, isi utuh, tersaji 200 |
+| SQL | Positif | Idempoten (panggilan kedua tidak mengubah apa pun); tabrakan nama -> ` (1)`, ` (2)` dan dua job bersamaan mendapat nama berbeda; DELETE menghapus file bernama baru |
+| SQL | Negatif | Tidak pernah rename saat belum final (transkrip `PROCESSING`, ringkasan `PROCESSING`, ringkasan belum dibuat/video lama, foto, job ringkasan antri/berjalan); nama yang dipakai record lain tidak dipakai ulang (case-insensitive); nama berbahaya (`../../x.mp4`, `a:b?.mp4`, `CON.mp4`, 400 karakter) tetap di dalam `server/uploads`; file hilang di disk -> tanpa error; OS menolak (`EPERM`/`EACCES`) -> hanya warning, `EBUSY` dicoba ulang sekali; update database gagal -> nama dikembalikan |
+| SQL, backend kedua (palsu Ollama + Video Extractor) | Positif | `PX_DISABLE_RESUME=1` tidak mengambil alih video yang sedang diproses; `GET`/buka event/list event tidak me-rename video lama; video baru end-to-end: nama sementara bertahan selama proses lalu berganti; nama UTF-8; dua unggahan bernama sama; transkrip terlalu pendek (`INSUFFICIENT`); transkrip `FAILED` lalu "Try again" memakai path baru; Regenerate summary pada video lama; `DELETE /api/media/:id` menghapus file; MP4/JPG normal 201; `a.html.mp4` diterima dan berakhir `.mp4`; header `/uploads` (nosniff, CSP sandbox, `attachment` untuk non-allowlist, range 206, 401 tanpa sesi); cleanup tanpa sisa |
+| SQL, backend kedua | Negatif | Unggahan berbahaya -> 415 tanpa file/record: `evil.html`/`clip.exe`/`x.js` sebagai `video/mp4` atau `image/png`, SVG (MIME apa pun), tanpa ekstensi, MIME tidak sama dengan ekstensi, ekstensi ilegal `.m<p4` |
+
+**Harness**: Modul 38 dan 41 mensyaratkan **tidak ada video berstatus `PROCESSING`** di database; jalankan suite SQL **tanpa** `TEST_ADMIN_USER`/`TEST_ADMIN_PASSWORD`. Modul 41 membersihkan sendiri record dan file ber-stamp miliknya (tes terakhir memeriksa tidak ada sisa di `server/uploads`). Hitungan statis `await runTest(` kini 238 vs hasil jalan 251 (selisih 13 = +3 dari loop Modul 41 dikurangi tes khusus JSON, + 10 sisa lama yang belum dijelaskan sejak v2.29.0); angka resmi mengikuti laporan developer/QC.
+
+**Tidak diuji / tidak terverifikasi**: rename pada file yang benar-benar terkunci program lain (hanya simulasi `EBUSY`/`EPERM`); perilaku UI (kartu menyegarkan diri setelah rename) di browser - hanya tes statis kode sumber dan pemeriksaan QC; entri di Video Extractor setelah rename (tidak berubah); kasus unggahan HEIC dari perangkat nyata. Jalankan JSON ulang sebelum merilis bila backend JSON dipakai.

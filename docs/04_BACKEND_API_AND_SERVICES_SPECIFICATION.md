@@ -92,10 +92,10 @@ Backend dibangun menggunakan **Node.js dan Express.js** sebagai REST API Server 
 | `DELETE` | `/api/events/:event_id` | Menghapus event beserta seluruh absensi, feedback, dan pertanyaan kustom terkait | Path: `event_id` |
 | `DELETE` | `/api/events/:event_id/attendance/:nip` | Menghapus satu catatan absensi berdasarkan NIP (mis. untuk membersihkan data uji) | Path: `event_id`, `nip` |
 | `DELETE` | `/api/events/:event_id/feedback/:nip` | Menghapus satu respon feedback berdasarkan NIP (mis. untuk membersihkan data uji) | Path: `event_id`, `nip` |
-| `POST` | `/api/events/:event_id/media` | Upload foto/video dokumentasi (`multipart/form-data`, field `mediaFile`). Hanya `image/*` & `video/*` (selain itu **415**), batas `MEDIA_MAX_MB` (default 200 MB, lebih dari itu **413**). Tipe ditentukan dari MIME file. Video dijawab langsung dengan `transcript_status: "PROCESSING"` lalu ditranskrip di background | Path: `event_id`; Form: `mediaFile`, `caption` |
+| `POST` | `/api/events/:event_id/media` | Upload foto/video dokumentasi (`multipart/form-data`, field `mediaFile`). MIME **dan** ekstensi terakhir nama file harus sama-sama lolos allowlist dan sekelompok (gambar `jpg jpeg png gif webp bmp avif`; video `mp4 m4v mov webm mkv avi ogv mpg mpeg 3gp wmv flv`), selain itu **415** tanpa menyimpan apa pun (SVG dan HEIC/HEIF ditolak; sejak v2.30.1, lihat "Catatan v2.30.1"), batas `MEDIA_MAX_MB` (default 200 MB, lebih dari itu **413**). Tipe ditentukan dari MIME file. Video dijawab langsung dengan `transcript_status: "PROCESSING"` lalu ditranskrip di background | Path: `event_id`; Form: `mediaFile`, `caption` |
 | `POST` | `/api/media/:media_id/transcribe` | (Ulang) memulai transkrip AI untuk video — dipakai tombol "Coba lagi". **202** diterima, **400** bila bukan video, **404** bila media tak ada, **409** bila sedang diproses | Path: `media_id` |
 | `POST` | `/api/media/:media_id/summarize` | (Ulang) membuat **AI Summary** transkrip video (tombol "Buat / Buat ulang ringkasan"; pengelola event saja). **202** + record media berstatus `PROCESSING`; **400** bukan video; **404** media tak ada; **409** transkrip belum `DONE` atau ringkasan sedang diproses/antri; **403** non-pengelola; **401** tanpa login | Path: `media_id` |
-| `DELETE` | `/api/media/:media_id` | Menghapus record media **beserta file fisiknya** di `server/uploads` | Path: `media_id` |
+| `DELETE` | `/api/media/:media_id` | Menghapus record media **beserta file fisiknya** di `server/uploads` (sejak v2.30.1 respons baru dikirim setelah file terhapus, dan yang dihapus adalah file yang sedang ditunjuk record - nama baru bila video sudah di-rename) | Path: `media_id` |
 | `POST` | `/api/events/:event_id/generate-ppt` | Menghasilkan dan menyajikan berkas presentasi PowerPoint (.pptx) | Path: `event_id` |
 
 > **Transkrip AI video (sejak v2.21.0)**: `server/services/transcribeService.js` memanggil API audio/video-to-text lokal (faster-whisper, default `http://127.0.0.1:8000`, `POST /transcribe` dengan body `{"source": "<path file di server>", "language": "id"}`) — **path lokal** file yang diupload dikirim, sehingga video tidak keluar dari mesin (patuh aturan 100% on-premise). Bahasa default `id` (`TRANSCRIBE_LANGUAGE`). Karena Whisper di CPU bisa memakan menit, hasilnya disimpan ke record media: `transcript_status` (`PROCESSING`/`DONE`/`FAILED`), `transcript` (teks lengkap), `transcript_segments` (`[{start, end, text}]`), `transcript_language`, `duration_seconds`, `transcript_error`, dan `ai_generated_description` diisi cuplikan transkrip. Job yang terputus karena restart server otomatis dilanjutkan saat boot. Konfigurasi di `.env`: `TRANSCRIBE_API_URL`, `TRANSCRIBE_LANGUAGE`, `TRANSCRIBE_TIMEOUT_MS`, `MEDIA_MAX_MB` (lihat `.env.example`).
@@ -412,3 +412,37 @@ Perubahan kontrak API terbatas pada **teks**, bukan struktur: nama field, kode s
 `.env` user tidak meng-override keempatnya, jadi default 120 menit berlaku. `.env.example` memuat contoh dan komentarnya.
 
 **Tidak berubah**: kolom CSV, isi e-mail pengingat, nama metrik/journey/direktorat/program, data Action Library, dan seluruh logika skor/status.
+
+---
+
+## Catatan v2.30.1 - Nama File Video Sesuai Unggahan & Allowlist Unggahan Media
+
+**Filter unggahan (`POST /api/events/:event_id/media`, `server.js` `mediaUpload.fileFilter`)**: MIME dari klien **dan** ekstensi terakhir nama file harus sama-sama lolos allowlist dan sekelompok (gambar atau video). Selain itu **415** dan tidak ada file/record yang tersimpan.
+
+| Kelompok | Ekstensi yang diterima | Catatan |
+| :--- | :--- | :--- |
+| Gambar (MIME `image/*` kecuali SVG) | `jpg jpeg png gif webp bmp avif` | SVG ditolak (bisa membawa script); HEIC/HEIF ditolak (browser tidak menampilkannya) |
+| Video (MIME `video/*`) | `VIDEO_EXTENSIONS` di `mediaFileService.js`: `mp4 m4v mov webm mkv avi ogv mpg mpeg 3gp wmv flv` | Hanya ekstensi **terakhir** yang dihitung: `a.html.mp4` diterima dan berakhir `.mp4`; `evil.html`/`clip.exe` yang dikirim sebagai `video/mp4` ditolak |
+
+Nama file sementara di disk (`media-<timestamp>-<rand>.<ext>`) hanya membawa ekstensi yang aman (`safeExtension`); nama asli (dengan perbaikan mojibake latin1->UTF-8 bila hasilnya pasti valid) disimpan di `px_media.file_name`.
+
+**Header `/uploads/*`** (login tetap wajib, tanpa sesi 401): semua file mendapat `X-Content-Type-Options: nosniff` dan `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; media-src 'self'; img-src 'self'; sandbox`; file yang ekstensinya di luar allowlist (data lama) juga mendapat `Content-Disposition: attachment` sehingga hanya bisa diunduh. Video/gambar allowlist tidak diberi `attachment`, jadi pemutaran dan range request (206) normal.
+
+**Rename file video (`server/services/mediaFileService.js`)**
+
+| Aspek | Perilaku |
+| :--- | :--- |
+| Kapan | `finalizeMediaFileName(media_id)` dipanggil di ujung job transkripsi (`transcribeService.js`) dan job ringkasan (`mediaSummaryService.js`, juga cabang `INSUFFICIENT` dan antrean penuh). Rename hanya jika `file_type = VIDEO` dan keadaan final: `transcript_status = FAILED`, atau `transcript_status = DONE` dengan `summary_status` `DONE` (AI atau RULE) / `FAILED` / `INSUFFICIENT` |
+| Tidak pernah | Saat transkrip/ringkasan `PROCESSING` atau antri: dicek di database **dan** di memori (`isTranscribeInFlight`, `isSummaryInFlight`; `queueMediaTranscription` menandai `inFlight` sebelum `await` pertama). Tidak pernah dari `GET` event/dashboard atau saat boot biasa |
+| Video lama | Tidak di-rename otomatis. Baru berganti nama setelah job eksplisit selesai (Regenerate summary, Try again) atau boot-resume job `PROCESSING` yang selesai |
+| Hasil | File di `server/uploads` bernama sesuai `px_media.file_name`; `px_media.file_path` = `/uploads/` + `encodeURIComponent(nama)` (path maks 480 karakter dihitung, kolom 500) |
+| Aturan nama | `sanitizeVideoFileName`: hanya basename (tanpa direktori/`..`); buang `<>:"\|?*`, karakter kontrol dan bidi; pangkas titik/spasi di ujung dan awal; stem maks 150 karakter; nama reservasi Windows (`CON`, `NUL`, `COM1` ...) diawali `_`. Nama akhir selalu berekstensi video dikenal: bila ekstensi nama asli bukan video, ekstensi nama sementara ditambahkan (`clip.exe` -> `clip.exe.mp4`); tanpa ekstensi video sama sekali atau stem kosong, nama acak dipertahankan |
+| Tabrakan | Tidak pernah menimpa: ` (1)`, ` (2)` ... sampai 999; case-insensitive (Windows), juga terhadap nama yang dipakai record lain walau filenya tidak ada |
+| Kegagalan | `EBUSY`/`EPERM`/`EACCES` dicoba ulang sekali setelah 500 ms; selanjutnya hanya `console.warn`, record tidak berubah, job tidak gagal. Rename dilakukan **sebelum** update database; bila update gagal, nama dikembalikan; bila record terhapus saat itu, file hasil rename dihapus |
+| Konkurensi | Rename, update record, dan delete memakai satu antrean `runExclusive` |
+
+Perubahan terkait: `updateMedia` (`sqlStorage.js`, `jsonStorage.js`) kini menerima `file_path` di whitelist-nya; `resolveUploadPath` (dipindah ke `mediaFileService.js`, tetap diekspor `transcribeService.js`) men-decode URL dan menolak apa pun di luar `server/uploads`; **`DELETE /api/media/:media_id` kini menunggu** penghapusan file (`deleteMediaAndFile`) dan selalu menghapus file yang sedang ditunjuk record (nama baru bila sudah di-rename).
+
+**Env baru (opsional)**: `PX_DISABLE_RESUME=1` mematikan `resumeInterruptedTranscriptions`/`resumeInterruptedSummaries` saat boot. Hanya untuk backend kedua yang berbagi database dengan backend yang sedang memproses video (dipakai suite tes); jangan di-set pada backend utama.
+
+**Tidak berubah / belum**: monitoring dan entri di Video Extractor (`:8000`) tidak ikut berganti nama; usulan mengirim `display_name` ke API transkrip belum dikerjakan. Skema database tidak berubah.

@@ -5,10 +5,10 @@
 // CPU, so callers must treat it as a background job (see queueMediaTranscription).
 const http = require('http');
 const https = require('https');
-const path = require('path');
 const fs = require('fs');
 const storage = require('../db/storage');
 const { queueMediaSummary } = require('./mediaSummaryService');
+const { UPLOADS_DIR, resolveUploadPath, runExclusive, finalizeMediaFileName } = require('./mediaFileService');
 
 const API_URL = (process.env.TRANSCRIBE_API_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '');
 const DEFAULT_LANGUAGE = process.env.TRANSCRIBE_LANGUAGE || 'id';
@@ -17,7 +17,6 @@ const DEFAULT_LANGUAGE = process.env.TRANSCRIBE_LANGUAGE || 'id';
 // Video Extractor sends nothing until the transcript is complete, so it is also the total limit.
 const DEFAULT_TIMEOUT_MS = 120 * 60 * 1000;
 const TIMEOUT_MS = parseInt(process.env.TRANSCRIBE_TIMEOUT_MS || String(DEFAULT_TIMEOUT_MS), 10);
-const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
 const DESCRIPTION_EXCERPT_CHARS = 280;
 
 // Node's global fetch (undici) aborts if response headers take >5 min, which a long
@@ -89,24 +88,17 @@ function excerpt(text) {
   return clean.length > DESCRIPTION_EXCERPT_CHARS ? `${clean.slice(0, DESCRIPTION_EXCERPT_CHARS).trimEnd()}…` : clean;
 }
 
-// Resolves a stored `/uploads/<file>` web path to an absolute path, refusing anything that
-// would escape the uploads folder.
-function resolveUploadPath(filePath) {
-  if (!filePath || !filePath.startsWith('/uploads/')) return null;
-  const abs = path.resolve(UPLOADS_DIR, path.basename(filePath));
-  return abs.startsWith(UPLOADS_DIR + path.sep) ? abs : null;
-}
-
 const inFlight = new Set();
+const isTranscribeInFlight = media_id => inFlight.has(media_id);
 
 // Fire-and-forget: marks the media PROCESSING, runs the transcription, then stores the
 // result (DONE) or the failure reason (FAILED). The UI polls the event detail for the status.
 async function queueMediaTranscription(media_id) {
   if (inFlight.has(media_id)) return false;
-  const media = await storage.getMediaById(media_id);
-  if (!media) return false;
-
+  // Marked in flight BEFORE anything is awaited: from here on the video file may not be renamed (mediaFileService).
   inFlight.add(media_id);
+  const media = await storage.getMediaById(media_id);
+  if (!media) { inFlight.delete(media_id); return false; }
   // A new transcript makes any earlier AI summary stale: clear it (the summary is made again once this one is DONE).
   await storage.updateMedia(media_id, {
     transcript_status: 'PROCESSING', transcript_error: '',
@@ -116,7 +108,9 @@ async function queueMediaTranscription(media_id) {
 
   (async () => {
     try {
-      const abs = resolveUploadPath(media.file_path);
+      // Read the path inside the file lock: a rename that was running when the job started has finished by now.
+      const current = await runExclusive(() => storage.getMediaById(media_id));
+      const abs = resolveUploadPath((current || media).file_path);
       if (!abs || !fs.existsSync(abs)) throw new Error('The video file was not found on the server');
 
       const result = await transcribeLocalFile(abs);
@@ -155,6 +149,9 @@ async function queueMediaTranscription(media_id) {
     } finally {
       inFlight.delete(media_id);
     }
+    // The file is free again: if nothing else is pending (transcript failed, or the summary is already final) it gets
+    // its original upload name. While the AI summary is still queued/running this does nothing - that job renames it.
+    await finalizeMediaFileName(media_id);
   })();
 
   return true;
@@ -176,5 +173,6 @@ module.exports = {
   queueMediaTranscription,
   resumeInterruptedTranscriptions,
   resolveUploadPath,
+  isTranscribeInFlight,
   UPLOADS_DIR
 };

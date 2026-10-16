@@ -21,7 +21,8 @@ const { getPendingUploadReminders, sendPendingUploadReminders, startReminderSche
 const emailSettingsService = require('./services/emailSettingsService');
 const auth = require('./services/authService');
 const { queueMediaSummary, resumeInterruptedSummaries, isSummaryInFlight } = require('./services/mediaSummaryService');
-const { queueMediaTranscription, resumeInterruptedTranscriptions, resolveUploadPath, isTranscribeApiReachable, unreachableMessage } = require('./services/transcribeService');
+const { queueMediaTranscription, resumeInterruptedTranscriptions, isTranscribeApiReachable, unreachableMessage } = require('./services/transcribeService');
+const { repairUploadedName, safeExtension, mediaKindOfName, deleteMediaAndFile } = require('./services/mediaFileService');
 
 // Default year for YTD/unparseable period query params, derived from the real server clock
 // instead of a hardcoded literal (mirrors CURRENT_YEAR in calculationEngine.js).
@@ -44,14 +45,25 @@ if (!fs.existsSync(EXPORTS_DIR)) fs.mkdirSync(EXPORTS_DIR, { recursive: true });
 
 // Static files need a login too: uploaded media for any logged-in user, generated PPT reports only
 // for people who may manage events. (The public check-in / feedback forms use neither.)
-app.use('/uploads', auth.requireLogin, (req, res, next) => { res.set('X-Content-Type-Options', 'nosniff'); next(); }, express.static(UPLOADS_DIR));
+// Second line of defence behind the upload filter: nosniff + a sandboxing CSP on every file (script never runs even if an
+// HTML/SVG file ever lands here), and anything that is not an allowlisted photo/video type is only offered as a download.
+app.use('/uploads', auth.requireLogin, (req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; media-src 'self'; img-src 'self'; sandbox");
+  let name = req.path;
+  try { name = decodeURIComponent(req.path); } catch (_) { /* use as is */ }
+  if (!mediaKindOfName(name)) res.set('Content-Disposition', 'attachment');
+  next();
+}, express.static(UPLOADS_DIR));
 app.use('/exports', auth.requireLogin, auth.requireEventManager, express.static(EXPORTS_DIR));
 
 // Multer storage for media uploads
 const multerStorage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOADS_DIR),
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
+    // Temporary random name (two uploads with the same name never collide); a finished video is renamed to its
+    // original name by mediaFileService. Only a harmless extension is taken from the client's name.
+    const ext = safeExtension(file.originalname);
     cb(null, `media-${Date.now()}-${Math.random().toString(36).substring(2, 8)}${ext}`);
   }
 });
@@ -65,8 +77,12 @@ const mediaUpload = multer({
   storage: multerStorage,
   limits: { fileSize: MEDIA_MAX_MB * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    if (/^(image|video)\//.test(file.mimetype)) return cb(null, true);
-    const err = new Error('Unsupported file format. Upload a photo (JPG/PNG/GIF/WEBP) or a video (MP4/MOV/WEBM).');
+    // Both checks must agree: the (client-supplied) MIME type AND the file extension, which decides the stored name and
+    // how /uploads serves it. SVG is refused (script), as is anything like evil.html sent with a video/mp4 MIME type.
+    const mimeKind = /^image\/(?!svg)/.test(file.mimetype) ? 'IMAGE' : (/^video\//.test(file.mimetype) ? 'VIDEO' : null);
+    const nameKind = mediaKindOfName(repairUploadedName(file.originalname));
+    if (mimeKind && mimeKind === nameKind) return cb(null, true);
+    const err = new Error('Unsupported file format. Upload a photo (JPG/PNG/GIF/WEBP/BMP/AVIF) or a video (MP4/MOV/WEBM/MKV/AVI) whose file extension matches its type. SVG is not accepted.');
     err.code = 'UNSUPPORTED_MEDIA_TYPE';
     cb(err);
   }
@@ -111,12 +127,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.30.0' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.30.1' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.30.0',
+    version: '2.30.1',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',
@@ -1009,7 +1025,7 @@ app.post('/api/events/:id/media', EVENT_MANAGER, (req, res, next) => {
 
     const event = await storage.getEventById(req.params.id);
     const mediaPath = file ? `/uploads/${file.filename}` : '/uploads/sample.jpg';
-    const originalName = file ? file.originalname : 'media_upload.jpg';
+    const originalName = file ? repairUploadedName(file.originalname) : 'media_upload.jpg';
     // The browser-reported MIME type is more trustworthy than the client's file_type field.
     const detectedType = file
       ? (file.mimetype.startsWith('video/') ? 'VIDEO' : 'IMAGE')
@@ -1080,10 +1096,9 @@ app.post('/api/media/:id/summarize', EVENT_MANAGER, async (req, res) => {
 
 app.delete('/api/media/:id', EVENT_MANAGER, async (req, res) => {
   try {
-    const removed = await storage.deleteMedia(req.params.id);
-    // Uploaded videos are large — don't leave the file behind once its record is gone.
-    const abs = removed && resolveUploadPath(removed.file_path);
-    if (abs) fs.unlink(abs, () => {});
+    // Uploaded videos are large - don't leave the file behind once its record is gone (always the file the record
+    // currently points to: a finished video may have been renamed to its original upload name).
+    await deleteMediaAndFile(req.params.id);
     res.json({ success: true, message: 'Media deleted' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1171,9 +1186,13 @@ storageReady.then(() => { const httpServer = app.listen(PORT, () => {
   console.log(`=======================================================`);
 
   // Video transcripts interrupted by a restart would otherwise sit on PROCESSING forever.
-  resumeInterruptedTranscriptions().catch(err => console.error('Resume transcriptions failed:', err.message));
-  // Only summaries that were mid-way (PROCESSING) when the server stopped continue; old videos without one stay untouched.
-  resumeInterruptedSummaries().catch(err => console.error('Resume summaries failed:', err.message));
+  // (PX_DISABLE_RESUME=1 is only for a throw-away second backend sharing the database of a running one, so it does not
+  // take over that backend's videos that are being processed.)
+  if (process.env.PX_DISABLE_RESUME !== '1') {
+    resumeInterruptedTranscriptions().catch(err => console.error('Resume transcriptions failed:', err.message));
+    // Only summaries that were mid-way (PROCESSING) when the server stopped continue; old videos without one stay untouched.
+    resumeInterruptedSummaries().catch(err => console.error('Resume summaries failed:', err.message));
+  }
 
   // Automatic Survey Upload Reminders: on a metric's deadline day, if the PIC has not uploaded the
   // previous month's survey data, the PIC is emailed (see services/reminderService.js). Runs at boot

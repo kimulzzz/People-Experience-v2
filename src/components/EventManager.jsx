@@ -80,6 +80,11 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
   const [broken, setBroken] = useState(false);
   const isVideo = med.file_type === 'VIDEO';
 
+  // A finished video is renamed on the server and its file_path changes; an error raised for the old path (404 in the
+  // window between the rename and the refetch) must not stick. A seed photo whose file never existed keeps its path, so
+  // it stays "not available" without reloading in a loop.
+  useEffect(() => { setBroken(false); }, [med.file_path]);
+
   const openLarge = () => {
     if (videoRef.current) videoRef.current.pause();
     onOpen(med);
@@ -102,6 +107,7 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
           </div>
         ) : isVideo ? (
           <video
+            key={med.file_path}
             ref={videoRef}
             src={`${med.file_path}#t=0.1`}
             controls
@@ -111,6 +117,7 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
           />
         ) : (
           <img
+            key={med.file_path}
             src={med.file_path}
             alt={captionText(med) || med.file_name}
             loading="lazy"
@@ -364,6 +371,25 @@ export default function EventManager({
       }
     }, 4000);
     return () => clearInterval(timer);
+  }, [hasProcessingTranscript, selectedEvent?.event_id]);
+
+  // When the last video job ends, the server renames the video file to its original upload name a moment later (the
+  // file_path changes). The poll above has stopped by then, so fetch once more to pick up the new file_path.
+  const wasProcessing = useRef(false);
+  useEffect(() => {
+    if (hasProcessingTranscript) { wasProcessing.current = true; return undefined; }
+    if (!wasProcessing.current || !selectedEvent?.event_id) return undefined;
+    wasProcessing.current = false;
+    const eventId = selectedEvent.event_id;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/events/${eventId}`);
+        if (res.ok) setEventDetail(await res.json());
+      } catch (err) {
+        console.error('Video file name refresh failed:', err);
+      }
+    }, 2500);
+    return () => clearTimeout(timer);
   }, [hasProcessingTranscript, selectedEvent?.event_id]);
 
   const handleMediaUpload = async (e) => {
@@ -714,7 +740,7 @@ export default function EventManager({
                     <span>{uploadingMedia ? 'Uploading...' : 'Upload Photo / Video'}</span>
                     <input
                       type="file"
-                      accept="image/*,video/*"
+                      accept=".jpg,.jpeg,.png,.gif,.webp,.bmp,.avif,.mp4,.m4v,.mov,.webm,.mkv,.avi,.ogv,.mpg,.mpeg,.3gp,.wmv,.flv"
                       onChange={handleMediaUpload}
                       className="hidden"
                       disabled={uploadingMedia}
@@ -789,7 +815,7 @@ export default function EventManager({
       </div>
 
       {lightboxMedia && (
-        <MediaLightbox media={lightboxMedia} onClose={() => setLightboxMedia(null)} />
+        <MediaLightbox media={eventDetail?.media?.find(m => m.media_id === lightboxMedia.media_id) || lightboxMedia} onClose={() => setLightboxMedia(null)} />
       )}
 
     </div>

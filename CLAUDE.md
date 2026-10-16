@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(217-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(251-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (217 cases on SQL; JSON 195 at QC before the last 4 tests of Module 40, not re-run) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (251 cases on SQL; JSON 204 at QC before the Module 41 fixes, not re-run) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (29 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules |
 
@@ -551,6 +551,23 @@ domain model, not just descriptive:
   baru. QC pertama LULUS DENGAN CATATAN, lanjutan LULUS. Harness: JANGAN set `TEST_ADMIN_USER`/`TEST_ADMIN_PASSWORD` saat menjalankan suite di SQL. Sisa temuan: `?survey=`
   dengan kode pre-event menampilkan form tanpa pertanyaan (severity rendah). Belum dikerjakan: Activity Log + log proses/durasi (ada di branch `wip/v2.29.0-ui-english`
   - hanya UI Inggris/tema/bulan/limit yang sudah dibawa ke v2.30.0). Hitungan statis `await runTest(` (207) tidak sama dengan 217 - selisih 10 belum dijelaskan (pola sama v2.29.0).
+
+- **v2.30.1** (2026-10-16, see `CHANGELOG.md` [2.30.1], `docs/04` "Catatan v2.30.1", `docs/05` §3.7a, `docs/06`, `docs/07` §24): User minta file video di `server/uploads`
+  (nama acak `media-<ts>-<rand>.<ext>`, terlihat di monitoring Video Extractor) diganti ke NAMA ASLI unggahan setelah pipeline selesai. Baru `server/services/mediaFileService.js`
+  (`finalizeMediaFileName`, `deleteMediaAndFile`, `sanitizeVideoFileName`, `resolveUploadPath`, `runExclusive`, dst.): rename hanya untuk VIDEO berstatus final (transcript FAILED,
+  atau transcript DONE + summary DONE(AI/RULE)/FAILED/INSUFFICIENT), tidak pernah saat PROCESSING/antri (cek DB + `inFlight` memori di `transcribeService`/`aiQueue`),
+  `px_media.file_path` ikut berubah (`/uploads/<encodeURIComponent(nama)>`), tabrakan nama -> ` (1)`, gagal rename = peringatan saja (DB di-rollback), rename/update/delete satu lock;
+  whitelist `updateMedia` kini memuat `file_path`; `DELETE /api/media/:id` menunggu file terhapus. Gotcha: video LAMA tidak di-rename oleh GET/boot, baru setelah Regenerate summary /
+  Try again (atau job PROCESSING yang di-resume saat boot) selesai; monitoring Video Extractor (:8000) tidak diubah dan entri yang sudah tercatat tetap bernama acak (ide, belum
+  dikerjakan: kirim nama asli sebagai `display_name` opsional ke API transkrip); env `PX_DISABLE_RESUME=1` HANYA untuk backend kedua yang berbagi DB dengan backend yang sedang
+  jalan. Temuan QC yang diperbaiki: `MediaCard` macet di "File not available" setelah rename (kini reset `broken` saat `file_path` berubah + `key`), `accept` file-picker = daftar
+  ekstensi eksplisit, dan celah unggah yang SUDAH ADA sebelum versi ini (file apa pun yang dikirim sebagai `video/mp4`, mis. `evil.html`, tersimpan dan disajikan; butuh login) - kini
+  MIME DAN ekstensi terakhir harus sama-sama allowlist (gambar jpg jpeg png gif webp bmp avif; video mp4 m4v mov webm mkv avi ogv mpg mpeg 3gp wmv flv) kalau tidak 415 dan tidak
+  ada yang tersimpan; SVG dan HEIC/HEIF ditolak; `/uploads` mengirim nosniff + CSP sandbox + `Content-Disposition: attachment` bagi ekstensi non-allowlist (range 206 tetap).
+  Tes: Modul 41 (34 di SQL, 7 di JSON) -> SQL 251/251 (developer, backend kedua, 0 skip); QC sebelum perbaikan SQL 246 / JSON 204; JSON TIDAK dijalankan ulang setelah perbaikan;
+  verifikasi singkat QC atas perbaikan: LULUS DENGAN CATATAN, tanpa bug baru. Harness: Modul 38/41 butuh tidak ada video PROCESSING; jalankan suite SQL TANPA `TEST_ADMIN_USER`/`TEST_ADMIN_PASSWORD`;
+  hitungan statis `await runTest(` (238) masih beda dengan hasil jalan (251; +3 dijelaskan Modul 41, 10 lama belum). BELUM dikerjakan: Activity Log dan log durasi proses (masih
+  hanya di branch `wip/v2.29.0-ui-english`); rename file yang benar-benar terkunci hanya disimulasikan.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

@@ -1653,7 +1653,8 @@ const storage = {
     });
     return rowToMedia(rows[0]);
   },
-  // Whitelisted partial update - used by the background transcription job to record progress.
+  // Whitelisted partial update - used by the background transcription job to record progress. file_path is only changed
+  // by mediaFileService (renaming a finished video to its original upload name).
   async updateMedia(media_id, patch) {
     const sets = [];
     const params = { id: String(media_id) };
@@ -1661,6 +1662,7 @@ const storage = {
       if (patch[key] !== undefined) { sets.push(`${column} = @${key}`); params[key] = convert ? convert(patch[key]) : patch[key]; }
     };
     setIf('caption', 'caption', T.max);
+    setIf('file_path', 'file_path', v => String(v));
     setIf('ai_generated_description', 'ai_generated_description', T.max);
     setIf('transcript', 'transcript', v => T.max(v === null ? null : String(v)));
     setIf('transcript_segments', 'transcript_segments', v => T.max(v === null ? null : JSON.stringify(v)));
