@@ -378,7 +378,7 @@ export default function Calculator({
                   Check Point & Metric
                 </th>
                 <th className={`py-3 ${isFit ? 'px-2.5 w-28' : 'px-3.5 w-36'} bg-[var(--theme-deep)]`}>Type & PIC</th>
-                <th className={`py-3 ${isFit ? 'px-2 text-center w-24' : 'px-3.5 text-center w-32'} bg-[var(--theme-deep)]`}>Sample / Source</th>
+                <th className={`py-3 ${isFit ? 'px-2 text-center w-24' : 'px-3.5 text-center w-32'} bg-[var(--theme-deep)]`}>Total Respondents</th>
                 <th className={`py-3 ${isFit ? 'px-2 text-center w-24' : 'px-3.5 text-center w-28'} bg-[var(--theme-deep)]`}>Date / Last Sync</th>
                 <th className={`py-3 ${isFit ? 'px-2 text-right w-24' : 'px-3.5 text-right w-28'} bg-[var(--theme-deep)]`}>Actual Value</th>
                 <th className={`py-3 ${isFit ? 'px-2.5 min-w-[120px] w-32' : 'px-3.5 min-w-[150px]'} bg-[var(--theme-deep)]`}>Index Score (Target)</th>
@@ -406,7 +406,6 @@ export default function Calculator({
                 </tr>
               ) : (
                 filteredMetrics.map((m) => {
-                  const cp = checkpoints.find(c => c.checkpoint_id === m.checkpoint_id);
                   const j = journeys.find(jn => jn.journey_id === m.journey_id);
                   const isSurvey = m.metric_type === 'SURVEY';
                   const rawDate = m.last_survey_date || todayDateString();
@@ -436,12 +435,12 @@ export default function Calculator({
 
                       {/* Name & Checkpoint */}
                       <td className={`py-3 ${isFit ? 'px-2.5' : 'px-3.5'}`}>
-                        <div className="flex items-center space-x-1 text-[9.5px] font-bold text-gray-400 uppercase tracking-tight">
+                        <div className={`flex items-center space-x-1 text-[10px] font-extrabold uppercase tracking-tight ${isDisabled ? 'text-gray-400' : 'text-[#231F20]'}`}>
                           <span 
-                            className="w-2 h-2 rounded-full shrink-0" 
+                            className="w-2 h-2 rounded-full shrink-0 ring-1 ring-white/70" 
                             style={{ backgroundColor: isDisabled ? '#9CA3AF' : (j?.color || 'var(--theme-base)') }} 
                           />
-                          <span className="truncate max-w-[190px]">{j?.journey_name} • CP: {cp?.checkpoint_name}</span>
+                          <span className="truncate max-w-[190px]">{j?.journey_name}</span>
                         </div>
                         <div className={`font-extrabold ${isDisabled ? 'text-gray-500 line-through decoration-gray-400' : 'text-[#231F20] group-hover:text-[var(--theme-base)]'} transition ${isFit ? 'text-xs' : 'text-sm'} leading-snug mt-0.5 line-clamp-2`}>
                           {m.metric_name}
@@ -461,15 +460,13 @@ export default function Calculator({
                       {/* Type & Owner */}
                       <td className={`py-3 ${isFit ? 'px-2.5' : 'px-3.5'}`}>
                         {(() => {
-                          const isEss = isSurvey && (m.source_of_data || '').toUpperCase().includes('ESS');
                           return (
                             <span className={`inline-block px-1.5 py-0.5 rounded text-[9.5px] font-bold ${
                               isDisabled ? 'bg-gray-200 text-gray-600' :
-                              isEss ? 'bg-purple-50 text-purple-800 border border-purple-200' :
                               isSurvey ? 'bg-amber-50 text-amber-800 border border-amber-200' : 
                               'bg-blue-50 text-blue-800 border border-blue-200'
                             }`}>
-                              {isEss ? 'ESS SURVEY' : isSurvey ? 'SURVEY' : 'OUTCOME'}
+                              {isSurvey ? 'SURVEY' : 'OUTCOME'}
                             </span>
                           );
                         })()}
@@ -478,7 +475,7 @@ export default function Calculator({
                         </div>
                       </td>
 
-                      {/* Sample Size for Survey vs Data HR Internal badge for Outcome */}
+                      {/* Total respondents for Survey vs Data HR Internal badge for Outcome */}
                       <td className={`py-3 ${isFit ? 'px-2' : 'px-3.5'} text-center`}>
                         {isDisabled ? (
                           <span className="text-[10px] font-mono text-gray-400">-</span>
@@ -487,7 +484,7 @@ export default function Calculator({
                             <div className="font-black text-gray-900 text-xs">
                               {m.sample_size || 0}
                             </div>
-                            <span className="text-[9.5px] text-gray-400 block leading-tight">respondents</span>
+                            <span className="text-[9.5px] text-gray-500 block leading-tight">respondents</span>
                           </>
                         ) : (
                           <div className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-bold text-[9.5px] border border-blue-100">

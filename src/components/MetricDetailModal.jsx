@@ -297,44 +297,35 @@ export default function MetricDetailModal({
                       <div className="text-[11px] font-bold text-gray-500 uppercase flex items-center justify-between">
                         <span>Survey Data Operations</span>
                       </div>
-                      <div className="mt-2 flex flex-col sm:flex-row gap-1.5">
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
                         <a
                           href={`/api/surveys/template?metric_id=${detailData.metric_id}`}
                           download={`Template_Survey_Metric_${detailData.metric_id}.csv`}
-                          className="flex-1 py-1.5 px-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold flex flex-col items-center justify-center space-y-0.5 transition shadow-xs text-center group"
+                          className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
                           title="Download CSV Template with standard question format"
                         >
-                          <div className="flex items-center space-x-1">
-                            <Download className="w-3.5 h-3.5" />
-                            <span>Template</span>
-                          </div>
-                          <span className="text-[9px] font-normal text-emerald-100">Standard CSV</span>
+                          <Download className="w-3 h-3 text-slate-500 shrink-0" />
+                          <span>Template</span>
                         </a>
                         <a
                           href={`/api/surveys/evidence?metric_id=${detailData.metric_id}&period=${period || 'YTD'}`}
                           download={`Evidence_Survey_Metric_${detailData.metric_id}_${period || 'YTD'}.csv`}
-                          className="flex-1 py-1.5 px-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-[11px] font-bold flex flex-col items-center justify-center space-y-0.5 transition shadow-xs text-center group"
+                          className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
                           title="Download survey respondent records for audit validation"
                         >
-                          <div className="flex items-center space-x-1">
-                            <FileText className="w-3.5 h-3.5" />
-                            <span>Evidence</span>
-                          </div>
-                          <span className="text-[9px] font-normal text-purple-100">Audit Trail</span>
+                          <FileText className="w-3 h-3 text-slate-500 shrink-0" />
+                          <span>Evidence</span>
                         </a>
                         <button
                           onClick={() => {
                             onClose();
                             if (onOpenSurveyUpload) onOpenSurveyUpload(detailData.metric_id);
                           }}
-                          className="flex-1 py-1.5 px-2 bg-[#ED1C24] hover:bg-[#D91B23] text-white rounded-lg text-[11px] font-bold flex flex-col items-center justify-center space-y-0.5 transition shadow-xs text-center group"
+                          className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
                           title="Upload new CSV survey responses"
                         >
-                          <div className="flex items-center space-x-1">
-                            <FileSpreadsheet className="w-3.5 h-3.5" />
-                            <span>Upload</span>
-                          </div>
-                          <span className="text-[9px] font-normal text-red-100">Import CSV</span>
+                          <FileSpreadsheet className="w-3 h-3 text-slate-500 shrink-0" />
+                          <span>Upload</span>
                         </button>
                       </div>
                     </div>}

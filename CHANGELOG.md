@@ -4,6 +4,17 @@ Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Managemen
 
 ---
 
+## [2.28.1] - 2026-10-16
+
+### Perapian Tampilan Explore Metrics & Detail Metrik (Changed)
+- **Explore Metrics — teks journey kontras**: teks journey di atas nama metrik kini gelap dan tebal (`#231F20`), bukan abu-abu yang tidak terbaca pada tema Merah; penjelasan checkpoint ("• CP: ...") di sampingnya dihapus; titik warna journey diberi tepi putih. Rasio kontras terhadap latar baris untuk 5 tema: 4,6 (Ungu, terendah) sampai 9,4 (Teal).
+- **Type hanya SURVEY dan OUTCOME**: badge "ESS SURVEY" dihapus; metrik ESS kini berlabel SURVEY, jenis sumber datanya tetap terlihat di baris "Source".
+- **Kolom "Sample / Source" -> "Total Respondents"**: untuk metrik SURVEY menampilkan jumlah responden (nilai yang sama dengan "Total Respondents" di detail metrik); metrik OUTCOME tetap menampilkan badge "HR System".
+- **Detail metrik — tombol Survey Data Operations**: Template / Evidence / Upload dikecilkan (tidak lagi keluar dari kartu, otomatis turun baris bila sempit) dan diberi warna slate yang sama dengan tombol "Actions & Evidence" di daftar metrik; subteks "Standard CSV / Audit Trail / Import CSV" dipindah ke tooltip.
+- **Hanya frontend** (`Calculator.jsx`, `MetricDetailModal.jsx`); tidak ada perubahan API, database, atau tes. Pekerjaan UI bahasa Inggris & v2.29.0 (log proses/Activity Log) yang belum selesai disimpan di branch `wip/v2.29.0-ui-english`.
+
+---
+
 ## [2.28.0] - 2026-10-15
 
 ### 🤖 AI Summary Video Signature Program Event — Gemma 3 4B Lokal (Added / Changed)
