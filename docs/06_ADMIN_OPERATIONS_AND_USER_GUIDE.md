@@ -247,6 +247,13 @@ Catatan / belum diperbaiki: importer Admin yang menerima `metric_id` form non-nu
 - Video lama (diunggah sebelum v2.28.0) **tidak** diringkas otomatis; tekan tombol bila perlu. Gemma tidak dipanggil saat membuka halaman, dashboard, alerts, foto, atau PPT; PPT hanya menampilkan ringkasan yang sudah tersimpan.
 - Ollama mati tidak menghalangi upload maupun transkrip.
 
+### Kenapa ringkasan bisa jatuh ke "Automatic (rule-based)" (v2.30.3)
+- **Arti**: Gemma sudah dipanggil, tetapi jawabannya tidak lolos pemeriksaan otomatis (setelah satu kali coba ulang), atau Ollama mati/timeout. Yang tampil adalah kalimat yang diambil langsung dari transkrip - aman, hanya kurang rapi. Pesan di kartu: *"The AI summary was rejected by the validator; the automatic (rule-based) summary is shown."*
+- **Penyebab paling umum**: model 4B "menghias" transkrip yang **sangat pendek** (contoh kasusnya: 59 kata) dengan gagasan yang tidak diucapkan (mis. "dampak negatif", "masa depan"), atau memasukkan angka, nama, atau bahasa yang tidak ada di transkrip. Penolakan seperti ini benar, bukan kesalahan sistem. Sejak v2.30.3, kata yang hanya berbeda imbuhan dari kata di transkrip (mis. "dampaknya" untuk "dampak") tidak lagi dianggap baru, sehingga lebih sedikit ringkasan yang ditolak tanpa alasan.
+- **Cara memperbaiki**: klik **Regenerate summary** pada kartu video (hanya Admin/pengelola event). Satu kali regenerate = 1-2 panggilan Gemma, sekitar 11 detik per panggilan di CPU mesin ini; hasilnya deterministik (seed tetap), jadi mengulang berkali-kali pada video yang sama biasanya memberi hasil sama.
+- **Ekspektasi kualitas**: untuk transkrip sangat pendek, model mungkin tetap gagal dan hasilnya tetap **Automatic (rule-based)** - itu normal. Ringkasan berlabel `AI` tetap perlu dicek dengan transkrip: pemeriksaan otomatis tidak menangkap distorsi makna halus atau penafian.
+- Setelah memperbarui ke v2.30.3, **restart backend** agar validator baru dipakai; ringkasan yang sudah tersimpan tidak berubah sampai Anda menekan Regenerate.
+
 ### Memasang Ollama + Gemma (sekali per mesin)
 ```powershell
 winget install Ollama.Ollama

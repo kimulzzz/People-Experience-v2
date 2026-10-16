@@ -3880,6 +3880,7 @@ async function runRegressionSuite() {
           assert.strictEqual(done.summary_model, null);
           assert.strictEqual(generateCalls(), 2, 'exactly one retry');
           assert.ok(oll.calls[1].prompt.includes('PERBAIKAN') && /2019|350/.test(oll.calls[1].prompt), 'retry prompt names the rejected facts');
+          assert.ok(oll.calls[1].prompt.includes('benar-benar ada di transkrip'), 'retry prompt asks for words that are in the transcript');
           assert.ok(/validator/i.test(done.summary_error));
           const stored = `${done.summary} ${done.summary_points.join(' ')}`;
           assert.ok(!/2019|350|Budi|Santoso/.test(stored), 'invented facts must not be stored');
@@ -5097,6 +5098,79 @@ async function runRegressionSuite() {
         assert.deepStrictEqual(snapshot(), userBefore);
       });
     }
+  }
+
+  // --- MODULE 43 (v2.30.3): AI SUMMARY VALIDATOR TOLERATES PARAPHRASE (STEMMING) BUT STILL BLOCKS INVENTED FACTS ---
+  // Offline: no Ollama, no database. A summary used to be rejected when 3+ of its content words (over 20%) were not in the
+  // transcript, which also hit harmless affixed forms ("dampaknya" for "dampak"). The match is now stem based, more neutral
+  // words are ignored and the limits are 5 words AND over 30%, or 12 words in any case (long transcript: over 35% / 18).
+  // Numbers, number words, capitalised names, wrong language, meta phrases and markup are rejected exactly as before.
+  console.log('\n📦 MODULE 43: AI summary validator - paraphrase tolerance with stemming, invented facts still rejected (Positive & Negative Testing)');
+  {
+    const sm43 = require('../server/services/mediaSummaryService');
+    const sets43 = require('./helpers/summaryValidatorCases');
+    const answerOf = c => c.answer || sm43.parseModelAnswer(c.raw);
+    const verdict43 = c => { const a = answerOf(c); return a ? sm43.validateAnswer(a, c.transcript, c.lang) : 'FORMAT'; };
+
+    await runTest('[POSITIVE] Paraphrase set: affixed forms of words that are in the transcript pass (Indonesian + English, short + long transcript, log-case words, frozen real Gemma answer)', async () => {
+      const positives = sets43.CASES.filter(c => c.set === 'POSITIVE');
+      assert.ok(positives.length >= 8, `expected a real positive set, got ${positives.length}`);
+      for (const c of positives) assert.strictEqual(verdict43(c), null, `must pass: ${c.name}`);
+    });
+
+    await runTest('[NEGATIVE] Invented-fact set is still rejected, for the right reason: digits, number words, names, acronyms, wrong language, invented story (also against a long transcript), markup, meta phrase, frozen invented Gemma answer', async () => {
+      const negatives = sets43.CASES.filter(c => c.set === 'NEGATIVE');
+      assert.ok(negatives.length >= 12, `expected a real negative set, got ${negatives.length}`);
+      for (const c of negatives) {
+        const reason = verdict43(c);
+        assert.ok(reason, `must be rejected: ${c.name}`);
+        assert.ok(c.reason.test(reason), `${c.name}: rejected for the wrong reason: ${reason}`);
+      }
+    });
+
+    await runTest('[POSITIVE] Stemming: the words of the real log case match their roots (dampaknya, tindakannya, berpartisipasi, merasa~terasa, waktunya~waktuku, kebiasaan, membuatnya, tujuannya, mengganggu~terganggu, learned, participating)', async () => {
+      const tr = 'dampak tindakan partisipasi terasa waktuku biasa dibuat tujuan terganggu gangguan sosial';
+      const out = 'dampaknya tindakannya berpartisipasi merasa waktunya kebiasaan membuatnya tujuannya mengganggu sosial';
+      assert.deepStrictEqual(sm43.novelWords(out, tr, 'id').novel, []);
+      assert.deepStrictEqual(sm43.novelWords('learned supports participating decisions consideration', 'learn support participate decision consider', 'en').novel, []);
+      // 'sosial' ~ 'sosialisasi' and 'bahas' ~ 'bahasa': the shorter stem is the beginning of the other (max 4 letters longer)
+      assert.deepStrictEqual(sm43.novelWords('sosial', 'kegiatan sosialisasi', 'id').novel, []);
+    });
+
+    await runTest('[NEGATIVE] Stemming does not over-match: 3-letter stems never match, unrelated look-alikes stay new, number words are not rescued by an affix', async () => {
+      assert.deepStrictEqual(sm43.novelWords('adaptasi', 'saya ada di rumah', 'id').novel, ['adaptasi']);
+      assert.deepStrictEqual(sm43.novelWords('kendaraan', 'kendali penuh', 'id').novel, ['kendaraan']);
+      assert.deepStrictEqual(sm43.novelWords('pertumbuhan pendapatan', 'saya makan nasi', 'id').novel, ['pertumbuhan', 'pendapatan']);
+      // "keenam" (sixth) is not "enam" (six): a number word with an affix is still checked as a number
+      const tr = 'Mentor mendampingi peserta selama enam bulan pertama di kantor pusat untuk karyawan baru.';
+      const reason = sm43.validateAnswer({ summary: 'Mentor mendampingi peserta pada bulan keenam di kantor pusat untuk karyawan baru.', points: ['Mentor mendampingi peserta.', 'Karyawan baru didampingi.'] }, tr, 'id');
+      assert.ok(reason && /keenam/.test(reason), `got: ${reason}`);
+    });
+
+    await runTest('[POSITIVE] Limits: 5 new words AND over 30%, or 12 new words in any case; a long (chunked) transcript allows over 35% / 18 words; fewer than 5 never rejects', async () => {
+      assert.deepStrictEqual({ ...sm43.NOVEL_LIMITS }, { min: 5, ratio: 0.30, max: 12, longRatio: 0.35, longMax: 18 });
+      const short = 'x'.repeat(100);
+      const long = 'x'.repeat(5001);
+      const T = sm43.tooManyNovelWords;
+      assert.strictEqual(T(4, 5, short), false, 'under 5 words is never enough, even when it is 80% of the summary');
+      assert.strictEqual(T(5, 16, short), true, '5 of 16 = 31%');
+      assert.strictEqual(T(5, 17, short), false, '5 of 17 = 29%');
+      assert.strictEqual(T(11, 40, short), false);
+      assert.strictEqual(T(12, 80, short), true, '12 words are too many in any case');
+      assert.strictEqual(T(12, 40, long), false, 'long transcript: 12 of 40 = 30%');
+      assert.strictEqual(T(15, 40, long), true, 'long transcript: 15 of 40 = 37.5%');
+      assert.strictEqual(T(18, 200, long), true, 'long transcript: 18 words in any case');
+    });
+
+    await runTest('[POSITIVE] The Module 38 behaviour is kept: the stored real summary and the invented one are still told apart, and the retry prompt asks for words from the transcript', async () => {
+      const real = sets43.CASES.find(c => /earlier stored summary/.test(c.name));
+      const invented = sets43.CASES.find(c => /Gemma answer 1/.test(c.name));
+      assert.strictEqual(verdict43(real), null);
+      assert.ok(verdict43(invented));
+      const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'server', 'services', 'mediaSummaryService.js'), 'utf8');
+      assert.ok(/Pakai hanya kata yang benar-benar ada di transkrip/.test(src) && /Use only words that really occur in the transcript/.test(src), 'both retry prompts carry the instruction');
+      assert.ok(/novel\.slice\(0, 12\)/.test(src), 'the retry feedback names up to 12 rejected words');
+    });
   }
 
   // --- SUMMARY ---

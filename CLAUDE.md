@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(266-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(272-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (266 cases on SQL; JSON 204 at QC before the Module 41 fixes, not re-run since) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (272 cases on SQL; JSON 204 at QC before the Module 41 fixes, not re-run since) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (29 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules |
 
@@ -515,7 +515,7 @@ domain model, not just descriptive:
   Rule: Gemma is called ONLY (1) for a NEW video once its transcript is DONE and (2) by the manager's "Buat/Buat ulang ringkasan" button
   (`POST /api/media/:id/summarize`); zero calls on GET event/dashboard/alerts/health/photos/PPT/boot (boot only resumes an interrupted `PROCESSING`).
   Single guard `localAiService.assertAiAllowed()` (scope `EVENT_VIDEO_SUMMARY`). `mediaSummaryService.js` + `aiQueue.js`: validator (numbers AND number
-  words, capitalised names, language, meta phrases, new content words >= 3 and > 20%) -> one retry -> extractive RULE fallback labelled "Otomatis (aturan)";
+  words, capitalised names, language, meta phrases, HTML, new content words; since v2.30.3: stem-matched, reject at >= 5 AND > 30% or >= 12 — was >= 3 and > 20%) -> one retry -> extractive RULE fallback labelled "Otomatis (aturan)";
   < 20 words = INSUFFICIENT; long transcripts chunked at 5000 chars (> 12 parts = RULE). 8 `px_media.summary_*` columns (per-column `COL_LENGTH` guard;
   the user's DB already had 7 left over from v2.26.0). BEHAVIOUR CHANGE: alert narratives and event summaries are now purely rule-based and `/api/health`
   only touches Ollama with login + `?check_ai=1`. `PX_DISABLE_SCHEDULERS=1` is only for the suite's second backend. Install: `winget install Ollama.Ollama`,
@@ -578,6 +578,19 @@ domain model, not just descriptive:
   backend kedua tes. Tes: Modul 42 (15; 14 khusus SQL) -> SQL 266/266 (developer, backend kedua, 0 skip); JSON TIDAK dijalankan ulang; hitungan statis `await runTest(` 253 vs hasil 266
   (selisih 13 sama seperti v2.30.1). TIDAK ada QC terpisah. BELUM terverifikasi: tampilan di menu monitoring Video Extractor yang ASLI (user akan menguji dengan video pendek asli);
   karakter `[ ] ( ) é` di Extractor asli; "file in use" saat hapus link. BELUM dikerjakan: Activity Log dan log durasi proses; foto HEIC masih ditolak.
+
+- **v2.30.3** (2026-10-16, see `CHANGELOG.md` [2.30.3], `docs/04` "Catatan v2.30.3", `docs/06`, `docs/07` §26): user saw "The AI summary was rejected by the validator" on the video
+  "Tentang WAKTU" (`med-1792147085411-jvp16`, 411 chars / 59 words, not chunked). Diagnosis with the real Gemma (once, separate script, no DB writes): attempt 1 REALLY invented content
+  (15 of 46 content words = 33% new) -> the rejection was correct; attempt 2 only 3/42 (7%). So the main cause is the 4B model embellishing a very short text, not just a strict validator; the
+  guess "only affixes" was partly wrong. Fix in `mediaSummaryService.js`: STEM-based word matching (id prefixes/suffixes/clitics up to two layers, simple en suffixes, stem >= 4 letters, a 5+ letter
+  stem that is the beginning of another within 4 letters also matches); neutral-word list widened but matched as the EXACT word (stem matching let "pendapatan" through via "dapat" - caught by a
+  test), only a small `NEUTRAL_ROOTS` set matches by stem; new limits `NOVEL_LIMITS`: reject at >= 5 new content words AND > 30%, or >= 12 words (transcript > 5000 chars: > 35% or >= 18; was
+  >= 3 AND > 20%); HTML/markup now rejected; retry prompts ask for words really in the transcript + shorter output, feedback names up to 12 words; Gemma call count unchanged. Unchanged defences:
+  numbers and number words (affixed "keenam" not rescued by "enam"), capitalised names/acronyms, wrong language, meta phrases, < 40 chars, format. The chunk path still validates the combined
+  answer against the FULL transcript. No new endpoint/setting/table/env. Tests (developer): Module 43 (6 offline tests, fixture `tests/helpers/summaryValidatorCases.js`: 10 positive + 14
+  negative cases) + 1 assertion in Module 38 -> SQL 272/272, 0 skip (second backend); static `await runTest(` 259 vs 272 (gap 13, as in v2.30.2). NO separate QC; JSON full suite NOT run.
+  Limits: subtle semantic distortion still passes (accepted trade-off); non-affix synonyms not matched; Gemma can still invent on very short text -> RULE; main backend must be restarted;
+  Regenerate = 1-2 Gemma calls (~11 s each on this CPU, fixed seed). Side finding: the user's video file already carries its original name in `server/uploads` (v2.30.1 rename works for real).
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

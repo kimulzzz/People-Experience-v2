@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    42 MODUL PENGUJIAN    │     266 AUTOMATED TESTS     │       100% PASS RATE          │
+│    43 MODUL PENGUJIAN    │     272 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -867,3 +867,25 @@ Modul 42 memakai backend kedua dengan Ollama dan Video Extractor **palsu** yang 
 **Harness**: Modul 42 di-skip bila backend bukan SQL atau ada video berstatus `PROCESSING` di database (sama seperti Modul 38/41); jalankan suite SQL tanpa `TEST_ADMIN_USER`/`TEST_ADMIN_PASSWORD`. Satu tes menunggu jendela 15 detik (kegagalan lambat), jadi modul ini menambah waktu proses suite.
 
 **Tidak diuji / tidak terverifikasi**: tampilan menu monitoring Video Extractor yang **asli** (hanya `source` yang diterima Extractor palsu); perilaku Extractor asli terhadap path ber-karakter `[ ] ( ) é`; kasus Windows "file in use" saat menghapus link; hard link lintas volume (hanya disimulasikan lewat `EXDEV` palsu); suite JSON penuh.
+
+
+## 🧮 26. Validator AI Summary Toleran Parafrase - v2.30.3 (2026-10-16)
+
+**Regression suite: 272 test di SQL Server** (angka dari laporan developer, backend kedua, 0 skip; penulis dokumen ini tidak menjalankan ulang suite). 272 = 266 (v2.30.2) + 6 (Modul 43). **Tidak ada QC terpisah** untuk rilis ini dan **suite JSON penuh tidak dijalankan** (tidak ada angka JSON terverifikasi; Modul 43 dirancang jalan di SQL dan JSON, tetapi hasil di JSON tidak diverifikasi).
+
+**Modul 43 = 6 tes** (dihitung dari kode: 6 pemanggilan `runTest`, tanpa loop). Hitungan statis `await runTest(` di `tests/regressionTest.js` kini 259 vs hasil jalan 272 (selisih 13, sama dengan v2.30.2). Modul 43 **offline**: tanpa Ollama, tanpa database, hanya `require('../server/services/mediaSummaryService')` dan fixture `tests/helpers/summaryValidatorCases.js` (24 kasus: 10 `POSITIVE` + 14 `NEGATIVE`). Transkrip dan dua jawaban Gemma asli dari video "Tentang WAKTU" dibekukan di fixture agar tes tidak membaca database.
+
+| # | Jenis | Yang diuji (Modul 43) |
+| :-: | :---: | :--- |
+| 1 | Positif | Himpunan parafrase (10 kasus): bentuk berimbuhan dari kata di transkrip lolos (Indonesia + Inggris, transkrip pendek + panjang, kata dari log, jawaban Gemma asli percobaan 2 dan ringkasan tersimpan sebelumnya, angka sama dengan transkrip) |
+| 2 | Negatif | Himpunan karangan (14 kasus) ditolak **dengan alasan yang benar**: digit, kata bilangan, nama, akronim, bahasa salah, cerita karangan (juga terhadap transkrip panjang), setengah karangan, HTML/script, frasa meta, jawaban Gemma asli percobaan 1; juga kasus Inggris |
+| 3 | Positif | Stemming: kata dari kasus log (dampaknya, tindakannya, berpartisipasi, merasa~terasa, waktunya~waktuku, kebiasaan, membuatnya, tujuannya, mengganggu~terganggu, learned, participating) cocok dengan akarnya; sosial~sosialisasi |
+| 4 | Negatif | Stemming tidak terlalu longgar: stem 3 huruf tidak cocok (`adaptasi` vs `ada`), kata mirip tak berkaitan tetap baru (`kendaraan` vs `kendali`), `pertumbuhan pendapatan` tidak lolos sebagai netral, "keenam" tidak diselamatkan oleh "enam" |
+| 5 | Positif | Batas `NOVEL_LIMITS` dan `tooManyNovelWords`: 5 kata **dan** > 30% atau 12 kata; transkrip panjang > 35% / 18; di bawah 5 kata tidak pernah menolak |
+| 6 | Positif | Perilaku Modul 38 dipertahankan (ringkasan tersimpan lolos, jawaban karangan ditolak) dan kedua prompt retry memuat instruksi "hanya kata yang ada di transkrip" serta umpan balik 12 kata |
+
+**Modul 38 disesuaikan**: satu asersi tambahan pada tes retry (prompt retry memuat `benar-benar ada di transkrip`); jumlah tes Modul 38 tidak berubah.
+
+**Data nyata (bukan bagian suite, laporan developer)**: ringkasan AI tersimpan pada 3 video user lulus validator lama dan baru. Gemma asli dipakai **satu kali** untuk diagnosis lewat skrip terpisah yang tidak menulis ke database.
+
+**Tidak diuji / tidak terverifikasi**: suite JSON penuh; QC terpisah; perilaku Gemma asli pada transkrip pendek lain (hanya satu video yang didiagnosis); distorsi makna halus tidak terdeteksi oleh validator (batasan desain). Dua kasus positif adalah parafrase buatan developer, bukan keluaran Gemma asli.

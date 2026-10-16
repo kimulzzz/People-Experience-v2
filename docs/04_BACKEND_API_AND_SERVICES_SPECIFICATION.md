@@ -341,9 +341,9 @@ Tidak diubah / belum diputuskan: importer tidak menolak NIP kembar (dalam satu C
 
 **Service**
 
-- `mediaSummaryService.js`: `queueMediaSummary(media_id)` (hanya video dengan `transcript_status = DONE`; mengembalikan `queued`/`insufficient`/`duplicate`/`skipped`), `resumeInterruptedSummaries()` (dipanggil `server.js` saat boot; hanya yang `PROCESSING`), `validateAnswer`, `numberMentions`, `novelWords`, `splitTranscript`, `parseModelAnswer`, `ruleBasedSummary`.
+- `mediaSummaryService.js`: `queueMediaSummary(media_id)` (hanya video dengan `transcript_status = DONE`; mengembalikan `queued`/`insufficient`/`duplicate`/`skipped`), `resumeInterruptedSummaries()` (dipanggil `server.js` saat boot; hanya yang `PROCESSING`), `summarizeWithAi`, `validateAnswer`, `numberMentions`, `novelWords`, `tooManyNovelWords`, `NOVEL_LIMITS` (sejak v2.30.3), `splitTranscript`, `parseModelAnswer`, `ruleBasedSummary`.
 - Konstanta: `MIN_WORDS = 20`, `CHUNK_CHARS = 5000`, `MAX_CHUNKS = 12`, poin 2-5. Format keluaran model: teks `RINGKASAN:` + `POIN:` (bukan JSON).
-- Validator menolak: angka atau kata bilangan/kata satuan frekuensi yang tidak ada di transkrip, nama/akronim berkapital yang tidak ada di transkrip, bahasa salah (id/en), frasa meta, dan kata isi baru (>= 3 kata dan > 20% kata isi; hanya untuk bahasa id/en). Ditolak -> satu retry dengan alasan; gagal lagi, Ollama mati/timeout/model belum terpasang, atau transkrip > 12 bagian -> `RULE` dengan `summary_error`. Antrian penuh -> `RULE` langsung.
+- Validator menolak: angka atau kata bilangan/kata satuan frekuensi yang tidak ada di transkrip, nama/akronim berkapital yang tidak ada di transkrip, bahasa salah (id/en), frasa meta, tag HTML/markup (sejak v2.30.3), dan kata isi baru yang tidak ada di transkrip setelah pencocokan stem (sejak v2.30.3: >= 5 kata dan > 30% kata isi, atau >= 12 kata; transkrip > 5000 karakter: > 35% atau >= 18; sebelumnya >= 3 kata dan > 20%; hanya untuk bahasa id/en; lihat "Catatan v2.30.3"). Ditolak -> satu retry dengan alasan; gagal lagi, Ollama mati/timeout/model belum terpasang, atau transkrip > 12 bagian -> `RULE` dengan `summary_error`. Antrian penuh -> `RULE` langsung.
 - `aiQueue.js`: satu job berjalan pada satu waktu; `enqueue(key, run)` -> `queued`/`duplicate`/`full`; batas antrian `AI_QUEUE_MAX` (default 50).
 - `localAiService.js`: `queryLocalOllama(prompt, { scope, subject, ... })` memanggil `POST {OLLAMA_HOST}/api/generate` memakai modul `http` inti (bukan `fetch`, agar tidak terkena batas header 5 menit); timeout `OLLAMA_TIMEOUT_MS` (default 7.200.000 ms = 120 menit sejak v2.30.0; dulu 300000). `generateAlertNarrative` dan `generateEventSummary` kini rule-based.
 - `transcribeService.js`: memicu `queueMediaSummary` setelah transkrip `DONE` (kegagalan memulai ringkasan tidak mengubah transkrip yang sudah selesai); memulai transkrip ulang mengosongkan semua field `summary_*`.
@@ -468,3 +468,29 @@ Perubahan terkait: `updateMedia` (`sqlStorage.js`, `jsonStorage.js`) kini meneri
 **Ekspor baru** `transcribeService`: `cleanupTranscribeTempDirs`, `TMP_DIR`. `postJson` memberi error properti `statusCode`, `isTimeout`, `isUnreachable`. Tidak ada endpoint, tabel, kolom, atau env baru; `/api/health` `version` = `2.30.2`.
 
 **Batasan**: hard link mensyaratkan `server/uploads` dan `server/tmp-transcribe` berada di **volume NTFS yang sama** (bila tidak: path acak); entri Extractor yang sudah ada tidak berubah; perilaku Extractor asli terhadap path berisi `[ ] ( ) é` belum diuji; kasus "file in use" saat menghapus link tidak disimulasikan; tampilan monitoring Extractor asli belum diverifikasi (menunggu uji user).
+
+
+---
+
+## Catatan v2.30.3 - Validator AI Summary: Stem & Ambang Baru
+
+**Masalah**: ringkasan Gemma pada video "Tentang WAKTU" (transkrip 411 karakter) ditolak validator dan jatuh ke `RULE`. Percobaan 1 memang mengarang isi (15 dari 46 kata isi tidak ada di transkrip); percobaan 2 hanya 3 dari 42 kata baru. Kata berimbuhan dan kata netral yang belum terdaftar juga dihitung "baru" oleh aturan lama (>= 3 kata dan > 20%). Detail: `CHANGELOG.md` [2.30.3].
+
+**Pemeriksaan kata baru di `validateAnswer` (`mediaSummaryService.js`)**
+
+| Aspek | Perilaku sejak v2.30.3 |
+| :--- | :--- |
+| Pencocokan | Berbasis **stem** (`stemsOf`, `buildSourceIndex`, `isInSource`). Indonesia: awalan me-/mem-/men-/meng-/meny-/memper-/ber-/ter-/per-/pe-/di-/ke-/se- (sampai 2 lapis, varian nasal dan r-drop), akhiran -kan/-an/-i, klitik -nya/-ku/-mu/-lah/-kah/-pun. Inggris: -s/-es/-ed/-ing/-ly/-er/-ion/-ment (konsonan ganda, e-bisu). |
+| Panjang stem | Minimal `STEM_MIN = 4` huruf, jadi stem 3 huruf (`ada`, `ini`) tidak pernah menciptakan kecocokan. Stem 5+ huruf yang merupakan awalan stem lain (selisih maks. 4 huruf) juga cocok (`sosial` ~ `sosialisasi`). |
+| Kata netral | `NEUTRAL` (id/en) dicocokkan **kata persis**; hanya `NEUTRAL_ROOTS` (id: jelas, cerita, sampaikan, bahas, ungkap; en: explain, discuss, mention, describe, share, highlight, emphasize) yang dicocokkan lewat stem. |
+| Ambang tolak | `NOVEL_LIMITS = { min: 5, ratio: 0.30, max: 12, longRatio: 0.35, longMax: 18 }`. `tooManyNovelWords(novelCount, total, transcript)` menolak bila kata baru >= 12, atau >= 5 **dan** > 30% kata isi. Transkrip > `CHUNK_CHARS` (5000 karakter): >= 18, atau >= 5 dan > 35%. Lama: >= 3 dan > 20%. |
+| Tag HTML | Jawaban yang memuat tag/markup ditolak: `memuat tag HTML/markup`. |
+| Tidak berubah | Angka dan kata bilangan (bentuk berimbuhan seperti "keenam" tidak diselamatkan oleh "enam"), nama/akronim berkapital, bahasa salah, frasa meta, ringkasan < 40 karakter, format `RINGKASAN:`/`POIN:`. |
+
+**Retry**: pesan penolakan menyebut sampai 12 kata (`novel.slice(0, 12)`, dulu 8). Kedua prompt (id/en) ditambah instruksi retry: pakai hanya kata yang benar-benar ada di transkrip (salin frasa bila ragu) dan tulis lebih pendek (2-3 kalimat, 3 poin pendek). Jumlah panggilan Gemma tidak berubah: 1 per bagian + 1 gabungan untuk transkrip panjang; retry maksimal 1.
+
+**Transkrip panjang (tidak berubah)**: `validateAnswer` untuk jawaban gabungan selalu membandingkan dengan transkrip **penuh**; ringkasan parsial per bagian tidak divalidasi sendiri.
+
+**Ekspor modul**: ditambah `summarizeWithAi`, `tooManyNovelWords`, `NOVEL_LIMITS`. Tidak ada endpoint, setting, tabel, atau env baru; `/api/health` `version` = `2.30.3`.
+
+**Batasan**: distorsi makna halus (penafian, nuansa) tetap bisa lolos; sinonim non-imbuhan (perlahan vs pelan) tidak dicocokkan; Gemma 4B masih bisa mengarang pada teks sangat pendek (hasil: `RULE`). Pengujian: `docs/07` §26 (Modul 43).

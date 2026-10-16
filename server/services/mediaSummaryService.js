@@ -59,7 +59,7 @@ Aturan keras:
 - Pakai kata-kata dan istilah yang sama dengan transkrip sedekat mungkin. Jangan memakai kata, istilah, atau gagasan baru yang tidak diucapkan.
 - Dilarang menambah angka, nama, tanggal, tempat, jabatan, penyebab, atau kesimpulan sendiri.
 - Jangan menulis kata "transkrip" atau "video"; jangan membuka dengan "Pembicara menceritakan".
-- Tulis dari sudut pandang orang ketiga ("ia") bila isinya cerita pribadi.${feedback ? `\n\nPERBAIKAN: jawaban Anda sebelumnya ditolak karena ${feedback}. Tulis ulang, patuhi aturan di atas, dan JANGAN memakai kata/angka yang disebut itu.` : ''}
+- Tulis dari sudut pandang orang ketiga ("ia") bila isinya cerita pribadi.${feedback ? `\n\nPERBAIKAN: jawaban Anda sebelumnya ditolak karena ${feedback}. Tulis ulang, patuhi aturan di atas, dan JANGAN memakai kata/angka yang disebut itu. Pakai hanya kata yang benar-benar ada di transkrip (bila ragu, salin frasanya dari transkrip) dan tulis lebih ringkas: 2 sampai 3 kalimat dan 3 poin pendek.` : ''}
 
 Transkrip:
 """
@@ -80,7 +80,7 @@ Hard rules:
 - Use the same words and terms as the transcript as closely as possible. Do not introduce words, terms or ideas that were not said.
 - Never add numbers, names, dates, places, job titles, causes or conclusions of your own.
 - Do not use the words "transcript" or "video"; do not open with "The speaker describes".
-- Write in the third person when the content is a personal story.${feedback ? `\n\nFIX: your previous answer was rejected because ${feedback}. Rewrite it, follow the rules above and do NOT use the words/numbers mentioned.` : ''}
+- Write in the third person when the content is a personal story.${feedback ? `\n\nFIX: your previous answer was rejected because ${feedback}. Rewrite it, follow the rules above and do NOT use the words/numbers mentioned. Use only words that really occur in the transcript (when in doubt, copy the phrase from it) and be shorter: 2 to 3 sentences and 3 short points.` : ''}
 
 Transcript:
 """
@@ -141,13 +141,31 @@ function parseModelAnswer(text) {
 
 // ------------------------------------------------------------------ validator (nothing outside the transcript)
 const META_RE = /^\s*["“]?(transkrip|video|rekaman|ringkasan|berikut|ini adalah|the (transcript|video|recording)|this (transcript|video|recording)|summary|here is)\b|\b(transkrip|video|rekaman)\s+(ini|tersebut|itu)\b|\bthe (transcript|video|recording)\b/i;
+// Words that carry no fact of their own (function words, light verbs, "the speaker tells ..." phrasing, frequency/degree
+// adverbs), matched as the exact word.
 const NEUTRAL = {
   id: new Set(['tersebut', 'kemudian', 'akhirnya', 'awalnya', 'bahwa', 'dengan', 'sebuah', 'seseorang', 'menceritakan', 'membahas', 'menjelaskan', 'menyampaikan',
     'pembicara', 'berbicara', 'tentang', 'mengenai', 'dalam', 'hidupnya', 'sehingga', 'namun', 'serta', 'setelah', 'sebelum', 'ketika', 'dapat', 'akan', 'mulai',
     'juga', 'yang', 'dari', 'untuk', 'pada', 'karena', 'agar', 'oleh', 'antara', 'terhadap', 'melalui', 'selama', 'sampai', 'orang', 'tidak', 'sebagai', 'adalah',
-    'sebelumnya', 'sangat', 'terutama', 'sebenarnya', 'sesungguhnya', 'sedikit', 'banyak', 'sering', 'selalu', 'hanya', 'masih', 'sudah', 'telah']),
+    'sebelumnya', 'sangat', 'terutama', 'sebenarnya', 'sesungguhnya', 'sedikit', 'banyak', 'sering', 'selalu', 'hanya', 'masih', 'sudah', 'telah',
+    // v2.30.3: more connectives, auxiliaries, pronouns, degree/frequency words and reporting verbs
+    'seringkali', 'sangatlah', 'kadang', 'kadangkala', 'biasanya', 'mungkin', 'harus', 'perlu', 'semua', 'setiap', 'beberapa', 'lainnya', 'tertentu', 'secara',
+    'umumnya', 'khususnya', 'misalnya', 'seperti', 'selain', 'supaya', 'walaupun', 'meskipun', 'apabila', 'bahkan', 'maupun', 'ataupun', 'tetapi', 'yaitu',
+    'yakni', 'ialah', 'merupakan', 'menjadi', 'melakukan', 'terdapat', 'berada', 'berbagai', 'lebih', 'paling', 'cukup', 'kurang', 'hampir', 'sekitar',
+    'selanjutnya', 'berikutnya', 'seluruh', 'menyebutkan', 'menyatakan', 'mengatakan', 'bercerita', 'mengungkapkan', 'menegaskan', 'menekankan',
+    'menggambarkan', 'menunjukkan', 'dijelaskan', 'disampaikan', 'diceritakan', 'narator', 'penulis', 'dirinya', 'mereka', 'sendiri', 'bersama']),
   en: new Set(['speaker', 'about', 'which', 'their', 'there', 'where', 'while', 'after', 'before', 'being', 'because', 'through', 'during', 'between', 'describes',
-    'explains', 'discusses', 'mentions', 'person', 'also', 'these', 'those', 'other', 'would', 'could', 'should'])
+    'explains', 'discusses', 'mentions', 'person', 'also', 'these', 'those', 'other', 'would', 'could', 'should',
+    // v2.30.3
+    'narrator', 'states', 'notes', 'highlights', 'emphasizes', 'shares', 'tells', 'another', 'several', 'various', 'overall', 'generally', 'often', 'sometimes',
+    'usually', 'really', 'however', 'therefore', 'although', 'though', 'whether', 'around', 'within', 'without', 'against', 'among', 'under', 'since', 'until',
+    'every', 'something', 'everyone', 'people'])
+};
+// Reporting verbs, recognised in any inflected form ("dijelaskan", "pembahasan", "explained"). Only roots that never carry a fact on their own:
+// a general function-word list matched by stem would swallow real content words ("dapat" -> "pendapatan").
+const NEUTRAL_ROOTS = {
+  id: new Set(['jelas', 'cerita', 'sampaikan', 'bahas', 'ungkap']),
+  en: new Set(['explain', 'discuss', 'mention', 'describe', 'share', 'highlight', 'emphasize'])
 };
 // Words that are only function words in each language, used to detect a summary written in the wrong language.
 const LANG_MARKERS = {
@@ -155,39 +173,114 @@ const LANG_MARKERS = {
   en: new Set(['the', 'and', 'of', 'to', 'in', 'is', 'that', 'for', 'with', 'on', 'it', 'as', 'was', 'are', 'he', 'she', 'they'])
 };
 
-// Crude stems so "menyadari" ~ "sadar", "merugikan" ~ "kerugian", "learned" ~ "learn".
-// Returns every plausible stem (Indonesian prefixes change the first letter: meny+adari -> sadar, men+ulis -> tulis).
-function stems(word, lang) {
-  const w = word.toLowerCase();
-  if (lang === 'en') return new Set([w.replace(/(ing|ed|es|ly|s)$/, ''), w]);
-  const bases = new Set([w]);
-  const m = /^(meny|meng|mem|men|me|peny|peng|pem|pen|pe|ber|ter|di|ke|se)(.{4,})$/.exec(w);
-  if (m) {
-    bases.add(m[2]);
-    const swap = { meny: 's', peny: 's', meng: 'k', peng: 'k', mem: 'p', pem: 'p', men: 't', pen: 't' }[m[1]];
-    if (swap) bases.add(swap + m[2]);
+// Light stemming (v2.30.3): "dampaknya" ~ "dampak", "berpartisipasi" ~ "partisipasi", "merasa" ~ "terasa", "learned" ~ "learn".
+// Every plausible stem of a word is produced (an affix can hide a changed first letter: meny+adari -> sadar, men+ulis -> tulis,
+// ter+asa -> rasa) and two words match when they share a stem. A stem has at least STEM_MIN letters, so 'ada', 'ini' ...
+// never create a match by accident. Two stems also match when the shorter one (5+ letters) is the beginning of the other and
+// the other is at most 4 letters longer ("sosial" ~ "sosialisasi", "bahas" ~ "bahasa").
+const STEM_MIN = 4;
+const ID_PREFIXES = [ // [prefix, letters the root may have lost because of that prefix]
+  ['memper', ['']], ['member', ['']], ['pember', ['']], ['diper', ['']], ['menge', ['']], ['pemer', ['']],
+  ['meny', ['s']], ['peny', ['s']], ['meng', ['', 'k']], ['peng', ['', 'k']], ['mem', ['', 'p']], ['pem', ['', 'p']], ['men', ['', 't']], ['pen', ['', 't']],
+  ['ter', ['', 'r']], ['ber', ['']], ['per', ['']], ['be', ['']], ['te', ['']], ['me', ['']], ['pe', ['']], ['di', ['']], ['ke', ['']], ['se', ['']]
+];
+const ID_CLITICS = ['nya', 'ku', 'mu', 'lah', 'kah', 'pun'];
+const ID_SUFFIXES = ['kan', 'an', 'i'];
+const EN_SUFFIXES = [['ing', ''], ['ing', 'e'], ['ed', ''], ['ed', 'e'], ['ies', 'y'], ['es', ''], ['ly', ''], ['ers', ''], ['er', ''], ['ments', ''], ['ment', ''], ['ions', ''], ['ion', ''], ['ness', ''], ['s', '']];
+
+function idStems(word) {
+  const prefixed = new Set([word]);
+  let frontier = [word];
+  for (let depth = 0; depth < 2; depth++) { // memper+hati+kan: a prefix can sit behind another prefix
+    const next = [];
+    for (const w of frontier) {
+      for (const [prefix, extras] of ID_PREFIXES) {
+        if (!w.startsWith(prefix)) continue;
+        const rest = w.slice(prefix.length);
+        for (const extra of extras) {
+          const cand = extra + rest;
+          if (cand.length >= STEM_MIN && !prefixed.has(cand)) { prefixed.add(cand); next.push(cand); }
+        }
+      }
+    }
+    frontier = next;
   }
-  const out = new Set();
-  bases.forEach(b => { out.add(b); out.add(b.replace(/(kan|an|i|nya|lah|kah)$/, '')); });
+  const out = new Set(prefixed);
+  prefixed.forEach(b => {
+    const bases = [b];
+    ID_CLITICS.forEach(c => { if (b.endsWith(c) && b.length - c.length >= STEM_MIN) bases.push(b.slice(0, -c.length)); });
+    bases.forEach(x => {
+      out.add(x);
+      ID_SUFFIXES.forEach(s => { if (x.endsWith(s) && x.length - s.length >= STEM_MIN) out.add(x.slice(0, -s.length)); });
+    });
+  });
   return out;
 }
 
+function enStems(word) {
+  const out = new Set([word]);
+  EN_SUFFIXES.forEach(([suffix, add]) => {
+    if (!word.endsWith(suffix) || word.length - suffix.length < STEM_MIN - 1) return;
+    const base = word.slice(0, -suffix.length);
+    [base + add, base.replace(/([^aeiou])\1$/, '$1') + add].forEach(c => { if (c.length >= STEM_MIN) out.add(c); }); // "planned" -> "plan"
+  });
+  return out;
+}
+
+const stemsOf = (word, lang) => (lang === 'en' ? enStems(word) : idStems(word));
+
 const wordsOf = text => String(text || '').toLowerCase().split(/[^\p{L}]+/u).filter(Boolean);
+
+// Every stem found in the transcript, plus a first-5-letters bucket for the "beginning of" rule.
+function buildSourceIndex(transcript, lang) {
+  const stemSet = new Set();
+  const buckets = new Map();
+  new Set(wordsOf(transcript)).forEach(w => stemsOf(w, lang).forEach(s => {
+    if (stemSet.has(s)) return;
+    stemSet.add(s);
+    if (s.length >= 5) {
+      const key = s.slice(0, 5);
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push(s);
+    }
+  }));
+  return { stemSet, buckets };
+}
+
+function isInSource(word, lang, index) {
+  for (const s of stemsOf(word, lang)) {
+    if (index.stemSet.has(s)) return true;
+    if (s.length < 5) continue;
+    for (const t of index.buckets.get(s.slice(0, 5)) || []) {
+      const [shorter, longer] = s.length <= t.length ? [s, t] : [t, s];
+      if (longer.startsWith(shorter) && longer.length - shorter.length <= 4) return true;
+    }
+  }
+  return false;
+}
 
 // Content words (5+ letters) of `output` that cannot be traced to the transcript (exact or by stem).
 function novelWords(output, transcript, lang) {
   if (lang !== 'id' && lang !== 'en') return { total: 0, novel: [] };
   const neutral = NEUTRAL[lang];
   const source = String(transcript || '').toLowerCase();
-  const sourceStems = new Set();
-  wordsOf(transcript).forEach(w => stems(w, lang).forEach(s => { if (s.length >= 3) sourceStems.add(s); }));
+  const index = buildSourceIndex(transcript, lang);
   // Hyphenated words (reduplications such as "sia-sia" / "menyia-nyiakan") are skipped: they cannot be stemmed reliably.
-  const words = String(output || '').toLowerCase().split(/[^\p{L}-]+/u).map(w => w.replace(/^-+|-+$/g, '')).filter(w => w.length >= 5 && !w.includes('-') && !neutral.has(w));
-  const novel = words.filter(w => {
-    if (source.includes(w)) return false;
-    return ![...stems(w, lang)].some(s => s.length >= 3 && sourceStems.has(s));
-  });
+  const words = String(output || '').toLowerCase().split(/[^\p{L}-]+/u).map(w => w.replace(/^-+|-+$/g, '')).filter(w => w.length >= 5 && !w.includes('-'))
+    .filter(w => !neutral.has(w) && ![...stemsOf(w, lang)].some(s => NEUTRAL_ROOTS[lang].has(s)));
+  const novel = words.filter(w => !source.includes(w) && !isInSource(w, lang, index));
   return { total: words.length, novel: [...new Set(novel)] };
+}
+
+// Limits for content words the transcript does not contain (after stemming). A paraphrase has a few of them, an invented
+// story has many: reject on NOVEL_LIMITS.min words AND a share above `ratio` of the summary's content words, or on `max`
+// words in any case. A long (chunked) transcript has a wide vocabulary and its combined summary is longer: more room.
+const NOVEL_LIMITS = { min: 5, ratio: 0.30, max: 12, longRatio: 0.35, longMax: 18 };
+function tooManyNovelWords(novelCount, total, transcript) {
+  const isLong = String(transcript || '').length > CHUNK_CHARS;
+  const ratio = isLong ? NOVEL_LIMITS.longRatio : NOVEL_LIMITS.ratio;
+  const max = isLong ? NOVEL_LIMITS.longMax : NOVEL_LIMITS.max;
+  return novelCount >= max || (novelCount >= NOVEL_LIMITS.min && novelCount / Math.max(total, 1) > ratio);
 }
 
 const normNumber = token => token.replace(/[.,]+$/, '').replace(/[.,]/g, '');
@@ -246,6 +339,8 @@ function validateAnswer(answer, transcript, lang) {
   if (answer.summary.length < 40) return 'ringkasan terlalu pendek';
   if (META_RE.test(answer.summary) || answer.points.some(p => META_RE.test(p))) return 'membuka/memakai frasa meta seperti "transkrip ini ..." atau "video ini ..."';
 
+  if (/<\/?[a-z!][^>]*>/i.test(text)) return 'memuat tag HTML/markup';
+
   const supported = supportedNumberKeys(transcript);
   const badNumbers = [...new Set(numberMentions(text).filter(x => !supported.has(x.key)).map(x => x.label))];
   if (badNumbers.length) return `memuat angka/bilangan yang tidak ada di transkrip: ${badNumbers.join(', ')}`;
@@ -269,7 +364,7 @@ function validateAnswer(answer, transcript, lang) {
   }
 
   const { total, novel } = novelWords(text, transcript, lang);
-  if (novel.length >= 3 && novel.length / Math.max(total, 1) > 0.2) return `memuat kata yang tidak ada di transkrip: ${novel.slice(0, 8).join(', ')}`;
+  if (tooManyNovelWords(novel.length, total, transcript)) return `memuat kata yang tidak ada di transkrip: ${novel.slice(0, 12).join(', ')}`;
   return null;
 }
 
@@ -437,9 +532,12 @@ module.exports = {
   summaryLanguageFor,
   isTranscriptSufficient,
   splitTranscript,
+  summarizeWithAi,
   parseModelAnswer,
   validateAnswer,
   novelWords,
+  tooManyNovelWords,
+  NOVEL_LIMITS,
   numberMentions,
   ruleBasedSummary
 };
