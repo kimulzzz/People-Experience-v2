@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(195-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(207-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (195 cases on SQL, 177 on JSON) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (207 cases on SQL, 189 on JSON) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (29 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules |
 
@@ -490,7 +490,7 @@ domain model, not just descriptive:
   survey upload by PIC, respondent data visible to the PIC.
 
 - **v2.27.1** (2026-10-15, see `CHANGELOG.md` [2.27.1], `docs/04`, `docs/06`): login stage 2b - a metric's PIC is linked to a login account. The PIC is
-  still assigned in Parameter Admin (`pic_name`/`pic_email`); a USER account is PIC of SURVEY metric M (`requires_manual_upload`) when its e-mail equals
+  still assigned in Parameter Admin (`pic_name`/`pic_email`); a USER account is PIC of SURVEY metric M (since v2.29.0 ANY SURVEY metric; originally only those with `requires_manual_upload`) when its e-mail equals
   M's `pic_email` (case-insensitive, trimmed), read from the DB on every request (effective immediately, no cache). A PIC may use template/upload/history/
   evidence/responses/respondent identity ONLY for own metrics (`authService.requirePicMetric/getPicMetric/canSeeRespondentData` - now async - `rowsForViewer`/
   `respondentScopeFor`); employee-metric identities only for rows in the account's own directorate/division scope, non-employee metrics bankwide. `metric_id`
@@ -523,6 +523,19 @@ domain model, not just descriptive:
   fake Ollama/transcribe backend; Module 34 lockout test fixed). Known limits: subtle semantic distortion/negation can pass the validator; real Gemma tried
   once; Video Extractor :8000 not tested end-to-end by QC; PPT text not visually checked. NEXT: Gemma for WARNING/CRITICAL metrics. `stash@{0}` holds the old
   v2.26.0 WIP - reference only.
+
+- **v2.29.0** (2026-10-16, lihat `CHANGELOG.md` [2.29.0], `docs/04`/`05`/`06`/`07` §22/`08` §14, `SQLServerDB.md` §13): metrik SURVEY kini punya
+  `px_metrics.survey_source` (`SYSTEM`|`ESS`, `CHECK`, OUTCOME = NULL; ALTER idempoten; top-up boot `topUpSurveySource` hanya mengisi NULL dan
+  `enforceEssManualUpload`; logika bersama di `server/db/surveySource.js`, UI di `src/utils/surveySource.js`). ESS (metrik 9,13,15,16,17,18,21,22,24,25,27)
+  dideteksi dari kolom (teks `source_of_data` hanya fallback bila NULL), skor 27 metrik tidak berubah; ESS selalu `requires_manual_upload` (false -> 400).
+  KOREKSI v2.27.1: `authService.isPicMetric` = setiap metrik SURVEY, jadi Admin dan PIC (e-mail akun = `pic_email`) boleh Template/Evidence/Upload untuk semua
+  survei; `requires_manual_upload` kini HANYA menentukan pengingat e-mail. UI: dropdown Survey Source di Parameter Admin, badge ESS Template/System di Explore
+  Metrics (judul/chip filter dihitung dari data), AI Summary video bisa dilipat dan "AI Description" disembunyikan untuk video, awalan "Documentation " nama media
+  dihapus, tombol Survey Templates wrap. v2.28.1 (UI Explore Metrics) punya entri CHANGELOG sendiri. Tes: Modul 39 (10) + Modul 36 disesuaikan -> SQL 207/207,
+  JSON 189/189 (Modul 37/38 skip; top-up boot SQL di Modul 39 skip); selisih 2 dari penjumlahan 195+10 belum dijelaskan. QC: LULUS DENGAN CATATAN, 0 bug fungsional.
+  Temuan lama BELUM diperbaiki: importer Admin dengan `metric_id` form non-numerik jatuh ke metrik SURVEY pertama (rendah-sedang); "Latest Survey Date" modal detail
+  memakai hari ini; `PUT /api/admin/metrics/<tak ada>` -> 400 bukan 404; NIP kembar belum ditolak. Branch `wip/v2.29.0-ui-english` = pekerjaan belum selesai (UI bahasa
+  Inggris, nama tema, filter bulan, awal log proses/Activity Log/limit 120 menit) - hanya referensi, akan dikerjakan ulang/dibawa nanti.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

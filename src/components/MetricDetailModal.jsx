@@ -32,6 +32,7 @@ import {
   LayoutGrid
 } from 'lucide-react';
 import { formatMetricValue } from '../utils/formatMetricValue';
+import { surveySourceLabel, surveySourceBadgeClass } from '../utils/surveySource';
 
 function normalizeDateString(dateVal) {
   if (!dateVal) return null;
@@ -146,7 +147,8 @@ export default function MetricDetailModal({
 
   const isSurvey = detailData?.metric_type === 'SURVEY';
   const isOutcome = !isSurvey;
-  const isEss = detailData?.is_ess || (detailData?.source_of_data || '').toUpperCase().includes('ESS');
+  // ESS-ness is decided by the server from the metric's Survey Source (Parameter Admin), not by the source text.
+  const isEss = !!detailData?.is_ess;
 
   const isCampus = detailData?.metric_id === 2 || detailData?.target_audience === 'CAMPUS_STUDENTS';
   const isCandidate = detailData?.metric_id === 5 || detailData?.target_audience === 'JOB_APPLICANTS';
@@ -207,8 +209,16 @@ export default function MetricDetailModal({
                     ? 'bg-amber-50 text-amber-800 border-amber-200/60' 
                     : 'bg-blue-50 text-blue-800 border-blue-200/60'
                 }`}>
-                  {isSurvey ? (isEss ? 'Type: ESS (Employee Sentiment Survey)' : 'Type: Employee Survey') : 'Type: Outcome (Internal HR Data)'}
+                  {isSurvey ? 'Type: Employee Survey' : 'Type: Outcome (Internal HR Data)'}
                 </span>
+                {isSurvey && detailData?.survey_source && (
+                  <span
+                    className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${surveySourceBadgeClass(detailData.survey_source)}`}
+                    title={detailData.survey_source === 'ESS' ? 'Employee Sentiment Survey - uploaded manually from the ESS template' : 'Data from another system or form'}
+                  >
+                    Survey Source: {surveySourceLabel(detailData.survey_source)}
+                  </span>
+                )}
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 border border-gray-200">
                   Period: {period === 'YTD' ? `Year-to-Date ${detailData?.filter_options?.year || ''}` : period}
                 </span>

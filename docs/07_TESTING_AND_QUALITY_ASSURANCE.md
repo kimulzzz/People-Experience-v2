@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    38 MODUL PENGUJIAN    │     195 AUTOMATED TESTS     │       100% PASS RATE          │
+│    39 MODUL PENGUJIAN    │     207 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -762,3 +762,27 @@ Modul 38 (SQL Server) menjalankan **backend kedua** (`PX_DISABLE_SCHEDULERS=1`) 
 | 15 | Positif | PPT dibuat dari data tersimpan saja (tetap nol panggilan Ollama) |
 
 **Tidak diuji / keterbatasan**: Video Extractor asli (:8000) tidak diuji end-to-end oleh QC; Gemma asli hanya dicoba satu kali pada video user (±53 dtk); teks di slide PPT tidak diperiksa secara visual (slide media hanya 3 media); distorsi semantik halus dan negasi dapat lolos validator.
+
+---
+
+## 🗂️ 22. Survey Source (SYSTEM / ESS) & Upload Manual Semua Survei - v2.29.0 (2026-10-16)
+
+**Regression suite: 207 test di SQL Server** dan **189 di JSON** (angka dari laporan QC; penulis dokumen ini tidak menjalankan ulang suite). Di JSON, Modul 37 dan 38 di-skip dan bagian top-up boot SQL dari Modul 39 di-skip. QC: LULUS DENGAN CATATAN, 0 bug fungsional. **Modul 39 = 10 tes**; **Modul 36 disesuaikan** (PIC metrik tanpa flag pengingat kini boleh upload: daftar `pic_metrics` / `picMetricIds` memuat metrik itu, `can_upload` true, `/api/surveys/metrics` PIC memuatnya; metrik tersebut dikeluarkan dari daftar yang harus 403). Catatan hitungan: 195 + 10 = 205 dan 177 + 10 = 187, sedangkan hasil QC 207 dan 189 - selisih 2 pada kedua backend belum dijelaskan; hitungan statis `await runTest(` di `tests/regressionTest.js` naik dari 187 ke 197.
+
+| # | Jenis | Yang diuji (Modul 39) |
+| :-: | :---: | :--- |
+| 1 | Positif | `survey_source` terisi: tepat 11 metrik ESS (9, 13, 15, 16, 17, 18, 21, 22, 24, 25, 27), SURVEY lain `SYSTEM` (2, 5, 6, 7, 8, 10, 12, 23, 26), OUTCOME `null`; ESS ber-`requires_manual_upload`; ada di `calculate`, `detail` (level atas dan `metric`), `admin/parameters`, juga untuk User; `is_ess` / `ess_summary` mengikuti kolom |
+| 2 | Negatif | Nilai `FOO`, `SYSTEMS`, `ES S`, `5`, `true`, `["ESS"]`, `{v}` -> 400 pada tambah dan ubah, juga untuk OUTCOME; permintaan yang ditolak tidak mengubah apa pun; `PUT` id 99999 -> 400 |
+| 3 | Positif | Huruf kecil / spasi diterima; SURVEY mempertahankan atau mengganti nilai; OUTCOME selalu `null` (ESS yang dikirim diabaikan); SURVEY <-> OUTCOME menghapus / memberi sumber lagi |
+| 4 | Negatif | ESS + `requires_manual_upload: false` -> 400 pada tambah, ubah (juga metrik asli 9, yang tidak berubah) dan saat berpindah ke ESS; ESS menyalakan flag; SYSTEM boleh `false`; keluar dari ESS melepas kunci |
+| 5 | Positif | ESS dideteksi dari kolom, bukan kata "ESS" di `source_of_data` (kedua arah); mengganti teks tidak membalik; skor, nilai mentah dan status sama berapa pun sumbernya |
+| 6 | Positif (SQL saja) | Top-up boot: `survey_source` `NULL` diisi (teks ESS -> `ESS`, lain -> `SYSTEM`), nilai admin tidak ditimpa, OUTCOME tetap `NULL`, ESS ber-flag mati dinyalakan, dijalankan dua kali tidak mengubah apa pun; `CHECK` database menolak `FOO`. Di-skip di JSON (backfill JSON tidak punya tes otomatis) |
+| 7 | Positif | Admin mengunggah ke metrik SYSTEM/ESS dengan dan tanpa flag (upload, baris tersimpan, template, evidence, `can_upload`, `total_respondents`); template dan evidence menjawab 200 untuk ke-20 metrik SURVEY asli |
+| 8 | Positif / Negatif | PIC metrik SYSTEM tanpa flag dan PIC metrik ESS dapat unggah (audit `SURVEY_UPLOAD`, tanpa `calculation`); non-PIC dan PIC metrik lain 403 di semua rute; OUTCOME 403; mengubah `pic_email` mencabut hak pada request berikutnya |
+| 9 | Negatif | Sasaran bukan SURVEY (OUTCOME / id tidak dikenal, lewat form atau kolom CSV `metric_id`) tidak menyimpan baris apa pun; form menang atas kolom CSV |
+| 10 | Positif | Pengingat tetap opt-in: metrik tanpa flag tidak pernah diingatkan walau batas lewat; metrik ber-flag dengan batas tanggal 1 masuk daftar; ke-11 ESS ada di himpunan kandidat pengingat |
+
+Tes menghapus metrik ujinya lewat `tempMetricIds36` (metrik beserta datanya) di blok `finally`, lalu mencatat ke log bila masih ada metrik berawalan `REGRESSION PIC|SRC|UP` (hanya log, bukan assertion).
+
+**Tidak diuji / tidak terverifikasi**: tampilan UI (diperiksa QC di Browser pane; mobile tidak); backfill JSON; pengiriman e-mail pengingat asli. **Temuan lama yang belum diperbaiki**: importer dengan `metric_id` form non-numerik jatuh ke metrik SURVEY pertama (rendah-sedang); "Latest Survey Date" modal detail memakai hari ini; `PUT /api/admin/metrics/<tak ada>` -> 400 bukan 404; NIP kembar belum ditolak.
+

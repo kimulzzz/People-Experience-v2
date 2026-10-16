@@ -3002,6 +3002,7 @@ async function runRegressionSuite() {
       // pic_email is typed in a different letter case on purpose: the match is case-insensitive
       const P = await mkMetric36('REGRESSION PIC Own Metric', { pic_email: uMail('p1').toUpperCase() });
       const Q = await mkMetric36('REGRESSION PIC Other Metric', { pic_email: 'someone.else@example.test' });
+      // v2.29.0: no reminder flag, yet still uploadable by its PIC (every SURVEY metric can be uploaded by hand)
       const R = await mkMetric36('REGRESSION PIC Not Manual', { pic_email: uMail('p1'), requires_manual_upload: false });
       const day = new Date().toISOString().slice(0, 10);
       const rowsFor = tag => [
@@ -3014,7 +3015,7 @@ async function runRegressionSuite() {
 
       await runTest('[POSITIVE] A User whose e-mail equals a metric\'s pic_email (any letter case) is its PIC: own metric list, template, history; the flags come from the server', async () => {
         const list = await uj(picUser, '/api/surveys/metrics');
-        assert.deepStrictEqual(list.map(m => m.metric_id), [P], 'only the metrics the account is PIC of (R is not a manual-upload metric)');
+        assert.deepStrictEqual(list.map(m => m.metric_id), [P, R], 'only the metrics the account is PIC of (R has no reminder flag but is still uploadable since v2.29.0)');
         const t = await csvFor(picUser, P);
         assert.strictEqual(t.status, 200);
         assert.ok((t.headers.get('content-type') || '').includes('text/csv'));
@@ -3023,7 +3024,7 @@ async function runRegressionSuite() {
         const calc = await uj(picUser, '/api/metrics/calculate?period=YTD');
         assert.strictEqual(calc.metrics.find(m => m.metric_id === P).can_upload, true);
         assert.strictEqual(calc.metrics.find(m => m.metric_id === Q).can_upload, false);
-        assert.strictEqual(calc.metrics.find(m => m.metric_id === R).can_upload, false);
+        assert.strictEqual(calc.metrics.find(m => m.metric_id === R).can_upload, true, 'v2.29.0: a SURVEY metric without the reminder flag is still uploadable by its PIC');
         assert.strictEqual(calc.metrics.find(m => m.metric_id === 8).can_upload, false);
         assert.ok(calc.metrics.filter(m => m.metric_type === 'OUTCOME').every(m => m.can_upload === false));
         assert.strictEqual((await uj(picUser, `/api/metrics/${P}/detail?period=YTD`)).can_upload, true);
@@ -3082,7 +3083,7 @@ async function runRegressionSuite() {
           return out;
         };
         const qBefore = (await aj(`/api/surveys/responses/${Q}`)).length;
-        for (const m of [Q, R, 8, 99999]) {
+        for (const m of [Q, 8, 99999]) {
           const o = await probe(picUser, m);
           Object.entries(o).forEach(([k, v]) => assert.strictEqual(v, 403, `PIC ${k} of metric ${m} -> ${v}`));
         }
@@ -3169,7 +3170,7 @@ async function runRegressionSuite() {
         assert.strictEqual((await uget(picUser, `/api/surveys/responses/${P}`)).status, 403);
         assert.strictEqual((await uj(picUser, `/api/metrics/${P}/detail?period=YTD`)).respondent_data_hidden, true);
         assert.strictEqual((await uj(picUser, '/api/metrics/calculate?period=YTD')).metrics.find(m => m.metric_id === P).can_upload, false);
-        assert.strictEqual((await uget(picUser, '/api/surveys/metrics')).status, 403, 'no longer a PIC of anything');
+        assert.deepStrictEqual((await uj(picUser, '/api/surveys/metrics')).map(m => m.metric_id), [R], 'still PIC of R only');
         assert.strictEqual((await adminJson('PUT', `/api/admin/metrics/${P}`, { pic_email: uMail('p1') })).status, 200);
         assert.strictEqual((await csvFor(picUser, P)).status, 200, 'granted again at once');
         // the account e-mail is the other half of the match
@@ -3180,7 +3181,7 @@ async function runRegressionSuite() {
         // helpers: inactive / admin / strict id parsing
         const auth = require('../server/services/authService');
         const asObj = { role: 'USER', email: uMail('p1'), is_active: true };
-        assert.deepStrictEqual(await auth.picMetricIds(asObj), [P]);
+        assert.deepStrictEqual(await auth.picMetricIds(asObj), [P, R]);
         assert.deepStrictEqual(await auth.picMetricIds({ ...asObj, is_active: false }), [], 'inactive account has no PIC rights');
         assert.deepStrictEqual(await auth.picMetricIds({ ...asObj, email: '' }), []);
         assert.deepStrictEqual(await auth.picMetricIds({ role: 'ADMIN', email: uMail('p1') }), [], 'Admin is not "a PIC" (needs no PIC right)');
@@ -3207,7 +3208,7 @@ async function runRegressionSuite() {
         assert.ok(params.active_account_emails.every(e => e === e.toLowerCase()));
         const users = await aj('/api/admin/users');
         const mine = users.find(x => x.user_id === picUser.id);
-        assert.deepStrictEqual(mine.pic_metrics.map(m => m.metric_id), [P]);
+        assert.deepStrictEqual(mine.pic_metrics.map(m => m.metric_id), [P, R]);
         assert.ok(users.find(x => x.user_id === plainUser.id).pic_metrics.length === 0);
         assert.ok(users.filter(x => x.role === 'ADMIN').every(x => x.pic_metrics.length === 0));
         // a deactivated account is not a match for the hint
@@ -3266,9 +3267,270 @@ async function runRegressionSuite() {
         assert.ok(Array.isArray(rem.reminders));
         assert.ok(!JSON.stringify(rem).toLowerCase().includes('password'));
       });
+
+      // --- 39. SURVEY SOURCE (SYSTEM / ESS) + MANUAL UPLOAD FOR EVERY SURVEY METRIC (v2.29.0) ---
+      // Runs inside the Module 36 scope so it can reuse the PIC accounts; every metric it creates is added to
+      // tempMetricIds36, whose cleanup deletes the metric together with its survey data (documented cascade).
+      console.log('\n📦 MODULE 39: Survey Source (SYSTEM/ESS) column and manual upload for every SURVEY metric (Positive & Negative Testing)');
+
+      const ESS_IDS = [9, 13, 15, 16, 17, 18, 21, 22, 24, 25, 27];
+      const mkSurvey39 = async (name, body = {}) => {
+        const res = await adminJson('POST', '/api/admin/metrics', { metric_name: name, metric_type: 'SURVEY', scale_type: 'RATING_5', pic_name: 'PIC Regresi', pic_email: 'nobody.pic@example.test', ...body });
+        const json = await res.json();
+        if (res.status === 201) tempMetricIds36.push(json.metric_id);
+        return { status: res.status, body: json };
+      };
+      const put39 = async (id, body) => { const res = await adminJson('PUT', `/api/admin/metrics/${id}`, body); return { status: res.status, body: await res.json() }; };
+      const getMetric39 = async id => (await aj('/api/admin/parameters')).metrics.find(m => m.metric_id === id);
+
+      await runTest('[POSITIVE] survey_source is filled for every metric: exactly the 11 ESS metrics are ESS, the other SURVEY metrics are SYSTEM, OUTCOME metrics are NULL; ESS metrics are manual-upload; calculate and detail expose it and detail.is_ess follows it', async () => {
+        const params = (await aj('/api/admin/parameters')).metrics.filter(m => m.metric_id <= 27);
+        assert.strictEqual(params.length, 27);
+        assert.deepStrictEqual(params.filter(m => m.survey_source === 'ESS').map(m => m.metric_id), ESS_IDS);
+        const system = params.filter(m => m.metric_type === 'SURVEY' && m.survey_source === 'SYSTEM').map(m => m.metric_id);
+        assert.deepStrictEqual(system, [2, 5, 6, 7, 8, 10, 12, 23, 26]);
+        assert.ok(params.filter(m => m.metric_type === 'OUTCOME').every(m => m.survey_source === null), 'OUTCOME has no survey source');
+        assert.ok(params.filter(m => m.survey_source === 'ESS').every(m => m.requires_manual_upload === true), 'ESS is always manual upload');
+        const calc = await aj('/api/metrics/calculate?period=YTD');
+        for (const m of calc.metrics.filter(x => x.metric_id <= 27)) assert.strictEqual(m.survey_source, params.find(p => p.metric_id === m.metric_id).survey_source, `calculate metric ${m.metric_id}`);
+        const d9 = await aj('/api/metrics/9/detail?period=YTD');
+        const d8 = await aj('/api/metrics/8/detail?period=YTD');
+        const d1 = await aj('/api/metrics/1/detail?period=YTD');
+        assert.strictEqual(d9.survey_source, 'ESS'); assert.strictEqual(d9.is_ess, true); assert.strictEqual(d9.metric.survey_source, 'ESS');
+        assert.ok(d9.ess_summary, 'ESS metrics keep their dimension summary');
+        assert.strictEqual(d8.survey_source, 'SYSTEM'); assert.strictEqual(d8.is_ess, false); assert.strictEqual(d8.ess_summary, null);
+        assert.strictEqual(d1.survey_source, null); assert.strictEqual(d1.is_ess, false);
+        const uCalc = await uj(picUser, '/api/metrics/calculate?period=YTD');
+        assert.strictEqual(uCalc.metrics.find(m => m.metric_id === 9).survey_source, 'ESS', 'a User sees the source too');
+      });
+
+      await runTest('[NEGATIVE] Survey Source validation: values other than SYSTEM/ESS (any case is fine, other types are not) are refused with 400 on add and update, also for an OUTCOME metric; refused calls change nothing', async () => {
+        for (const bad of ['FOO', 'SYSTEMS', 'ES S', 5, true, ['ESS'], { v: 'ESS' }]) {
+          const created = await mkSurvey39('REGRESSION SRC Bad', { survey_source: bad });
+          assert.strictEqual(created.status, 400, `POST survey_source=${JSON.stringify(bad)} -> ${created.status}`);
+        }
+        const out = await adminJson('POST', '/api/admin/metrics', { metric_name: 'REGRESSION SRC Out Bad', metric_type: 'OUTCOME', scale_type: 'PERCENTAGE', survey_source: 'FOO' });
+        assert.strictEqual(out.status, 400, 'a typo is not silently ignored for OUTCOME either');
+        const m = await mkSurvey39('REGRESSION SRC Edit');
+        assert.strictEqual(m.status, 201);
+        assert.strictEqual(m.body.survey_source, 'SYSTEM', 'SURVEY without survey_source defaults to SYSTEM');
+        for (const bad of ['FOO', 7, ['ESS']]) {
+          assert.strictEqual((await put39(m.body.metric_id, { survey_source: bad, metric_name: 'REGRESSION SRC Changed' })).status, 400, `PUT ${JSON.stringify(bad)}`);
+        }
+        const after = await getMetric39(m.body.metric_id);
+        assert.strictEqual(after.survey_source, 'SYSTEM'); assert.strictEqual(after.metric_name, 'REGRESSION SRC Edit', 'a refused update changes nothing');
+        assert.strictEqual((await adminJson('PUT', '/api/admin/metrics/99999', { survey_source: 'FOO' })).status, 400);
+      });
+
+      await runTest('[POSITIVE] Survey Source rules: accepted in any case, SURVEY keeps/changes it, OUTCOME is always NULL (even when ESS is sent), SURVEY->OUTCOME clears it and OUTCOME->SURVEY gets a source again', async () => {
+        const e = await mkSurvey39('REGRESSION SRC Lower', { survey_source: 'ess' });
+        assert.strictEqual(e.status, 201); assert.strictEqual(e.body.survey_source, 'ESS');
+        assert.strictEqual((await put39(e.body.metric_id, { survey_source: ' system ' })).body.survey_source, 'SYSTEM');
+        assert.strictEqual((await getMetric39(e.body.metric_id)).survey_source, 'SYSTEM');
+        assert.strictEqual((await put39(e.body.metric_id, { survey_source: 'ESS' })).body.survey_source, 'ESS');
+        assert.strictEqual((await put39(e.body.metric_id, { metric_name: 'REGRESSION SRC Lower 2' })).body.survey_source, 'ESS', 'an update that does not mention it keeps it');
+        const toOut = await put39(e.body.metric_id, { metric_type: 'OUTCOME' });
+        assert.strictEqual(toOut.status, 200); assert.strictEqual(toOut.body.survey_source, null, 'OUTCOME is NULL');
+        assert.strictEqual((await put39(e.body.metric_id, { survey_source: 'ESS' })).body.survey_source, null, 'ESS sent to an OUTCOME metric is ignored');
+        const back = await put39(e.body.metric_id, { metric_type: 'SURVEY' });
+        assert.ok(['SYSTEM', 'ESS'].includes(back.body.survey_source), `SURVEY again has a source (${back.body.survey_source})`);
+        const out = await adminJson('POST', '/api/admin/metrics', { metric_name: 'REGRESSION SRC Outcome', metric_type: 'OUTCOME', scale_type: 'PERCENTAGE', survey_source: 'ESS' });
+        assert.strictEqual(out.status, 201);
+        const outBody = await out.json(); tempMetricIds36.push(outBody.metric_id);
+        assert.strictEqual(outBody.survey_source, null);
+      });
+
+      await runTest('[NEGATIVE] An ESS metric is always manual upload: requires_manual_upload=false is refused (400) on add and update (also for the real ESS metric 9, which stays unchanged); turning on ESS turns the flag on; a SYSTEM metric may have it off', async () => {
+        const bad = await mkSurvey39('REGRESSION SRC Ess Off', { survey_source: 'ESS', requires_manual_upload: false });
+        assert.strictEqual(bad.status, 400);
+        assert.ok(/ESS/.test(bad.body.error) && /manual/i.test(bad.body.error));
+        const e = await mkSurvey39('REGRESSION SRC Ess Default', { survey_source: 'ESS' });
+        assert.strictEqual(e.status, 201); assert.strictEqual(e.body.requires_manual_upload, true, 'ESS defaults to manual upload');
+        assert.strictEqual((await put39(e.body.metric_id, { requires_manual_upload: false })).status, 400);
+        assert.strictEqual((await put39(e.body.metric_id, { survey_source: 'ESS', requires_manual_upload: false })).status, 400);
+        assert.strictEqual((await getMetric39(e.body.metric_id)).requires_manual_upload, true);
+        assert.strictEqual((await put39(e.body.metric_id, { requires_manual_upload: true })).status, 200);
+        const before9 = await getMetric39(9);
+        assert.strictEqual((await put39(9, { requires_manual_upload: false })).status, 400);
+        assert.deepStrictEqual(await getMetric39(9), before9, 'the real ESS metric is untouched by the refused call');
+        // SYSTEM may be off, and switching it to ESS in the same request that says false is refused, but without the flag it turns on
+        const s = await mkSurvey39('REGRESSION SRC Sys Off', { requires_manual_upload: false });
+        assert.strictEqual(s.status, 201); assert.strictEqual(s.body.survey_source, 'SYSTEM'); assert.strictEqual(s.body.requires_manual_upload, false);
+        assert.strictEqual((await put39(s.body.metric_id, { survey_source: 'ESS', requires_manual_upload: false })).status, 400);
+        const toEss = await put39(s.body.metric_id, { survey_source: 'ESS' });
+        assert.strictEqual(toEss.status, 200); assert.strictEqual(toEss.body.requires_manual_upload, true, 'becoming ESS turns the flag on');
+        const toSys = await put39(s.body.metric_id, { survey_source: 'SYSTEM', requires_manual_upload: false });
+        assert.strictEqual(toSys.status, 200); assert.strictEqual(toSys.body.requires_manual_upload, false, 'leaving ESS releases the lock');
+      });
+
+      await runTest('[POSITIVE] ESS is detected by the survey_source column, not by the words in source_of_data (and the score does not depend on it)', async () => {
+        const a = await mkSurvey39('REGRESSION SRC Col ESS', { survey_source: 'ESS', source_of_data: 'Pulse Check Form' });
+        const b = await mkSurvey39('REGRESSION SRC Col System', { survey_source: 'SYSTEM', source_of_data: 'ESS (Employee Sentiment Survey)' });
+        assert.strictEqual(a.status, 201); assert.strictEqual(b.status, 201);
+        const dA = await aj(`/api/metrics/${a.body.metric_id}/detail?period=YTD`);
+        const dB = await aj(`/api/metrics/${b.body.metric_id}/detail?period=YTD`);
+        assert.strictEqual(dA.is_ess, true, 'ESS without the word ESS in the text');
+        assert.ok(dA.ess_summary, 'the ESS dimension summary is built for it');
+        assert.strictEqual(dB.is_ess, false, 'text says ESS but the column says SYSTEM');
+        assert.strictEqual(dB.ess_summary, null);
+        // editing the text does not flip it
+        assert.strictEqual((await put39(a.body.metric_id, { source_of_data: 'Something else' })).status, 200);
+        assert.strictEqual((await aj(`/api/metrics/${a.body.metric_id}/detail?period=YTD`)).is_ess, true);
+        // with real responses the score is the same whichever source the metric has
+        const day39 = new Date().toISOString().slice(0, 10);
+        const up = await adminJson('POST', '/api/surveys/upload', { csvText: csv36([`9300001,Skor Sama,s@cimbniaga.co.id,${A},${divX},${day39},4`, `9300002,Skor Sama 2,s2@cimbniaga.co.id,${A},${divX},${day39},5`]), fileName: 'rt39.csv', metric_id: a.body.metric_id });
+        assert.strictEqual((await up.json()).valid_rows_count, 2);
+        const scoreOf = async () => { const m = (await aj('/api/metrics/calculate?period=YTD')).metrics.find(x => x.metric_id === a.body.metric_id); return [m.raw_value, m.normalized_score, m.status]; };
+        const asEss = await scoreOf();
+        assert.strictEqual((await put39(a.body.metric_id, { survey_source: 'SYSTEM' })).status, 200);
+        assert.deepStrictEqual(await scoreOf(), asEss, 'switching the source does not move the score');
+      });
+
+      await runTest('[POSITIVE] Boot top-up (SQL Server): NULL survey_source of a SURVEY metric is filled (text with ESS -> ESS, otherwise SYSTEM), an admin\'s value is never overwritten, OUTCOME stays NULL, ESS with the reminder flag off is switched on, and running it twice changes nothing', async () => {
+        require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+        const storage = require('../server/db/storage');
+        if (storage.backend !== 'sql') { console.log('     (skipped: JSON backend - its backfill runs when store.json is loaded and is covered by the unit run documented in docs/07)'); return; }
+        const sql = require('mssql');
+        const pool = await new sql.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
+          user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
+        try {
+          const withText = await mkSurvey39('REGRESSION SRC Top ESS text', { source_of_data: 'ESS (Employee Sentiment Survey)' });
+          const plain = await mkSurvey39('REGRESSION SRC Top plain', { source_of_data: 'Event Evaluation Form' });
+          const adminChoice = await mkSurvey39('REGRESSION SRC Top admin', { source_of_data: 'ESS (Employee Sentiment Survey)', survey_source: 'SYSTEM' });
+          const essOff = await mkSurvey39('REGRESSION SRC Top ess off', { survey_source: 'ESS' });
+          const outc = await adminJson('POST', '/api/admin/metrics', { metric_name: 'REGRESSION SRC Top outcome', metric_type: 'OUTCOME', scale_type: 'PERCENTAGE' });
+          const outId = (await outc.json()).metric_id; tempMetricIds36.push(outId);
+          const ids = [withText, plain, adminChoice, essOff].map(x => x.body.metric_id);
+          assert.ok(ids.every(Boolean));
+          // simulate a database from before v2.29.0 for three metrics, and an ESS metric whose flag was switched off behind the app's back
+          await pool.request().query(`UPDATE dbo.px_metrics SET survey_source = NULL WHERE metric_id IN (${ids[0]}, ${ids[1]})`);
+          await pool.request().query(`UPDATE dbo.px_metrics SET requires_manual_upload = 0 WHERE metric_id = ${ids[3]}`);
+          await storage.topUpSurveySource();
+          await storage.enforceEssManualUpload();
+          await storage.topUpSurveySource(); await storage.enforceEssManualUpload(); // idempotent
+          assert.strictEqual((await getMetric39(ids[0])).survey_source, 'ESS');
+          assert.strictEqual((await getMetric39(ids[1])).survey_source, 'SYSTEM');
+          assert.strictEqual((await getMetric39(ids[2])).survey_source, 'SYSTEM', 'an admin\'s SYSTEM is not overwritten although the text says ESS');
+          assert.strictEqual((await getMetric39(ids[3])).requires_manual_upload, true, 'ESS flag switched back on');
+          assert.strictEqual((await getMetric39(outId)).survey_source, null, 'OUTCOME stays NULL');
+          // the database also refuses a value outside SYSTEM/ESS
+          await assert.rejects(() => pool.request().query(`UPDATE dbo.px_metrics SET survey_source = 'FOO' WHERE metric_id = ${ids[1]}`), /CK_px_metrics_survey_source|CHECK/i);
+        } finally {
+          await pool.close();
+          if (typeof storage.close === 'function' && !tempAdmin) await storage.close();
+        }
+      });
+
+      await runTest('[POSITIVE] Every SURVEY metric can be uploaded by hand (Admin): SYSTEM and ESS, with or without the reminder flag - upload, template, evidence and the responses list work; template and evidence also answer for all 20 real SURVEY metrics', async () => {
+        const sysOff = await mkSurvey39('REGRESSION UP System Off', { survey_source: 'SYSTEM', requires_manual_upload: false });
+        const sysOn = await mkSurvey39('REGRESSION UP System On', { survey_source: 'SYSTEM', requires_manual_upload: true });
+        const essM = await mkSurvey39('REGRESSION UP ESS', { survey_source: 'ESS' });
+        const day39 = new Date().toISOString().slice(0, 10);
+        const list = await aj('/api/surveys/metrics');
+        for (const m of [sysOff, sysOn, essM]) {
+          const id = m.body.metric_id;
+          assert.ok(list.some(x => x.metric_id === id), `metric ${id} is offered in the upload list`);
+          const up = await adminJson('POST', '/api/surveys/upload', { csvText: csv36([`93100${id}1,Unggah ${id},u${id}@cimbniaga.co.id,${A},${divX},${day39},4`]), fileName: 'rt39.csv', metric_id: id });
+          assert.strictEqual(up.status, 200);
+          const body = await up.json();
+          assert.strictEqual(body.success, true, `upload to ${id}`); assert.strictEqual(body.valid_rows_count, 1);
+          assert.strictEqual((await aj(`/api/surveys/responses/${id}`)).length, 1, 'the row is stored in that metric');
+          assert.strictEqual((await adminJson('GET', `/api/surveys/template?metric_id=${id}`)).status, 200);
+          assert.strictEqual((await adminJson('GET', `/api/surveys/evidence?metric_id=${id}&period=YTD`)).status, 200);
+          const d = await aj(`/api/metrics/${id}/detail?period=YTD`);
+          assert.strictEqual(d.can_upload, true);
+          assert.strictEqual(d.total_respondents, 1);
+        }
+        const calc = await aj('/api/metrics/calculate?period=YTD');
+        assert.ok(calc.metrics.filter(m => m.metric_type === 'SURVEY').every(m => m.can_upload === true), 'the UI buttons are shown for every SURVEY metric');
+        const real = calc.metrics.filter(m => m.metric_type === 'SURVEY' && m.metric_id <= 27).map(m => m.metric_id);
+        assert.strictEqual(real.length, 20);
+        for (const id of real) {
+          assert.strictEqual((await adminJson('GET', `/api/surveys/template?metric_id=${id}`)).status, 200, `template ${id}`);
+          assert.strictEqual((await adminJson('GET', `/api/surveys/evidence?metric_id=${id}&period=YTD`)).status, 200, `evidence ${id}`);
+        }
+      });
+
+      await runTest('[POSITIVE/NEGATIVE] The PIC of a SYSTEM metric without the reminder flag can upload (audited), the PIC of an ESS metric too; a User who is not the PIC, or the PIC of another metric, gets 403 on every upload route; rights follow the metric\'s PIC e-mail', async () => {
+        plainUser.cookie = (await loginAs(plainUser.username, STRONG)).cookie; // Module 36 deactivated/reactivated this account, which ended its session
+        const day39 = new Date().toISOString().slice(0, 10);
+        const sysM = await mkSurvey39('REGRESSION UP PIC System', { survey_source: 'SYSTEM', requires_manual_upload: false, pic_email: uMail('p1') });
+        const essM = await mkSurvey39('REGRESSION UP PIC ESS', { survey_source: 'ESS', pic_email: uMail('p1') });
+        const otherM = await mkSurvey39('REGRESSION UP PIC Other', { survey_source: 'ESS', pic_email: 'someone.else@example.test' });
+        for (const m of [sysM, essM]) {
+          const id = m.body.metric_id;
+          const calc = await uj(picUser, '/api/metrics/calculate?period=YTD');
+          assert.strictEqual(calc.metrics.find(x => x.metric_id === id).can_upload, true, `PIC sees the upload buttons for ${id}`);
+          assert.strictEqual((await csvFor(picUser, id)).status, 200);
+          const up = await post36(picUser, { csvText: csv36([`93200${id}1,Pic Unggah ${id},pu${id}@cimbniaga.co.id,${A},${divX},${day39},5`]), metric_id: String(id), fileName: 'pic39.csv' });
+          assert.strictEqual(up.status, 200, `PIC upload to ${id}`);
+          const body = await up.json();
+          assert.strictEqual(body.valid_rows_count, 1); assert.strictEqual(body.calculation, undefined, 'no bankwide calculation for a PIC');
+          const log = await aj('/api/admin/audit-log?limit=100');
+          assert.ok(log.some(e => e.action === 'SURVEY_UPLOAD' && e.username === picUser.username && e.target.includes(`metrik ${id};`)), 'audited');
+          assert.strictEqual((await uget(picUser, `/api/surveys/evidence?metric_id=${id}&period=YTD`)).status, 200);
+          // a non-PIC User: 403 everywhere
+          assert.strictEqual((await csvFor(plainUser, id)).status, 403);
+          assert.strictEqual((await post36(plainUser, { csvText: csv36([`9330001,X,x@cimbniaga.co.id,${A},${divX},${day39},4`]), metric_id: String(id) })).status, 403);
+          assert.strictEqual((await uget(plainUser, `/api/surveys/evidence?metric_id=${id}&period=YTD`)).status, 403);
+          assert.strictEqual((await uget(plainUser, `/api/surveys/responses/${id}`)).status, 403);
+        }
+        const otherId = otherM.body.metric_id;
+        assert.strictEqual((await csvFor(picUser, otherId)).status, 403, 'PIC of other metrics cannot use an ESS metric that is not theirs');
+        assert.strictEqual((await post36(picUser, { csvText: csv36([`9340001,X,x@cimbniaga.co.id,${A},${divX},${day39},4`]), metric_id: String(otherId) })).status, 403);
+        assert.strictEqual((await aj(`/api/surveys/responses/${otherId}`)).length, 0, 'nothing was written into the other metric');
+        // OUTCOME metrics are never uploadable, not even for the Admin
+        assert.strictEqual((await csvFor(picUser, 1)).status, 403);
+        const calcAdm = await aj('/api/metrics/calculate?period=YTD');
+        assert.ok(calcAdm.metrics.filter(m => m.metric_type === 'OUTCOME').every(m => m.can_upload === false));
+        // revoking: change the e-mail of the SYSTEM metric -> the very next request is refused
+        assert.strictEqual((await put39(sysM.body.metric_id, { pic_email: 'gone@example.test' })).status, 200);
+        assert.strictEqual((await csvFor(picUser, sysM.body.metric_id)).status, 403);
+      });
+
+      await runTest('[NEGATIVE] Upload keeps rejecting a target that is not a SURVEY metric: an OUTCOME or unknown metric id (form field) and a CSV metric_id column that names an OUTCOME or unknown metric store nothing; the form metric still wins over a mismatching CSV column', async () => {
+        const day39 = new Date().toISOString().slice(0, 10);
+        const t1 = await mkSurvey39('REGRESSION UP Target 1', { survey_source: 'SYSTEM' });
+        const t2 = await mkSurvey39('REGRESSION UP Target 2', { survey_source: 'ESS' });
+        const row = (nip, extra) => `${nip},Salah Sasaran,s@cimbniaga.co.id,${A},${divX},${day39},4${extra === undefined ? '' : ',' + extra}`;
+        const withCol = rows => ['nip,employee_name,cimb_email,directorate,division,survey_date,q1_overall,metric_id', ...rows].join('\r\n');
+        const total = async () => (await aj(`/api/surveys/responses/${t1.body.metric_id}`)).length + (await aj(`/api/surveys/responses/${t2.body.metric_id}`)).length;
+        const baseline = await total();
+        for (const [label, payload] of [
+          ['form OUTCOME', { csvText: csv36([row('9350001')]), metric_id: 1 }],
+          ['form unknown', { csvText: csv36([row('9350002')]), metric_id: 99999 }],
+          ['column OUTCOME', { csvText: withCol([row('9350003', 1)]) }],
+          ['column unknown', { csvText: withCol([row('9350004', 99999)]) }]
+        ]) {
+          const res = await adminJson('POST', '/api/surveys/upload', { fileName: 'rt39.csv', ...payload });
+          assert.strictEqual(res.status, 200, label);
+          const body = await res.json();
+          assert.strictEqual(body.success, false, `${label} must be rejected`);
+          assert.strictEqual(body.valid_rows_count || 0, 0, label);
+        }
+        assert.strictEqual(await total(), baseline, 'no row was stored by the rejected uploads');
+        // the form metric wins over the CSV column: the row goes to t2, not to t1
+        const res = await adminJson('POST', '/api/surveys/upload', { fileName: 'rt39.csv', metric_id: t2.body.metric_id, csvText: withCol([row('9350005', t1.body.metric_id)]) });
+        assert.strictEqual((await res.json()).valid_rows_count, 1);
+        assert.strictEqual((await aj(`/api/surveys/responses/${t2.body.metric_id}`)).length, 1);
+        assert.strictEqual((await aj(`/api/surveys/responses/${t1.body.metric_id}`)).length, 0);
+      });
+
+      await runTest('[POSITIVE] Reminders stay opt-in: a SURVEY metric without the reminder flag is never reminded (even when its PIC e-mail is set and its deadline is past); ESS metrics are in the reminder set (flag always on)', async () => {
+        const rem = await aj('/api/admin/upload-reminders');
+        const ids = new Set((rem.reminders || []).map(r => r.metric_id));
+        assert.ok(!ids.has(R), 'R has the reminder flag off and must not be reminded');
+        const flagOff = await mkSurvey39('REGRESSION UP No Reminder', { survey_source: 'SYSTEM', requires_manual_upload: false, upload_deadline_day: 1 });
+        const flagOn = await mkSurvey39('REGRESSION UP Reminder', { survey_source: 'SYSTEM', requires_manual_upload: true, upload_deadline_day: 1 });
+        const after = new Set(((await aj('/api/admin/upload-reminders')).reminders || []).map(r => r.metric_id));
+        assert.ok(!after.has(flagOff.body.metric_id), 'flag off -> no reminder');
+        assert.ok(after.has(flagOn.body.metric_id), 'flag on + deadline day 1 + no data -> reminder (control)');
+        const reminderMetrics = (await aj('/api/admin/parameters')).metrics.filter(m => m.metric_type === 'SURVEY' && m.requires_manual_upload && m.pic_email && m.metric_id <= 27);
+        assert.ok(ESS_IDS.every(id => reminderMetrics.some(m => m.metric_id === id)), 'all 11 ESS metrics are reminder candidates');
+      });
     } finally {
       for (const id of tempMetricIds36) await adminJson('DELETE', `/api/admin/metrics/${id}`);
-      const left = (await aj('/api/admin/parameters')).metrics.filter(m => m.metric_name.startsWith('REGRESSION PIC'));
+      const left = (await aj('/api/admin/parameters')).metrics.filter(m => /^REGRESSION (PIC|SRC|UP)/.test(m.metric_name));
       if (left.length) console.error(`     cleanup: ${left.length} PIC test metrics remain`);
     }
   } finally {

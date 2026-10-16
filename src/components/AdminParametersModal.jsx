@@ -24,6 +24,7 @@ import {
   Send
 } from 'lucide-react';
 import { formatMetricValue, defaultUnitForScale } from '../utils/formatMetricValue';
+import { SURVEY_SOURCE_OPTIONS, surveySourceLabel, surveySourceBadgeClass } from '../utils/surveySource';
 
 const MONTH_NAMES_ID = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -104,6 +105,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
     min_threshold: 75.0,
     is_employee_metric: true,
     target_audience: 'EMPLOYEE',
+    survey_source: 'SYSTEM',
     update_frequency: 'MONTHLY',
     requires_manual_upload: true,
     upload_deadline_day: 25,
@@ -287,6 +289,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
       min_threshold: 75.0,
       is_employee_metric: true,
       target_audience: 'EMPLOYEE',
+      survey_source: 'SYSTEM',
       update_frequency: 'MONTHLY',
       requires_manual_upload: true,
       upload_deadline_day: 25,
@@ -315,6 +318,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
       min_threshold: m.min_threshold !== undefined ? m.min_threshold : 75.0,
       is_employee_metric: m.is_employee_metric !== undefined ? m.is_employee_metric : true,
       target_audience: m.target_audience || (m.is_employee_metric ? 'EMPLOYEE' : 'EXTERNAL_MARKET'),
+      survey_source: m.survey_source || 'SYSTEM',
       update_frequency: m.update_frequency || 'MONTHLY',
       requires_manual_upload: m.requires_manual_upload !== undefined ? m.requires_manual_upload : (m.metric_type === 'SURVEY'),
       upload_deadline_day: m.upload_deadline_day !== undefined ? m.upload_deadline_day : 25,
@@ -332,18 +336,24 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
     setLoading(true);
     setErrorMessage('');
     try {
+      // Survey Source only applies to SURVEY metrics; an ESS metric is always uploaded manually.
+      const payload = {
+        ...metricFormData,
+        survey_source: metricFormData.metric_type === 'SURVEY' ? metricFormData.survey_source : '',
+        ...(metricFormData.metric_type === 'SURVEY' && metricFormData.survey_source === 'ESS' ? { requires_manual_upload: true } : {})
+      };
       let res;
       if (editingMetric) {
         res = await fetch(`/api/admin/metrics/${editingMetric.metric_id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(metricFormData)
+          body: JSON.stringify(payload)
         });
       } else {
         res = await fetch('/api/admin/metrics', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(metricFormData)
+          body: JSON.stringify(payload)
         });
       }
 
@@ -796,6 +806,25 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                       </select>
                     </div>
 
+                    {metricFormData.metric_type === 'SURVEY' && (
+                      <div>
+                        <label className="block text-xs font-bold text-gray-700 mb-1">Survey Source</label>
+                        <select
+                          value={metricFormData.survey_source}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setMetricFormData({ ...metricFormData, survey_source: val, ...(val === 'ESS' ? { requires_manual_upload: true } : {}) });
+                          }}
+                          className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 font-semibold"
+                        >
+                          {SURVEY_SOURCE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                        <p className="text-[10.5px] text-gray-400 mt-1">
+                          System: data comes from another system or form. ESS Template: Employee Sentiment Survey, uploaded from the ESS template.
+                        </p>
+                      </div>
+                    )}
+
                     <div>
                       <label className="block text-xs font-bold text-gray-700 mb-1">Bobot Metrik (Weight)</label>
                       <input
@@ -943,19 +972,24 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                         <label className="flex items-center space-x-2 cursor-pointer">
                           <input
                             type="checkbox"
-                            checked={metricFormData.requires_manual_upload}
+                            checked={metricFormData.survey_source === 'ESS' ? true : metricFormData.requires_manual_upload}
+                            disabled={metricFormData.survey_source === 'ESS'}
                             onChange={(e) => setMetricFormData({ ...metricFormData, requires_manual_upload: e.target.checked })}
-                            className="w-4 h-4 text-red-600 rounded focus:ring-red-500 border-gray-300"
+                            className="w-4 h-4 text-red-600 rounded focus:ring-red-500 border-gray-300 disabled:opacity-60"
                           />
                           <span className="text-xs font-bold text-gray-800">
                             Survei ini masih diupload manual oleh PIC (aktifkan reminder email)
                           </span>
                         </label>
+                        <p className="text-[10.5px] text-gray-400 ml-3 max-w-xs">
+                          {metricFormData.survey_source === 'ESS'
+                            ? 'ESS data is always uploaded manually, so this is locked on.'
+                            : 'Turns on the reminder e-mails. Any survey can still be uploaded manually by the Admin or its PIC.'}
+                        </p>
                       </div>
                     )}
 
-                    {metricFormData.metric_type === 'SURVEY' && metricFormData.requires_manual_upload && (
-                      <>
+                    {metricFormData.metric_type === 'SURVEY' && (metricFormData.requires_manual_upload || metricFormData.survey_source === 'ESS') && (
                         <div>
                           <label className="block text-xs font-bold text-gray-700 mb-1 flex items-center space-x-1">
                             <CalendarClock className="w-3 h-3 text-gray-500" />
@@ -989,7 +1023,10 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                               : 'Pada tanggal ini setiap bulan, bila belum ada data survei bertanggal bulan SEBELUMNYA (mis. tgl 10 Oktober → data September), PIC otomatis diingatkan lewat email.'}
                           </p>
                         </div>
+                    )}
 
+                    {metricFormData.metric_type === 'SURVEY' && (
+                      <>
                         <div>
                           <label className="block text-xs font-bold text-gray-700 mb-1">Nama PIC Upload</label>
                           <input
@@ -1092,6 +1129,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                       <th className="py-2.5 px-3">Nama Metrik</th>
                       <th className="py-2.5 px-3">Journey</th>
                       <th className="py-2.5 px-3 text-center">Tipe</th>
+                      <th className="py-2.5 px-3 text-center">Survey Source</th>
                       <th className="py-2.5 px-3 text-center">Responden</th>
                       <th className="py-2.5 px-3 text-center">Update Data</th>
                       <th className="py-2.5 px-3 text-center">Bobot</th>
@@ -1130,6 +1168,15 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                             </span>
                           </td>
                           <td className="py-2.5 px-3 text-center">
+                            {m.metric_type === 'SURVEY' ? (
+                              <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${surveySourceBadgeClass(m.survey_source)}`}>
+                                {surveySourceLabel(m.survey_source) || 'System'}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
                             {m.is_employee_metric ? (
                               <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-50 text-green-700 border border-green-200">
                                 <UserCheck className="w-3 h-3" />
@@ -1158,7 +1205,7 @@ Seluruh data survei (respons) dan pengaturan pertanyaan metrik ini juga akan iku
                               <RefreshCw className="w-2.5 h-2.5" />
                               <span>{m.update_frequency === 'ONE_TIME_ANNUAL' ? 'Tahunan' : 'Bulanan'}</span>
                             </span>
-                            {m.metric_type === 'SURVEY' && m.requires_manual_upload && (
+                            {m.metric_type === 'SURVEY' && (m.requires_manual_upload || m.pic_email) && (
                               <div className="text-[9.5px] text-gray-400 mt-0.5">
                                 PIC: {m.pic_name || m.experience_owner || '-'}
                               </div>

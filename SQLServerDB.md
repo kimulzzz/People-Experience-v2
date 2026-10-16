@@ -140,6 +140,7 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 | Akun pengirim email reminder PIC (password terenkripsi) | `px_email_settings` | menu **Setting Email** di Header |
 | Daftar pilihan Parameter Admin & Survey Questions (tipe metrik, skala, responden, frekuensi, tipe pertanyaan) | `px_app_settings` | `PUT /api/admin/settings/:key` (hanya label) |
 | Satuan nilai aktual tiap metrik (`px_metrics.unit`) | `px_metrics` | Parameter Admin → field "Satuan Nilai Aktual" |
+| Sumber survei tiap metrik SURVEY (`px_metrics.survey_source`: `SYSTEM` / `ESS`) | `px_metrics` | Parameter Admin → dropdown "Survey Source" |
 | Parameter journey/checkpoint/metric/target/bobot | `px_journeys`, `px_checkpoints`, `px_metrics`, `px_metric_targets` | menu Parameter Admin |
 
 > **Perhatian:** `node server/db/migrate.js --reset` menghapus semua tabel `px_*` termasuk `px_email_settings` — pengaturan email harus diisi ulang setelahnya.
@@ -166,3 +167,13 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 - `px_media` mendapat 8 kolom nullable: `summary`, `summary_points` (JSON), `summary_status` (`PROCESSING|DONE|FAILED|INSUFFICIENT`), `summary_source` (`AI|RULE`), `summary_model`, `summary_language`, `summary_generated_at`, `summary_error`. Ditambahkan otomatis saat server start (`schema.sql`, per kolom `IF COL_LENGTH ... IS NULL`), aman diulang. Database ini sudah memiliki 7 kolom sisa percobaan v2.26.0 (menurut laporan; tidak dicek langsung) — tidak menimbulkan masalah.
 - Isi kolom dibuat oleh model lokal Gemma (Ollama, on-premise) atau fallback aturan; tidak ada setting database baru. Setting Ollama ada di `.env` (`OLLAMA_MODEL`, `OLLAMA_HOST`, `OLLAMA_TIMEOUT_MS`, `AI_QUEUE_MAX`) — lihat `docs/06`.
 - Backup `.bak` ikut memuat ringkasan. `node server/db/migrate.js --reset` memuat ulang dari `store.json`, sehingga ringkasan dan transkrip video yang hanya ada di SQL ikut hilang (lihat catatan video user di `CLAUDE.md` v2.24.1).
+
+---
+
+## 13. Sumber Survei Metrik (v2.29.0)
+
+- `px_metrics` mendapat kolom `survey_source VARCHAR(10) NULL` dengan `CHECK` `CK_px_metrics_survey_source` (`'SYSTEM'` atau `'ESS'`; `NULL` untuk metrik OUTCOME). Ditambahkan otomatis saat server start (`schema.sql`, guard `COL_LENGTH`); tidak ada setting `.env` atau `px_app_settings` baru.
+- Saat start, kolom yang masih `NULL` pada metrik SURVEY diisi sekali (teks `source_of_data` memuat "ESS" -> `ESS`, selain itu `SYSTEM`); nilai yang sudah ada (hasil edit admin) tidak pernah ditimpa. Metrik ESS selalu `requires_manual_upload = 1` (dinyalakan saat start bila mati).
+- Pemeriksaan: `SELECT metric_id, survey_source, requires_manual_upload FROM dbo.px_metrics WHERE metric_type = 'SURVEY' ORDER BY metric_id;`. Backup `.bak` ikut memuat kolom ini; `node server/db/migrate.js --reset` memuat ulang dari `store.json` (JSON mengisi kolomnya sendiri saat dimuat).
+- Rollback ke JSON tidak memerlukan langkah khusus.
+

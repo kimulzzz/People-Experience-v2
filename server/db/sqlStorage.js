@@ -10,6 +10,7 @@ const path = require('path');
 const sql = require('mssql');
 const seed = require('./seedData');
 const { defaultUnitForScale, parseUnit } = require('./metricUnit');
+const { inferSurveySource, resolveSurveySource, resolveRequiresManualUpload } = require('./surveySource');
 const { buildInitialStore } = require('./initialStore');
 const { parseFilterOptions, normalizeDateString, CURRENT_YEAR } = require('./filterUtils');
 const { normalizeScopes } = require('./scopeUtils');
@@ -144,6 +145,7 @@ function rowToMetric(r) {
     pic_name: r.pic_name,
     pic_email: r.pic_email,
     unit: r.unit === null || r.unit === undefined ? defaultUnitForScale(r.scale_type) : r.unit,
+    survey_source: r.survey_source || null,
     metric_weight: r.weight
   };
   if (r.last_data_date_str) m.last_data_date = r.last_data_date_str;
@@ -457,6 +459,31 @@ async function topUpMetricUnits() {
   console.log(`[sqlStorage] Filled the display unit of ${rows.length} metrics.`);
 }
 
+// Fills px_metrics.survey_source where it is still NULL on a SURVEY metric (a database created before v2.29.0):
+// source_of_data mentioning ESS -> 'ESS', any other SURVEY -> 'SYSTEM'. A value that is already set (an admin's
+// edit) is never touched, and OUTCOME metrics stay NULL.
+async function topUpSurveySource() {
+  const rows = await run(`SELECT metric_id, metric_type, source_of_data FROM dbo.px_metrics WHERE survey_source IS NULL AND metric_type = 'SURVEY'`);
+  if (!rows.length) return;
+  await inTransaction(async tx => {
+    for (const r of rows) {
+      await run(`UPDATE dbo.px_metrics SET survey_source = @src WHERE metric_id = @id AND survey_source IS NULL`,
+        { id: r.metric_id, src: inferSurveySource(r) }, tx);
+    }
+  });
+  console.log(`[sqlStorage] Filled the survey source of ${rows.length} SURVEY metrics.`);
+}
+
+// An ESS metric is always uploaded manually (ESS cannot be pulled from a system). Turns requires_manual_upload on
+// for any ESS metric where it is off; the admin routes refuse to turn it off again, so after the first boot that
+// needed it this finds nothing. Returns the ids it changed (logged so the change is traceable).
+async function enforceEssManualUpload() {
+  const rows = await run(`SELECT metric_id FROM dbo.px_metrics WHERE survey_source = 'ESS' AND requires_manual_upload = 0 ORDER BY metric_id`);
+  if (!rows.length) return;
+  await run(`UPDATE dbo.px_metrics SET requires_manual_upload = 1 WHERE survey_source = 'ESS' AND requires_manual_upload = 0`);
+  console.log(`[sqlStorage] ESS metrics are always uploaded manually: requires_manual_upload turned on for metric(s) ${rows.map(r => r.metric_id).join(', ')}.`);
+}
+
 // ------------------------------------------------------------------ login accounts (px_users)
 const rowToUser = r => ({
   user_id: r.user_id,
@@ -610,13 +637,14 @@ function metricParams(m) {
     target_audience: m.target_audience || 'EMPLOYEE',
     underlying_questions: T.max(JSON.stringify(Array.isArray(m.underlying_questions) ? m.underlying_questions : [])),
     update_frequency: m.update_frequency || 'MONTHLY',
-    requires_manual_upload: !!m.requires_manual_upload,
+    requires_manual_upload: !!m.requires_manual_upload || m.survey_source === 'ESS',
     upload_deadline_day: parseInt(m.upload_deadline_day !== undefined ? m.upload_deadline_day : 25, 10),
     upload_deadline_month: parseInt(m.upload_deadline_month !== undefined ? m.upload_deadline_month : 11, 10),
     pic_name: m.pic_name || '',
     pic_email: m.pic_email || '',
     last_data_date: toSqlDate(m.last_data_date) ? T.date(toSqlDate(m.last_data_date)) : null,
     unit: initialUnitFor(m),
+    survey_source: resolveSurveySource({ metricType: m.metric_type, current: m.survey_source, fallback: inferSurveySource(m) }),
     notes: m.notes === undefined || m.notes === null ? null : T.max(String(m.notes))
   };
 }
@@ -624,7 +652,7 @@ function metricParams(m) {
 const METRIC_COLUMNS = ['metric_id', 'journey_id', 'checkpoint_id', 'metric_name', 'metric_type', 'scale_type',
   'source_of_data', 'experience_owner', 'raw_value', 'normalized_score', 'weight', 'is_indicative',
   'is_employee_metric', 'target_audience', 'underlying_questions', 'update_frequency', 'requires_manual_upload',
-  'upload_deadline_day', 'upload_deadline_month', 'pic_name', 'pic_email', 'last_data_date', 'notes', 'unit'];
+  'upload_deadline_day', 'upload_deadline_month', 'pic_name', 'pic_email', 'last_data_date', 'notes', 'unit', 'survey_source'];
 
 async function insertMetric(tx, m) {
   await run(`INSERT INTO dbo.px_metrics (${METRIC_COLUMNS.join(', ')})
@@ -978,6 +1006,8 @@ const storage = {
     await inTransaction(async tx => { await seedSurveyQuestions(tx); await seedAppSettings(tx); await seedEmailSettings(tx); });
     await topUpDirectory();
     await topUpMetricUnits();
+    await topUpSurveySource();
+    await enforceEssManualUpload();
     await migrateLegacyUserScopes();
     // Demo survey responses for newly elapsed months. Set SEED_DEMO_DATA=false on a real
     // production database so no synthetic responses are ever generated.
@@ -1066,6 +1096,8 @@ const storage = {
 
   // ---- login accounts, sessions, audit trail (px_users / px_sessions / px_audit_log)
   migrateLegacyUserScopes,
+  topUpSurveySource,      // exposed for the regression suite (boot top-up of px_metrics.survey_source)
+  enforceEssManualUpload, // idem (ESS => requires_manual_upload)
   async countUsers() {
     return (await run('SELECT COUNT(*) AS c FROM dbo.px_users'))[0].c;
   },
@@ -1284,6 +1316,7 @@ const storage = {
       const maxId = (await run('SELECT ISNULL(MAX(metric_id), 0) AS m FROM dbo.px_metrics WITH (UPDLOCK, HOLDLOCK)', {}, tx))[0].m;
       const newId = maxId + 1;
       const isEmployee = metricData.is_employee_metric !== undefined ? Boolean(metricData.is_employee_metric) : true;
+      const surveySource = resolveSurveySource({ requested: metricData.survey_source, metricType: (metricData.metric_type || 'SURVEY').toUpperCase() });
       const metric = {
         metric_id: newId,
         journey_id: parseInt(metricData.journey_id || 1),
@@ -1304,14 +1337,15 @@ const storage = {
         target_audience: metricData.target_audience || (isEmployee ? 'EMPLOYEE' : 'EXTERNAL_MARKET'),
         underlying_questions: Array.isArray(metricData.underlying_questions) ? metricData.underlying_questions : [metricData.metric_name || 'Satisfaction Score'],
         update_frequency: metricData.update_frequency ? String(metricData.update_frequency).toUpperCase() : 'MONTHLY',
-        requires_manual_upload: metricData.requires_manual_upload !== undefined
-          ? Boolean(metricData.requires_manual_upload)
-          : ((metricData.metric_type || 'SURVEY').toUpperCase() === 'SURVEY'),
+        requires_manual_upload: resolveRequiresManualUpload({
+          surveySource, requested: metricData.requires_manual_upload, defaultValue: (metricData.metric_type || 'SURVEY').toUpperCase() === 'SURVEY'
+        }),
         upload_deadline_day: metricData.upload_deadline_day !== undefined && metricData.upload_deadline_day !== '' ? parseInt(metricData.upload_deadline_day) : 25,
         upload_deadline_month: metricData.upload_deadline_month !== undefined && metricData.upload_deadline_month !== '' ? parseInt(metricData.upload_deadline_month) : 11,
         pic_name: metricData.pic_name ? String(metricData.pic_name).trim() : (metricData.experience_owner || ''),
         pic_email: metricData.pic_email ? String(metricData.pic_email).trim() : '',
-        unit: metricData.unit !== undefined && metricData.unit !== null ? parseUnit(metricData.unit) : defaultUnitForScale(metricData.scale_type || (metricData.metric_type === 'SURVEY' ? 'RATING_5' : 'PERCENTAGE'))
+        unit: metricData.unit !== undefined && metricData.unit !== null ? parseUnit(metricData.unit) : defaultUnitForScale(metricData.scale_type || (metricData.metric_type === 'SURVEY' ? 'RATING_5' : 'PERCENTAGE')),
+        survey_source: surveySource
       };
       await insertMetric(tx, metric);
       await upsertTarget(tx, newId, metric);
@@ -1332,6 +1366,9 @@ const storage = {
       : (metricData.weight !== undefined ? parseFloat(metricData.weight) : (current.weight !== undefined ? current.weight : 1.0));
     const resolvedMetricType = metricData.metric_type ? metricData.metric_type.toUpperCase().trim() : current.metric_type;
     const defaultRequiresManualUpload = resolvedMetricType === 'SURVEY';
+    const surveySource = resolveSurveySource({
+      requested: metricData.survey_source, metricType: resolvedMetricType, current: current.survey_source, fallback: inferSurveySource({ ...current, metric_type: resolvedMetricType })
+    });
 
     const updated = {
       ...current,
@@ -1350,9 +1387,10 @@ const storage = {
       is_employee_metric: isEmployee,
       target_audience: metricData.target_audience || (isEmployee ? 'EMPLOYEE' : current.target_audience || 'EXTERNAL_MARKET'),
       update_frequency: metricData.update_frequency ? String(metricData.update_frequency).toUpperCase() : (current.update_frequency || 'MONTHLY'),
-      requires_manual_upload: metricData.requires_manual_upload !== undefined
-        ? Boolean(metricData.requires_manual_upload)
-        : (current.requires_manual_upload !== undefined ? current.requires_manual_upload : defaultRequiresManualUpload),
+      survey_source: surveySource,
+      requires_manual_upload: resolveRequiresManualUpload({
+        surveySource, requested: metricData.requires_manual_upload, current: current.requires_manual_upload, defaultValue: defaultRequiresManualUpload
+      }),
       upload_deadline_day: metricData.upload_deadline_day !== undefined && metricData.upload_deadline_day !== ''
         ? parseInt(metricData.upload_deadline_day) : (current.upload_deadline_day !== undefined ? current.upload_deadline_day : 25),
       upload_deadline_month: metricData.upload_deadline_month !== undefined && metricData.upload_deadline_month !== ''

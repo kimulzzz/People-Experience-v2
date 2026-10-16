@@ -250,7 +250,7 @@ export default function AdminSurveyQuestionsModal({
             </select>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2">
             <a
               href={`/api/surveys/template?metric_id=${selectedMetricId}`}
               download

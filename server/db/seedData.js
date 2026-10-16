@@ -742,6 +742,8 @@ const initialMetrics = [
   return {
     ...m,
     unit: METRIC_UNITS[m.metric_id] || defaultUnitForScale(m.scale_type),
+    // Sumber survei (v2.29.0): ESS (Employee Sentiment Survey, template ESS) atau SYSTEM (sistem/form lain); OUTCOME = null.
+    survey_source: m.metric_type === 'SURVEY' ? (isEssMetric ? 'ESS' : 'SYSTEM') : null,
     update_frequency,
     requires_manual_upload,
     // Monthly metrics: due by the 25th of every month. Annual (ESS) metrics: due by

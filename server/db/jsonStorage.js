@@ -18,6 +18,7 @@ const {
 const { parseFilterOptions, normalizeDateString, todayDateString } = require('./filterUtils');
 const { normalizeScopes, rowInScopes, legacyUserScopes } = require('./scopeUtils');
 const { defaultUnitForScale, parseUnit } = require('./metricUnit');
+const { inferSurveySource, resolveSurveySource, resolveRequiresManualUpload } = require('./surveySource');
 const { buildInitialStore: loadInitialStore } = require('./initialStore');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -65,6 +66,17 @@ function getStore() {
             if (m.pic_email === undefined) m.pic_email = (seed && seed.pic_email) || '';
             // Satuan tampilan nilai aktual (v2.25.0): isi hanya yang belum ada — edit admin tidak ditimpa.
             if (typeof m.unit !== 'string' || !m.unit.trim()) m.unit = (seed && seed.unit) || defaultUnitForScale(m.scale_type);
+            // Sumber survei (v2.29.0): isi hanya yang kosong pada metrik SURVEY (edit admin tidak ditimpa); OUTCOME = null.
+            if (m.metric_type === 'SURVEY') {
+              if (m.survey_source !== 'SYSTEM' && m.survey_source !== 'ESS') m.survey_source = (seed && (seed.survey_source === 'SYSTEM' || seed.survey_source === 'ESS')) ? seed.survey_source : inferSurveySource(m);
+              // Data ESS selalu di-upload manual (tidak bisa ditarik dari sistem).
+              if (m.survey_source === 'ESS' && m.requires_manual_upload !== true) {
+                m.requires_manual_upload = true;
+                console.log(`[jsonStorage] ESS metrics are always uploaded manually: requires_manual_upload turned on for metric ${m.metric_id}.`);
+              }
+            } else if (m.survey_source === undefined) {
+              m.survey_source = null;
+            }
             if (m.metric_type === 'OUTCOME' && m.last_data_date === undefined) m.last_data_date = (seed && seed.last_data_date) || todayDateString();
           });
         }
@@ -462,6 +474,7 @@ const storage = {
       ? Boolean(metricData.is_employee_metric) 
       : true;
 
+    const surveySource = resolveSurveySource({ requested: metricData.survey_source, metricType: (metricData.metric_type || 'SURVEY').toUpperCase() });
     const newMetric = {
       metric_id: newId,
       journey_id: parseInt(metricData.journey_id || 1),
@@ -483,14 +496,15 @@ const storage = {
       underlying_questions: Array.isArray(metricData.underlying_questions) ? metricData.underlying_questions : [metricData.metric_name || 'Satisfaction Score'],
       // --- Data Update Cadence & Manual Survey Upload Reminder Settings (defaults) ---
       update_frequency: metricData.update_frequency ? String(metricData.update_frequency).toUpperCase() : 'MONTHLY',
-      requires_manual_upload: metricData.requires_manual_upload !== undefined
-        ? Boolean(metricData.requires_manual_upload)
-        : ((metricData.metric_type || 'SURVEY').toUpperCase() === 'SURVEY'),
+      requires_manual_upload: resolveRequiresManualUpload({
+        surveySource, requested: metricData.requires_manual_upload, defaultValue: (metricData.metric_type || 'SURVEY').toUpperCase() === 'SURVEY'
+      }),
       upload_deadline_day: metricData.upload_deadline_day !== undefined && metricData.upload_deadline_day !== '' ? parseInt(metricData.upload_deadline_day) : 25,
       upload_deadline_month: metricData.upload_deadline_month !== undefined && metricData.upload_deadline_month !== '' ? parseInt(metricData.upload_deadline_month) : 11,
       pic_name: metricData.pic_name ? String(metricData.pic_name).trim() : (metricData.experience_owner || ''),
       pic_email: metricData.pic_email ? String(metricData.pic_email).trim() : '',
-      unit: metricData.unit !== undefined && metricData.unit !== null ? parseUnit(metricData.unit) : defaultUnitForScale(metricData.scale_type || (metricData.metric_type === 'SURVEY' ? 'RATING_5' : 'PERCENTAGE'))
+      unit: metricData.unit !== undefined && metricData.unit !== null ? parseUnit(metricData.unit) : defaultUnitForScale(metricData.scale_type || (metricData.metric_type === 'SURVEY' ? 'RATING_5' : 'PERCENTAGE')),
+      survey_source: surveySource
     };
 
     s.metrics.push(newMetric);
@@ -525,6 +539,9 @@ const storage = {
 
     const resolvedMetricType = metricData.metric_type ? metricData.metric_type.toUpperCase().trim() : current.metric_type;
     const defaultRequiresManualUpload = resolvedMetricType === 'SURVEY';
+    const surveySource = resolveSurveySource({
+      requested: metricData.survey_source, metricType: resolvedMetricType, current: current.survey_source, fallback: inferSurveySource({ ...current, metric_type: resolvedMetricType })
+    });
 
     const updated = {
       ...current,
@@ -547,9 +564,10 @@ const storage = {
         ? String(metricData.update_frequency).toUpperCase()
         : (current.update_frequency || 'MONTHLY'),
       // --- Manual Survey Upload Reminder Settings ---
-      requires_manual_upload: metricData.requires_manual_upload !== undefined
-        ? Boolean(metricData.requires_manual_upload)
-        : (current.requires_manual_upload !== undefined ? current.requires_manual_upload : defaultRequiresManualUpload),
+      survey_source: surveySource,
+      requires_manual_upload: resolveRequiresManualUpload({
+        surveySource, requested: metricData.requires_manual_upload, current: current.requires_manual_upload, defaultValue: defaultRequiresManualUpload
+      }),
       upload_deadline_day: metricData.upload_deadline_day !== undefined && metricData.upload_deadline_day !== ''
         ? parseInt(metricData.upload_deadline_day)
         : (current.upload_deadline_day !== undefined ? current.upload_deadline_day : 25),

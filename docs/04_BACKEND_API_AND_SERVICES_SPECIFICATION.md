@@ -64,8 +64,8 @@ Backend dibangun menggunakan **Node.js dan Express.js** sebagai REST API Server 
 | `POST` | `/api/admin/journeys` | Menambahkan journey baru | Body: `{ journey_code, journey_name, tagline, color, icon, display_order }` |
 | `PUT` | `/api/admin/journeys/:id` | Memperbarui parameter journey | Body: `{ journey_name, tagline, color, icon, display_order }` |
 | `DELETE`| `/api/admin/journeys/:id`| Menghapus journey | Path: `id` |
-| `POST` | `/api/admin/metrics` | Menambahkan parameter metrik baru | Body: `{ journey_id, checkpoint_id, metric_name, metric_type, scale_type, target_value, min_threshold, metric_weight, is_employee_metric, target_audience }` |
-| `PUT` | `/api/admin/metrics/:id` | Memperbarui parameter metrik, target, threshold, dan bobot | Body: `{ metric_name, target_value, min_threshold, metric_weight, is_employee_metric, target_audience, ... }` |
+| `POST` | `/api/admin/metrics` | Menambahkan parameter metrik baru | Body: `{ journey_id, checkpoint_id, metric_name, metric_type, scale_type, target_value, min_threshold, metric_weight, is_employee_metric, target_audience, survey_source }` (`survey_source` lihat catatan v2.29.0) |
+| `PUT` | `/api/admin/metrics/:id` | Memperbarui parameter metrik, target, threshold, dan bobot | Body: `{ metric_name, target_value, min_threshold, metric_weight, is_employee_metric, target_audience, survey_source, ... }` |
 | `DELETE`| `/api/admin/metrics/:id` | Menghapus parameter metrik | Path: `id` |
 | `POST` | `/api/admin/parameters/reset` | Mereset seluruh parameter journeys dan metrics ke default korporat | `-` |
 
@@ -302,7 +302,7 @@ Catatan: User dengan "semua divisi" yang meminta `sub_directorate` tak dikenal m
 
 ## 🧑‍💼 Catatan v2.27.1 — PIC Metrik Terhubung ke Akun
 
-Akun `USER` aktif = PIC metrik M bila emailnya == `pic_email` M (case-insensitive, `trim`; M harus SURVEY dengan `requires_manual_upload`). Penetapan tetap di Parameter Admin; hak dibaca dari DB tiap request. Helper di `authService.js`: `picMetrics`, `picMetricIds`, `getPicMetric`, `isPicOfMetric`, `canSeeRespondentData` (async), `requirePicMetric`, `respondentScopeFor`, `rowsForViewer`. Admin tidak dianggap PIC (selalu lolos).
+Akun `USER` aktif = PIC metrik M bila emailnya == `pic_email` M (case-insensitive, `trim`; M harus SURVEY; sejak v2.29.0 flag `requires_manual_upload` tidak lagi disyaratkan, lihat catatan v2.29.0 di bawah). Penetapan tetap di Parameter Admin; hak dibaca dari DB tiap request. Helper di `authService.js`: `picMetrics`, `picMetricIds`, `getPicMetric`, `isPicOfMetric`, `canSeeRespondentData` (async), `requirePicMetric`, `respondentScopeFor`, `rowsForViewer`. Admin tidak dianggap PIC (selalu lolos).
 
 | Rute | Admin | PIC (metrik miliknya) | PIC (metrik lain / `ALL` / kosong) | User non-PIC |
 | :--- | :--- | :--- | :--- | :--- |
@@ -353,3 +353,32 @@ Tidak diubah / belum diputuskan: importer tidak menolak NIP kembar (dalam satu C
 **Env (opsional)**: `OLLAMA_HOST` (default `http://localhost:11434`), `OLLAMA_MODEL` (default `gemma3:4b`), `OLLAMA_TIMEOUT_MS`, `AI_QUEUE_MAX`.
 
 **Tidak dicakup**: analisis metrik WARNING/CRITICAL oleh Gemma (langkah berikutnya); validator tidak menjamin ketepatan makna (lihat `CHANGELOG.md` [2.28.0]).
+
+---
+
+## Catatan v2.29.0 - Survey Source (SYSTEM / ESS) & Upload Manual untuk Semua Survei
+
+**Field `survey_source`** (`SYSTEM` | `ESS` | `null`) ada di tiap metrik pada `GET /api/metrics/calculate`, `GET /api/metrics/:id/detail` (level atas dan `metric.survey_source`) dan `GET /api/admin/parameters`. Metrik OUTCOME selalu `null`. Kolom database dan top-up boot: `docs/08` §14.
+
+**Validasi `POST` / `PUT /api/admin/metrics`** (`server/db/surveySource.js`, dipakai kedua storage; `server.js` mengubah `Error` menjadi 400):
+
+| Masukan | Hasil |
+| :--- | :--- |
+| `survey_source` bukan teks (`5`, `true`, `["ESS"]`, `{...}`) atau teks selain `SYSTEM`/`ESS` | **400** `Survey Source must be one of: SYSTEM, ESS.` - juga untuk metrik OUTCOME; permintaan `PUT` yang ditolak tidak mengubah apa pun |
+| Huruf kecil / spasi tepi (`ess`, ` system `) | Diterima (di-`trim` dan dibesarkan) |
+| SURVEY tanpa `survey_source` | `POST` -> `SYSTEM`; `PUT` mempertahankan nilai lama (fallback: inferensi dari `source_of_data`) |
+| OUTCOME (atau SURVEY diubah menjadi OUTCOME) | Dipaksa `null`; OUTCOME diubah kembali ke SURVEY mendapat sumber lagi |
+| Metrik ESS + `requires_manual_upload: false` (`POST` atau `PUT`) | **400** `ESS data is always uploaded manually: requires_manual_upload cannot be turned off for an ESS metric.` |
+| Menjadikan metrik ESS tanpa menyebut `requires_manual_upload` | Flag otomatis `true` |
+| Metrik SYSTEM | Flag mengikuti pilihan admin (boleh `false`) |
+
+`PUT /api/admin/metrics/<id tidak ada>` tetap menjawab **400** (bukan 404) - perilaku lama, belum diubah.
+
+**Deteksi ESS**: `calculationEngine.getMetricDetail()` memakai `isEssMetric()` - kolom `survey_source` menentukan; teks `source_of_data` memuat "ESS" hanya fallback bila kolom `null`. Hanya memengaruhi `is_ess` / `ess_summary`; skor, status dan angka metrik tidak berubah (snapshot 27 metrik sebelum/sesudah: hanya field baru).
+
+**Upload manual semua metrik SURVEY**: `authService.isPicMetric(m)` = `m.metric_type === 'SURVEY'` (dulu juga `requires_manual_upload`). Efek pada tabel rute v2.27.1: PIC (akun USER ber-e-mail = `pic_email`) kini berhak atas Template / Upload / Evidence / `responses` / riwayat untuk **setiap** metrik SURVEY miliknya; `can_upload` bernilai true untuk setiap metrik SURVEY bila Admin atau PIC-nya; `GET /api/surveys/metrics` memuat semua metrik SURVEY untuk Admin. Tidak berubah: non-PIC dan PIC metrik lain -> 403; metrik OUTCOME dan id tidak dikenal ditolak (Admin pun); `metric_id` dari form menang atas kolom `metric_id` di CSV; audit `SURVEY_UPLOAD`; cakupan data PIC.
+
+**`requires_manual_upload`** kini hanya berarti "kirim e-mail pengingat PIC" (`reminderService.js` tidak berubah; di data saat ini 20 metrik, semua ESS selalu termasuk). Metrik SURVEY tanpa flag tidak pernah diingatkan walau `pic_email` terisi dan batas tanggal terlewati.
+
+**Tidak diubah / diketahui**: importer Admin dengan `metric_id` form non-numerik jatuh ke metrik SURVEY pertama (`surveyImportService.js`); NIP kembar belum ditolak importer; `last_survey_date` kosong di detail metrik ditampilkan UI sebagai hari ini.
+

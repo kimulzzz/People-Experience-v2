@@ -24,7 +24,8 @@ import {
   Maximize2,
   Loader2,
   RefreshCw,
-  AlertCircle
+  AlertCircle,
+  ChevronDown
 } from 'lucide-react';
 
 function formatTimestamp(totalSeconds) {
@@ -54,10 +55,10 @@ function MediaLightbox({ media, onClose }) {
         {isVideo ? (
           <video src={media.file_path} controls autoPlay className="w-full max-h-[80vh] bg-black rounded-lg" />
         ) : (
-          <img src={media.file_path} alt={media.caption || media.file_name} className="max-h-[80vh] mx-auto object-contain rounded-lg" />
+          <img src={media.file_path} alt={captionText(media) || media.file_name} className="max-h-[80vh] mx-auto object-contain rounded-lg" />
         )}
         <div className="mt-3 flex items-center justify-between gap-4 text-white">
-          <p className="text-sm font-semibold line-clamp-2">{media.caption || media.file_name}</p>
+          <p className="text-sm font-semibold line-clamp-2">{captionText(media) || media.file_name}</p>
           <a
             href={media.file_path}
             target="_blank"
@@ -111,7 +112,7 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
         ) : (
           <img
             src={med.file_path}
-            alt={med.caption || med.file_name}
+            alt={captionText(med) || med.file_name}
             loading="lazy"
             onClick={openLarge}
             onError={() => setBroken(true)}
@@ -142,7 +143,7 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
       </div>
 
       <p className="text-[11px] font-bold text-gray-800 line-clamp-2">
-        {med.caption}
+        {captionText(med)}
       </p>
 
       {isVideo && med.transcript_status === 'PROCESSING' && (
@@ -174,7 +175,7 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
         </div>
       )}
 
-      {med.ai_generated_description && (
+      {!isVideo && med.ai_generated_description && (
         <div className="bg-gray-50 rounded p-2 text-[10px] text-gray-600 border border-gray-100 space-y-1">
           <div className="flex items-center space-x-1 font-bold text-[var(--theme-base)]">
             <Sparkles className="w-3 h-3" />
@@ -187,18 +188,22 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
       )}
 
       {isVideo && med.transcript_status === 'DONE' && med.transcript && (
-        <div className="bg-white rounded border border-[var(--theme-base)]/25 p-2 text-[10px] text-gray-700 space-y-1.5">
-          <div className="flex items-center justify-between gap-2">
+        <details open className="group bg-white rounded border border-[var(--theme-base)]/25 text-[10px] text-gray-700">
+          <summary className="cursor-pointer select-none p-2 flex items-center justify-between gap-2">
             <div className="flex items-center space-x-1 font-bold text-[var(--theme-base)]">
               <Sparkles className="w-3 h-3" />
               <span>AI Summary</span>
             </div>
-            {med.summary_status === 'DONE' && (
-              <span className={`px-1.5 py-0.5 rounded font-bold text-[9px] ${med.summary_source === 'AI' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
-                {med.summary_source === 'AI' ? `AI${med.summary_model ? ` • ${med.summary_model}` : ''}` : 'Otomatis (aturan)'}
-              </span>
-            )}
-          </div>
+            <div className="flex items-center space-x-1.5">
+              {med.summary_status === 'DONE' && (
+                <span className={`px-1.5 py-0.5 rounded font-bold text-[9px] ${med.summary_source === 'AI' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                  {med.summary_source === 'AI' ? `AI${med.summary_model ? ` • ${med.summary_model}` : ''}` : 'Otomatis (aturan)'}
+                </span>
+              )}
+              <ChevronDown className="w-3 h-3 text-gray-400 transition-transform group-open:rotate-180" />
+            </div>
+          </summary>
+          <div className="px-2 pb-2 space-y-1.5">
 
           {med.summary_status === 'PROCESSING' && (
             <div className="flex items-center space-x-1.5 text-gray-600">
@@ -256,18 +261,22 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
           {summaryNotice && (
             <p className="text-[9.5px] text-red-600 font-semibold">Dicoba pukul {summaryNotice.at}: {summaryNotice.text}</p>
           )}
-        </div>
+          </div>
+        </details>
       )}
 
       {isVideo && med.transcript_status === 'DONE' && med.transcript && (
-        <details className="bg-gray-50 rounded border border-gray-100 text-[10px] text-gray-600">
-          <summary className="cursor-pointer select-none p-2 font-bold text-[var(--theme-base)] flex items-center space-x-1">
-            <FileText className="w-3 h-3 inline" />
-            <span>
-              Transkrip AI lengkap
-              {med.duration_seconds ? ` • ${formatTimestamp(med.duration_seconds)}` : ''}
-              {med.transcript_language ? ` • ${med.transcript_language.toUpperCase()}` : ''}
+        <details className="group bg-gray-50 rounded border border-gray-100 text-[10px] text-gray-600">
+          <summary className="cursor-pointer select-none p-2 font-bold text-[var(--theme-base)] flex items-center justify-between gap-2">
+            <span className="flex items-center space-x-1">
+              <FileText className="w-3 h-3 inline" />
+              <span>
+                Transkrip AI lengkap
+                {med.duration_seconds ? ` • ${formatTimestamp(med.duration_seconds)}` : ''}
+                {med.transcript_language ? ` • ${med.transcript_language.toUpperCase()}` : ''}
+              </span>
             </span>
+            <ChevronDown className="w-3 h-3 text-gray-400 transition-transform group-open:rotate-180" />
           </summary>
           <div className="px-2 pb-2 max-h-56 overflow-y-auto space-y-1.5">
             {/* Full transcript = the API's `text` field */}
@@ -295,6 +304,9 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
     </div>
   );
 }
+
+// Older uploads were saved with a "Documentation " prefix in front of the file name; show just the file name.
+const captionText = (m) => String(m?.caption || '').replace(/^Documentation\s+/i, '');
 
 export default function EventManager({
   events, 
@@ -362,7 +374,7 @@ export default function EventManager({
     setUploadingMedia(true);
     const formData = new FormData();
     formData.append('mediaFile', file);
-    formData.append('caption', `Documentation ${file.name}`);
+    formData.append('caption', file.name);
     formData.append('file_type', file.type.startsWith('video') ? 'VIDEO' : 'IMAGE');
 
     try {

@@ -124,13 +124,14 @@ async function isEventManager(user) {
 }
 
 // ---- PIC of a metric (v2.27.1). The PIC is still assigned in Parameter Admin (pic_name / pic_email of a SURVEY
-// metric that needs a manual upload); a USER account is that metric's PIC when its e-mail equals the metric's
-// pic_email (case-insensitive, trimmed). Read from the database on every call - nothing is cached, so editing
+// metric; since v2.29.0 EVERY SURVEY metric - SYSTEM or ESS, with or without the reminder flag - can be uploaded by hand,
+// e.g. while the source system is down; requires_manual_upload now only decides whether reminder e-mails are sent);
+// a USER account is that metric's PIC when its e-mail equals the metric's pic_email (case-insensitive, trimmed). Read from the database on every call - nothing is cached, so editing
 // pic_email (or the account's e-mail / active flag) changes the rights from the very next request. A metric
 // can have one PIC e-mail; one account can be PIC of many metrics. An ADMIN is not "a PIC": Admin may do
 // everything anyway, so these helpers return nothing for an Admin.
 const normEmail = v => String(v === undefined || v === null ? '' : v).trim().toLowerCase();
-const isPicMetric = m => !!m && m.metric_type === 'SURVEY' && !!m.requires_manual_upload;
+const isPicMetric = m => !!m && m.metric_type === 'SURVEY';
 
 // The metrics this account is PIC of (metric objects). [] for an Admin, a missing/inactive account or one without e-mail.
 async function picMetrics(user) {

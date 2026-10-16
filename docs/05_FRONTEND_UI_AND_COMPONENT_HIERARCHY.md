@@ -297,3 +297,19 @@ Muncul di `MediaCard` untuk video yang `transcript_status = DONE` dan punya tran
 | kosong | "Belum ada ringkasan untuk video ini." |
 
 Tombol **Buat ringkasan / Buat ulang ringkasan** (`handleSummarize` -> `POST /api/media/:id/summarize`) hanya tampil untuk pengelola event (`canManage`) dan hanya bila belum ada ringkasan, `FAILED`, atau sumbernya `RULE`. Selama request tombol disabled dan berputar; balasan 202 langsung dipasang ke state; penolakan (mis. 409) ditampilkan dengan jam percobaan. Pengguna biasa hanya membaca ringkasan.
+
+---
+
+## Catatan v2.29.0 - Survey Source, Upload Manual & Perapian UI (teks UI berbahasa Inggris)
+
+| Komponen | Perubahan |
+| :--- | :--- |
+| `AdminParametersModal.jsx` (§3.7) | Dropdown **Survey Source** (System / ESS Template; hanya untuk metrik SURVEY, disembunyikan untuk OUTCOME) di form Tambah/Ubah; kolom tabel **Survey Source** (badge, "-" untuk OUTCOME). Checkbox "Survei ini masih diupload manual oleh PIC (aktifkan reminder email)" dicentang dan terkunci (`disabled`) untuk ESS, dengan keterangan "ESS data is always uploaded manually, so this is locked on."; untuk System keterangannya "Turns on the reminder e-mails. Any survey can still be uploaded manually by the Admin or its PIC." Nama PIC / Email PIC tampil untuk semua metrik SURVEY; Batas Tanggal Upload tampil bila flag aktif atau ESS; di tabel "PIC: ..." tampil bila flag aktif atau `pic_email` terisi. Saat simpan, `survey_source` dikirim kosong untuk OUTCOME dan ESS menyertakan `requires_manual_upload: true`; menolak 400 dari server ditampilkan di banner error form. |
+| `Calculator.jsx` (§3.4) | Badge **ESS Template** (indigo) / **System** (slate) di baris "Source" untuk metrik SURVEY (tooltip menjelaskan arti); Type tetap SURVEY / OUTCOME; pencarian juga mencocokkan label sumber. Judul "Explore {n} People Experience Metrics" dan chip "Survey (n)" / "Outcome (n)" dihitung dari `metrics` (Outcome = non-SURVEY), bukan literal 27 / 20 / 7. Tombol Template / Evidence / Upload tetap mengikuti `can_upload` dari server (kini true untuk setiap metrik SURVEY bila Admin / PIC-nya). |
+| `MetricDetailModal.jsx` (§3.5) | Chip **Survey Source: ...** di samping chip Type / Period; label Type SURVEY selalu "Type: Employee Survey"; `isEss` hanya dari `detailData.is_ess` (server). |
+| `EventManager.jsx` (§3.7a) | Blok **AI Summary** pada kartu video dibungkus `<details open>` (bisa dilipat, default terbuka, chevron berputar seperti "Transkrip AI lengkap"; badge `AI * model` / "Otomatis (aturan)" tetap di baris judul). Blok "AI Description" disembunyikan untuk VIDEO (`!isVideo`), tetap tampil untuk foto. Awalan "Documentation " tidak lagi ditambahkan pada `caption` unggahan baru (`caption` = nama file); media lama yang masih berawalan itu dipangkas saat tampil lewat `captionText()` (caption, `alt`, lightbox) - data di database tidak diubah. |
+| `AdminSurveyQuestionsModal.jsx` (§3.6) | Bar tombol Template / Upload memakai `flex flex-wrap` (bukan `shrink-0`) sehingga turun baris di layar sempit; dropdown metrik tidak lagi terpotong (commit `900a2be`). |
+| `src/utils/surveySource.js` (baru) | `SURVEY_SOURCE_OPTIONS`, `surveySourceLabel()`, `surveySourceBadgeClass()` dipakai tiga komponen di atas. |
+
+Tidak diuji otomatis: seluruh tampilan di atas (diperiksa QC di Browser pane); tampilan mobile. Pekerjaan UI Inggris penuh / nama tema / filter bulan / Activity Log ada di branch `wip/v2.29.0-ui-english` dan bukan bagian rilis ini.
+

@@ -44,7 +44,7 @@ Script `scripts/sqlserver/Setup-SqlServer.ps1` (idempoten, log di `scripts/sqlse
 
 | Kelompok | Tabel | Catatan |
 | :--- | :--- | :--- |
-| Parameter | `px_journeys`, `px_checkpoints`, `px_metrics` (kolom `unit` = satuan nilai aktual, v2.25.0), `px_metric_targets` | Target hanya ada di `px_metric_targets` (JSON menggandakannya di metric). Bobot hanya di `px_metrics.weight` — **tabel `weights` dihapus** (duplikat murni). Sengaja **tanpa FK** antar-tiga tabel ini (admin boleh menghapus journey tanpa menyentuh metric — sama seperti perilaku JSON). |
+| Parameter | `px_journeys`, `px_checkpoints`, `px_metrics` (kolom `unit` = satuan nilai aktual, v2.25.0; kolom `survey_source` = sumber survei SYSTEM/ESS, v2.29.0), `px_metric_targets` | Target hanya ada di `px_metric_targets` (JSON menggandakannya di metric). Bobot hanya di `px_metrics.weight` — **tabel `weights` dihapus** (duplikat murni). Sengaja **tanpa FK** antar-tiga tabel ini (admin boleh menghapus journey tanpa menyentuh metric — sama seperti perilaku JSON). |
 | Referensi | `px_directorates`, `px_divisions`, `px_action_library` | Direktorat/divisi memakai surrogate key + `UNIQUE` nama. |
 | Pertanyaan | `px_master_survey_questions`, `px_event_questions`, `px_survey_questions` | Pertanyaan event = salinan (snapshot) per event. **`px_survey_questions`** = set pertanyaan setiap metric SURVEY (1 baris/pertanyaan, kolom `is_customized`); di-seed sekali dari template kode, setelahnya dibaca hanya dari SQL (v2.22.1). |
 | Reminder | `px_reminder_log` | Catatan tiap email reminder upload survei ke PIC (metrik, periode yang kosong, tanggal, SENT/FAILED) — dasar pencegah duplikat & pengulangan. Ikut terhapus bersama metriknya. |
@@ -143,3 +143,15 @@ Hasil audit `auditor` (semua data dashboard harus dari SQL Server) dan perbaikan
 - Ditambahkan di `schema.sql` per kolom dengan `IF COL_LENGTH(N'dbo.px_media', N'<kolom>') IS NULL ALTER TABLE ... ADD ...`, sehingga aman diulang dan aman pada database yang sudah memiliki sebagian kolom — database pengguna sudah punya 7 kolom `summary_*` sisa percobaan v2.26.0 (menurut laporan developer/QC; tidak diperiksa langsung oleh penulis dokumen ini).
 - `sqlStorage.rowToMedia` hanya mengisi field `summary_*` bila `summary_status` tidak NULL; `updateMedia` menerima kedelapan field; `importStore` (`db:migrate`) ikut memuatnya. Backend JSON menyimpannya di record media `store.json` (whitelist `updateMedia`).
 - Rollback ke JSON tidak memerlukan langkah khusus.
+
+---
+
+## 14. Pembaruan v2.29.0 - Kolom `px_metrics.survey_source`
+
+- Satu kolom baru: `survey_source VARCHAR(10) NULL` dengan `CHECK` bernama `CK_px_metrics_survey_source` (`survey_source IN ('SYSTEM', 'ESS')`; `NULL` lolos `CHECK`). Hanya bermakna untuk metrik SURVEY; OUTCOME = `NULL`. Jumlah tabel tetap 29.
+- `schema.sql`: kolom (beserta `CHECK`) ada di `CREATE TABLE` dan ditambahkan pada database lama lewat `IF COL_LENGTH(N'dbo.px_metrics', N'survey_source') IS NULL ALTER TABLE ... ADD ...` - aman diulang.
+- **Top-up saat boot** (`sqlStorage.init()`, berurutan setelah `topUpMetricUnits()`): `topUpSurveySource()` mengisi HANYA baris SURVEY ber-`survey_source IS NULL` (`source_of_data` memuat "ESS" -> `ESS`, selain itu `SYSTEM`; klausa `AND survey_source IS NULL` di `UPDATE` menjaga nilai admin); lalu `enforceEssManualUpload()` menyalakan `requires_manual_upload` pada metrik ESS yang mati (dicatat di log). Keduanya idempoten dan tidak mengubah OUTCOME.
+- `metricParams()` ikut menulis `survey_source` (dan memaksa `requires_manual_upload = 1` untuk ESS) pada `INSERT` / `importStore` (`db:migrate`); `rowToMetric` membaca `NULL` sebagai `null`.
+- **Backend JSON / rollback**: `jsonStorage.getStore()` mengisi `survey_source` yang kosong pada metrik SURVEY di `store.json` yang dimuat (nilai seed atau inferensi dari `source_of_data`), menyalakan flag ESS yang mati, dan memberi `null` pada OUTCOME. Rollback ke JSON tidak memerlukan langkah khusus. Backfill JSON belum punya tes otomatis.
+- Contoh pemeriksaan: `SELECT metric_id, survey_source, requires_manual_upload FROM dbo.px_metrics WHERE metric_type = 'SURVEY' ORDER BY metric_id;` (data saat ini: ESS = 9, 13, 15, 16, 17, 18, 21, 22, 24, 25, 27).
+

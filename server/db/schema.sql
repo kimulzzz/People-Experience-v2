@@ -67,13 +67,21 @@ CREATE TABLE dbo.px_metrics (
   pic_email              NVARCHAR(200)  NOT NULL CONSTRAINT DF_px_metrics_pice DEFAULT (N''),
   last_data_date         DATE           NULL,                -- OUTCOME metrics: last HR-system ingestion
   notes                  NVARCHAR(MAX)  NULL,
-  unit                   NVARCHAR(30)   NULL                 -- display unit of the actual value ('%', '/ 5', 'pax', ...); NULL = not set yet (filled at boot)
+  unit                   NVARCHAR(30)   NULL,                -- display unit of the actual value ('%', '/ 5', 'pax', ...); NULL = not set yet (filled at boot)
+  survey_source          VARCHAR(10)    NULL CONSTRAINT CK_px_metrics_survey_source CHECK (survey_source IN ('SYSTEM', 'ESS'))
+                                                             -- SURVEY metrics only: SYSTEM (other system/form) | ESS (Employee Sentiment Survey); OUTCOME = NULL
 );
 GO
 
 -- Databases created before v2.25.0 have no `unit` column: add it (NULL), init() then fills it from the seed.
 IF COL_LENGTH(N'dbo.px_metrics', N'unit') IS NULL
 ALTER TABLE dbo.px_metrics ADD unit NVARCHAR(30) NULL;
+GO
+
+-- Databases created before v2.29.0 have no `survey_source` column: add it (NULL), init() then fills only the NULLs
+-- (SURVEY metric whose source_of_data mentions ESS -> 'ESS', other SURVEY -> 'SYSTEM'); an admin's value is never overwritten.
+IF COL_LENGTH(N'dbo.px_metrics', N'survey_source') IS NULL
+ALTER TABLE dbo.px_metrics ADD survey_source VARCHAR(10) NULL CONSTRAINT CK_px_metrics_survey_source CHECK (survey_source IN ('SYSTEM', 'ESS'));
 GO
 
 IF OBJECT_ID(N'dbo.px_metric_targets', N'U') IS NULL

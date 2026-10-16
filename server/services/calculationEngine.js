@@ -1,6 +1,7 @@
 // server/services/calculationEngine.js
 const storage = require('../db/storage');
 const { getQuestionsForMetric } = require('./metricQuestionService');
+const { isEssMetric } = require('../db/surveySource');
 
 // Default year for YTD/unparseable period requests, derived from the real server clock
 // instead of a hardcoded literal — this dataset happens to be seeded for 2026 (today's real
@@ -443,6 +444,7 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       metric_type: m.metric_type,
       scale_type: m.scale_type,
       source_of_data: m.source_of_data,
+      survey_source: m.survey_source || null,
       experience_owner: m.experience_owner,
       target_value: targetConfig.target_value,
       target_value_normalized: parseFloat(normalizedTarget.toFixed(2)),
@@ -662,7 +664,8 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
   const checkpoint = checkpoints.find(c => c.checkpoint_id === metric.checkpoint_id);
 
   const isSurvey = metric.metric_type === 'SURVEY';
-  const isEss = (metric.source_of_data || '').toUpperCase().includes('ESS');
+  // ESS is decided by the metric's survey_source (v2.29.0); the old text test is only a fallback when it is empty.
+  const isEss = isSurvey && isEssMetric(metric);
 
   if (!isSurvey) {
     // Outcome metric: Internal HR system data
@@ -703,6 +706,7 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
         scale_type: metric.scale_type,
         experience_owner: metric.experience_owner,
         source_of_data: metric.source_of_data,
+        survey_source: metric.survey_source || null,
         journey_name: journey?.journey_name || '',
         checkpoint_name: checkpoint?.checkpoint_name || '',
         target_value: targetConfig.target_value,
@@ -726,6 +730,7 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
       scale_type: metric.scale_type,
       experience_owner: metric.experience_owner,
       source_of_data: metric.source_of_data,
+      survey_source: metric.survey_source || null,
       journey_name: journey?.journey_name || '',
       journey_color: journey?.color || '#ED1C24',
       checkpoint_name: checkpoint?.checkpoint_name || '',
@@ -939,6 +944,7 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
       scale_type: metric.scale_type,
       experience_owner: metric.experience_owner,
       source_of_data: metric.source_of_data,
+      survey_source: metric.survey_source || null,
       journey_name: journey?.journey_name || '',
       checkpoint_name: checkpoint?.checkpoint_name || '',
       target_value: targetConfig.target_value,
@@ -963,6 +969,7 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
     scale_type: metric.scale_type,
     experience_owner: metric.experience_owner,
     source_of_data: metric.source_of_data,
+    survey_source: metric.survey_source || null,
     journey_name: journey?.journey_name || '',
     journey_color: journey?.color || '#ED1C24',
     checkpoint_name: checkpoint?.checkpoint_name || '',

@@ -1,6 +1,7 @@
 // src/components/Calculator.jsx
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../utils/AuthContext';
+import { surveySourceLabel, surveySourceBadgeClass } from '../utils/surveySource';
 import { 
   Layers, 
   Search, 
@@ -118,7 +119,7 @@ export default function Calculator({
       const q = searchQuery.toLowerCase();
       const matchName = m.metric_name.toLowerCase().includes(q);
       const matchOwner = m.experience_owner?.toLowerCase().includes(q);
-      const matchSource = m.source_of_data?.toLowerCase().includes(q);
+      const matchSource = m.source_of_data?.toLowerCase().includes(q) || surveySourceLabel(m.survey_source).toLowerCase().includes(q);
       if (!matchName && !matchOwner && !matchSource) return false;
     }
     return true;
@@ -166,7 +167,7 @@ export default function Calculator({
               <Layers className="w-4 h-4" />
             </div>
             <h3 className="text-base font-extrabold text-white">
-              Explore 27 People Experience Metrics
+              Explore {metrics.length} People Experience Metrics
             </h3>
             <span className="text-[10px] font-bold px-2 py-0.5 bg-white/90 text-[var(--theme-dark)] rounded-full">
               Pure Survey & HR Calculation
@@ -256,7 +257,7 @@ export default function Calculator({
               typeFilter === 'SURVEY' ? 'bg-blue-600 text-white' : 'bg-white/90 text-blue-700 hover:bg-white'
             }`}
           >
-            Survey (20)
+            Survey ({metrics.filter(m => m.metric_type === 'SURVEY').length})
           </button>
           <button
             onClick={() => setTypeFilter('OUTCOME')}
@@ -264,7 +265,7 @@ export default function Calculator({
               typeFilter === 'OUTCOME' ? 'bg-emerald-600 text-white' : 'bg-white/90 text-emerald-700 hover:bg-white'
             }`}
           >
-            Outcome (7)
+            Outcome ({metrics.filter(m => m.metric_type !== 'SURVEY').length})
           </button>
         </div>
 
@@ -449,6 +450,14 @@ export default function Calculator({
                           {isDisabled && (
                             <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-bold bg-gray-200 text-gray-600">
                               Bankwide Only (Non-Karyawan)
+                            </span>
+                          )}
+                          {isSurvey && m.survey_source && (
+                            <span
+                              className={`inline-block px-1.5 py-0.2 rounded text-[9px] font-bold shrink-0 ${isDisabled ? 'bg-gray-200 text-gray-600' : surveySourceBadgeClass(m.survey_source)}`}
+                              title={m.survey_source === 'ESS' ? 'Employee Sentiment Survey - uploaded manually from the ESS template' : 'Data from another system or form'}
+                            >
+                              {surveySourceLabel(m.survey_source)}
                             </span>
                           )}
                           <div className="text-[10px] text-gray-500 truncate max-w-[200px]">

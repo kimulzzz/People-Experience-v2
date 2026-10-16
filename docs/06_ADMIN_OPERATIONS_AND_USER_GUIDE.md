@@ -127,6 +127,7 @@ Buka **Parameter Admin → Parameter Metric → Edit** pada metrik yang dituju, 
 
 ### 7.2 Pengingat Upload Survei Manual (Reminder Email PIC)
 Khusus metrik bertipe **Survey**, tersedia toggle **"Survei ini masih diupload manual oleh PIC"**.
+Sejak v2.29.0 toggle ini **hanya mengatur pengingat e-mail**; semua metrik Survey tetap bisa diunggah manual (lihat bagian *Survey Source* di bawah).
 Jika diaktifkan:
 1. Isi **Nama PIC Upload** dan **Email PIC (Tujuan Reminder)**.
 2. Tentukan **Batas Tanggal Upload** — tanggal (1–28) setiap bulan untuk metrik Bulanan, atau
@@ -203,12 +204,35 @@ Yang dilihat User: pilihan filter "Semua cakupan saya" menampilkan **data gabung
 ## 🧑‍💼 Menjadikan Akun User sebagai PIC Metrik (v2.27.1)
 
 1. Buat akun **User** di **Kelola User** dan **isi emailnya** (opsional di form, tetapi wajib agar akun bisa menjadi PIC).
-2. Buka **Parameter Admin** → metrik SURVEY yang diupload manual → isi **Email PIC** dengan email akun tadi (huruf besar/kecil tidak berpengaruh). Penetapan PIC tetap lewat sini; tidak ada pengaturan PIC di Kelola User. Bila tidak ada akun aktif ber-email itu, muncul peringatan "PIC belum punya akun login".
+2. Buka **Parameter Admin** → metrik SURVEY (sejak v2.29.0 metrik SURVEY mana pun, tidak harus ber-toggle upload manual) → isi **Email PIC** dengan email akun tadi (huruf besar/kecil tidak berpengaruh). Penetapan PIC tetap lewat sini; tidak ada pengaturan PIC di Kelola User. Bila tidak ada akun aktif ber-email itu, muncul peringatan "PIC belum punya akun login".
 3. Berlaku **langsung** pada request berikutnya — tanpa login ulang. Mengubah Email PIC, email akun, atau menonaktifkan akun mencabut/memberi hak dengan cara yang sama. Kelola User menampilkan "PIC metrik" tiap akun.
 
 Yang bisa dilakukan PIC, hanya untuk metrik miliknya: unduh template, **upload CSV** (metrik ditentukan dari form; kolom `metric_id` di CSV diabaikan), lihat riwayat upload, unduh evidence, dan lihat identitas responden. Untuk metrik karyawan, identitas/evidence hanya responden dalam **cakupan direktorat/divisi akun PIC**. Hasil upload PIC tidak menampilkan PE Index bankwide. Setiap upload tercatat di riwayat audit (`SURVEY_UPLOAD`) dan di riwayat batch sebagai `Nama (username)`. Reminder email tetap ke Email PIC.
 
 Perhatian (belum diputuskan): importer belum menolak NIP kembar dalam satu CSV atau antar-batch, dan PIC dapat mengunggah baris di luar cakupannya (tersimpan, terlihat oleh Admin, tidak oleh PIC); tanggal survei tidak valid disimpan sebagai hari ini.
+
+---
+
+## 🗂️ Survey Source (System / ESS) & Upload Manual untuk Semua Survei (v2.29.0)
+
+**Mengatur Survey Source** - Parameter Admin -> Parameter Metric -> Edit / Tambah metrik **SURVEY** -> dropdown **Survey Source**:
+
+| Pilihan | Arti |
+| :--- | :--- |
+| **System** (default untuk metrik baru) | Data berasal dari sistem atau form lain (mis. form evaluasi event, sistem rekrutmen). |
+| **ESS Template** | Employee Sentiment Survey: data diunggah dari template ESS. Menampilkan ringkasan dimensi ESS di detail metrik. |
+
+Metrik OUTCOME tidak punya Survey Source (dropdown tidak muncul). Pilihan tampil sebagai badge **ESS Template** / **System** di Explore Metrics, sebagai kolom di tabel Parameter Metric, dan sebagai chip "Survey Source" di detail metrik. Data saat ini: ESS = metrik 9, 13, 15, 16, 17, 18, 21, 22, 24, 25, 27; System = 2, 5, 6, 7, 8, 10, 12, 23, 26. Mengubahnya tidak mengubah skor.
+
+**ESS selalu diunggah manual**: pada metrik ESS checkbox "Survei ini masih diupload manual oleh PIC" otomatis tercentang dan terkunci; server menolak (400) permintaan yang mematikannya. Jadi metrik ESS selalu ikut pengingat e-mail PIC.
+
+**Semua metrik Survey bisa diunggah manual**: tombol **Template**, **Evidence** dan **Upload** muncul untuk setiap metrik Survey bagi Admin dan bagi PIC-nya (akun User yang e-mailnya sama dengan **Email PIC** metrik itu) - tanpa perlu toggle upload manual. Berguna bila sistem sumber bermasalah dan data harus dimasukkan lewat CSV. Akun User yang bukan PIC metrik itu tetap ditolak (403); metrik Outcome tidak bisa diunggah. Toggle upload manual kini hanya menentukan apakah **e-mail pengingat** dikirim ke PIC (aturan pengingat v2.24.0 tidak berubah).
+
+**Tombol di layar sempit**: tombol Template / Upload di menu **Survey Templates** dan tombol Survey Data Operations di detail metrik turun ke baris berikutnya bila ruang tidak cukup.
+
+**Galeri media event**: ringkasan **AI Summary** video bisa dilipat dengan mengklik judulnya (default terbuka); blok "AI Description" kini hanya untuk foto; nama file media tidak lagi diawali "Documentation ".
+
+Catatan / belum diperbaiki: importer Admin yang menerima `metric_id` form non-numerik memakai metrik Survey pertama; NIP kembar belum ditolak importer.
 
 ---
 
