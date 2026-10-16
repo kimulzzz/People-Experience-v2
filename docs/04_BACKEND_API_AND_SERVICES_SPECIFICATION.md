@@ -98,7 +98,7 @@ Backend dibangun menggunakan **Node.js dan Express.js** sebagai REST API Server 
 | `DELETE` | `/api/media/:media_id` | Menghapus record media **beserta file fisiknya** di `server/uploads` (sejak v2.30.1 respons baru dikirim setelah file terhapus, dan yang dihapus adalah file yang sedang ditunjuk record - nama baru bila video sudah di-rename) | Path: `media_id` |
 | `POST` | `/api/events/:event_id/generate-ppt` | Menghasilkan dan menyajikan berkas presentasi PowerPoint (.pptx) | Path: `event_id` |
 
-> **Transkrip AI video (sejak v2.21.0)**: `server/services/transcribeService.js` memanggil API audio/video-to-text lokal (faster-whisper, default `http://127.0.0.1:8000`, `POST /transcribe` dengan body `{"source": "<path file di server>", "language": "id"}`) — **path lokal** file yang diupload dikirim, sehingga video tidak keluar dari mesin (patuh aturan 100% on-premise). Bahasa default `id` (`TRANSCRIBE_LANGUAGE`). Karena Whisper di CPU bisa memakan menit, hasilnya disimpan ke record media: `transcript_status` (`PROCESSING`/`DONE`/`FAILED`), `transcript` (teks lengkap), `transcript_segments` (`[{start, end, text}]`), `transcript_language`, `duration_seconds`, `transcript_error`, dan `ai_generated_description` diisi cuplikan transkrip. Job yang terputus karena restart server otomatis dilanjutkan saat boot. Konfigurasi di `.env`: `TRANSCRIBE_API_URL`, `TRANSCRIBE_LANGUAGE`, `TRANSCRIBE_TIMEOUT_MS`, `MEDIA_MAX_MB` (lihat `.env.example`).
+> **Transkrip AI video (sejak v2.21.0)**: `server/services/transcribeService.js` memanggil API audio/video-to-text lokal (faster-whisper, default `http://127.0.0.1:8000`, `POST /transcribe` dengan body `{"source": "<path file di server>", "language": "id"}`) — **path lokal** file yang diupload dikirim, sehingga video tidak keluar dari mesin (patuh aturan 100% on-premise). Sejak v2.30.2 path itu adalah hard link bernama asli di `server/tmp-transcribe/<media_id>/` (lihat "Catatan v2.30.2"). Bahasa default `id` (`TRANSCRIBE_LANGUAGE`). Karena Whisper di CPU bisa memakan menit, hasilnya disimpan ke record media: `transcript_status` (`PROCESSING`/`DONE`/`FAILED`), `transcript` (teks lengkap), `transcript_segments` (`[{start, end, text}]`), `transcript_language`, `duration_seconds`, `transcript_error`, dan `ai_generated_description` diisi cuplikan transkrip. Job yang terputus karena restart server otomatis dilanjutkan saat boot. Konfigurasi di `.env`: `TRANSCRIBE_API_URL`, `TRANSCRIBE_LANGUAGE`, `TRANSCRIBE_TIMEOUT_MS`, `MEDIA_MAX_MB` (lihat `.env.example`).
 
 > **Ukuran slide PPT (sejak v2.20.1)**: `server/services/pptGenerator.js` memakai `pptx.layout = 'LAYOUT_WIDE'` (13.33" × 7.5"). Seluruh koordinat konten (judul, kartu, tabel, footer) dirancang pada kanvas tersebut — sebelumnya memakai `LAYOUT_16x9` (10" × 5.625") sehingga konten setiap slide melebihi batas slide. Tambahan elemen baru harus tetap berada dalam 13.33" × 7.5".
 
@@ -445,4 +445,26 @@ Perubahan terkait: `updateMedia` (`sqlStorage.js`, `jsonStorage.js`) kini meneri
 
 **Env baru (opsional)**: `PX_DISABLE_RESUME=1` mematikan `resumeInterruptedTranscriptions`/`resumeInterruptedSummaries` saat boot. Hanya untuk backend kedua yang berbagi database dengan backend yang sedang memproses video (dipakai suite tes); jangan di-set pada backend utama.
 
-**Tidak berubah / belum**: monitoring dan entri di Video Extractor (`:8000`) tidak ikut berganti nama; usulan mengirim `display_name` ke API transkrip belum dikerjakan. Skema database tidak berubah.
+**Tidak berubah / belum**: monitoring dan entri di Video Extractor (`:8000`) tidak ikut berganti nama oleh rename final ini; nama asli di monitoring ditangani terpisah sejak v2.30.2 (lihat bawah) tanpa field `display_name`. Skema database tidak berubah.
+
+---
+
+## Catatan v2.30.2 - Nama File Asli untuk Video Extractor (Hard Link)
+
+**Masalah**: monitoring Video Extractor menampilkan basename `source` yang dikirim, yaitu nama acak `media-<ts>-<rand>.mp4`. API Extractor ('Video/Audio to Text v1.1': `POST /transcribe {source, language}`, `/transcribe/upload`, `/batch`, `/jobs`, `/summarize`) tidak punya field nama tampilan; kontraknya tidak diubah.
+
+**Alur di `transcribeService.queueMediaTranscription`** (hanya `transcribeService.js` dan satu pemanggilan di `server.js` yang berubah)
+
+| Langkah | Perilaku |
+| :--- | :--- |
+| 1. Link | `createNamedLink`: membuat `<TMP_DIR>/<media_id>/<stem><ext>` lewat `fs.promises.link` (hard link ke file di `server/uploads`, tanpa salinan). `TMP_DIR` = `server/tmp-transcribe` (di luar `server/uploads`, tanpa route, `.gitignore`). Nama = `sanitizeVideoFileName(media.file_name, ...)` (aturan sama dengan rename v2.30.1); stem dipendekkan agar seluruh path <= 250 karakter (`MAX_LINK_PATH_CHARS`). Nama folder dari `media_id` disanitasi (`[^A-Za-z0-9._-]` -> `_`) dan harus tetap di bawah `TMP_DIR`. Folder sisa percobaan sebelumnya untuk media yang sama dihapus dulu |
+| 2. Kirim | `source` = path link. Bila link gagal (`EXDEV`/`EPERM`/`ENOENT`/lainnya) atau nama ditolak sanitizer: kirim path acak lama dan `console.warn` |
+| 3. Retry | Satu kali dengan path acak, HANYA bila ada link, kegagalan terjadi < 15 dtk (`FAST_FAILURE_MS`), dan `looksLikeUnreadableFile(err)`: `statusCode` 404/422/500, atau pesan cocok "not found / no such file / cannot|could not open|read|find / does not exist / unreadable / invalid data|file|source|path / errno 2" |
+| Tanpa retry | Timeout (`isTimeout`), Extractor mati (`isUnreachable`: connection refused), connection reset, error lain, dan kegagalan setelah 15 dtk. Error pada percobaan kedua dilempar apa adanya |
+| 4. Bersih | `finally`: `removeTmpEntry(folder)` segera setelah panggilan (sebelum hasil disimpan dan sebelum `finalizeMediaFileName`). Hanya menghapus nama link; file asli aman. Gagal menghapus (mis. file terpakai) hanya `console.warn` dan tidak menggagalkan job |
+| Boot | `cleanupTranscribeTempDirs()` dipanggil di `server.js` sebelum `resumeInterruptedTranscriptions`/`resumeInterruptedSummaries` (juga bila `PX_DISABLE_RESUME=1`): hapus semua entri `TMP_DIR` (folder maupun file lepas) kecuali folder media berstatus `PROCESSING` atau yang sedang `inFlight`; job yang di-resume membuat link baru |
+| Hapus media | `DELETE /api/media/:id` saat `PROCESSING`: folder dibersihkan oleh `finally` saat job berakhir |
+
+**Ekspor baru** `transcribeService`: `cleanupTranscribeTempDirs`, `TMP_DIR`. `postJson` memberi error properti `statusCode`, `isTimeout`, `isUnreachable`. Tidak ada endpoint, tabel, kolom, atau env baru; `/api/health` `version` = `2.30.2`.
+
+**Batasan**: hard link mensyaratkan `server/uploads` dan `server/tmp-transcribe` berada di **volume NTFS yang sama** (bila tidak: path acak); entri Extractor yang sudah ada tidak berubah; perilaku Extractor asli terhadap path berisi `[ ] ( ) é` belum diuji; kasus "file in use" saat menghapus link tidak disimulasikan; tampilan monitoring Extractor asli belum diverifikasi (menunggu uji user).

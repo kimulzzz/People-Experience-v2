@@ -7,3 +7,4 @@ server/exports/
 
 server/data/backups/
 server/data/auth.json
+server/tmp-transcribe/

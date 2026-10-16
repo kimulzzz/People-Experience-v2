@@ -21,7 +21,7 @@ const { getPendingUploadReminders, sendPendingUploadReminders, startReminderSche
 const emailSettingsService = require('./services/emailSettingsService');
 const auth = require('./services/authService');
 const { queueMediaSummary, resumeInterruptedSummaries, isSummaryInFlight } = require('./services/mediaSummaryService');
-const { queueMediaTranscription, resumeInterruptedTranscriptions, isTranscribeApiReachable, unreachableMessage } = require('./services/transcribeService');
+const { queueMediaTranscription, resumeInterruptedTranscriptions, cleanupTranscribeTempDirs, isTranscribeApiReachable, unreachableMessage } = require('./services/transcribeService');
 const { repairUploadedName, safeExtension, mediaKindOfName, deleteMediaAndFile } = require('./services/mediaFileService');
 
 // Default year for YTD/unparseable period query params, derived from the real server clock
@@ -127,12 +127,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.30.1' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.30.2' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.30.1',
+    version: '2.30.2',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',
@@ -1188,11 +1188,15 @@ storageReady.then(() => { const httpServer = app.listen(PORT, () => {
   // Video transcripts interrupted by a restart would otherwise sit on PROCESSING forever.
   // (PX_DISABLE_RESUME=1 is only for a throw-away second backend sharing the database of a running one, so it does not
   // take over that backend's videos that are being processed.)
-  if (process.env.PX_DISABLE_RESUME !== '1') {
-    resumeInterruptedTranscriptions().catch(err => console.error('Resume transcriptions failed:', err.message));
-    // Only summaries that were mid-way (PROCESSING) when the server stopped continue; old videos without one stay untouched.
-    resumeInterruptedSummaries().catch(err => console.error('Resume summaries failed:', err.message));
-  }
+  // Leftover server/tmp-transcribe folders (named hard links for the Video Extractor) of jobs that are no longer running
+  // are removed first; the folder of a media that is still PROCESSING stays and is re-made when its job resumes.
+  cleanupTranscribeTempDirs().catch(err => console.error('Cleanup of temporary transcript folders failed:', err.message)).then(() => {
+    if (process.env.PX_DISABLE_RESUME !== '1') {
+      resumeInterruptedTranscriptions().catch(err => console.error('Resume transcriptions failed:', err.message));
+      // Only summaries that were mid-way (PROCESSING) when the server stopped continue; old videos without one stay untouched.
+      resumeInterruptedSummaries().catch(err => console.error('Resume summaries failed:', err.message));
+    }
+  });
 
   // Automatic Survey Upload Reminders: on a metric's deadline day, if the PIC has not uploaded the
   // previous month's survey data, the PIC is emailed (see services/reminderService.js). Runs at boot

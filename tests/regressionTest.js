@@ -4562,7 +4562,11 @@ async function runRegressionSuite() {
             assert.ok(renamedTo(done, name), `file_path ${done.file_path}`);
             assert.ok(!fs41.existsSync(tmpAbs));
             assert.ok(fs41.existsSync(path41.join(UP, name)));
-            assert.strictEqual(tr.sources[tr.sources.length - 1].replace(/\\/g, '/'), tmpAbs.replace(/\\/g, '/'), 'the Video Extractor was given the temporary file (it was still processing)');
+            // v2.30.2: the Extractor gets a hard link (outside server/uploads) that carries the uploaded name, not the random temporary name
+            const sentSource = tr.sources[tr.sources.length - 1];
+            assert.strictEqual(path41.basename(sentSource), name, 'the Video Extractor was given the original upload name');
+            assert.notStrictEqual(path41.dirname(path41.resolve(sentSource)), UP, 'the named link must not be in server/uploads');
+            assert.ok(!path41.basename(sentSource).startsWith('media-'));
             const served = await api(done.file_path);
             assert.strictEqual(served.status, 200);
           });
@@ -4610,7 +4614,8 @@ async function runRegressionSuite() {
             assert.strictEqual(retry.status, 202);
             const done = await waitFor(up.media.media_id, m => m.summary_status === 'DONE');
             assert.strictEqual(done.transcript_status, 'DONE');
-            assert.strictEqual(tr.sources[tr.sources.length - 1].replace(/\\/g, '/'), path41.join(UP, name).replace(/\\/g, '/'), 'Try again must send the renamed file');
+            // v2.30.2: "Try again" sends a named hard link to the (renamed) file; same file name, folder outside server/uploads
+            assert.strictEqual(path41.basename(tr.sources[tr.sources.length - 1]), name, 'Try again must send the file under its original name');
             assert.ok(renamedTo(done, name));
             assert.ok(fs41.existsSync(path41.join(UP, name)));
           });
@@ -4729,6 +4734,367 @@ async function runRegressionSuite() {
         assert.deepStrictEqual(fs41.readdirSync(UP).filter(f => f.includes(stamp41)), []);
         const left = (await st41.getAllMedia()).filter(m => ids.has(m.media_id));
         assert.deepStrictEqual(left, []);
+      });
+    }
+  }
+
+  // --- MODULE 42 (v2.30.2): THE VIDEO EXTRACTOR RECEIVES A HARD LINK THAT CARRIES THE ORIGINAL UPLOAD NAME ---
+  // The Extractor shows the `source` path it is given; its API has no display-name field. So the transcript job hard-links
+  // the video to server/tmp-transcribe/<media_id>/<sanitized upload name> (outside server/uploads), sends THAT path, and
+  // removes the link when the call is over. Fallback: the stored (random) path. One retry with it on a fast "unreadable file" error.
+  // A second backend with fake Ollama + a fake Video Extractor that RECORDS the `source` it receives (never the real ones).
+  console.log('\n📦 MODULE 42: Video Extractor gets a named hard link (Positive & Negative Testing)');
+  {
+    const fs42 = require('fs');
+    const os42 = require('os');
+    const path42 = require('path');
+    const st42 = require('../server/db/storage');
+    const fileSvc42 = require('../server/services/mediaFileService');
+    const trSvc42 = require('../server/services/transcribeService');
+    const UP42 = fileSvc42.UPLOADS_DIR;
+    const TMP42 = trSvc42.TMP_DIR;
+    const stamp42 = Date.now().toString(36);
+    const sleep42 = ms => new Promise(r => setTimeout(r, ms));
+    const webPath42 = name => `/uploads/${encodeURIComponent(name)}`;
+    const norm42 = p => path42.resolve(p).toLowerCase();
+
+    await runTest('[POSITIVE] Safety by construction: the link folder is outside server/uploads (never served statically), git-ignored, and not mounted by any route', async () => {
+      assert.ok(!norm42(TMP42).startsWith(norm42(UP42) + path42.sep) && norm42(TMP42) !== norm42(UP42), 'tmp-transcribe must not be inside server/uploads');
+      assert.strictEqual(path42.basename(TMP42), 'tmp-transcribe');
+      assert.ok(/^server\/tmp-transcribe\/?\s*$/m.test(fs42.readFileSync(path42.join(__dirname, '..', '.gitignore'), 'utf8')));
+      const server = fs42.readFileSync(path42.join(__dirname, '..', 'server', 'server.js'), 'utf8');
+      assert.ok(!/express\.static\([^)]*tmp-transcribe/.test(server) && !/['"`]\/tmp-transcribe/.test(server));
+      const svc = fs42.readFileSync(path42.join(__dirname, '..', 'server', 'services', 'transcribeService.js'), 'utf8');
+      assert.ok(/sanitizeVideoFileName/.test(svc) && !/function sanitize/.test(svc), 'the name rules are reused from mediaFileService, not duplicated');
+    });
+
+    const processing42 = (await st42.getAllMedia()).filter(m => m.transcript_status === 'PROCESSING');
+    if (st42.backend !== 'sql') {
+      console.log('  ⏭️  SKIP: Module 42 pipeline tests need the SQL backend (they use the database directly and a second backend)');
+    } else if (processing42.length) {
+      console.log(`  ⏭️  SKIP: Module 42 pipeline tests need no video in PROCESSING (found ${processing42.length}); try again when the pipeline is idle`);
+    } else {
+      const http42 = require('http');
+      const { spawn } = require('child_process');
+      const crypto42 = require('crypto');
+      const auth42 = require('../server/services/authService');
+      const EVENT42 = 'ev-perspektif-2024-q1';
+      const ids = new Set();
+      const userIds = [];
+      let child = null;
+      const keepDirs = [];
+      const flagFile = path42.join(os42.tmpdir(), `rt42-${stamp42}.nolink.flag`);
+      const before42 = new Set(fs42.readdirSync(UP42));
+      // the three real videos of the user must come out of this module exactly as they went in
+      const userVideos = ['media-1791719574686-vlyjb7.mp4', 'media-1792120436536-ol9m3m.mp4', 'media-1792140201332-gc585x.mp4'];
+      const snapshot = () => userVideos.map(f => { try { const s = fs42.statSync(path42.join(UP42, f)); return [f, s.size, s.mtimeMs, s.ino]; } catch (_) { return [f, null]; } });
+      const userBefore = snapshot();
+
+      const TEXT = 'Hari ini kami membahas program mentoring untuk karyawan baru di kantor pusat. Setiap mentor mendampingi peserta selama enam bulan pertama, bertemu secara rutin, dan membantu mereka memahami budaya kerja. Peserta merasa lebih percaya diri setelah mengikuti sesi tersebut dan ingin program ini diteruskan.';
+      const GOOD = 'RINGKASAN: Program mentoring untuk karyawan baru di kantor pusat dibahas. Mentor mendampingi peserta selama enam bulan pertama dan membantu mereka memahami budaya kerja. Peserta merasa lebih percaya diri dan ingin program diteruskan.\n\nPOIN:\n- Program mentoring untuk karyawan baru di kantor pusat.\n- Mentor mendampingi peserta dan bertemu secara rutin.\n- Peserta ingin program ini diteruskan.';
+      const fakeOllama = http42.createServer((req, res) => {
+        req.resume();
+        req.on('end', () => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ response: GOOD, done: true })); });
+      });
+
+      // The fake Video Extractor: records the `source` it is given AND what is behind that path at that very moment.
+      // Behaviour is chosen by a marker in the file NAME (the basename of the source), so concurrent tests do not interfere.
+      const calls = [];
+      const pending = [];
+      const alwaysFail = new Set();   // stored (random) file names that the fake must refuse too, to prove the retry is a single one
+      const fakeTranscribe = http42.createServer((req, res) => {
+        const chunks = [];
+        req.on('data', c => chunks.push(c));
+        req.on('end', () => {
+          res.setHeader('Content-Type', 'application/json');
+          if (!(req.method === 'POST' && req.url === '/transcribe')) return res.end('{"status":"ok"}');
+          let body = {}; try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch (_) { /* ignore */ }
+          const source = String(body.source || '');
+          const rec = { source, base: path42.basename(source), dirId: path42.basename(path42.dirname(source)), at: Date.now() };
+          try {
+            const st = fs42.statSync(source);
+            Object.assign(rec, { exists: true, size: st.size, nlink: st.nlink, ino: st.ino, content: fs42.readFileSync(source, 'utf8') });
+          } catch (_) { rec.exists = false; }
+          calls.push(rec);
+          const linkPath = source.replace(/\\/g, '/').includes('/tmp-transcribe/');
+          const ok = () => res.end(JSON.stringify({ text: TEXT, language: 'id', duration: 30, segments: [{ start: 0, end: 30, text: TEXT }] }));
+          const bad = (code, detail) => { res.statusCode = code; res.end(JSON.stringify({ detail })); };
+          if (rec.base.includes('HANG')) { pending.push(res); return; }
+          if (rec.base.includes('RESET')) return req.socket.destroy();
+          if (rec.base.includes('SLOWFAIL')) return setTimeout(() => bad(500, `file not found: ${source}`), 15500);
+          if (rec.base.includes('REFUSELINK') && linkPath) return bad(500, `No such file or directory: ${source}`);
+          if (rec.base.includes('BOOM') || alwaysFail.has(rec.base)) return bad(500, 'boom');
+          if (rec.base.includes('TWIN') || rec.base.includes('DELME')) return setTimeout(ok, 1500);
+          ok();
+        });
+      });
+      const listen = (srv, port = 0) => new Promise(resolve => srv.listen(port, '127.0.0.1', () => resolve(srv.address().port)));
+      const ollamaPort = await listen(fakeOllama);
+      const trPort = await listen(fakeTranscribe);
+      const freePort = await (async () => { const s = http42.createServer(); const p = await listen(s); await new Promise(r => s.close(r)); return p; })();
+      const CHILD = `http://127.0.0.1:${freePort}`;
+      const pw = crypto42.randomBytes(9).toString('hex') + 'Aa1';
+      const cookieOf = r => (r.headers.getSetCookie() || []).map(c => c.split(';')[0]).find(c => c.startsWith('px_session='));
+      let cookie = null;
+      const api = (p, opts = {}) => realFetch(`${CHILD}${p}`, { ...opts, headers: { ...(opts.headers || {}), ...(cookie ? { Cookie: cookie } : {}) } });
+      const eventMedia = async id => (await (await api(`/api/events/${EVENT42}`)).json()).media.find(m => m.media_id === id);
+      const waitFor = async (id, pred, ms = 20000) => {
+        for (let i = 0; i < ms / 200; i++) { const m = await eventMedia(id); if (m && pred(m)) return m; await sleep42(200); }
+        return await eventMedia(id);
+      };
+      const upload = async name => {
+        const form = new FormData();
+        form.append('mediaFile', new Blob([Buffer.from(`video bytes ${name}`)], { type: 'video/mp4' }), name);
+        const res = await api(`/api/events/${EVENT42}/media`, { method: 'POST', body: form });
+        const body = await res.json();
+        if (body.media) ids.add(body.media.media_id);
+        return { res, media: body.media, name, tmpBase: body.media ? path42.basename(body.media.file_path) : null };
+      };
+      const callsOf = up => calls.filter(c => c.dirId === up.media.media_id || c.base === up.tmpBase);
+      const jobDir = id => path42.join(TMP42, id);
+      const finished = (up, summary = 'DONE') => waitFor(up.media.media_id, m => m.summary_status === summary && m.file_path !== up.media.file_path);
+      // a video record + real file made directly in the database (for names the upload route would not carry)
+      let seq = 0;
+      const mkRecord = async (fileName, state) => {
+        const tmp = `media-rt42-${stamp42}-${++seq}.mp4`;
+        fs42.writeFileSync(path42.join(UP42, tmp), `bytes of ${tmp}`);
+        const m = await st42.addMedia({ event_id: EVENT42, file_name: fileName, file_path: `/uploads/${tmp}`, file_type: 'VIDEO', caption: 'rt42', transcript_status: 'FAILED' });
+        ids.add(m.media_id);
+        if (state) await st42.updateMedia(m.media_id, state);
+        return { id: m.media_id, tmp };
+      };
+
+      try {
+        // Leftovers a crashed/killed server could have left behind - the new backend removes them at boot (test h).
+        fs42.mkdirSync(TMP42, { recursive: true });
+        const doneRec = await mkRecord(`rt42-${stamp42} left over.mp4`, { transcript_status: 'DONE', transcript: 'x' });
+        const procRec = await mkRecord(`rt42-${stamp42} still running.mp4`, { transcript_status: 'PROCESSING' });
+        const leftovers = {
+          done: jobDir(doneRec.id), unknown: jobDir(`med-rt42-${stamp42}-unknown`), proc: jobDir(procRec.id), stray: path42.join(TMP42, `rt42-${stamp42}-stray.txt`)
+        };
+        for (const d of [leftovers.done, leftovers.unknown, leftovers.proc]) { fs42.mkdirSync(d, { recursive: true }); fs42.writeFileSync(path42.join(d, 'left.mp4'), 'link-ish'); }
+        fs42.writeFileSync(leftovers.stray, 'stray');
+        keepDirs.push(leftovers.done, leftovers.unknown, leftovers.proc, leftovers.stray);
+
+        const u = await st42.createUser({ username: `rt42a${stamp42}`, full_name: 'Regression 42', email: '', role: 'ADMIN', password_hash: await auth42.hashPassword(pw), must_change_password: false });
+        userIds.push(u.user_id);
+        child = spawn(process.execPath, ['--require', path42.join(__dirname, 'helpers', 'failLinkPreload.js'), path42.join(__dirname, '..', 'server', 'server.js')], {
+          cwd: path42.join(__dirname, '..'),
+          env: { ...process.env, PORT: String(freePort), OLLAMA_HOST: `http://127.0.0.1:${ollamaPort}`, OLLAMA_MODEL: 'gemma3:4b', TRANSCRIBE_API_URL: `http://127.0.0.1:${trPort}`, TRANSCRIBE_TIMEOUT_MS: '17000', RT42_FAIL_LINK_FLAG: flagFile, PX_DISABLE_SCHEDULERS: '1', PX_DISABLE_RESUME: '1' },
+          stdio: 'ignore'
+        });
+        let booted = false;
+        for (let i = 0; i < 120 && !booted; i++) { try { booted = (await realFetch(`${CHILD}/api/health`)).ok; } catch (_) { await sleep42(500); } }
+        assert.ok(booted, 'second backend did not start');
+        const login = await realFetch(`${CHILD}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u.username, password: pw }) });
+        assert.strictEqual(login.status, 200);
+        cookie = cookieOf(login);
+        await sleep42(1500);
+
+        await runTest('[POSITIVE] Boot cleanup: tmp-transcribe folders of finished/unknown jobs and stray files are removed; the folder of a media still PROCESSING is kept', async () => {
+          assert.ok(!fs42.existsSync(leftovers.done), 'folder of a DONE media must be removed');
+          assert.ok(!fs42.existsSync(leftovers.unknown), 'folder of an unknown media must be removed');
+          assert.ok(!fs42.existsSync(leftovers.stray), 'a stray file must be removed');
+          assert.ok(fs42.existsSync(path42.join(leftovers.proc, 'left.mp4')), 'folder of a PROCESSING media must stay');
+          // cleanup removed only link-side entries: the uploaded files of those records are untouched
+          assert.ok(fs42.existsSync(path42.join(UP42, doneRec.tmp)) && fs42.existsSync(path42.join(UP42, procRec.tmp)));
+        });
+
+        const NAME_A = `rt42-${stamp42} Rapat Q3 [final] (v2) é.mp4`;
+        let upA = null;
+        await runTest('[POSITIVE] The Extractor receives the ORIGINAL upload name (not media-<ts>-<rand>), from a folder outside server/uploads, and it is a real hard link to the same bytes', async () => {
+          upA = await upload(NAME_A);
+          assert.strictEqual(upA.res.status, 201);
+          assert.ok(/^media-\d+-[a-z0-9]+\.mp4$/.test(upA.tmpBase), `stored under a temporary name: ${upA.tmpBase}`);
+          const done = await finished(upA);
+          assert.strictEqual(done.summary_status, 'DONE');
+          const cs = callsOf(upA);
+          assert.strictEqual(cs.length, 1, JSON.stringify(cs.map(c => c.source)));
+          const c = cs[0];
+          assert.strictEqual(c.base, NAME_A, 'basename of source = the sanitized original name');
+          assert.ok(!c.base.startsWith('media-'));
+          assert.strictEqual(path42.dirname(path42.dirname(path42.resolve(c.source))).toLowerCase(), norm42(TMP42), 'source = <tmp-transcribe>/<media_id>/<name>');
+          assert.strictEqual(c.dirId, upA.media.media_id, 'one folder per job');
+          assert.ok(!norm42(c.source).startsWith(norm42(UP42) + path42.sep), 'never inside server/uploads');
+          assert.strictEqual(c.exists, true, 'the path existed while the Extractor was reading');
+          assert.strictEqual(c.content, `video bytes ${NAME_A}`, 'same bytes as the uploaded file');
+          assert.strictEqual(c.size, Buffer.byteLength(`video bytes ${NAME_A}`));
+          assert.strictEqual(c.nlink, 2, 'a hard link (2 names for one file), not a copy');
+          assert.strictEqual(c.ino, fs42.statSync(path42.join(UP42, NAME_A)).ino, 'same file on disk as the final upload file');
+        });
+
+        await runTest('[POSITIVE] After DONE the link folder is gone, and the v2.30.1 rename still works: the file in server/uploads has the original name, intact, served 200', async () => {
+          assert.ok(!fs42.existsSync(jobDir(upA.media.media_id)), 'folder must be removed');
+          const m = await eventMedia(upA.media.media_id);
+          assert.strictEqual(m.file_path, webPath42(NAME_A));
+          assert.strictEqual(fs42.readFileSync(path42.join(UP42, NAME_A), 'utf8'), `video bytes ${NAME_A}`);
+          assert.ok(!fs42.existsSync(path42.join(UP42, upA.tmpBase)), 'temporary name gone after the rename');
+          assert.strictEqual((await api(m.file_path)).status, 200);
+        });
+
+        await runTest('[NEGATIVE] Transcript FAILED (Extractor error): the link folder is removed, the failure is recorded, the file is renamed; a failure that looks like an unreadable path gets exactly ONE retry with the stored path', async () => {
+          const up = await upload(`rt42-${stamp42} BOOM.mp4`);
+          alwaysFail.add(up.tmpBase);
+          const failed = await waitFor(up.media.media_id, m => m.transcript_status === 'FAILED' && m.file_path !== up.media.file_path);
+          assert.strictEqual(failed.transcript_status, 'FAILED');
+          assert.ok(/boom/.test(failed.transcript_error));
+          const cs = callsOf(up);
+          assert.strictEqual(cs.length, 2, 'link path, then ONE retry with the stored path (no loop)');
+          assert.strictEqual(cs[0].base, `rt42-${stamp42} BOOM.mp4`);
+          assert.strictEqual(cs[1].base, up.tmpBase);
+          assert.ok(!fs42.existsSync(jobDir(up.media.media_id)));
+          assert.ok(fs42.existsSync(path42.join(UP42, `rt42-${stamp42} BOOM.mp4`)), 'v2.30.1 rename after a failed transcript');
+        });
+
+        await runTest('[POSITIVE] Retry: the Extractor rejects the link path quickly with "file not found" -> ONE retry with the stored (random) path -> DONE, folder removed, final rename OK', async () => {
+          const up = await upload(`rt42-${stamp42} REFUSELINK.mp4`);
+          const done = await finished(up);
+          assert.strictEqual(done.transcript_status, 'DONE');
+          assert.strictEqual(done.summary_status, 'DONE');
+          const cs = callsOf(up);
+          assert.strictEqual(cs.length, 2, JSON.stringify(cs.map(c => c.source)));
+          assert.strictEqual(cs[0].base, `rt42-${stamp42} REFUSELINK.mp4`);
+          assert.strictEqual(cs[1].base, up.tmpBase);
+          assert.strictEqual(norm42(path42.dirname(cs[1].source)), norm42(UP42), 'the retry used the stored path');
+          assert.ok(!fs42.existsSync(jobDir(up.media.media_id)));
+          assert.strictEqual(done.file_path, webPath42(`rt42-${stamp42} REFUSELINK.mp4`));
+        });
+
+        await runTest('[NEGATIVE] No retry on a connection reset (Extractor died mid-call): one call, FAILED, folder removed', async () => {
+          const up = await upload(`rt42-${stamp42} RESET.mp4`);
+          const failed = await waitFor(up.media.media_id, m => m.transcript_status === 'FAILED');
+          assert.strictEqual(failed.transcript_status, 'FAILED');
+          await sleep42(500);
+          assert.strictEqual(callsOf(up).length, 1);
+          assert.ok(!fs42.existsSync(jobDir(up.media.media_id)));
+        });
+
+        await runTest('[NEGATIVE] No retry when the Extractor is not running (connection refused): FAILED with the "not running" message, no call recorded, folder removed', async () => {
+          fakeTranscribe.closeAllConnections();
+          await new Promise(r => fakeTranscribe.close(r));
+          try {
+            const up = await upload(`rt42-${stamp42} DOWN.mp4`);
+            const failed = await waitFor(up.media.media_id, m => m.transcript_status === 'FAILED');
+            assert.strictEqual(failed.transcript_status, 'FAILED');
+            assert.ok(/not running/.test(failed.transcript_error), failed.transcript_error);
+            assert.strictEqual(callsOf(up).length, 0);
+            assert.ok(!fs42.existsSync(jobDir(up.media.media_id)));
+          } finally {
+            await listen(fakeTranscribe, trPort);
+          }
+        });
+
+        await runTest('[NEGATIVE] No retry on a timeout, and none when the link path fails only AFTER the 15-second window (slow failure); the folder is removed in both cases', async () => {
+          const [hang, slow] = await Promise.all([upload(`rt42-${stamp42} HANG.mp4`), upload(`rt42-${stamp42} SLOWFAIL.mp4`)]);
+          const [fh, fs_] = await Promise.all([hang, slow].map(x => waitFor(x.media.media_id, m => m.transcript_status === 'FAILED', 40000)));
+          assert.strictEqual(fh.transcript_status, 'FAILED');
+          assert.ok(/exceeded/.test(fh.transcript_error), fh.transcript_error);
+          assert.strictEqual(fs_.transcript_status, 'FAILED');
+          assert.ok(/file not found/.test(fs_.transcript_error), fs_.transcript_error);
+          await sleep42(500);
+          assert.strictEqual(callsOf(hang).length, 1, 'timeout: no second call');
+          assert.strictEqual(callsOf(slow).length, 1, 'slow failure: no second call');
+          assert.ok(!fs42.existsSync(jobDir(hang.media.media_id)) && !fs42.existsSync(jobDir(slow.media.media_id)));
+          pending.splice(0).forEach(r => { try { r.destroy(); } catch (_) { /* ignore */ } });
+        });
+
+        await runTest('[POSITIVE] Fallback: when the hard link cannot be made (simulated EXDEV) the stored path is sent, nothing fails, no folder is left, final rename OK', async () => {
+          fs42.writeFileSync(flagFile, '1');
+          try {
+            const up = await upload(`rt42-${stamp42} NOLINK.mp4`);
+            const done = await finished(up);
+            assert.strictEqual(done.transcript_status, 'DONE');
+            const cs = callsOf(up);
+            assert.strictEqual(cs.length, 1);
+            assert.strictEqual(cs[0].base, up.tmpBase, 'the random stored name was sent');
+            assert.strictEqual(norm42(path42.dirname(cs[0].source)), norm42(UP42));
+            assert.strictEqual(cs[0].exists, true);
+            assert.ok(!fs42.existsSync(jobDir(up.media.media_id)));
+            assert.strictEqual(done.file_path, webPath42(`rt42-${stamp42} NOLINK.mp4`));
+          } finally { try { fs42.unlinkSync(flagFile); } catch (_) { /* ignore */ } }
+        });
+
+        await runTest('[POSITIVE] Same name, two jobs at the same time: two different folders, both named after the upload; the final files are "name" and "name (1)"', async () => {
+          const name = `rt42-${stamp42} TWIN.mp4`;
+          const [a, b] = await Promise.all([upload(name), upload(name)]);
+          const [da, db] = await Promise.all([a, b].map(x => finished(x)));
+          const ca = callsOf(a)[0], cb = callsOf(b)[0];
+          assert.ok(ca && cb);
+          assert.strictEqual(ca.base, name);
+          assert.strictEqual(cb.base, name);
+          assert.notStrictEqual(norm42(path42.dirname(ca.source)), norm42(path42.dirname(cb.source)));
+          assert.ok(ca.exists && cb.exists, 'both links existed while their jobs were running');
+          assert.deepStrictEqual([da.file_path, db.file_path].sort(), [webPath42(name), webPath42(`rt42-${stamp42} TWIN (1).mp4`)].sort());
+          assert.ok(!fs42.existsSync(jobDir(a.media.media_id)) && !fs42.existsSync(jobDir(b.media.media_id)));
+        });
+
+        await runTest('[NEGATIVE] Dangerous names ("../../x.mp4", "CON.mp4", "a:b?.mp4", "..\\..\\y.mp4", only-illegal "???.mp4") never leave the job folder; an unusable name falls back to the stored path', async () => {
+          const outsideA = path42.join(TMP42, '..', `rt42-${stamp42}-evil.mp4`);
+          const outsideB = path42.join(UP42, '..', `rt42-${stamp42}-evil.mp4`);
+          const cases = [
+            [`../../rt42-${stamp42}-evil.mp4`, `rt42-${stamp42}-evil.mp4`],
+            [`..\\..\\rt42-${stamp42}-win.mp4`, `rt42-${stamp42}-win.mp4`],
+            ['CON.mp4', '_CON.mp4'],
+            [`a:b?${stamp42}.mp4`, `ab${stamp42}.mp4`]
+          ];
+          for (const [original, expected] of cases) {
+            const rec = await mkRecord(original, { transcript_status: 'FAILED' });
+            const r = await api(`/api/media/${rec.id}/transcribe`, { method: 'POST' });
+            assert.strictEqual(r.status, 202, original);
+            const done = await waitFor(rec.id, m => m.transcript_status === 'DONE', 15000);
+            assert.strictEqual(done.transcript_status, 'DONE', original);
+            const c = calls.filter(x => x.dirId === rec.id)[0];
+            assert.ok(c, `${original}: link path expected`);
+            assert.strictEqual(c.base, expected, original);
+            assert.strictEqual(norm42(path42.dirname(c.source)), norm42(jobDir(rec.id)), `${original} must stay in its job folder`);
+            assert.ok(c.exists && c.nlink === 2, original);
+            assert.ok(!fs42.existsSync(jobDir(rec.id)), `${original}: folder removed`);
+          }
+          const bad = await mkRecord('???.mp4', { transcript_status: 'FAILED' });
+          assert.strictEqual((await api(`/api/media/${bad.id}/transcribe`, { method: 'POST' })).status, 202);
+          await waitFor(bad.id, m => m.transcript_status === 'DONE', 15000);
+          const cb = calls.filter(x => x.base === bad.tmp);
+          assert.strictEqual(cb.length, 1, 'unusable name -> the stored path is sent');
+          assert.ok(!fs42.existsSync(outsideA) && !fs42.existsSync(outsideB), 'nothing may be written outside the job folder');
+        });
+
+        await runTest('[POSITIVE] Deleting a media while its transcript is PROCESSING leaves no folder behind and no file in server/uploads (the job ends cleanly)', async () => {
+          const up = await upload(`rt42-${stamp42} DELME.mp4`);
+          for (let i = 0; i < 50 && !callsOf(up).length; i++) await sleep42(100);
+          assert.ok(callsOf(up).length, 'the job reached the Extractor');
+          assert.ok(fs42.existsSync(jobDir(up.media.media_id)), 'folder exists while processing');
+          const del = await api(`/api/media/${up.media.media_id}`, { method: 'DELETE' });
+          assert.strictEqual(del.status, 200);
+          for (let i = 0; i < 50 && fs42.existsSync(jobDir(up.media.media_id)); i++) await sleep42(100);
+          assert.ok(!fs42.existsSync(jobDir(up.media.media_id)), 'folder removed when the job ends');
+          assert.strictEqual(await st42.getMediaById(up.media.media_id), null, 'the record is not resurrected');
+          assert.ok(!fs42.readdirSync(UP42).some(f => f === up.tmpBase || f.includes('DELME')), 'no file left in server/uploads');
+        });
+
+        await runTest('[POSITIVE] The three real videos of the user and the real uploads folder are untouched by this module', async () => {
+          assert.deepStrictEqual(snapshot(), userBefore);
+        });
+      } finally {
+        if (child) child.kill();
+        await sleep42(500);
+        pending.splice(0).forEach(r => { try { r.destroy(); } catch (_) { /* ignore */ } });
+        try { fakeTranscribe.closeAllConnections(); } catch (_) { /* ignore */ }
+        await new Promise(r => fakeOllama.close(r));
+        await new Promise(r => fakeTranscribe.close(r));
+        try { fs42.unlinkSync(flagFile); } catch (_) { /* ignore */ }
+        for (const id of ids) { try { await fileSvc42.deleteMediaAndFile(id); } catch (_) { /* ignore */ } }
+        for (const id of userIds) { try { await st42.deleteUser(id); } catch (_) { /* ignore */ } }
+        for (const id of ids) { try { fs42.rmSync(path42.join(TMP42, id), { recursive: true, force: true }); } catch (_) { /* ignore */ } }
+        for (const d of keepDirs) { try { fs42.rmSync(d, { recursive: true, force: true }); } catch (_) { /* ignore */ } }
+        for (const f of fs42.readdirSync(UP42)) if ((f.includes(stamp42)) && !before42.has(f)) { try { fs42.unlinkSync(path42.join(UP42, f)); } catch (_) { /* ignore */ } }
+        for (const f of [`rt42-${stamp42}-evil.mp4`]) for (const dir of [path42.join(TMP42, '..'), path42.join(UP42, '..')]) { try { fs42.unlinkSync(path42.join(dir, f)); } catch (_) { /* never created */ } }
+      }
+      await runTest('[POSITIVE] Cleanup: no test record, file or link folder of this module is left behind', async () => {
+        assert.deepStrictEqual(fs42.readdirSync(UP42).filter(f => f.includes(stamp42)), []);
+        assert.deepStrictEqual((await st42.getAllMedia()).filter(m => ids.has(m.media_id)), []);
+        const tmpLeft = fs42.existsSync(TMP42) ? fs42.readdirSync(TMP42).filter(f => f.includes(stamp42) || ids.has(f)) : [];
+        assert.deepStrictEqual(tmpLeft, []);
+        assert.deepStrictEqual(snapshot(), userBefore);
       });
     }
   }

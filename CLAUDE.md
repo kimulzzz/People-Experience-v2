@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(251-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(266-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (251 cases on SQL; JSON 204 at QC before the Module 41 fixes, not re-run) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (266 cases on SQL; JSON 204 at QC before the Module 41 fixes, not re-run since) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (29 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules |
 
@@ -568,6 +568,16 @@ domain model, not just descriptive:
   verifikasi singkat QC atas perbaikan: LULUS DENGAN CATATAN, tanpa bug baru. Harness: Modul 38/41 butuh tidak ada video PROCESSING; jalankan suite SQL TANPA `TEST_ADMIN_USER`/`TEST_ADMIN_PASSWORD`;
   hitungan statis `await runTest(` (238) masih beda dengan hasil jalan (251; +3 dijelaskan Modul 41, 10 lama belum). BELUM dikerjakan: Activity Log dan log durasi proses (masih
   hanya di branch `wip/v2.29.0-ui-english`); rename file yang benar-benar terkunci hanya disimulasikan.
+
+- **v2.30.2** (2026-10-16, see `CHANGELOG.md` [2.30.2], `docs/03`, `docs/04` "Catatan v2.30.2", `docs/06`, `docs/07` §25): monitoring Video Extractor menampilkan nama acak
+  `media-<ts>-<rand>.mp4` (= `source` yang dikirim); API Extractor tidak punya field nama tampilan dan kontraknya tidak diubah. Solusi: `transcribeService` membuat HARD LINK (bukan salinan)
+  ke video di `server/tmp-transcribe/<media_id>/<nama-unggahan-tersanitasi>` (di luar `server/uploads`, tanpa route, di `.gitignore`) dan mengirim path itu sebagai `source`; link dihapus di
+  `finally` segera setelah panggilan (sebelum rename final v2.30.1); `cleanupTranscribeTempDirs()` saat boot sebelum resume (juga bila `PX_DISABLE_RESUME=1`). Fallback ke path acak bila link
+  gagal; satu retry dengan path acak hanya bila gagal CEPAT (< 15 dtk) dengan error "file tak terbaca" (404/422/500 atau pesan not found), tidak pernah pada timeout/refused/reset/gagal lambat.
+  Gotcha: hard link butuh `server/uploads` dan `server/tmp-transcribe` di volume NTFS yang sama; entri lama di Extractor tetap bernama acak; `tests/helpers/failLinkPreload.js` hanya untuk
+  backend kedua tes. Tes: Modul 42 (15; 14 khusus SQL) -> SQL 266/266 (developer, backend kedua, 0 skip); JSON TIDAK dijalankan ulang; hitungan statis `await runTest(` 253 vs hasil 266
+  (selisih 13 sama seperti v2.30.1). TIDAK ada QC terpisah. BELUM terverifikasi: tampilan di menu monitoring Video Extractor yang ASLI (user akan menguji dengan video pendek asli);
+  karakter `[ ] ( ) é` di Extractor asli; "file in use" saat hapus link. BELUM dikerjakan: Activity Log dan log durasi proses; foto HEIC masih ditolak.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

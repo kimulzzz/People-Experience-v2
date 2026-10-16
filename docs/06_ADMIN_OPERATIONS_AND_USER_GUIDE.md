@@ -303,5 +303,18 @@ Setelah mengubah `.env`, restart backend. Bila batas ringkasan habis, kartu vide
 - Karakter yang tidak boleh dipakai Windows (`< > : " | ? *`) dibuang dari nama; nama dipotong bila terlalu panjang (150 karakter); bila sudah ada file bernama sama, ditambahkan ` (1)`, ` (2)` dan seterusnya - file lain tidak pernah tertimpa.
 - Bila penggantian nama gagal (file terkunci, izin ditolak), video tetap bisa diputar dengan nama acak dan hanya muncul peringatan di console server.
 - Video yang diunggah **sebelum v2.30.1** tidak diganti namanya otomatis. Namanya berubah hanya bila Anda menekan **Regenerate summary** atau **Try again** pada video itu dan prosesnya selesai.
-- Daftar/monitoring di layanan Video Extractor tetap menampilkan nama acak untuk video yang sudah pernah dikirim ke sana sebelum diganti namanya.
+- Daftar/monitoring di layanan Video Extractor tetap menampilkan nama acak untuk video yang sudah pernah dikirim ke sana sebelum diganti namanya (sejak v2.30.2 video **baru** tampil dengan nama asli, lihat bagian berikut).
 - Hapus video lewat tombol hapus di kartu: file dengan nama barunya ikut terhapus dari `server/uploads`.
+
+## Nama File Asli di Monitoring Video Extractor (v2.30.2)
+
+**Perubahan yang terlihat**: pada video yang diunggah setelah v2.30.2 (setelah backend di-restart), menu monitoring Video Extractor seharusnya menampilkan **nama file yang Anda unggah**, bukan lagi `media-<angka>-<acak>.mp4`. Sistem melakukannya dengan membuat `hard link` sementara (bukan salinan, tidak memakan ruang disk) di `server/tmp-transcribe/<id media>/` yang dihapus otomatis begitu Extractor selesai; file asli di `server/uploads` tidak disentuh.
+
+**Cara memeriksa** (belum diverifikasi oleh penulis dokumen; menunggu uji dengan video pendek asli): unggah video pendek di Signature Program Events, buka monitoring Video Extractor selagi status "processing", dan cek nama yang tampil.
+
+**Yang perlu diketahui**
+- Entri yang sudah tercatat di Extractor sebelum versi ini tetap bernama acak.
+- Folder `server/tmp-transcribe` normalnya kosong; hanya berisi folder selama transkrip berjalan. Sisa (mis. server mati mendadak) dibersihkan otomatis saat backend dinyalakan. Aman dihapus manual saat tidak ada video berstatus "processing".
+- Hard link hanya bisa dibuat bila `server/uploads` dan `server/tmp-transcribe` ada di **drive/volume NTFS yang sama** (default: ya, keduanya di folder `server`). Bila tidak bisa, sistem otomatis memakai nama acak seperti sebelumnya; transkrip tetap berjalan dan hanya muncul peringatan di console server.
+- Bila Extractor menolak path bernama asli dengan error cepat "file tidak ditemukan/tidak terbaca", sistem mencoba **sekali** lagi dengan nama acak. Bila Extractor mati atau timeout, tidak ada percobaan ulang (gunakan **Try again** setelah Extractor aktif).
+- Bila nama file mengandung karakter khusus (`[ ] ( ) é`) dan monitoring tetap menampilkan nama acak, laporkan: perilaku Extractor asli terhadap karakter itu belum diuji.

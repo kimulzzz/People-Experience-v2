@@ -190,7 +190,8 @@ Browser --GET /api/... (cookie otomatis)--> authGate: cookie -> hash -> px_sessi
 Penjaga tunggal: `localAiService.assertAiAllowed()` — `queryLocalOllama()` menolak panggilan tanpa scope `EVENT_VIDEO_SUMMARY` dan subjek berupa video yang punya transkrip.
 
 ```text
-Upload video -> transcribeService (API lokal :8000) -> transcript_status DONE
+Upload video -> transcribeService: hard link bernama asli di server/tmp-transcribe/<media_id>/ (v2.30.2)
+   -> API lokal :8000 (source = path link; folder link dihapus segera setelah panggilan) -> transcript_status DONE
    -> queueMediaSummary -> aiQueue (satu job, kunci media:<id>)
    -> mediaSummaryService: <20 kata? INSUFFICIENT (tanpa model)
         -> prompt (dipecah 5000 karakter bila panjang) -> Ollama
@@ -200,5 +201,7 @@ Upload video -> transcribeService (API lokal :8000) -> transcript_status DONE
                      -> ringkasan ekstraktif aturan (summary_source RULE)
    -> px_media.summary_* (SQL Server) -> UI polling 4 dtk -> slide media PPT membaca dari DB
 ```
+
+**Hard link untuk Video Extractor (v2.30.2)**: API Extractor tidak punya field nama tampilan dan monitoring-nya menampilkan `source`. Karena itu, sebelum memanggil `POST /transcribe`, `transcribeService` membuat hard link (bukan salinan; file tetap satu di disk) ke video di `server/tmp-transcribe/<media_id>/<nama-unggahan>` dan mengirim path itu. Folder ini sengaja di luar `server/uploads` (yang di-serve statik), tanpa route, dan di `.gitignore`; link dihapus tepat setelah panggilan selesai (sebelum rename final v2.30.1), dan sisa job yang mati dibersihkan saat boot. Bila link tak bisa dibuat (mis. beda volume), path acak lama dikirim. Video tetap tidak keluar dari mesin. Rinci: `docs/04` "Catatan v2.30.2".
 
 Narasi Score Deficit Alert dan Event Summary kini murni aturan (tidak lagi mencoba Ollama). Ringkasan yang ditampilkan wajib berlabel sumbernya (`AI` atau "Otomatis (aturan)") dan UI mengingatkan agar dicek dengan transkrip.

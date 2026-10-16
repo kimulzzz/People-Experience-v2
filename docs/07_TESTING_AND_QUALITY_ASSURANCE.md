@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    41 MODUL PENGUJIAN    │     251 AUTOMATED TESTS     │       100% PASS RATE          │
+│    42 MODUL PENGUJIAN    │     266 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -833,3 +833,37 @@ Tes 7-10 membaca kode sumber (`App.jsx`, `Header.jsx`, `pptGenerator.js`, `serve
 **Harness**: Modul 38 dan 41 mensyaratkan **tidak ada video berstatus `PROCESSING`** di database; jalankan suite SQL **tanpa** `TEST_ADMIN_USER`/`TEST_ADMIN_PASSWORD`. Modul 41 membersihkan sendiri record dan file ber-stamp miliknya (tes terakhir memeriksa tidak ada sisa di `server/uploads`). Hitungan statis `await runTest(` kini 238 vs hasil jalan 251 (selisih 13 = +3 dari loop Modul 41 dikurangi tes khusus JSON, + 10 sisa lama yang belum dijelaskan sejak v2.29.0); angka resmi mengikuti laporan developer/QC.
 
 **Tidak diuji / tidak terverifikasi**: rename pada file yang benar-benar terkunci program lain (hanya simulasi `EBUSY`/`EPERM`); perilaku UI (kartu menyegarkan diri setelah rename) di browser - hanya tes statis kode sumber dan pemeriksaan QC; entri di Video Extractor setelah rename (tidak berubah); kasus unggahan HEIC dari perangkat nyata. Jalankan JSON ulang sebelum merilis bila backend JSON dipakai.
+
+---
+
+## 🔗 25. Hard Link Bernama Asli untuk Video Extractor - v2.30.2 (2026-10-16)
+
+**Regression suite: 266 test di SQL Server** (angka dari laporan developer, backend kedua, 0 skip; penulis dokumen ini tidak menjalankan ulang suite). 266 = 251 (v2.30.1) + 15 (Modul 42). **Tidak ada QC terpisah** untuk rilis ini dan **suite JSON tidak dijalankan ulang** (tidak ada angka JSON terverifikasi; di JSON hanya 1 tes statis Modul 42 yang berjalan, sisanya di-skip dengan pesan).
+
+**Modul 42 = 15 tes** (dihitung dari kode: 15 pemanggilan `runTest` tanpa loop = 1 tes statis yang jalan di SQL dan JSON + 14 tes khusus SQL). Hitungan statis `await runTest(` di `tests/regressionTest.js` kini 253 vs hasil jalan 266 (selisih 13, sama dengan v2.30.1: 10 sisa lama sejak v2.29.0 yang belum dijelaskan + 3 dari loop Modul 41).
+
+Modul 42 memakai backend kedua dengan Ollama dan Video Extractor **palsu** yang merekam `source` yang diterimanya (tidak pernah memanggil layanan asli). Sebagian skenario memakai kata kunci pada nama file untuk memicu perilaku palsu (`HANG`, `RESET`, `SLOWFAIL`, `REFUSELINK`, `BOOM`, `TWIN`, `DELME`). `tests/helpers/failLinkPreload.js` (dimuat `node --require` hanya di backend kedua) membuat `fs.promises.link` gagal seperti `EXDEV` selama file bendera ada.
+
+| Kelompok | Jenis | Yang diuji |
+| :--- | :---: | :--- |
+| Statis (1, SQL & JSON) | Positif | Folder link di luar `server/uploads`, ada di `.gitignore`, dan tidak di-mount route mana pun |
+| SQL (boot) | Positif | Boot cleanup: folder job selesai/tak dikenal dan file lepas di `tmp-transcribe` dihapus; folder media yang masih `PROCESSING` dipertahankan |
+| SQL | Positif | Extractor menerima nama unggahan asli (bukan `media-<ts>-<rand>`) dari folder di luar `server/uploads`, dan itu hard link ke byte yang sama |
+| SQL | Positif | Setelah `DONE` folder link hilang dan rename final v2.30.1 tetap jalan (nama asli, isi utuh, disajikan 200) |
+| SQL | Positif | Retry: Extractor menolak path link dengan "file not found" cepat -> satu retry dengan path acak -> `DONE`, folder hilang, rename OK |
+| SQL | Positif | Fallback: link tidak bisa dibuat (EXDEV simulasi) -> path acak dikirim, tidak gagal, tidak ada folder tersisa, rename OK |
+| SQL | Positif | Dua job bernama sama bersamaan: dua folder berbeda, keduanya bernama asli; file akhir "nama" dan "nama (1)" |
+| SQL | Positif | Hapus media saat transkrip `PROCESSING`: tidak ada folder atau file tersisa |
+| SQL | Positif | Tiga video asli user dan folder `server/uploads` nyata tidak tersentuh modul ini |
+| SQL | Positif | Cleanup akhir: tidak ada record, file, atau folder link milik modul tersisa; snapshot user tidak berubah |
+| SQL | Negatif | Transkrip `FAILED` (error Extractor): folder dihapus, kegagalan tercatat, file di-rename; kegagalan berbau "file tak terbaca" mendapat tepat SATU retry |
+| SQL | Negatif | Tanpa retry pada connection reset (satu panggilan, `FAILED`, folder hilang) |
+| SQL | Negatif | Tanpa retry saat Extractor mati (connection refused): `FAILED` dengan pesan "not running", tidak ada panggilan tercatat |
+| SQL | Negatif | Tanpa retry pada timeout, dan tanpa retry bila kegagalan path link terjadi setelah jendela 15 dtk; folder dihapus di kedua kasus |
+| SQL | Negatif | Nama berbahaya (`../../x.mp4`, `CON.mp4`, `a:b?.mp4`, `..\\..\\y.mp4`, `???.mp4`) tidak pernah keluar dari folder job; nama tak layak jatuh ke path tersimpan |
+
+**Modul 41 disesuaikan**: dua asersi `source` (video baru end-to-end dan "Try again") yang dulu mengharapkan path file di `server/uploads` kini mengharapkan basename = nama unggahan, folder bukan `server/uploads`, dan basename tidak berawalan `media-`.
+
+**Harness**: Modul 42 di-skip bila backend bukan SQL atau ada video berstatus `PROCESSING` di database (sama seperti Modul 38/41); jalankan suite SQL tanpa `TEST_ADMIN_USER`/`TEST_ADMIN_PASSWORD`. Satu tes menunggu jendela 15 detik (kegagalan lambat), jadi modul ini menambah waktu proses suite.
+
+**Tidak diuji / tidak terverifikasi**: tampilan menu monitoring Video Extractor yang **asli** (hanya `source` yang diterima Extractor palsu); perilaku Extractor asli terhadap path ber-karakter `[ ] ( ) é`; kasus Windows "file in use" saat menghapus link; hard link lintas volume (hanya disimulasikan lewat `EXDEV` palsu); suite JSON penuh.
