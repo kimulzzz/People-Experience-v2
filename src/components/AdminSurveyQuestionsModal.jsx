@@ -232,15 +232,15 @@ export default function AdminSurveyQuestionsModal({
 
         {/* Metric Selector Bar */}
         <div className="bg-white/15 border-b border-white/15 px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3 flex-1 min-w-[280px]">
-            <label className="text-xs font-bold text-red-50 uppercase tracking-wider whitespace-nowrap flex items-center gap-1.5">
+          <div className="flex items-center gap-3 flex-1 min-w-[280px] basis-[420px]">
+            <label className="text-xs font-bold text-red-50 uppercase tracking-wider whitespace-nowrap flex items-center gap-1.5 shrink-0">
               <Layers className="w-4 h-4 text-white" />
               Select Survey Metric:
             </label>
             <select
               value={selectedMetricId}
               onChange={(e) => setSelectedMetricId(parseInt(e.target.value))}
-              className="flex-1 bg-white border border-white rounded-xl px-3.5 py-2 text-sm font-semibold text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
+              className="flex-1 min-w-0 w-full truncate bg-white border border-white rounded-xl px-3.5 py-2 text-sm font-semibold text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
             >
               {surveyMetrics.map(m => (
                 <option key={m.metric_id} value={m.metric_id}>
@@ -250,7 +250,7 @@ export default function AdminSurveyQuestionsModal({
             </select>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <a
               href={`/api/surveys/template?metric_id=${selectedMetricId}`}
               download
