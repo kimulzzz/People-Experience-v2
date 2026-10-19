@@ -4,6 +4,20 @@ Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Managemen
 
 ---
 
+## [2.33.0] - 2026-10-19
+
+- **Permintaan user**: template ESS terbaru tidak lagi berisi favorable, neutral dan unfavorable, jadi komponen itu dihapus dari tampilan; yang ditampilkan cukup penilaian sesuai template (index kolom F + skor tiap pertanyaan).
+- **UI (`MetricDetailModal.jsx`)**:
+  - Kartu ESS: label "Overall Favorable", legenda Favorable/Neutral/Unfavorable dan bar sentimen bertumpuk dihapus. Kini "Index Score" (kolom F) + participants + periode, dengan satu bar netral. Metrik ESS tanpa hasil untuk periode itu menampilkan "No ESS summary uploaded for this period" (sebelumnya angka favorable placeholder dari konfigurasi pertanyaan).
+  - Spreadsheet View: kolom % Favorable/% Neutral/% Unfavorable, Dimension, "visible/required based on" dihapus. Tabel kini Question | Score dengan baris Index di atas (nilai kolom F, bukan rata-rata hitungan UI).
+  - Card View ESS: badge "ESS % Favorable" -> "ESS score", skor tampil sebagai "96%" (bukan "96% Favorable"), bar tiga warna diganti bar tunggal; tanpa ringkasan -> "—" tanpa bar.
+  - Tab "ESS Results by Directorate": header "Index"/"Q1..", nilai dengan "%"; keterangan tidak lagi menyebut "% favorable".
+- **Backend (`calculationEngine.js`)**: hanya teks `ess_summary.description` (tanpa kata favorable; untuk metrik tanpa ringkasan: ajakan upload). Field API `percent_favorable/neutral/unfavorable` sengaja tetap ada (kompatibilitas, Modul 11/45), hanya tidak ditampilkan.
+- **Tes**: tidak ada tes baru (perubahan tampilan). Suite penuh SQL (backend kedua): **202/202 lulus, 0 gagal, 16 dilewati** — modul Signature Program Event (8, 24) dan media (27, 32, 38, 41, 42, 43) di-skip atas permintaan user karena tidak tersentuh. `vite build` OK.
+- **Pembersihan data tes**: setelah suite, batch upload milik admin sementara suite ("Regression Suite Admin (rt-suite-…)") dihapus. Filter itu ikut menghapus **80 batch lama** (140 baris CSV fixture Modul 5/12/13 dari run-run sebelumnya, sejak v2.29.x) selain 5 batch run ini. Semuanya data tes, bukan data user, tetapi ikut terhitung di metrik SYSTEM, sehingga Dashboard ALL YTD 2026 bergeser: Survey Index 88,62 -> 88,43, PX Index 84,56 -> 84,43 (Outcome 75,08 tetap). Tidak ada backup untuk baris itu.
+
+---
+
 ## [2.32.0] - 2026-10-19
 
 ### Hasil ESS Diunggah sebagai Ringkasan Excel (.xlsx) per Direktorat (Changed)

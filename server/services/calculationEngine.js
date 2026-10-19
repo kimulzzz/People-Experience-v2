@@ -963,7 +963,7 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
         percent_neutral: avgNeut,
         percent_unfavorable: avgUnfav,
         questions_count: scorableQuestions.length,
-        description: 'ESS data is a summary of satisfaction scores (% Favorable) from the questions of the annual employee sentiment survey.'
+        description: 'No ESS summary has been uploaded for this period yet. Upload the ESS summary (.xlsx) to show the index and question scores.'
       };
     }
   }
@@ -1135,7 +1135,7 @@ async function buildEssDetail({ id, metric, targetConfig, journey, checkpoint, i
       participation: essResult.participation,
       period: essResult.period,
       period_label: essResult.period_label,
-      description: `ESS result ${essResult.period_label} (uploaded ESS summary): index and question scores are % favorable${essResult.level === 'DIRECTORATE' ? ', at directorate level' : ', bankwide'}.`
+      description: `ESS result ${essResult.period_label} (uploaded ESS summary): the index (column F) and the question scores as stated in the file${essResult.level === 'DIRECTORATE' ? ', at directorate level' : ', bankwide'}.`
     },
     ess_results_by_directorate: byDirectorate,
     ess_upload: upload ? { upload_id: upload.upload_id, file_name: upload.file_name, uploaded_by: upload.uploaded_by, uploaded_at: upload.uploaded_at, has_original_file: !!essOriginalFilePath(upload.upload_id) } : null,

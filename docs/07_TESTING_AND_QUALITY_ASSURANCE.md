@@ -205,6 +205,8 @@ TEST_SKIP_MEDIA=1 node tests/regressionTest.js            # = TEST_SKIP_MODULES=
 TEST_SKIP_MODULES=27,32 node tests/regressionTest.js      # daftar modul bebas, pisah koma
 ```
 
+Sejak v2.33.0 (permintaan user): perubahan yang tidak menyentuh **Signature Program Event** juga melewati modul event **8 dan 24** - mis. `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`. Modul yang dilewati dilaporkan SKIP, bukan lulus.
+
 Tes di modul yang dilewati dicatat **SKIPPED**, tidak pernah PASS. Modul 27 dan 32 dilewati per tes (`runTest` mencetak `SKIP: <nama>` dan menambah hitungan skip; modul aktif dibaca dari baris header `📦 MODULE <n>:`). Modul 38, 41, 42, 43 dilewati sebagai satu blok (`skipModuleBlock(n)`, karena setup backend kedua/layanan palsu ada di luar `runTest`); tesnya tidak dihitung sama sekali, hanya dicetak `SKIPPED: Module <n> ... none of its tests ran`. Ringkasan akhir menyebut jumlah tes SKIPPED dan daftar modul yang dilewati.
 
 ### Output Pengujian Sukses:
@@ -949,3 +951,7 @@ Modul 42 memakai backend kedua dengan Ollama dan Video Extractor **palsu** yang 
 **Perbaikan flake Modul 36**: file sementara upload kini dihapus sinkron sebelum respons (lihat `CHANGELOG.md` [2.32.0]).
 
 **Tidak diuji / tidak terverifikasi**: suite JSON penuh; modul media 27/32/38/41/42/43 (dilewati); tampilan UI dan mobile (tidak ada tes render); metrik ESS tanpa hasil sama sekali di detail metrik (masih jalur placeholder lama); baris dengan Level `Bankwide` tetapi nama direktorat di kolom A tidak punya tes.
+
+## 29. v2.33.0 - Tampilan ESS tanpa Favorable/Neutral/Unfavorable
+
+Perubahan tampilan saja (`MetricDetailModal.jsx`) + teks `ess_summary.description`; tidak ada tes baru. Suite penuh SQL di backend kedua dengan `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`: **202/202 lulus, 0 gagal, 16 tes SKIPPED** (Modul 8, 24, 27, 32) + blok 38/41/42/43 dilewati. `vite build` OK. Suite JSON tidak dijalankan.

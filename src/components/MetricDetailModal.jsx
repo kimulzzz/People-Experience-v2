@@ -151,9 +151,9 @@ export default function MetricDetailModal({
   // ESS-ness is decided by the server from the metric's Survey Source (Parameter Admin), not by the source text.
   const isEss = !!detailData?.is_ess;
   // ESS metric read from its uploaded ESS summary (v2.32.0): directorate-level aggregates, no respondent rows,
-  // and only % favorable per question (neutral / unfavorable are not part of the summary -> null).
+  // the index (column F) and one score per question, exactly as in the ESS template (no favorable / neutral / unfavorable).
   const isEssSummary = isEss && !!detailData?.is_ess_summary;
-  const pct = v => (v === null || v === undefined ? '—' : v);
+  const pct = v => (v === null || v === undefined ? '—' : `${v}%`);
 
   const isCampus = detailData?.metric_id === 2 || detailData?.target_audience === 'CAMPUS_STUDENTS';
   const isCandidate = detailData?.metric_id === 5 || detailData?.target_audience === 'JOB_APPLICANTS';
@@ -411,59 +411,38 @@ export default function MetricDetailModal({
                       </h3>
                     </div>
 
-                    <div className="flex items-center space-x-4 bg-white/10 backdrop-blur-md px-4 py-2 rounded-xl border border-white/15">
-                      <div>
-                        <div className="text-[10px] text-gray-300 font-bold uppercase tracking-wider">Overall Favorable</div>
-                        <div className="text-2xl font-black text-emerald-400">
-                          {detailData.ess_summary.summary_score}%
+                    {/* ESS summary template (v2.33.0): only the index (column F) and the question scores - no favorable / neutral / unfavorable split */}
+                    {isEssSummary ? (
+                      <div className="flex items-center space-x-4 bg-white/10 backdrop-blur-md px-4 py-2 rounded-xl border border-white/15">
+                        <div>
+                          <div className="text-[10px] text-gray-300 font-bold uppercase tracking-wider">Index Score</div>
+                          <div className="text-2xl font-black text-white">
+                            {pct(detailData.ess_summary.summary_score)}
+                          </div>
+                        </div>
+                        <div className="flex flex-col space-y-1 text-[11px] font-bold border-l border-white/20 pl-3 text-gray-300">
+                          <span>{detailData.ess_summary.participation} participants</span>
+                          <span>{detailData.ess_summary.period_label}</span>
                         </div>
                       </div>
-                      <div className="flex flex-col space-y-1 text-[11px] font-bold border-l border-white/20 pl-3">
-                        <span className="text-emerald-400 flex items-center space-x-1">
-                          <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />
-                          <span>{detailData.ess_summary.percent_favorable}% Favorable</span>
-                        </span>
-                        {isEssSummary ? (
-                          <span className="text-gray-300">{detailData.ess_summary.participation} participants · {detailData.ess_summary.period_label}</span>
-                        ) : (<>
-                        <span className="text-amber-300 flex items-center space-x-1">
-                          <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
-                          <span>{detailData.ess_summary.percent_neutral}% Neutral</span>
-                        </span>
-                        <span className="text-rose-400 flex items-center space-x-1">
-                          <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" />
-                          <span>{detailData.ess_summary.percent_unfavorable}% Unfavorable</span>
-                        </span>
-                        </>)}
+                    ) : (
+                      <div className="bg-white/10 backdrop-blur-md px-4 py-2 rounded-xl border border-white/15 text-[11px] font-bold text-gray-300">
+                        No ESS summary uploaded for this period
                       </div>
-                    </div>
+                    )}
                   </div>
 
-                  {/* Stacked Sentiment Bar */}
-                  <div className="space-y-1.5 pt-1">
-                    <div className="w-full h-3.5 bg-black/50 rounded-full overflow-hidden flex shadow-inner">
-                      <div 
-                        style={{ width: `${detailData.ess_summary.percent_favorable}%` }} 
-                        className="bg-emerald-500 h-full transition-all duration-500"
-                        title={`Favorable: ${detailData.ess_summary.percent_favorable}%`}
-                      />
-                      <div
-                        style={{ width: `${detailData.ess_summary.percent_neutral || 0}%` }}
-                        className="bg-amber-400 h-full transition-all duration-500"
-                        title={`Neutral: ${detailData.ess_summary.percent_neutral}%`}
-                      />
-                      <div
-                        style={{ width: `${detailData.ess_summary.percent_unfavorable || 0}%` }}
-                        className="bg-rose-500 h-full transition-all duration-500"
-                        title={`Unfavorable: ${detailData.ess_summary.percent_unfavorable}%`}
-                      />
+                  {isEssSummary && (
+                    <div className="pt-1">
+                      <div className="w-full h-3 bg-black/50 rounded-full overflow-hidden shadow-inner">
+                        <div
+                          style={{ width: `${Math.min(100, Math.max(0, detailData.ess_summary.summary_score || 0))}%` }}
+                          className="bg-white/80 h-full rounded-full transition-all duration-500"
+                          title={`Index score: ${pct(detailData.ess_summary.summary_score)}`}
+                        />
+                      </div>
                     </div>
-                    <div className="flex justify-between text-[10px] text-gray-300 font-medium">
-                      <span>✓ Favorable (Satisfied / Positive): {detailData.ess_summary.percent_favorable}%</span>
-                      {!isEssSummary && <span>— Neutral: {detailData.ess_summary.percent_neutral}%</span>}
-                      {!isEssSummary && <span>✕ Unfavorable (Dissatisfied): {detailData.ess_summary.percent_unfavorable}%</span>}
-                    </div>
-                  </div>
+                  )}
                   <p className="text-[11px] text-gray-400 italic pt-1 border-t border-white/10">
                     {detailData.ess_summary.description}
                   </p>
@@ -533,7 +512,7 @@ export default function MetricDetailModal({
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <div className="text-xs text-gray-500">
                       {isEss 
-                        ? 'Spreadsheet of % Favorable, Neutral, and Unfavorable sentiment for each ESS question item:'
+                        ? 'ESS index and score of each question, as stated in the uploaded ESS summary:'
                         : 'Detailed respondent average scores for each survey question in this metric:'}
                     </div>
 
@@ -581,106 +560,39 @@ export default function MetricDetailModal({
                     </div>
                   </div>
 
-                  {/* SPREADSHEET TABLE VIEW (EXACT USER EXCEL CAPTURE FORMAT) */}
+                  {/* SPREADSHEET TABLE VIEW (v2.33.0): same content as the ESS summary template - the index (column F) and one score per question */}
                   {isEss && essViewMode === 'table' ? (
                     <div className="border border-purple-200/80 rounded-xl overflow-hidden shadow-xs bg-white">
                       <div className="overflow-x-auto">
                         <table className="w-full text-left border-collapse text-xs">
                           <thead>
-                            {/* Top Level Purple Header (Matching Excel Capture) */}
                             <tr className="bg-[#563175] text-white font-black text-xs uppercase tracking-wider">
-                              <th colSpan={4} className="py-2.5 px-3 border-r border-purple-400/30">
-                                Scored question
-                              </th>
-                              <th className="py-2.5 px-2 text-center border-r border-purple-400/30 w-28 bg-[#663A8B]">
-                                % Favorable
-                              </th>
-                              <th className="py-2.5 px-2 text-center border-r border-purple-400/30 w-24 bg-[#663A8B]">
-                                % Neutral
-                              </th>
-                              <th className="py-2.5 px-2 text-center w-24 bg-[#663A8B]">
-                                % Unfavorable
-                              </th>
-                            </tr>
-                            {/* Sub Header Columns */}
-                            <tr className="bg-[#482862] text-purple-100 text-[11px] font-bold border-t border-purple-400/20">
-                              <th className="py-2 px-3 w-48 border-r border-purple-400/20">Dimension</th>
-                              <th className="py-2 px-3 border-r border-purple-400/20">Question</th>
-                              <th className="py-2 px-3 w-36 border-r border-purple-400/20">Question is visible based on</th>
-                              <th className="py-2 px-3 w-36 border-r border-purple-400/20">Question is required based on</th>
-                              <th className="py-2 px-2 text-center border-r border-purple-400/20 text-purple-200">Fav %</th>
-                              <th className="py-2 px-2 text-center border-r border-purple-400/20 text-purple-200">Neut %</th>
-                              <th className="py-2 px-2 text-center text-purple-200">Unfav %</th>
+                              <th className="py-2.5 px-3 border-r border-purple-400/30">Question</th>
+                              <th className="py-2.5 px-2 text-center w-28 bg-[#663A8B]">Score</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-200 bg-white">
-                            {/* Grouped by Dimension */}
-                            {(() => {
-                              const essMap = {};
-                              (detailData.questions_breakdown || []).forEach(q => {
-                                const dim = q.dimension || detailData.ess_summary?.dimension_name || 'ESS Survey Dimension';
-                                if (!essMap[dim]) essMap[dim] = [];
-                                essMap[dim].push(q);
-                              });
-
-                              return Object.keys(essMap).map((dimName, gIdx) => {
-                                const qs = essMap[dimName];
-                                const scorable = qs.filter(q => q.type !== 'FREE_TEXT');
-                                const totalFav = Math.round(scorable.reduce((s, q) => s + (q.percent_favorable ?? q.normalized_score ?? 88), 0) / (scorable.length || 1));
-                                const totalNeut = isEssSummary ? null : Math.round(scorable.reduce((s, q) => s + (q.percent_neutral ?? 10), 0) / (scorable.length || 1));
-                                const totalUnfav = isEssSummary ? null : Math.round(scorable.reduce((s, q) => s + (q.percent_unfavorable ?? 2), 0) / (scorable.length || 1));
-
-                                return (
-                                  <React.Fragment key={gIdx}>
-                                    {/* Dimension Total Summary Row (Bold like Excel) */}
-                                    <tr className="bg-gray-100/95 font-black text-gray-900 border-t-2 border-gray-300">
-                                      <td className="py-2 px-3 font-black text-gray-900" colSpan={4}>
-                                        {dimName} Total
-                                      </td>
-                                      <td className="py-2 px-2 text-center font-black text-emerald-800 bg-emerald-50/70 border-r border-gray-200">
-                                        {totalFav}
-                                      </td>
-                                      <td className="py-2 px-2 text-center font-black text-amber-800 bg-amber-50/70 border-r border-gray-200">
-                                        {pct(totalNeut)}
-                                      </td>
-                                      <td className="py-2 px-2 text-center font-black text-rose-800 bg-rose-50/70">
-                                        {pct(totalUnfav)}
-                                      </td>
-                                    </tr>
-
-                                    {/* Individual Question Rows */}
-                                    {qs.map((q, qIdx) => (
-                                      <tr key={q.key || qIdx} className="hover:bg-purple-50/30 transition-colors">
-                                        <td className="py-2.5 px-3 text-gray-700 font-medium align-top border-r border-gray-200/60">
-                                          {q.dimension || dimName}
-                                        </td>
-                                        <td className="py-2.5 px-3 text-gray-900 font-semibold align-top border-r border-gray-200/60">
-                                          <div className="flex items-start gap-1.5">
-                                            <span className="text-[10px] font-bold text-gray-400 shrink-0 mt-0.5">Q{qIdx + 1}.</span>
-                                            <span className="text-xs">{q.text || q.label}</span>
-                                          </div>
-                                        </td>
-                                        <td className="py-2.5 px-3 text-gray-500 text-[11px] align-top border-r border-gray-200/60">
-                                          {q.visible_based_on || 'Always'}
-                                        </td>
-                                        <td className="py-2.5 px-3 text-gray-500 text-[11px] align-top border-r border-gray-200/60">
-                                          {q.required_based_on || (q.mandatory ? 'Always' : 'Optional')}
-                                        </td>
-                                        <td className="py-2.5 px-2 text-center font-bold text-emerald-600 align-top border-r border-gray-200/60">
-                                          {q.percent_favorable !== null && q.percent_favorable !== undefined ? q.percent_favorable : q.normalized_score}
-                                        </td>
-                                        <td className="py-2.5 px-2 text-center font-medium text-amber-600 align-top border-r border-gray-200/60">
-                                          {q.percent_neutral !== null && q.percent_neutral !== undefined ? q.percent_neutral : (isEssSummary ? '—' : 8)}
-                                        </td>
-                                        <td className="py-2.5 px-2 text-center font-medium text-rose-600 align-top">
-                                          {q.percent_unfavorable !== null && q.percent_unfavorable !== undefined ? q.percent_unfavorable : (isEssSummary ? '—' : 1)}
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </React.Fragment>
-                                );
-                              });
-                            })()}
+                            <tr className="bg-gray-100/95 font-black text-gray-900 border-t-2 border-gray-300">
+                              <td className="py-2 px-3 font-black text-gray-900 border-r border-gray-200">
+                                {detailData.ess_summary?.dimension_name || detailData.metric_name} (Index)
+                              </td>
+                              <td className="py-2 px-2 text-center font-black text-gray-900">
+                                {isEssSummary ? pct(detailData.ess_summary?.summary_score) : '—'}
+                              </td>
+                            </tr>
+                            {(detailData.questions_breakdown || []).filter(q => q.type !== 'FREE_TEXT').map((q, qIdx) => (
+                              <tr key={q.key || qIdx} className="hover:bg-purple-50/30 transition-colors">
+                                <td className="py-2.5 px-3 text-gray-900 font-semibold align-top border-r border-gray-200/60">
+                                  <div className="flex items-start gap-1.5">
+                                    <span className="text-[10px] font-bold text-gray-400 shrink-0 mt-0.5">Q{qIdx + 1}.</span>
+                                    <span className="text-xs">{q.text || q.label}</span>
+                                  </div>
+                                </td>
+                                <td className="py-2.5 px-2 text-center font-bold text-gray-800 align-top">
+                                  {isEssSummary ? pct(q.normalized_score) : '—'}
+                                </td>
+                              </tr>
+                            ))}
                           </tbody>
                         </table>
                       </div>
@@ -690,7 +602,8 @@ export default function MetricDetailModal({
                     <div className="grid grid-cols-1 gap-3">
                       {detailData.questions_breakdown?.map((q, idx) => {
                         const qType = q.type || 'SCALE_1_5';
-                        const hasEssBreakdown = q.percent_favorable !== undefined && q.percent_favorable !== null;
+                        // ESS: the question's score from the uploaded summary (none when no summary is uploaded for the period)
+                        const essScore = isEssSummary && q.normalized_score !== null && q.normalized_score !== undefined ? q.normalized_score : null;
 
                         if (qType === 'FREE_TEXT') {
                           return (
@@ -812,7 +725,6 @@ export default function MetricDetailModal({
 
                         // Numeric Scale: SCALE_1_5 or SCALE_1_10
                         const isScale10 = qType === 'SCALE_1_10';
-                        const isEssPercent = qType === 'ESS_PERCENT';
                         const maxScore = isScale10 ? 10.0 : 5.0;
                         const scoreFormatted = `${(q.avg_score || 0).toFixed(2)} / ${maxScore.toFixed(1)}`;
                         const isHigh = q.normalized_score >= 80;
@@ -834,7 +746,7 @@ export default function MetricDetailModal({
                                       {q.label}
                                     </h4>
                                     <span className="text-[10px] font-bold px-2 py-0.5 bg-gray-200 text-gray-800 rounded-full">
-                                      {isEssPercent ? 'ESS % Favorable' : (isScale10 ? 'Scale 1 - 10' : 'Scale 1 - 5')}
+                                      {isEss ? 'ESS score' : (isScale10 ? 'Scale 1 - 10' : 'Scale 1 - 5')}
                                     </span>
                                     {q.dimension && (
                                       <span className="text-[10px] font-semibold px-2 py-0.5 bg-red-50 text-[#ED1C24] border border-red-200 rounded-full">
@@ -850,47 +762,22 @@ export default function MetricDetailModal({
 
                               <div className="text-right shrink-0">
                                 <div className="text-base font-black text-gray-900">
-                                  {hasEssBreakdown ? `${q.percent_favorable}% Favorable` : (isEssPercent ? 'No score in the file' : scoreFormatted)}
+                                  {isEss ? (essScore !== null ? `${essScore}%` : (isEssSummary ? 'No score in the file' : '—')) : scoreFormatted}
                                 </div>
-                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                                  isHigh ? 'bg-emerald-100 text-emerald-800' :
-                                  isWarning ? 'bg-amber-100 text-amber-800' :
-                                  'bg-red-100 text-red-800'
-                                }`}>
-                                  {q.normalized_score}% Index
-                                </span>
+                                {!isEss && (
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                    isHigh ? 'bg-emerald-100 text-emerald-800' :
+                                    isWarning ? 'bg-amber-100 text-amber-800' :
+                                    'bg-red-100 text-red-800'
+                                  }`}>
+                                    {q.normalized_score}% Index
+                                  </span>
+                                )}
                               </div>
                             </div>
 
-                            {/* Progress Bar Visualization */}
-                            {hasEssBreakdown ? (
-                              /* Segmented Sentiment Bar (Favorable / Neutral / Unfavorable) */
-                              <div className="space-y-1">
-                                <div className="w-full h-2.5 bg-gray-200 rounded-full overflow-hidden flex">
-                                  <div 
-                                    style={{ width: `${q.percent_favorable}%` }} 
-                                    className="bg-emerald-500 h-full transition-all duration-500"
-                                    title={`Favorable: ${q.percent_favorable}%`}
-                                  />
-                                  <div
-                                    style={{ width: `${q.percent_neutral || 0}%` }}  
-                                    className="bg-amber-400 h-full transition-all duration-500"
-                                    title={`Neutral: ${q.percent_neutral}%`}
-                                  />
-                                  <div
-                                    style={{ width: `${q.percent_unfavorable || 0}%` }}  
-                                    className="bg-rose-500 h-full transition-all duration-500"
-                                    title={`Unfavorable: ${q.percent_unfavorable}%`}
-                                  />
-                                </div>
-                                <div className="flex justify-between text-[10px] font-medium">
-                                  <span className="text-emerald-700">● {q.percent_favorable}% Favorable</span>
-                                  {q.percent_neutral !== null && q.percent_neutral !== undefined && <span className="text-amber-700">● {q.percent_neutral}% Neutral</span>}
-                                  {q.percent_unfavorable !== null && q.percent_unfavorable !== undefined && <span className="text-rose-700">● {q.percent_unfavorable}% Unfavorable</span>}
-                                </div>
-                              </div>
-                            ) : (
-                              /* Standard Single Progress Bar */
+                            {/* Progress Bar Visualization (ESS: only when the uploaded summary has a score for this question) */}
+                            {(!isEss || essScore !== null) && (
                               <div className="space-y-1">
                                 <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
                                   <div 
@@ -926,7 +813,7 @@ export default function MetricDetailModal({
                 return (
                   <div className="space-y-3">
                     <div className="text-xs text-gray-500">
-                      ESS result {detailData.ess_period_label}: index and question scores are % favorable per org unit.
+                      ESS result {detailData.ess_period_label}: index (column F) and question scores per org unit, as stated in the uploaded file.
                       {detailData.ess_division_filtered && <strong className="text-indigo-700"> ESS is reported at directorate level - the division filter shows its directorate.</strong>}
                     </div>
                     <div className="border border-gray-200 rounded-xl overflow-x-auto shadow-2xs">
@@ -935,9 +822,9 @@ export default function MetricDetailModal({
                           <tr>
                             <th className="py-3 px-3.5">Directorate</th>
                             <th className="py-3 px-3.5 text-right whitespace-nowrap">Participation</th>
-                            <th className="py-3 px-3.5 text-right whitespace-nowrap">Index %</th>
+                            <th className="py-3 px-3.5 text-right whitespace-nowrap">Index</th>
                             {labels.map((l, i) => (
-                              <th key={i} className="py-3 px-3.5 text-right whitespace-nowrap" title={l}>Q{i + 1} %</th>
+                              <th key={i} className="py-3 px-3.5 text-right whitespace-nowrap" title={l}>Q{i + 1}</th>
                             ))}
                           </tr>
                         </thead>
@@ -948,7 +835,7 @@ export default function MetricDetailModal({
                             <tr key={idx} className={r.is_selected ? 'bg-red-50/60 font-bold' : (r.org_level === 'BANKWIDE' ? 'bg-gray-50 font-semibold' : '')}>
                               <td className="py-2.5 px-3.5 text-gray-900">{r.directorate}</td>
                               <td className="py-2.5 px-3.5 text-right text-gray-700">{r.participation}</td>
-                              <td className="py-2.5 px-3.5 text-right text-[#ED1C24] font-black">{r.index_score}</td>
+                              <td className="py-2.5 px-3.5 text-right text-[#ED1C24] font-black">{pct(r.index_score)}</td>
                               {labels.map((l, i) => {
                                 const q = (r.questions || []).find(x => x.label === l);
                                 return <td key={i} className="py-2.5 px-3.5 text-right text-gray-700">{pct(q ? q.score : null)}</td>;

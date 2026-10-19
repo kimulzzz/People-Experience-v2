@@ -370,3 +370,12 @@ Metrik ESS kini diisi dari ringkasan hasil ESS `.xlsx` (lihat `docs/04` "Catatan
 | `AdminSurveyQuestionsModal.jsx` (§3.6) | Untuk metrik ESS tombol bernama "Download ESS Template (.xlsx)". |
 
 Tidak diuji otomatis: tampilan di atas (pengujian Modul 45 lewat API); tampilan mobile.
+
+## Catatan v2.33.0 - Tampilan ESS tanpa Favorable/Neutral/Unfavorable
+
+Template ESS terbaru hanya berisi index (kolom F) dan skor per pertanyaan, jadi `MetricDetailModal.jsx` tidak lagi menampilkan favorable/neutral/unfavorable untuk metrik ESS:
+- Kartu ESS: **Index Score** + participants + periode dan satu bar netral (dulu "Overall Favorable", legenda tiga warna dan bar bertumpuk). Tanpa ringkasan untuk periode itu: "No ESS summary uploaded for this period".
+- **Spreadsheet View**: tabel `Question | Score`, baris Index (kolom F) di atas; kolom Dimension, visible/required based on, % Favorable/% Neutral/% Unfavorable dihapus.
+- **Card View**: badge "ESS score", skor "96%", satu bar; tanpa ringkasan "—" tanpa bar.
+- Tab **ESS Results by Directorate**: header "Index" dan "Q1..Qn", nilai bersatuan "%".
+Field API `percent_*` tetap dikirim server (kompatibilitas) tetapi tidak dipakai UI. Catatan v2.32.0 di atas yang menyebut "neutral/unfavorable tampil —" dan "ESS % Favorable" sudah tidak berlaku.

@@ -610,6 +610,13 @@ domain model, not just descriptive:
   column A says; ESS metric with no result still uses the old placeholder detail; ESS reminders fire after 25 Nov 2026 without a 2026 upload. Tests: Module 45 (10, 1 SQL-only), Modules 4/11/12/39
   adjusted, `TEST_SKIP_MODULES`/`TEST_SKIP_MEDIA=1` -> SQL 209/209 with media modules 27/32/38/41/42/43 skipped (suite size 288); JSON only targeted in-process checks.
 
+- **v2.33.0** (2026-10-19, see `CHANGELOG.md` [2.33.0], `docs/05` "Catatan v2.33.0", `docs/07` §29): the new ESS template has no
+  favorable/neutral/unfavorable, so `MetricDetailModal.jsx` no longer shows them for ESS: card = Index Score (column F) + participants +
+  period; Spreadsheet View = Question | Score with the Index row; Card View = "ESS score" + one bar; no summary for the period -> "No ESS
+  summary uploaded" / "—". API still sends `percent_*` (compatibility), unused by the UI. Suite SQL 202/202, 16 skipped (event 8/24 + media).
+  Cleanup after the suite also deleted 80 OLD leftover regression CSV batches (140 rows) -> Dashboard YTD 2026 Survey 88.62 -> 88.43, PX
+  84.56 -> 84.43 (test data only). Open QC notes from v2.32.0 still apply.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan
@@ -625,6 +632,9 @@ langkah-langkah ini sebelum melaporkan pekerjaan selesai — jangan tunggu dimin
    kode transkrip/ringkasan AI/media (`mediaFileService`, `transcribeService`, `mediaSummaryService`, `aiQueue`,
    `localAiService`, route media), modul 27, 32, 38, 41, 42, 43 di-skip pada run suite penuh (developer maupun QC)
    dan dilaporkan sebagai SKIP, bukan lulus. Jalankan modul media hanya bila diff memang menyentuh area itu.
+   Sama untuk **Signature Program Event** (permintaan user 2026-10-19): bila perubahan tidak menyentuh event/absensi/
+   feedback/PPT (`EventManager.jsx`, `pptGenerator.js`, route `/api/events*`), modul 8 dan 24 juga di-skip, mis.
+   `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`.
 2. **Versioning**: naikkan angka versi di `server/server.js` (field `version` pada endpoint
    `/api/health`), dan tambahkan entri baru di `CHANGELOG.md` (format `## [x.y.z] - YYYY-MM-DD`
    yang sudah konsisten dipakai di file ini) menjelaskan apa yang berubah dan mengapa.
