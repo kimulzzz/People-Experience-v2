@@ -183,7 +183,7 @@ async function generateSurveyCsvTemplate(metric_id = 'ALL') {
           id: '8801245',
           name: 'Dimas Setiawan',
           email: 'dimas.setiawan@cimbniaga.co.id',
-          dim1: 'Information Technology',
+          dim1: 'Operations, Technology, Analytics & AI',
           dim2: 'Application Development',
           date: '2026-03-15',
           verbatim: 'Proses dan panduan sangat terstruktur, dukungan rekan kerja dan atasan luar biasa.'
@@ -192,7 +192,7 @@ async function generateSurveyCsvTemplate(metric_id = 'ALL') {
           id: '8802390',
           name: 'Siti Rahmawati',
           email: 'siti.rahmawati@cimbniaga.co.id',
-          dim1: 'Consumer Banking',
+          dim1: 'Consumer & EBB',
           dim2: 'Branch Service Excellence',
           date: '2026-03-16',
           verbatim: 'Materi pembekalan komprehensif, fasilitas kerja sudah siap tepat waktu.'

@@ -9,6 +9,9 @@ let totalTests = 0;
 let passedTests = 0;
 let failedTests = 0;
 
+// One CSV cell: quoted when it holds a comma / quote (real directorate names such as "Strategy, Finance & SPAPM" do).
+const csvCell = v => (/[",\r\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+
 function runTest(name, fn) {
   totalTests++;
   return fn()
@@ -197,8 +200,8 @@ async function runRegressionSuite() {
   await runTest('Upload question-level survey CSV for Metric #8 and verify recalculated scores', async () => {
     const questionCsv = [
       'nip,employee_name,cimb_email,directorate,division,metric_id,metric_name,q1_role_clarity,q2_supervisor_support,q3_buddy_support,q4_resource_access,verbatim_feedback,survey_date',
-      '8809901,Andi Pratama,andi.p@cimbniaga.co.id,Information Technology,Core Banking,8,Onboarding 30/60/90 Satisfaction Index,5.0,5.0,5.0,5.0,Proses onboarding dan buddy sangat profesional!,2026-03-25',
-      '8809902,Siti Rahayu,siti.r@cimbniaga.co.id,Consumer Banking,Wealth Management,8,Onboarding 30/60/90 Satisfaction Index,4.8,5.0,4.8,4.8,Sangat memuaskan dan fasilitas kerja langsung siap,2026-03-25',
+      '8809901,Andi Pratama,andi.p@cimbniaga.co.id,"Operations, Technology, Analytics & AI",Core Banking,8,Onboarding 30/60/90 Satisfaction Index,5.0,5.0,5.0,5.0,Proses onboarding dan buddy sangat profesional!,2026-03-25',
+      '8809902,Siti Rahayu,siti.r@cimbniaga.co.id,Consumer & EBB,Wealth Management,8,Onboarding 30/60/90 Satisfaction Index,4.8,5.0,4.8,4.8,Sangat memuaskan dan fasilitas kerja langsung siap,2026-03-25',
       '8809903,Doni Setiawan,doni.s@cimbniaga.co.id,Risk Management,Market Risk,8,Onboarding 30/60/90 Satisfaction Index,5.0,4.8,4.9,5.0,Buddy ramah dan materi jelas,2026-03-25'
     ].join('\r\n');
 
@@ -303,7 +306,7 @@ async function runRegressionSuite() {
           nip: testNip,
           employee_name: 'Test Participant',
           cimb_email: `user.${testNip}@cimbniaga.co.id`,
-          directorate: 'Information Technology',
+          directorate: 'Operations, Technology, Analytics & AI',
           division: 'Digital Platform'
         })
       });
@@ -425,7 +428,7 @@ async function runRegressionSuite() {
     const csvContent = [
       'nip,employee_name,cimb_email,directorate,division,metric_id,metric_name,q1_recruitment_process,q2_interview_biz_unit,q3_day1_overall_exp,q4_welcome_kit_interest,q5_meet_greet_satisfaction,q6_welcoming_email,q7_contacted_by_ds_buddy,q8_welcomed_by_ds,q9_welcomed_by_buddy,q10_welcome_kit_goodie_bag,q11_id_card_received,q12_laptop_received,q13_sms_credentials,q14_system_activation_support,q15_system_access_ready,verbatim_feedback,survey_date',
       '8809951,Rian Pratama,rian.p@cimbniaga.co.id,Human Resources,People Experience,7,Day 1 Onboarding Satisfaction Index,5.0,5.0,5.0,5.0,5.0,Ya,Ya,Ya,Ya,Ya,Ya,Ya,Ya,Ya,Ya,Semua perlengkapan dan buddy menyambut dengan sangat baik!,2026-03-25',
-      '8809952,Maya Indah,maya.i@cimbniaga.co.id,Digital Banking,OCTO Mobile,7,Day 1 Onboarding Satisfaction Index,4.0,4.0,5.0,4.0,5.0,Ya,Ya,Ya,Ya,Ya,Ya,Ya,Ya,Ya,Tidak,Sangat puas dengan sambutan hari pertama,2026-03-25'
+      '8809952,Maya Indah,maya.i@cimbniaga.co.id,Network & Digital Banking,OCTO Mobile,7,Day 1 Onboarding Satisfaction Index,4.0,4.0,5.0,4.0,5.0,Ya,Ya,Ya,Ya,Ya,Ya,Ya,Ya,Ya,Tidak,Sangat puas dengan sambutan hari pertama,2026-03-25'
     ].join('\r\n');
 
     const res = await fetch(`${BASE_URL}/api/surveys/upload`, {
@@ -527,7 +530,7 @@ async function runRegressionSuite() {
     const customCsv = [
       'nip,employee_name,cimb_email,directorate,division,survey_date,q1_clarity,q2_support,verbatim_feedback',
       '# MANDATORY,Nama,Email,Direktorat,Divisi,YYYY-MM-DD,Skala,Skala,Verbatim',
-      '8899011,Test Date Normalizer,test.norm@cimbniaga.co.id,Information Technology,App Dev,3/31/2026,5.0,4.8,"Test date normalization"'
+      '8899011,Test Date Normalizer,test.norm@cimbniaga.co.id,"Operations, Technology, Analytics & AI",App Dev,3/31/2026,5.0,4.8,"Test date normalization"'
     ].join('\r\n');
 
     const res = await fetch(`${BASE_URL}/api/surveys/upload`, {
@@ -658,22 +661,22 @@ async function runRegressionSuite() {
 
   // --- 15. DIRECTORATE & SUB-DIRECTORATE FILTER WITH DYNAMIC NON-EMPLOYEE EXCLUSION ---
   console.log('\n📦 MODULE 15: Directorate & Sub-Directorate Filtering & Metric Exclusion');
-  await runTest('GET /api/directorates returns list of 7 Directorates with sub-directorates', async () => {
+  await runTest('GET /api/directorates returns the 12 real Directorates with sub-directorates', async () => {
     const res = await fetch(`${BASE_URL}/api/directorates`);
     assert.strictEqual(res.status, 200);
     const directorates = await res.json();
     assert(Array.isArray(directorates), 'Must return array');
-    assert(directorates.length >= 7, 'Must have at least 7 directorates');
-    const itDir = directorates.find(d => d.name.includes('Information Technology'));
-    assert(itDir !== undefined, 'Information Technology directorate must exist');
-    assert(itDir.sub_directorates.length > 0, 'IT must have sub-directorates');
+    assert(directorates.length >= 12, 'Must have at least 12 directorates');
+    const itDir = directorates.find(d => d.name === 'Operations, Technology, Analytics & AI');
+    assert(itDir !== undefined, 'Operations, Technology, Analytics & AI directorate must exist');
+    assert(itDir.sub_directorates.length > 0, 'Operations, Technology, Analytics & AI must have sub-directorates');
   });
 
   await runTest('Calculate with Directorate filter disables non-employee metrics (Metrics #1 to #5)', async () => {
-    const res = await fetch(`${BASE_URL}/api/metrics/calculate?mode=YTD&year=2026&directorate=Information%20Technology`);
+    const res = await fetch(`${BASE_URL}/api/metrics/calculate?mode=YTD&year=2026&directorate=${encodeURIComponent('Operations, Technology, Analytics & AI')}`);
     assert.strictEqual(res.status, 200);
     const data = await res.json();
-    assert.strictEqual(data.filter_options.directorate, 'Information Technology');
+    assert.strictEqual(data.filter_options.directorate, 'Operations, Technology, Analytics & AI');
     
     // Check that metrics 1 to 5 are disabled
     const nonEmpMetrics = data.metrics.filter(m => m.metric_id <= 5);
@@ -699,7 +702,7 @@ async function runRegressionSuite() {
   });
 
   await runTest('Calculate with Sub-Directorate filter', async () => {
-    const res = await fetch(`${BASE_URL}/api/metrics/calculate?mode=YTD&year=2026&directorate=Information%20Technology&sub_directorate=IT%20Architecture%20%26%20Governance`);
+    const res = await fetch(`${BASE_URL}/api/metrics/calculate?mode=YTD&year=2026&directorate=${encodeURIComponent('Operations, Technology, Analytics & AI')}&sub_directorate=IT%20Architecture%20%26%20Governance`);
     assert.strictEqual(res.status, 200);
     const data = await res.json();
     assert.strictEqual(data.filter_options.sub_directorate, 'IT Architecture & Governance');
@@ -1191,7 +1194,7 @@ async function runRegressionSuite() {
         nip: testNip,
         employee_name: 'Module 24 Delete Check',
         cimb_email: `user.${testNip}@cimbniaga.co.id`,
-        directorate: 'Information Technology',
+        directorate: 'Operations, Technology, Analytics & AI',
         division: 'Digital Platform'
       })
     });
@@ -3006,9 +3009,9 @@ async function runRegressionSuite() {
       const R = await mkMetric36('REGRESSION PIC Not Manual', { pic_email: uMail('p1'), requires_manual_upload: false });
       const day = new Date().toISOString().slice(0, 10);
       const rowsFor = tag => [
-        `9${tag}001,Nama In ${tag},in${tag}@cimbniaga.co.id,${A},${divX},${day},4`,
-        `9${tag}002,Nama Div Lain ${tag},y${tag}@cimbniaga.co.id,${A},${divY},${day},3`,
-        `9${tag}003,Nama Dir Lain ${tag},b${tag}@cimbniaga.co.id,${B},${dirB.divisions[0]},${day},5`
+        `9${tag}001,Nama In ${tag},in${tag}@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day},4`,
+        `9${tag}002,Nama Div Lain ${tag},y${tag}@cimbniaga.co.id,${csvCell(A)},${csvCell(divY)},${day},3`,
+        `9${tag}003,Nama Dir Lain ${tag},b${tag}@cimbniaga.co.id,${csvCell(B)},${csvCell(dirB.divisions[0])},${day},5`
       ];
       await adminUpload36(P, rowsFor('1'));
       await adminUpload36(Q, rowsFor('2'));
@@ -3041,7 +3044,7 @@ async function runRegressionSuite() {
         const before = csvFiles();
         const nipTag = `9${Date.now().toString().slice(-5)}`;
         const bodyCsv = ['nip,employee_name,cimb_email,directorate,division,survey_date,q1_overall,metric_id',
-          `${nipTag}1,Nama Audit Rahasia,rahasia@cimbniaga.co.id,${A},${divX},${day},4,${Q}`].join('\r\n');
+          `${nipTag}1,Nama Audit Rahasia,rahasia@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day},4,${Q}`].join('\r\n');
         const qBefore = (await aj(`/api/surveys/responses/${Q}`)).length;
         const pBefore = (await aj(`/api/surveys/responses/${P}`)).length;
         const r1 = await post36(picUser, { csvText: bodyCsv, fileName: 'pic.csv', metric_id: String(P) });
@@ -3056,7 +3059,7 @@ async function runRegressionSuite() {
         assert.strictEqual((await aj(`/api/surveys/responses/${P}`)).length, pBefore + 1);
         // multipart file
         const fd = new FormData();
-        fd.append('csvFile', new Blob([csv36([`${nipTag}2,Nama File Rahasia,file@cimbniaga.co.id,${A},${divX},${day},5`])], { type: 'text/csv' }), 'pic-file.csv');
+        fd.append('csvFile', new Blob([csv36([`${nipTag}2,Nama File Rahasia,file@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day},5`])], { type: 'text/csv' }), 'pic-file.csv');
         fd.append('metric_id', String(P));
         const r2 = await rawFetch(`${BASE_URL}/api/surveys/upload`, { method: 'POST', headers: { Cookie: picUser.cookie }, body: fd });
         assert.strictEqual(r2.status, 200);
@@ -3077,7 +3080,7 @@ async function runRegressionSuite() {
         const probe = async (u, metric) => {
           const out = {};
           out.template = (await csvFor(u, metric)).status;
-          out.upload = (await post36(u, { csvText: csv36([`9990001,X,x@cimbniaga.co.id,${A},${divX},${day},4`]), metric_id: metric })).status;
+          out.upload = (await post36(u, { csvText: csv36([`9990001,X,x@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day},4`]), metric_id: metric })).status;
           out.evidence = (await uget(u, `/api/surveys/evidence?metric_id=${metric}&period=YTD`)).status;
           out.responses = (await uget(u, `/api/surveys/responses/${metric}`)).status;
           return out;
@@ -3094,16 +3097,16 @@ async function runRegressionSuite() {
         for (const bad of [`${P}abc`, `${P}.0`, '-1', '1;2']) {
           assert.strictEqual((await csvFor(picUser, encodeURIComponent(bad))).status, 403, `template ${bad}`);
           assert.strictEqual((await uget(picUser, `/api/surveys/evidence?metric_id=${encodeURIComponent(bad)}&period=YTD`)).status, 403, `evidence ${bad}`);
-          assert.strictEqual((await post36(picUser, { csvText: csv36([`9990002,X,x@cimbniaga.co.id,${A},${divX},${day},4`]), metric_id: bad })).status, 403, `upload ${bad}`);
+          assert.strictEqual((await post36(picUser, { csvText: csv36([`9990002,X,x@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day},4`]), metric_id: bad })).status, 403, `upload ${bad}`);
         }
         assert.strictEqual((await uget(picUser, `/api/surveys/evidence?metric_id=${P}&metric_id=${Q}&period=YTD`)).status, 403, 'repeated metric_id');
         assert.strictEqual((await uget(picUser, '/api/surveys/evidence?metric_id=ALL&period=YTD')).status, 403, 'no master evidence for a PIC');
         assert.strictEqual((await uget(picUser, '/api/surveys/evidence?period=YTD')).status, 403, 'evidence without metric_id defaults to ALL');
         for (const m of ['ALL', '']) {
           assert.strictEqual((await csvFor(picUser, m)).status, 400, 'a PIC must name a metric (no master template)');
-          assert.strictEqual((await post36(picUser, { csvText: csv36([`9990003,X,x@cimbniaga.co.id,${A},${divX},${day},4`]), metric_id: m })).status, 400);
+          assert.strictEqual((await post36(picUser, { csvText: csv36([`9990003,X,x@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day},4`]), metric_id: m })).status, 400);
         }
-        assert.strictEqual((await post36(picUser, { csvText: csv36([`9990004,X,x@cimbniaga.co.id,${A},${divX},${day},4`]) })).status, 400, 'no metric_id');
+        assert.strictEqual((await post36(picUser, { csvText: csv36([`9990004,X,x@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day},4`]) })).status, 400, 'no metric_id');
         assert.strictEqual((await uget(plainUser, '/api/surveys/metrics')).status, 403);
         assert.strictEqual((await uget(plainUser, '/api/surveys/history')).status, 403);
         assert.strictEqual((await post36(plainUser, {})).status, 403);
@@ -3116,16 +3119,16 @@ async function runRegressionSuite() {
         const pBefore = (await aj(`/api/surveys/responses/${P}`)).length;
         const hBefore = (await uj(picUser, '/api/surveys/history')).length;
         const res = await post36(picUser, { metric_id: String(P), csvText: csv36([
-          `,Tanpa NIP,t@cimbniaga.co.id,${A},${divX},${day},4`,
-          `9880001,Nilai Salah,n@cimbniaga.co.id,${A},${divX},${day},9`,
-          `9880002,Valid,v@cimbniaga.co.id,${A},${divX},${day},4`]) });
+          `,Tanpa NIP,t@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day},4`,
+          `9880001,Nilai Salah,n@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day},9`,
+          `9880002,Valid,v@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day},4`]) });
         assert.strictEqual(res.status, 200);
         const body = await res.json();
         assert.strictEqual(body.valid_rows_count, 1);
         assert.strictEqual(body.invalid_rows_count, 2);
         assert.ok(body.errors.some(e => /NIP/.test(e.reason)) && body.errors.some(e => /range/.test(e.reason)));
         assert.strictEqual((await aj(`/api/surveys/responses/${P}`)).length, pBefore + 1);
-        const allBad = await post36(picUser, { metric_id: String(P), csvText: csv36([`,Tanpa NIP,t@cimbniaga.co.id,${A},${divX},${day},4`]) });
+        const allBad = await post36(picUser, { metric_id: String(P), csvText: csv36([`,Tanpa NIP,t@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day},4`]) });
         assert.strictEqual((await allBad.json()).success, false);
         assert.strictEqual((await uj(picUser, '/api/surveys/history')).length, hBefore + 1, 'only the batch with a valid row was recorded');
         assert.strictEqual((await post36(picUser, { metric_id: String(P) })).status, 400, 'no CSV at all');
@@ -3166,7 +3169,7 @@ async function runRegressionSuite() {
         assert.strictEqual((await csvFor(picUser, P)).status, 200);
         assert.strictEqual((await adminJson('PUT', `/api/admin/metrics/${P}`, { pic_email: 'another.person@example.test' })).status, 200);
         assert.strictEqual((await csvFor(picUser, P)).status, 403, 'revoked at once');
-        assert.strictEqual((await post36(picUser, { csvText: csv36([`9990005,X,x@cimbniaga.co.id,${A},${divX},${day},4`]), metric_id: String(P) })).status, 403);
+        assert.strictEqual((await post36(picUser, { csvText: csv36([`9990005,X,x@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day},4`]), metric_id: String(P) })).status, 403);
         assert.strictEqual((await uget(picUser, `/api/surveys/responses/${P}`)).status, 403);
         assert.strictEqual((await uj(picUser, `/api/metrics/${P}/detail?period=YTD`)).respondent_data_hidden, true);
         assert.strictEqual((await uj(picUser, '/api/metrics/calculate?period=YTD')).metrics.find(m => m.metric_id === P).can_upload, false);
@@ -3222,8 +3225,8 @@ async function runRegressionSuite() {
 
       await runTest('[NEGATIVE] CSV injection: respondent text starting with = + - @ is written with a leading apostrophe in the evidence CSV (never as a formula); plain values and numbers are untouched', async () => {
         await adminUpload36(P, [
-          `=1+1,=cmd|x,e@cimbniaga.co.id,${A},${divX},${day},4`,
-          `+SUM(1),@name,f@cimbniaga.co.id,${A},${divX},${day},3`]);
+          `=1+1,=cmd|x,e@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day},4`,
+          `+SUM(1),@name,f@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day},3`]);
         const csv = await (await adminJson('GET', `/api/surveys/evidence?metric_id=${P}&period=YTD`)).text();
         assert.ok(csv.includes("'=1+1") && csv.includes("'=cmd|x") && csv.includes("'+SUM(1)") && csv.includes("'@name"));
         assert.ok(!/(^|,)=1\+1/m.test(csv) && !/(^|,)=cmd/m.test(csv) && !/(^|,)\+SUM/m.test(csv) && !/(^|,)@name/m.test(csv), 'no cell may start with a formula character');
@@ -3378,7 +3381,7 @@ async function runRegressionSuite() {
         assert.strictEqual((await aj(`/api/metrics/${a.body.metric_id}/detail?period=YTD`)).is_ess, true);
         // with real responses the score is the same whichever source the metric has
         const day39 = new Date().toISOString().slice(0, 10);
-        const up = await adminJson('POST', '/api/surveys/upload', { csvText: csv36([`9300001,Skor Sama,s@cimbniaga.co.id,${A},${divX},${day39},4`, `9300002,Skor Sama 2,s2@cimbniaga.co.id,${A},${divX},${day39},5`]), fileName: 'rt39.csv', metric_id: a.body.metric_id });
+        const up = await adminJson('POST', '/api/surveys/upload', { csvText: csv36([`9300001,Skor Sama,s@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day39},4`, `9300002,Skor Sama 2,s2@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day39},5`]), fileName: 'rt39.csv', metric_id: a.body.metric_id });
         assert.strictEqual((await up.json()).valid_rows_count, 2);
         const scoreOf = async () => { const m = (await aj('/api/metrics/calculate?period=YTD')).metrics.find(x => x.metric_id === a.body.metric_id); return [m.raw_value, m.normalized_score, m.status]; };
         const asEss = await scoreOf();
@@ -3430,7 +3433,7 @@ async function runRegressionSuite() {
         for (const m of [sysOff, sysOn, essM]) {
           const id = m.body.metric_id;
           assert.ok(list.some(x => x.metric_id === id), `metric ${id} is offered in the upload list`);
-          const up = await adminJson('POST', '/api/surveys/upload', { csvText: csv36([`93100${id}1,Unggah ${id},u${id}@cimbniaga.co.id,${A},${divX},${day39},4`]), fileName: 'rt39.csv', metric_id: id });
+          const up = await adminJson('POST', '/api/surveys/upload', { csvText: csv36([`93100${id}1,Unggah ${id},u${id}@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day39},4`]), fileName: 'rt39.csv', metric_id: id });
           assert.strictEqual(up.status, 200);
           const body = await up.json();
           assert.strictEqual(body.success, true, `upload to ${id}`); assert.strictEqual(body.valid_rows_count, 1);
@@ -3462,7 +3465,7 @@ async function runRegressionSuite() {
           const calc = await uj(picUser, '/api/metrics/calculate?period=YTD');
           assert.strictEqual(calc.metrics.find(x => x.metric_id === id).can_upload, true, `PIC sees the upload buttons for ${id}`);
           assert.strictEqual((await csvFor(picUser, id)).status, 200);
-          const up = await post36(picUser, { csvText: csv36([`93200${id}1,Pic Unggah ${id},pu${id}@cimbniaga.co.id,${A},${divX},${day39},5`]), metric_id: String(id), fileName: 'pic39.csv' });
+          const up = await post36(picUser, { csvText: csv36([`93200${id}1,Pic Unggah ${id},pu${id}@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day39},5`]), metric_id: String(id), fileName: 'pic39.csv' });
           assert.strictEqual(up.status, 200, `PIC upload to ${id}`);
           const body = await up.json();
           assert.strictEqual(body.valid_rows_count, 1); assert.strictEqual(body.calculation, undefined, 'no bankwide calculation for a PIC');
@@ -3471,13 +3474,13 @@ async function runRegressionSuite() {
           assert.strictEqual((await uget(picUser, `/api/surveys/evidence?metric_id=${id}&period=YTD`)).status, 200);
           // a non-PIC User: 403 everywhere
           assert.strictEqual((await csvFor(plainUser, id)).status, 403);
-          assert.strictEqual((await post36(plainUser, { csvText: csv36([`9330001,X,x@cimbniaga.co.id,${A},${divX},${day39},4`]), metric_id: String(id) })).status, 403);
+          assert.strictEqual((await post36(plainUser, { csvText: csv36([`9330001,X,x@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day39},4`]), metric_id: String(id) })).status, 403);
           assert.strictEqual((await uget(plainUser, `/api/surveys/evidence?metric_id=${id}&period=YTD`)).status, 403);
           assert.strictEqual((await uget(plainUser, `/api/surveys/responses/${id}`)).status, 403);
         }
         const otherId = otherM.body.metric_id;
         assert.strictEqual((await csvFor(picUser, otherId)).status, 403, 'PIC of other metrics cannot use an ESS metric that is not theirs');
-        assert.strictEqual((await post36(picUser, { csvText: csv36([`9340001,X,x@cimbniaga.co.id,${A},${divX},${day39},4`]), metric_id: String(otherId) })).status, 403);
+        assert.strictEqual((await post36(picUser, { csvText: csv36([`9340001,X,x@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day39},4`]), metric_id: String(otherId) })).status, 403);
         assert.strictEqual((await aj(`/api/surveys/responses/${otherId}`)).length, 0, 'nothing was written into the other metric');
         // OUTCOME metrics are never uploadable, not even for the Admin
         assert.strictEqual((await csvFor(picUser, 1)).status, 403);
@@ -3492,7 +3495,7 @@ async function runRegressionSuite() {
         const day39 = new Date().toISOString().slice(0, 10);
         const t1 = await mkSurvey39('REGRESSION UP Target 1', { survey_source: 'SYSTEM' });
         const t2 = await mkSurvey39('REGRESSION UP Target 2', { survey_source: 'ESS' });
-        const row = (nip, extra) => `${nip},Salah Sasaran,s@cimbniaga.co.id,${A},${divX},${day39},4${extra === undefined ? '' : ',' + extra}`;
+        const row = (nip, extra) => `${nip},Salah Sasaran,s@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day39},4${extra === undefined ? '' : ',' + extra}`;
         const withCol = rows => ['nip,employee_name,cimb_email,directorate,division,survey_date,q1_overall,metric_id', ...rows].join('\r\n');
         const total = async () => (await aj(`/api/surveys/responses/${t1.body.metric_id}`)).length + (await aj(`/api/surveys/responses/${t2.body.metric_id}`)).length;
         const baseline = await total();
@@ -5171,6 +5174,146 @@ async function runRegressionSuite() {
       assert.ok(/Pakai hanya kata yang benar-benar ada di transkrip/.test(src) && /Use only words that really occur in the transcript/.test(src), 'both retry prompts carry the instruction');
       assert.ok(/novel\.slice\(0, 12\)/.test(src), 'the retry feedback names up to 12 rejected words');
     });
+  }
+
+  // --- MODULE 44 (v2.31.0): THE DIRECTORATE MASTER IS THE BANK'S 12 REAL DIRECTORATES ---
+  // The 8 demo directorates were replaced by the 12 directorates of the ESS 2025 result file; old names in existing
+  // data are renamed at boot (server/db/directorateMigration.js, division overrides first). Data checks read the SQL
+  // database (SQL backend) or store.json (JSON backend, read only); the in-place rerun/rename tests are SQL only.
+  console.log('\n📦 MODULE 44: Real directorate master (12 ESS directorates) and the boot rename of the old demo names (Positive & Negative Testing)');
+  {
+    const dm44 = require('../server/db/directorateMigration');
+    const REAL44 = ['Business Banking', 'Compliance, Corporate Affairs & Legal', 'Consumer & EBB', 'Corporate Assurance', 'Human Resources',
+      'Network & Digital Banking', 'Operations, Technology, Analytics & AI', 'Risk Management', 'Sharia Banking', 'Special Asset',
+      'Strategy, Finance & SPAPM', 'Treasury & Capital Market'];
+    const OLD44 = ['Commercial & Corporate Banking', 'Consumer Banking', 'Digital Banking', 'Finance & Operations', 'Information Technology', 'Internal Audit & Legal'];
+    require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+    const storage44 = require('../server/db/storage');
+    const sql44 = storage44.backend === 'sql' ? require('mssql') : null;
+    const pool44 = sql44 ? await new sql44.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
+      user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect() : null;
+    // EMPLOYEE survey rows as { directorate, division } (SQL: the table; JSON: store.json as the server saved it)
+    const employeeRows44 = async () => {
+      if (pool44) {
+        return (await pool44.request().query(`SELECT org_unit_1 AS directorate, org_unit_2 AS division, COUNT(*) AS n FROM dbo.px_survey_uploaded_responses
+                                              WHERE respondent_type = 'EMPLOYEE' GROUP BY org_unit_1, org_unit_2`)).recordset;
+      }
+      const store = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', 'server', 'data', 'store.json'), 'utf8'));
+      return (store.surveyUploadedResponses || [])
+        .filter(r => ![2, 5].includes(parseInt(r.metric_id, 10)) && !r.participant_id && !r.university && !r.candidate_id && !r.applied_position)
+        .map(r => ({ directorate: r.directorate, division: r.division, n: 1 }));
+    };
+    try {
+      await runTest('[POSITIVE] GET /api/directorates returns exactly the 12 real directorates (no demo name, no "PT Bank CIMB Niaga Tbk" Bankwide row)', async () => {
+        const dirs = await (await fetch(`${BASE_URL}/api/directorates`)).json();
+        assert.deepStrictEqual(dirs.map(d => d.name).sort(), [...REAL44].sort());
+        assert.ok(!dirs.some(d => /PT Bank CIMB Niaga/i.test(d.name)), 'the Bankwide row is not a directorate');
+        // re-parented divisions (overrides) sit under their new directorate
+        const divsOf = n => dirs.find(d => d.name === n).divisions;
+        assert.ok(divsOf('Treasury & Capital Market').includes('Treasury Operations') && divsOf('Treasury & Capital Market').includes('Investment Banking & Markets'));
+        assert.ok(divsOf('Corporate Assurance').includes('Internal Audit Group'));
+        assert.ok(divsOf('Operations, Technology, Analytics & AI').includes('Central Operations & Services'));
+        assert.ok(!divsOf('Strategy, Finance & SPAPM').includes('Treasury Operations'));
+      });
+
+      await runTest('[POSITIVE] No EMPLOYEE survey row carries an old directorate name and every EMPLOYEE directorate + division exists in the directory', async () => {
+        const dirs = await (await fetch(`${BASE_URL}/api/directorates`)).json();
+        const pairs = new Set(dirs.flatMap(d => d.divisions.map(v => `${d.name}|${v}`)));
+        const rows = await employeeRows44();
+        assert.ok(rows.length > 0, 'there must be employee survey rows');
+        const old = rows.filter(r => OLD44.some(o => o.toLowerCase() === String(r.directorate).trim().toLowerCase()));
+        assert.deepStrictEqual(old, [], 'old directorate names left');
+        const outside = rows.filter(r => !pairs.has(`${r.directorate}|${r.division}`));
+        assert.deepStrictEqual(outside.map(r => `${r.directorate}|${r.division}`), [], 'employee rows outside the directory');
+      });
+
+      await runTest('[POSITIVE] Mapping: division overrides first, then the directorate default; trimmed and case-insensitive; "all divisions" scopes keep exactly the same access', async () => {
+        assert.strictEqual(dm44.mapDirectorate('Finance & Operations', 'Treasury Operations'), 'Treasury & Capital Market');
+        assert.strictEqual(dm44.mapDirectorate('Finance & Operations', 'Central Operations & Services'), 'Operations, Technology, Analytics & AI');
+        assert.strictEqual(dm44.mapDirectorate('Finance & Operations', 'Financial Planning & Analysis'), 'Strategy, Finance & SPAPM');
+        assert.strictEqual(dm44.mapDirectorate('  commercial & corporate BANKING ', ' investment banking & markets'), 'Treasury & Capital Market');
+        assert.strictEqual(dm44.mapDirectorate('Internal Audit & Legal', 'Internal Audit Group'), 'Corporate Assurance');
+        assert.strictEqual(dm44.mapDirectorate('Internal Audit & Legal', 'Legal & Compliance'), 'Compliance, Corporate Affairs & Legal');
+        assert.strictEqual(dm44.mapDirectorate('Digital Banking', 'OCTO Mobile'), 'Network & Digital Banking');
+        assert.strictEqual(dm44.renamedDirectorate('Human Resources', 'Talent Acquisition'), null, 'Human Resources keeps its name');
+        assert.deepStrictEqual(dm44.migrateScopes([{ directorate: 'Finance & Operations', divisions: null }]), [
+          { directorate: 'Strategy, Finance & SPAPM', divisions: null },
+          { directorate: 'Treasury & Capital Market', divisions: ['Treasury Operations'] },
+          { directorate: 'Operations, Technology, Analytics & AI', divisions: ['Central Operations & Services'] }]);
+        assert.deepStrictEqual(dm44.migrateScopes([{ directorate: 'Consumer Banking', divisions: ['Wealth Management'] }, { directorate: 'Human Resources', divisions: null }]),
+          [{ directorate: 'Consumer & EBB', divisions: ['Wealth Management'] }, { directorate: 'Human Resources', divisions: null }]);
+        assert.deepStrictEqual(dm44.migrateDirectorateOptions([{ value: 'Information Technology', label: 'Information Technology' }, { value: 'Human Resources', label: 'HR' }]),
+          [{ value: 'Operations, Technology, Analytics & AI', label: 'Operations, Technology, Analytics & AI' }, { value: 'Human Resources', label: 'HR' }]);
+        const plan = dm44.planDirectory([
+          { directorate_name: 'Finance & Operations', divisions: ['Treasury Operations', 'Financial Planning & Control'] },
+          { directorate_name: 'Human Resources', divisions: ['Talent Acquisition'] },
+          { directorate_name: 'Unit Lain', divisions: ['X'] }], [{ directorate_name: 'Human Resources', divisions: [] }, { directorate_name: 'Sharia Banking', divisions: [] }]);
+        assert.deepStrictEqual(plan.directorates, [
+          { directorate_name: 'Human Resources', divisions: ['Talent Acquisition'] }, { directorate_name: 'Sharia Banking', divisions: [] },
+          { directorate_name: 'Strategy, Finance & SPAPM', divisions: ['Financial Planning & Control'] },
+          { directorate_name: 'Treasury & Capital Market', divisions: ['Treasury Operations'] },
+          { directorate_name: 'Unit Lain', divisions: ['X'] }]);
+        assert.strictEqual(plan.removed, 1);
+        assert.strictEqual(plan.moved, 2);
+        assert.strictEqual(dm44.planDirectory(plan.directorates, []), null, 'second run plans nothing');
+      });
+
+      await runTest('[NEGATIVE] The mapping leaves new names, unknown names, look-alikes and empty values alone (second run = no change)', async () => {
+        for (const n of REAL44) {
+          assert.strictEqual(dm44.renamedDirectorate(n, 'Treasury Operations'), null, n);
+          assert.strictEqual(dm44.migrateScopes([{ directorate: n, divisions: null }]), null, n);
+        }
+        for (const n of ['Digital Banking Specialist', 'Universitas Indonesia', 'General', 'Treasury Operations', 'PT Bank CIMB Niaga Tbk', '', null, undefined]) {
+          assert.strictEqual(dm44.renamedDirectorate(n, null), null, String(n));
+        }
+        assert.strictEqual(dm44.migrateDirectorateOptions([{ value: 'Human Resources', label: 'Human Resources' }]), null);
+        assert.strictEqual(dm44.migrateDirectorateOptions('not a list'), null);
+      });
+
+      if (!pool44) {
+        console.log('  ⏭️  SKIP: Module 44 in-place rename tests need the SQL backend (they write to the database directly)');
+      } else {
+        const tag44 = `rt44-${Date.now().toString(36)}`;
+        await runTest('[POSITIVE] Running the migration again on the migrated database changes 0 rows', async () => {
+          const counts = await storage44.migrateDirectorates();
+          assert.deepStrictEqual(Object.values(counts).filter(v => v !== 0), [], JSON.stringify(counts));
+        });
+
+        await runTest('[POSITIVE/NEGATIVE] A leftover old name is renamed (EMPLOYEE row by division override, user scope expanded), a campus row with the same text is NOT touched, and a rerun changes 0 rows', async () => {
+          let userId = null;
+          try {
+            const ins = (type, o1, o2) => pool44.request().input('u', sql44.NVarChar, tag44).input('t', sql44.VarChar, type).input('o1', sql44.NVarChar, o1).input('o2', sql44.NVarChar, o2)
+              .query(`INSERT INTO dbo.px_survey_uploaded_responses (upload_id, metric_id, respondent_type, respondent_id, org_unit_1, org_unit_2, rating_score, survey_date)
+                      VALUES (@u, 8, @t, @u, @o1, @o2, 4, '2020-01-01')`);
+            await ins('EMPLOYEE', 'Finance & Operations', 'Treasury Operations');
+            await ins('EMPLOYEE', ' consumer banking', 'Wealth Management');
+            await ins('CAMPUS_STUDENT', 'Information Technology', 'Teknik Informatika');
+            const user = await storage44.createUser({ username: tag44, full_name: 'Module 44', email: '', role: 'USER', password_hash: 'x', scopes: [] });
+            userId = user.user_id;
+            await pool44.request().input('id', sql44.Int, userId).query(`INSERT INTO dbo.px_user_scopes (user_id, directorate, division) VALUES (@id, N'Finance & Operations', NULL)`);
+
+            const counts = await storage44.migrateDirectorates();
+            assert.strictEqual(counts.survey_responses, 2, JSON.stringify(counts));
+            assert.strictEqual(counts.user_scopes, 1, JSON.stringify(counts));
+            const rows = (await pool44.request().input('u', sql44.NVarChar, tag44)
+              .query('SELECT respondent_type, org_unit_1, org_unit_2 FROM dbo.px_survey_uploaded_responses WHERE upload_id = @u ORDER BY response_id')).recordset;
+            assert.deepStrictEqual(rows.map(r => `${r.respondent_type}|${r.org_unit_1}|${r.org_unit_2}`), [
+              'EMPLOYEE|Treasury & Capital Market|Treasury Operations', 'EMPLOYEE|Consumer & EBB|Wealth Management', 'CAMPUS_STUDENT|Information Technology|Teknik Informatika']);
+            assert.deepStrictEqual((await storage44.getUserById(userId)).scopes, [
+              { directorate: 'Strategy, Finance & SPAPM', divisions: null },
+              { directorate: 'Treasury & Capital Market', divisions: ['Treasury Operations'] },
+              { directorate: 'Operations, Technology, Analytics & AI', divisions: ['Central Operations & Services'] }]);
+            const again = await storage44.migrateDirectorates();
+            assert.deepStrictEqual(Object.values(again).filter(v => v !== 0), [], JSON.stringify(again));
+          } finally {
+            await pool44.request().input('u', sql44.NVarChar, tag44).query('DELETE FROM dbo.px_survey_uploaded_responses WHERE upload_id = @u');
+            if (userId) await storage44.deleteUser(userId);
+          }
+        });
+      }
+    } finally {
+      if (pool44) await pool44.close();
+    }
   }
 
   // --- SUMMARY ---

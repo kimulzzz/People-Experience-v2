@@ -21,7 +21,7 @@ nip,employee_name,cimb_email,directorate,division,metric_id,metric_name,rating_s
 | **`nip`** | **Wajib** | String | `8801245` | Nomor Induk Pegawai responden (4–15 karakter alfanumerik). Tidak boleh kosong. |
 | **`employee_name`** | Opsional | String | `Dimas Setiawan` | Nama lengkap karyawan responden. |
 | **`cimb_email`** | Opsional | Email | `dimas.setiawan@cimbniaga.co.id` | Alamat email resmi CIMB Niaga. |
-| **`directorate`** | Opsional | String | `Information Technology` | Nama direktorat tempat karyawan bertugas. |
+| **`directorate`** | Opsional | String | `Operations, Technology, Analytics & AI` | Nama direktorat tempat karyawan bertugas (salah satu dari 12 direktorat riil sejak v2.31.0). Nama yang mengandung koma wajib diapit tanda kutip ganda di CSV, mis. `"Strategy, Finance & SPAPM"`. |
 | **`division`** | Opsional | String | `Application Development` | Nama divisi atau unit kerja. |
 | **`metric_id`** | **Wajib** | Integer | `8` | ID Metrik survei (1–27) yang diukur. |
 | **`metric_name`** | Opsional | String | `New Joiner Onboarding Journey` | Nama deskriptif metrik. |

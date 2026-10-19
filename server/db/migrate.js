@@ -72,6 +72,9 @@ async function main() {
   const after = await storage.health();
   console.log(`\nVerified in SQL Server: ${JSON.stringify(after.tables)}`);
   if (mismatches) console.log(`\n${mismatches} table(s) differ - rows listed as "skipped" above were orphans (event no longer exists).`);
+  // v2.31.0: an older store.json still holds the demo directorate names - rename them right away
+  // (the server would otherwise do it on its next boot).
+  await storage.migrateDirectorates();
   console.log('\nMIGRATE_OK. Next: set STORAGE_BACKEND=sql in .env and restart the server.');
 }
 

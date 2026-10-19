@@ -67,7 +67,7 @@ Setiap metrik Outcome tidak merepresentasikan kuesioner individual, melainkan **
 ### 1. Metrik #1: % SLA of Candidate Fulfillment
 - **Pengukuran**: Persentase pemenuhan lowongan pekerjaan sesuai dengan batas waktu *Service Level Agreement* (SLA) rekrutmen.
 - **Logika Nilai**: $\frac{\text{Jumlah Posisi Terpenuhi Tepat Waktu}}{\text{Total Posisi Dibuka}} \times 100\%$.
-- **Tabel Log**: Mencatat rincian SLA per Direktorat (IT, Consumer Banking, Commercial, Risk, Finance).
+- **Tabel Log**: Mencatat rincian SLA per unit (seed sejak v2.31.0: Operations, Technology, Analytics & AI; Consumer & EBB; Risk Management; Corporate Banking & Markets; Operations & Support).
 
 ### 2. Metrik #3: Candidate Offering Lead Time (TAT H-14)
 - **Pengukuran**: Persentase penerbitan surat penawaran kerja (*Offering Letter*) yang diselesaikan minimal 14 hari sebelum tanggal mulai bekerja.
@@ -154,7 +154,7 @@ nip,employee_name,cimb_email,directorate,division,metric_id,metric_name,q1_...,q
 | **`nip`** | **Mandatory** | String | `8801245` | NIP Karyawan (kunci unik responden, wajib diisi). |
 | **`employee_name`** | Opsional | String | `Budi Setiawan` | Nama lengkap koresponden. |
 | **`cimb_email`** | Opsional | String | `budi.setiawan@cimbniaga.co.id` | Alamat email resmi. |
-| **`directorate`** | Opsional | String | `Information Technology` | Direktorat tempat bertugas. |
+| **`directorate`** | Opsional | String | `Operations, Technology, Analytics & AI` | Direktorat tempat bertugas (salah satu dari 12 direktorat riil sejak v2.31.0; nama berkoma diapit tanda kutip ganda di CSV). |
 | **`division`** | Opsional | String | `Core Banking Dev` | Unit kerja spesifik. |
 | **`metric_id`** | **Mandatory** | Integer | `7` | ID Metrik survei (1-27). |
 | **`metric_name`** | Opsional | String | `Day 1 Onboarding Satisfaction Index` | Nama metrik deskriptif. |

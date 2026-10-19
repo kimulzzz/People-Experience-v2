@@ -167,3 +167,29 @@ Tidak ada perubahan skema (jumlah tabel tetap 29, tidak ada kolom baru). Yang be
 - **Tidak diubah**: kolom `description` di `px_app_settings` (teks internal, masih Indonesia), isi pertanyaan survei, nama metrik/direktorat/program, dan data Action Library.
 - Contoh pemeriksaan: `SELECT setting_key, setting_value FROM dbo.px_app_settings WHERE setting_key IN ('metric_types','scale_types','target_audiences','update_frequencies');`
 - Diverifikasi oleh Modul 40 (`docs/07` §23): katalog yang disajikan database tidak lagi berlabel Indonesia dengan `value` utuh, dan fungsi murni `upgradeLegacyOptionLabels` tidak menimpa edit admin. **Tidak ada tes otomatis yang memanggil `topUpOptionLabels()` / `init()` terhadap baris SQL berlabel lama**; jalur boot itu sendiri tidak diuji terpisah.
+
+---
+
+## 16. Pembaruan v2.31.0 - Master 12 Direktorat Riil (Migrasi Nama Direktorat)
+
+Tidak ada perubahan skema (jumlah tabel tetap 29, tidak ada kolom baru). Yang berubah adalah **isi**: 8 direktorat demo diganti 12 direktorat riil bank dari file ESS 2025 (`docs/ESS 2025 Result_Role Clarity & DS Support.xlsx`; baris "PT Bank CIMB Niaga Tbk" = Bankwide, bukan direktorat). Tabel pemetaan lengkap ada di `CHANGELOG.md` [2.31.0]; logikanya di `server/db/directorateMigration.js` (pengecualian divisi dulu, lalu default direktorat; trim + case-insensitive; nama divisi tidak berubah, hanya dipindah induk).
+
+- **Kapan berjalan**: `sqlStorage.init()` memanggil `migrateDirectorates()` tepat setelah `seedIfEmpty()` dan sebelum seed/top-up lain (`topUpDirectory()`, `topUpMetricUnits()`, `topUpSurveySource()` dst.). `server/db/migrate.js` (termasuk `--reset`) memanggilnya setelah memuat `store.json`, karena `store.json` lama masih bernama lama. Seluruhnya dalam **satu transaksi**.
+- **Idempoten tanpa flag**: hanya baris yang masih bernama lama yang diubah; jalan kedua = 0 baris. Akibatnya data yang diunggah belakangan dengan nama demo lama ikut di-rename pada start berikutnya. Log (hanya bila ada perubahan): `[sqlStorage] Directorate master migrated to the 12 real directorates: directorates_removed=..., divisions_moved=..., ...`.
+
+| Tabel | Kolom | Aturan |
+| :--- | :--- | :--- |
+| `px_directorates`, `px_divisions` | seluruh isi | dihapus lalu diisi ulang dalam urutan seed (`initialDirectorates`); divisi lama dipindah ke induk baru; direktorat yang bukan nama lama dan bukan seed dipertahankan beserta divisinya |
+| `px_survey_uploaded_responses` | `org_unit_1` | hanya `respondent_type = 'EMPLOYEE'` (per pasangan `org_unit_1` + `org_unit_2`); baris mahasiswa/kandidat tidak disentuh |
+| `px_attendances` | `directorate` | per pasangan `directorate` + `division` |
+| `px_users` | `directorate` | kolom legacy v2.26.0 |
+| `px_recruitment_sla_by_unit` | `unit` | default direktorat |
+| `px_user_scopes` | `directorate`, `division` | ditulis ulang per user; "semua divisi" (`division` NULL) pada direktorat lama -> "semua divisi" direktorat default baru + satu baris per divisi pengecualian, sehingga akses tetap sama |
+| `px_app_settings` | `event_manager_directorates` | nilai opsi di-rename; label yang sama dengan nama lama ikut berganti |
+
+- **Sengaja tidak diubah**: `px_audit_log`, CSV evidence historis, nama file upload.
+- **Hasil di database utama** (laporan developer): `directorates_removed=6, divisions_moved=28, survey_responses=3640, attendances=3, user_scopes=0, users=0, app_settings=0, operational_records=2`; jumlah baris EMPLOYEE tetap 4.920.
+- **Backend JSON / rollback ke JSON**: `jsonStorage.js` menjalankan rename yang sama saat `store.json` dimuat (lalu disimpan) dan saat `auth.json` dimuat, jadi rollback ke `STORAGE_BACKEND=json` tidak memerlukan langkah khusus. `server/data/store.json` di repo masih bernama lama sampai `npm run db:export -- --replace` (server dihentikan dulu).
+- **Tidak ada migrasi balik**: kembali ke nama demo lama hanya lewat restore backup `.bak` dari sebelum v2.31.0.
+- Contoh pemeriksaan: `SELECT directorate_name FROM dbo.px_directorates ORDER BY directorate_id;` dan `SELECT org_unit_1, COUNT(*) AS n FROM dbo.px_survey_uploaded_responses WHERE respondent_type = 'EMPLOYEE' GROUP BY org_unit_1 ORDER BY org_unit_1;`
+- Diverifikasi oleh Modul 44 (`docs/07` §27).

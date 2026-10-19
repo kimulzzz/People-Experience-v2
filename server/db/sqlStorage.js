@@ -14,6 +14,7 @@ const { inferSurveySource, resolveSurveySource, resolveRequiresManualUpload } = 
 const { buildInitialStore } = require('./initialStore');
 const { parseFilterOptions, normalizeDateString, CURRENT_YEAR } = require('./filterUtils');
 const { normalizeScopes } = require('./scopeUtils');
+const { planDirectory, renamedDirectorate, migrateScopes, migrateDirectorateOptions, DIRECTORATE_SETTING_KEYS } = require('./directorateMigration');
 
 // ------------------------------------------------------------------ connection
 let poolPromise = null;
@@ -535,6 +536,81 @@ async function migrateLegacyUserScopes() {
                            AND NOT EXISTS (SELECT 1 FROM dbo.px_user_scopes s WHERE s.user_id = u.user_id)`);
 }
 
+// v2.31.0: renames the 8 old demo directorates to the bank's 12 real ones everywhere a directorate
+// name is stored (mapping in directorateMigration.js). Runs at boot before any top-up; only rows that
+// still carry an old name are touched, so a second run changes 0 rows. Returns the rows changed per table.
+const BIN = 'COLLATE Latin1_General_100_BIN2';
+async function migrateDirectorates() {
+  const counts = { directorates_removed: 0, divisions_moved: 0, survey_responses: 0, attendances: 0, user_scopes: 0, users: 0, app_settings: 0, operational_records: 0 };
+  await inTransaction(async tx => {
+    // Directory: rebuilt in seed order with every existing division re-parented.
+    const dirRows = await run(`SELECT d.directorate_id, d.directorate_name, v.division_name FROM dbo.px_directorates d
+                               LEFT JOIN dbo.px_divisions v ON v.directorate_id = d.directorate_id ORDER BY d.directorate_id, v.division_id`, {}, tx);
+    const current = [];
+    dirRows.forEach(r => {
+      let d = current.find(x => x.id === r.directorate_id);
+      if (!d) { d = { id: r.directorate_id, directorate_name: r.directorate_name, divisions: [] }; current.push(d); }
+      if (r.division_name !== null) d.divisions.push(r.division_name);
+    });
+    const plan = planDirectory(current, seed.initialDirectorates);
+    if (plan) {
+      await run('DELETE FROM dbo.px_divisions; DELETE FROM dbo.px_directorates;', {}, tx);
+      for (const d of plan.directorates) await insertDirectorate(tx, d);
+      counts.directorates_removed = plan.removed;
+      counts.divisions_moved = plan.moved;
+    }
+
+    // Columns holding (directorate, division): renamed per distinct exact pair.
+    const renamePairs = async (table, dirCol, divCol, where) => {
+      const pairs = await run(`SELECT ${dirCol} ${BIN} AS dir, ${divCol ? `${divCol} ${BIN}` : 'NULL'} AS div, COUNT(*) AS n
+                               FROM dbo.${table} WHERE ${dirCol} IS NOT NULL ${where ? `AND ${where}` : ''}
+                               GROUP BY ${dirCol} ${BIN}${divCol ? `, ${divCol} ${BIN}` : ''}`, {}, tx);
+      let changed = 0;
+      for (const p of pairs) {
+        const to = renamedDirectorate(p.dir, p.div);
+        if (!to) continue;
+        await run(`UPDATE dbo.${table} SET ${dirCol} = @to WHERE ${dirCol} ${BIN} = @dir
+                   ${divCol ? (p.div === null ? `AND ${divCol} IS NULL` : `AND ${divCol} ${BIN} = @div`) : ''} ${where ? `AND ${where}` : ''}`,
+          { to, dir: p.dir, div: p.div }, tx);
+        changed += p.n;
+      }
+      return changed;
+    };
+    // Only EMPLOYEE rows: campus / candidate rows keep a university / applied position in org_unit_1.
+    counts.survey_responses = await renamePairs('px_survey_uploaded_responses', 'org_unit_1', 'org_unit_2', "respondent_type = 'EMPLOYEE'");
+    counts.attendances = await renamePairs('px_attendances', 'directorate', 'division');
+    counts.users = await renamePairs('px_users', 'directorate', 'division');          // legacy v2.26.0 columns
+    counts.operational_records = await renamePairs('px_recruitment_sla_by_unit', 'unit', null);
+
+    // Login scopes: rewritten per user whose scope list changes.
+    const scopeRows = await run('SELECT user_id, directorate, division FROM dbo.px_user_scopes ORDER BY scope_id', {}, tx);
+    const byUser = new Map();
+    scopeRows.forEach(r => {
+      if (!byUser.has(r.user_id)) byUser.set(r.user_id, []);
+      byUser.get(r.user_id).push({ directorate: r.directorate, divisions: r.division === null ? null : [r.division] });
+    });
+    for (const [user_id, list] of byUser) {
+      const next = migrateScopes(list);
+      if (!next) continue;
+      await writeUserScopes(tx, user_id, next);
+      counts.user_scopes += list.length;
+    }
+
+    // Settings whose value lists directorates (event_manager_directorates).
+    for (const k of DIRECTORATE_SETTING_KEYS) {
+      const rows = await run('SELECT setting_value FROM dbo.px_app_settings WHERE setting_key = @k', { k }, tx);
+      if (!rows.length) continue;
+      const next = migrateDirectorateOptions(parseJson(rows[0].setting_value, null));
+      if (!next) continue;
+      await run('UPDATE dbo.px_app_settings SET setting_value = @v, updated_at = SYSUTCDATETIME() WHERE setting_key = @k', { k, v: T.max(JSON.stringify(next)) }, tx);
+      counts.app_settings++;
+    }
+  });
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  if (total) console.log(`[sqlStorage] Directorate master migrated to the 12 real directorates: ${Object.entries(counts).map(([k, v]) => `${k}=${v}`).join(', ')}.`);
+  return counts;
+}
+
 // ------------------------------------------------------------------ app settings (px_app_settings)
 // Inserts any default setting that is not in the table yet (never overwrites an admin's value).
 async function seedAppSettings(tx) {
@@ -1017,6 +1093,7 @@ const storage = {
     await getPool();
     await applySchema();
     await seedIfEmpty();
+    await migrateDirectorates();     // v2.31.0: old demo directorate names -> the 12 real ones (before any top-up)
     await inTransaction(async tx => { await seedSurveyQuestions(tx); await seedAppSettings(tx); await seedEmailSettings(tx); });
     await topUpOptionLabels();
     await topUpDirectory();
@@ -1049,6 +1126,7 @@ const storage = {
   },
   importStore,
   applySchema,
+  migrateDirectorates,
   seedSurveyQuestions: () => inTransaction(tx => seedSurveyQuestions(tx)),
   // Drops every px_* table (children first). Used only by migrate.js --reset.
   async dropAllTables() {

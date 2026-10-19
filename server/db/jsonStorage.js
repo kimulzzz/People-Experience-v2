@@ -22,6 +22,7 @@ const { normalizeScopes, rowInScopes, legacyUserScopes } = require('./scopeUtils
 const { defaultUnitForScale, parseUnit } = require('./metricUnit');
 const { inferSurveySource, resolveSurveySource, resolveRequiresManualUpload } = require('./surveySource');
 const { buildInitialStore: loadInitialStore } = require('./initialStore');
+const { planDirectory, renamedDirectorate, migrateScopes, migrateDirectorateOptions, DIRECTORATE_SETTING_KEYS } = require('./directorateMigration');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const DATA_FILE = path.join(DATA_DIR, 'store.json');
@@ -33,6 +34,60 @@ if (!fs.existsSync(DATA_DIR)) {
 
 
 let store = null;
+
+// Same respondent-type rule as sqlStorage's normalizeResponse: campus / candidate rows keep a
+// university / applied position in `directorate`, so only EMPLOYEE rows are renamed.
+const isEmployeeResponse = r => {
+  const metricId = parseInt(r.metric_id, 10);
+  return !(metricId === 2 || r.participant_id || r.university || metricId === 5 || r.candidate_id || r.applied_position);
+};
+
+// v2.31.0: renames the 8 old demo directorates to the bank's 12 real ones in the store (mapping in
+// directorateMigration.js). Only rows that still carry an old name change, so a second run changes 0
+// rows. Returns the rows changed per collection (the caller saves the store).
+function migrateStoreDirectorates(s) {
+  const counts = { directorates_removed: 0, divisions_moved: 0, survey_responses: 0, attendances: 0, app_settings: 0, operational_records: 0 };
+  const plan = planDirectory(s.directorates || [], initialDirectorates);
+  if (plan) {
+    s.directorates = plan.directorates;
+    counts.directorates_removed = plan.removed;
+    counts.divisions_moved = plan.moved;
+  }
+  (s.surveyUploadedResponses || []).forEach(r => {
+    if (!isEmployeeResponse(r)) return;
+    const to = renamedDirectorate(r.directorate, r.division);
+    if (to) { r.directorate = to; counts.survey_responses++; }
+  });
+  (s.attendances || []).forEach(a => {
+    const to = renamedDirectorate(a.directorate, a.division);
+    if (to) { a.directorate = to; counts.attendances++; }
+  });
+  DIRECTORATE_SETTING_KEYS.forEach(k => {
+    const cur = s.appSettings && s.appSettings[k];
+    const next = cur && migrateDirectorateOptions(cur.value);
+    if (next) { s.appSettings[k] = { ...cur, value: next }; counts.app_settings++; }
+  });
+  Object.values(s.operationalRecords || {}).forEach(rows => (rows || []).forEach(r => {
+    const to = r && r.unit !== undefined && renamedDirectorate(r.unit, null);
+    if (to) { r.unit = to; counts.operational_records++; }
+  }));
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  if (total) console.log(`[jsonStorage] Directorate master migrated to the 12 real directorates: ${Object.entries(counts).map(([k, v]) => `${k}=${v}`).join(', ')}.`);
+  return counts;
+}
+
+// Same for the login accounts (auth.json): scope lists and the legacy v2.26.0 directorate/division fields.
+function migrateAuthDirectorates(a) {
+  const counts = { user_scopes: 0, users: 0 };
+  (a.users || []).forEach(u => {
+    const next = Array.isArray(u.scopes) ? migrateScopes(u.scopes) : null;
+    if (next) { counts.user_scopes += u.scopes.length; u.scopes = next; }
+    const to = renamedDirectorate(u.directorate, u.division);
+    if (to) { u.directorate = to; counts.users++; }
+  });
+  if (counts.user_scopes + counts.users) console.log(`[jsonStorage] Directorate names migrated in login accounts: user_scopes=${counts.user_scopes}, users=${counts.users}.`);
+  return counts;
+}
 
 function getStore() {
   if (!store) {
@@ -88,6 +143,8 @@ function getStore() {
         if (!store.weights || store.weights.length === 0) {
           store.weights = store.metrics.map(m => ({ metric_id: m.metric_id, weight: m.weight || 1.0 }));
         }
+        // v2.31.0: old demo directorate names -> the 12 real directorates (before the top-up below).
+        migrateStoreDirectorates(store);
         // Add org units that exist in the seed directory but not yet in this store (non-destructive).
         initialDirectorates.forEach(sd => {
           let d = store.directorates.find(x => (x.directorate_name || x.name) === sd.directorate_name);
@@ -179,7 +236,8 @@ function getAuth() {
       u.scopes = legacyUserScopes(u);
       migrated = true;
     });
-    if (migrated) saveAuth();
+    const renamed = migrateAuthDirectorates(authStore);
+    if (migrated || renamed.user_scopes + renamed.users) saveAuth();
   }
   return authStore;
 }
@@ -192,6 +250,17 @@ function saveAuth() {
 const copyUser = u => (u ? { ...u, scopes: normalizeScopes(u.scopes) } : null);
 
 const storage = {
+  // v2.31.0 directorate rename (runs by itself when the store / auth file is loaded; calling it again
+  // changes 0 rows). Same counters as sqlStorage.migrateDirectorates.
+  async migrateDirectorates() {
+    const s = getStore();
+    const a = getAuth();
+    const counts = { ...migrateStoreDirectorates(s), ...migrateAuthDirectorates(a) };
+    if (counts.directorates_removed + counts.divisions_moved + counts.survey_responses + counts.attendances + counts.app_settings + counts.operational_records) saveStore();
+    if (counts.user_scopes + counts.users) saveAuth();
+    return counts;
+  },
+
   // --- APP SETTINGS (admin-managed UI values: PX target line, event dropdown options) ---
   getSettings() {
     const out = {};

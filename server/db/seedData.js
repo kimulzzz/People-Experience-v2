@@ -871,11 +871,11 @@ const sampleEvents = [
 ];
 
 const sampleAttendances = [
-  { attendance_id: 1, event_id: 'ev-perspektif-2024-q1', nip: '8801923', employee_name: 'Ahmad Fauzi', cimb_email: 'ahmad.fauzi@cimbniaga.co.id', directorate: 'Information Technology', division: 'Core Banking Solution', attendance_timestamp: '2026-03-15T08:45:00.000Z' },
+  { attendance_id: 1, event_id: 'ev-perspektif-2024-q1', nip: '8801923', employee_name: 'Ahmad Fauzi', cimb_email: 'ahmad.fauzi@cimbniaga.co.id', directorate: 'Operations, Technology, Analytics & AI', division: 'Core Banking Solution', attendance_timestamp: '2026-03-15T08:45:00.000Z' },
   { attendance_id: 2, event_id: 'ev-perspektif-2024-q1', nip: '8802341', employee_name: 'Siti Rahmawati', cimb_email: 'siti.rahmawati@cimbniaga.co.id', directorate: 'Human Resources', division: 'People Experience & Culture', attendance_timestamp: '2026-03-15T08:50:00.000Z' },
-  { attendance_id: 3, event_id: 'ev-perspektif-2024-q1', nip: '8804552', employee_name: 'Budi Santoso', cimb_email: 'budi.santoso@cimbniaga.co.id', directorate: 'Consumer Banking', division: 'Branch Banking Region 1', attendance_timestamp: '2026-03-15T08:55:00.000Z' },
+  { attendance_id: 3, event_id: 'ev-perspektif-2024-q1', nip: '8804552', employee_name: 'Budi Santoso', cimb_email: 'budi.santoso@cimbniaga.co.id', directorate: 'Consumer & EBB', division: 'Branch Banking Region 1', attendance_timestamp: '2026-03-15T08:55:00.000Z' },
   { attendance_id: 4, event_id: 'ev-perspektif-2024-q1', nip: '8807890', employee_name: 'Dewi Lestari', cimb_email: 'dewi.lestari@cimbniaga.co.id', directorate: 'Risk Management', division: 'Credit Risk Operations', attendance_timestamp: '2026-03-15T09:02:00.000Z' },
-  { attendance_id: 5, event_id: 'ev-perspektif-2024-q1', nip: '8809112', employee_name: 'Rian Pratama', cimb_email: 'rian.pratama@cimbniaga.co.id', directorate: 'Digital Banking', division: 'OCTO Mobile Product', attendance_timestamp: '2026-03-15T09:05:00.000Z' }
+  { attendance_id: 5, event_id: 'ev-perspektif-2024-q1', nip: '8809112', employee_name: 'Rian Pratama', cimb_email: 'rian.pratama@cimbniaga.co.id', directorate: 'Network & Digital Banking', division: 'OCTO Mobile Product', attendance_timestamp: '2026-03-15T09:05:00.000Z' }
 ];
 
 const sampleFeedbackResponses = [
@@ -905,18 +905,26 @@ const sampleFeedbackResponses = [
   }
 ];
 
+// The bank's 12 real directorates (ESS 2025 result file; v2.31.0 replaced the 8 demo directorates - old
+// names in existing data are renamed at boot by directorateMigration.js). Divisions of the old demo
+// directory were re-parented, never invented: a directorate may have no division yet.
 const initialDirectorates = [
   {
-    directorate_name: 'Information Technology',
+    directorate_name: 'Business Banking',
     divisions: [
-      'Application Development',
-      'IT Infrastructure & Operations',
-      'IT Security & Governance',
-      'Core Banking & Digital Solutions'
+      'Corporate Banking Coverage',
+      'Commercial Banking SME',
+      'Transaction Banking'
     ]
   },
   {
-    directorate_name: 'Consumer Banking',
+    directorate_name: 'Compliance, Corporate Affairs & Legal',
+    divisions: [
+      'Legal Counsel & Corporate Secretarial'
+    ]
+  },
+  {
+    directorate_name: 'Consumer & EBB',
     divisions: [
       'Branch Service Excellence',
       'Wealth Management',
@@ -925,21 +933,9 @@ const initialDirectorates = [
     ]
   },
   {
-    directorate_name: 'Commercial & Corporate Banking',
+    directorate_name: 'Corporate Assurance',
     divisions: [
-      'Corporate Banking Coverage',
-      'Commercial Banking SME',
-      'Transaction Banking',
-      'Investment Banking & Markets'
-    ]
-  },
-  {
-    directorate_name: 'Risk Management',
-    divisions: [
-      'Enterprise Risk Management',
-      'Credit Risk Analytics',
-      'Market & Operational Risk',
-      'Compliance & AML/CFT'
+      'Internal Audit Group'
     ]
   },
   {
@@ -954,18 +950,47 @@ const initialDirectorates = [
     ]
   },
   {
-    directorate_name: 'Finance & Operations',
+    directorate_name: 'Network & Digital Banking',
+    divisions: []
+  },
+  {
+    directorate_name: 'Operations, Technology, Analytics & AI',
     divisions: [
-      'Financial Planning & Control',
-      'Treasury Operations',
+      'Application Development',
+      'IT Infrastructure & Operations',
+      'IT Security & Governance',
+      'Core Banking & Digital Solutions',
       'Central Operations & Services'
     ]
   },
   {
-    directorate_name: 'Internal Audit & Legal',
+    directorate_name: 'Risk Management',
     divisions: [
-      'Internal Audit Group',
-      'Legal Counsel & Corporate Secretarial'
+      'Enterprise Risk Management',
+      'Credit Risk Analytics',
+      'Market & Operational Risk',
+      'Compliance & AML/CFT'
+    ]
+  },
+  {
+    directorate_name: 'Sharia Banking',
+    divisions: []
+  },
+  {
+    directorate_name: 'Special Asset',
+    divisions: []
+  },
+  {
+    directorate_name: 'Strategy, Finance & SPAPM',
+    divisions: [
+      'Financial Planning & Control'
+    ]
+  },
+  {
+    directorate_name: 'Treasury & Capital Market',
+    divisions: [
+      'Investment Banking & Markets',
+      'Treasury Operations'
     ]
   }
 ];
@@ -973,23 +998,23 @@ const initialDirectorates = [
 // Organisation units the demo respondents (survey responses + event attendance) actually belong
 // to. They are part of the directory so that every respondent can be reached through the
 // Directorate / Sub-Directorate filters (previously these units existed only as free text on
-// the responses, e.g. the whole "Digital Banking" directorate and ~15 divisions were unreachable).
+// the responses and ~15 divisions were unreachable).
 const respondentOrgUnits = [
-  ['Commercial & Corporate Banking', 'Corporate Banking'],
-  ['Consumer Banking', 'Branch Banking Region 1'],
-  ['Consumer Banking', 'Branch Banking Region 2'],
-  ['Finance & Operations', 'Financial Planning & Analysis'],
+  ['Business Banking', 'Corporate Banking'],
+  ['Consumer & EBB', 'Branch Banking Region 1'],
+  ['Consumer & EBB', 'Branch Banking Region 2'],
+  ['Strategy, Finance & SPAPM', 'Financial Planning & Analysis'],
   ['Human Resources', 'Talent Acquisition'],
   ['Human Resources', 'People Experience & Culture'],
-  ['Information Technology', 'Core Banking Solution'],
-  ['Information Technology', 'IT Infrastructure & Security'],
-  ['Internal Audit & Legal', 'Legal & Compliance'],
+  ['Operations, Technology, Analytics & AI', 'Core Banking Solution'],
+  ['Operations, Technology, Analytics & AI', 'IT Infrastructure & Security'],
+  ['Compliance, Corporate Affairs & Legal', 'Legal & Compliance'],
   ['Risk Management', 'Market Risk'],
   ['Risk Management', 'Credit Risk Operations'],
-  ['Digital Banking', 'OCTO Mobile Product'],
-  ['Digital Banking', 'OCTO Mobile'],
-  ['Information Technology', 'App Dev'],
-  ['Information Technology', 'Core Banking'],
+  ['Network & Digital Banking', 'OCTO Mobile Product'],
+  ['Network & Digital Banking', 'OCTO Mobile'],
+  ['Operations, Technology, Analytics & AI', 'App Dev'],
+  ['Operations, Technology, Analytics & AI', 'Core Banking'],
   ['Human Resources', 'People Experience']
 ];
 respondentOrgUnits.forEach(([directorate_name, division]) => {
@@ -1002,22 +1027,22 @@ respondentOrgUnits.forEach(([directorate_name, division]) => {
 function generateInitialSurveyResponses() {
   const { DEFAULT_METRIC_QUESTIONS } = require('../services/metricQuestionService');
   const employees = [
-    { nip: '8801245', name: 'Dimas Setiawan', email: 'dimas.setiawan@cimbniaga.co.id', dir: 'Information Technology', div: 'Core Banking Solution' },
+    { nip: '8801245', name: 'Dimas Setiawan', email: 'dimas.setiawan@cimbniaga.co.id', dir: 'Operations, Technology, Analytics & AI', div: 'Core Banking Solution' },
     { nip: '8802391', name: 'Anisa Rahmawati', email: 'anisa.rahmawati@cimbniaga.co.id', dir: 'Human Resources', div: 'People Experience & Culture' },
-    { nip: '8803418', name: 'Reza Pratama', email: 'reza.pratama@cimbniaga.co.id', dir: 'Consumer Banking', div: 'Branch Banking Region 1' },
+    { nip: '8803418', name: 'Reza Pratama', email: 'reza.pratama@cimbniaga.co.id', dir: 'Consumer & EBB', div: 'Branch Banking Region 1' },
     { nip: '8804572', name: 'Citra Dewi', email: 'citra.dewi@cimbniaga.co.id', dir: 'Risk Management', div: 'Credit Risk Operations' },
-    { nip: '8805629', name: 'Fajar Nugroho', email: 'fajar.nugroho@cimbniaga.co.id', dir: 'Information Technology', div: 'Application Development' },
-    { nip: '8806781', name: 'Lestari Wulandari', email: 'lestari.w@cimbniaga.co.id', dir: 'Commercial & Corporate Banking', div: 'Commercial Banking SME' },
-    { nip: '8807894', name: 'Bambang Kusuma', email: 'bambang.k@cimbniaga.co.id', dir: 'Internal Audit & Legal', div: 'Internal Audit Group' },
-    { nip: '8808935', name: 'Mega Anggraini', email: 'mega.a@cimbniaga.co.id', dir: 'Finance & Operations', div: 'Treasury Operations' },
-    { nip: '8810127', name: 'Yoga Prasetyo', email: 'yoga.prasetyo@cimbniaga.co.id', dir: 'Consumer Banking', div: 'Branch Banking Region 2' },
-    { nip: '8811284', name: 'Putri Handayani', email: 'putri.handayani@cimbniaga.co.id', dir: 'Digital Banking', div: 'OCTO Mobile Product' },
+    { nip: '8805629', name: 'Fajar Nugroho', email: 'fajar.nugroho@cimbniaga.co.id', dir: 'Operations, Technology, Analytics & AI', div: 'Application Development' },
+    { nip: '8806781', name: 'Lestari Wulandari', email: 'lestari.w@cimbniaga.co.id', dir: 'Business Banking', div: 'Commercial Banking SME' },
+    { nip: '8807894', name: 'Bambang Kusuma', email: 'bambang.k@cimbniaga.co.id', dir: 'Corporate Assurance', div: 'Internal Audit Group' },
+    { nip: '8808935', name: 'Mega Anggraini', email: 'mega.a@cimbniaga.co.id', dir: 'Treasury & Capital Market', div: 'Treasury Operations' },
+    { nip: '8810127', name: 'Yoga Prasetyo', email: 'yoga.prasetyo@cimbniaga.co.id', dir: 'Consumer & EBB', div: 'Branch Banking Region 2' },
+    { nip: '8811284', name: 'Putri Handayani', email: 'putri.handayani@cimbniaga.co.id', dir: 'Network & Digital Banking', div: 'OCTO Mobile Product' },
     { nip: '8812356', name: 'Arief Budiman', email: 'arief.budiman@cimbniaga.co.id', dir: 'Risk Management', div: 'Market Risk' },
     { nip: '8813492', name: 'Sri Wahyuni', email: 'sri.wahyuni@cimbniaga.co.id', dir: 'Human Resources', div: 'Talent Acquisition' },
-    { nip: '8814518', name: 'Bayu Firmansyah', email: 'bayu.firmansyah@cimbniaga.co.id', dir: 'Information Technology', div: 'IT Infrastructure & Security' },
-    { nip: '8815673', name: 'Indah Permatasari', email: 'indah.permatasari@cimbniaga.co.id', dir: 'Commercial & Corporate Banking', div: 'Corporate Banking' },
-    { nip: '8816729', name: 'Rendy Saputra', email: 'rendy.saputra@cimbniaga.co.id', dir: 'Finance & Operations', div: 'Financial Planning & Analysis' },
-    { nip: '8817845', name: 'Melati Kusumawardhani', email: 'melati.k@cimbniaga.co.id', dir: 'Internal Audit & Legal', div: 'Legal & Compliance' }
+    { nip: '8814518', name: 'Bayu Firmansyah', email: 'bayu.firmansyah@cimbniaga.co.id', dir: 'Operations, Technology, Analytics & AI', div: 'IT Infrastructure & Security' },
+    { nip: '8815673', name: 'Indah Permatasari', email: 'indah.permatasari@cimbniaga.co.id', dir: 'Business Banking', div: 'Corporate Banking' },
+    { nip: '8816729', name: 'Rendy Saputra', email: 'rendy.saputra@cimbniaga.co.id', dir: 'Strategy, Finance & SPAPM', div: 'Financial Planning & Analysis' },
+    { nip: '8817845', name: 'Melati Kusumawardhani', email: 'melati.k@cimbniaga.co.id', dir: 'Compliance, Corporate Affairs & Legal', div: 'Legal & Compliance' }
   ];
 
   const campusStudents = [
@@ -1302,8 +1327,8 @@ const initialSurveyUploadedResponses = generateInitialSurveyResponses();
 // calculationEngine.js's business logic.
 const initialOperationalRecords = {
   1: [
-    { unit: 'Information Technology', target_headcount: 45, fulfilled: 42, sla_achievement: '93.3%', status: 'Achieved' },
-    { unit: 'Consumer Banking', target_headcount: 80, fulfilled: 71, sla_achievement: '88.8%', status: 'Achieved' },
+    { unit: 'Operations, Technology, Analytics & AI', target_headcount: 45, fulfilled: 42, sla_achievement: '93.3%', status: 'Achieved' },
+    { unit: 'Consumer & EBB', target_headcount: 80, fulfilled: 71, sla_achievement: '88.8%', status: 'Achieved' },
     { unit: 'Risk Management', target_headcount: 25, fulfilled: 23, sla_achievement: '92.0%', status: 'Achieved' },
     { unit: 'Corporate Banking & Markets', target_headcount: 30, fulfilled: 26, sla_achievement: '86.7%', status: 'Achieved' },
     { unit: 'Operations & Support', target_headcount: 50, fulfilled: 46, sla_achievement: '92.0%', status: 'Achieved' }

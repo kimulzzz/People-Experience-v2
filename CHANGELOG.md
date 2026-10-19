@@ -4,6 +4,39 @@ Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Managemen
 
 ---
 
+## [2.31.0] - 2026-10-19
+
+### Master Direktorat Diganti 12 Direktorat Riil Bank + Migrasi Nama Otomatis (Changed)
+- **Permintaan user**: hasil ESS (Employee Sentiment Survey) akan diunggah per direktorat memakai daftar direktorat riil bank dari `docs/ESS 2025 Result_Role Clarity & DS Support.xlsx`. User memilih **mengganti** 8 direktorat demo aplikasi dengan 12 direktorat riil: Business Banking; Compliance, Corporate Affairs & Legal; Consumer & EBB; Corporate Assurance; Human Resources; Network & Digital Banking; Operations, Technology, Analytics & AI; Risk Management; Sharia Banking; Special Asset; Strategy, Finance & SPAPM; Treasury & Capital Market. Baris "PT Bank CIMB Niaga Tbk" di file ESS = baris Bankwide, **bukan** direktorat. Rilis ini irisan A dari 2; irisan B (v2.32.0, upload ringkasan ESS `.xlsx`) menyusul.
+- **Pemetaan** (`server/db/directorateMigration.js`, `DIRECTORATE_RENAMES`): pengecualian divisi diperiksa dulu, lalu default direktorat; nama dibandingkan setelah trim dan tanpa membedakan huruf besar/kecil. Nama divisi **tidak** berubah, hanya dipindah induknya; tidak ada divisi yang dikarang (Sharia Banking dan Special Asset 0 divisi, Corporate Assurance 1).
+
+| Direktorat lama | Direktorat baru (default) | Pengecualian divisi |
+| :--- | :--- | :--- |
+| Commercial & Corporate Banking | Business Banking | Investment Banking & Markets -> Treasury & Capital Market |
+| Consumer Banking | Consumer & EBB | - |
+| Digital Banking | Network & Digital Banking | - |
+| Finance & Operations | Strategy, Finance & SPAPM | Treasury Operations -> Treasury & Capital Market; Central Operations & Services -> Operations, Technology, Analytics & AI |
+| Human Resources | Human Resources | - |
+| Information Technology | Operations, Technology, Analytics & AI | - |
+| Internal Audit & Legal | Compliance, Corporate Affairs & Legal | Internal Audit Group -> Corporate Assurance |
+| Risk Management | Risk Management | - |
+
+- **Implementasi**:
+  - Modul baru `server/db/directorateMigration.js` (`mapDirectorate`, `renamedDirectorate`, `planDirectory`, `migrateScopes`, `migrateDirectorateOptions`, `DIRECTORATE_SETTING_KEYS`), dipakai kedua backend sehingga pemetaannya tidak bisa berbeda.
+  - SQL: `migrateDirectorates()` di `sqlStorage.js`, dipanggil di `init()` tepat setelah `seedIfEmpty()` dan sebelum seed/top-up lain (`topUpDirectory()` dst.), dalam **satu transaksi**; juga dipanggil di akhir `server/db/migrate.js` karena `store.json` lama masih memuat nama lama.
+  - JSON: `migrateStoreDirectorates()` saat `store.json` dimuat (sebelum top-up direktori, lalu disimpan) dan `migrateAuthDirectorates()` saat `auth.json` dimuat; `storage.migrateDirectorates()` juga tersedia.
+  - **Idempoten tanpa flag**: yang dideteksi adalah nama lama; jalan ulang = 0 perubahan. Konsekuensi: data yang diunggah **belakangan** dengan nama demo lama ikut di-rename pada boot berikutnya.
+  - Yang di-rename: direktori dibangun ulang dalam urutan seed (direktorat yang bukan nama lama dan bukan seed dipertahankan beserta divisinya); baris survei **EMPLOYEE** saja (`org_unit_1`; baris mahasiswa/kandidat yang memakai kolom itu untuk universitas/posisi tidak disentuh); absensi event; kolom legacy `px_users.directorate`; `px_recruitment_sla_by_unit.unit`; `px_user_scopes` (cakupan "semua divisi" pada direktorat lama -> "semua divisi" direktorat default baru + tiap divisi pengecualian, sehingga akses akun identik); setting `event_manager_directorates`.
+  - Log boot (hanya bila ada perubahan): `Directorate master migrated to the 12 real directorates: ...`.
+  - **Sengaja tidak di-rename**: `px_audit_log`, CSV evidence historis, nama file upload.
+  - Seed (`initialDirectorates`, pool karyawan demo, `respondentOrgUnits`, contoh absensi, unit SLA metrik 1) memakai nama baru; logika pembuatan skor demo tidak berubah. Contoh baris template CSV (`surveyTemplateService.js`) memakai nama baru; nama yang mengandung koma otomatis dikutip (`escapeCsv`).
+  - Tidak ada endpoint, setting, tabel, kolom, atau env baru. Versi `/api/health` 2.31.0.
+- **Hasil migrasi database utama** (laporan developer): `directorates_removed=6, divisions_moved=28, survey_responses=3640, attendances=3, user_scopes=0, users=0, app_settings=0, operational_records=2`. Baris EMPLOYEE 4.920 sebelum = 4.920 sesudah (Finance & Operations 580 -> Strategy, Finance & SPAPM 280 + Treasury & Capital Market 300; Internal Audit & Legal 540 -> Compliance, Corporate Affairs & Legal 260 + Corporate Assurance 280; lainnya 1:1). Akun admin asli, 3 event, dan 6 record media tetap. Catatan: record video `med-1791719574927-rd10q` (catatan v2.24.1) sudah tidak ada di database **sebelum** migrasi ini.
+- **Tes**: Modul 5, 7, 8, 11, 15, 24 memakai nama baru; Modul 15 kini mengharapkan >= 12 direktorat. Helper baru `csvCell()`: Modul 35/36/39 mengutip direktorat/divisi di 23 baris CSV. Modul 44 baru = **6 tes** (2 khusus SQL). Hasil developer: **SQL 278/278, 0 skip** (backend kedua) = 272 + 6. JSON: suite penuh **tidak** dijalankan; cek in-process `jsonStorage` pada salinan cadangan `store.json` lulus 11/11 (`store.json` dipulihkan, hash identik). `vite build` OK. **Belum ada QC terpisah** (dijadwalkan bersama irisan B). Detail: `docs/07` §27, `docs/08` §16.
+- **Catatan**: `server/data/store.json` masih memuat nama lama sampai diekspor dengan `npm run db:export -- --replace` (server dihentikan dulu; tanpa `--replace` hasilnya ke `store.from-sql.json`). Entri historis CHANGELOG/dokumen tetap memakai nama lama.
+
+---
+
 ## [2.30.3] - 2026-10-16
 
 ### Validator AI Summary: Kata Berimbuhan Tidak Lagi Dihitung "Baru" & Ambang Tolak Diperbaiki (Fixed)

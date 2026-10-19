@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(272-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(278-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (272 cases on SQL; JSON 204 at QC before the Module 41 fixes, not re-run since) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (278 cases on SQL; JSON 204 at QC before the Module 41 fixes, not re-run since) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (29 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules |
 
@@ -591,6 +591,15 @@ domain model, not just descriptive:
   negative cases) + 1 assertion in Module 38 -> SQL 272/272, 0 skip (second backend); static `await runTest(` 259 vs 272 (gap 13, as in v2.30.2). NO separate QC; JSON full suite NOT run.
   Limits: subtle semantic distortion still passes (accepted trade-off); non-affix synonyms not matched; Gemma can still invent on very short text -> RULE; main backend must be restarted;
   Regenerate = 1-2 Gemma calls (~11 s each on this CPU, fixed seed). Side finding: the user's video file already carries its original name in `server/uploads` (v2.30.1 rename works for real).
+
+- **v2.31.0** (2026-10-19, see `CHANGELOG.md` [2.31.0], `docs/07` §27, `docs/08` §16, `SQLServerDB.md` §15): ESS results will be uploaded per directorate, so the user chose to REPLACE the 8 demo
+  directorates with the bank's 12 real ones (from `docs/ESS 2025 Result_Role Clarity & DS Support.xlsx`; "PT Bank CIMB Niaga Tbk" = Bankwide row, not a directorate). Slice A of 2; slice B
+  (v2.32.0) = ESS summary `.xlsx` upload. New `server/db/directorateMigration.js` (division override first, then directorate default; divisions only re-parented, none invented) used by
+  `migrateDirectorates()` in both backends: SQL at boot right after `seedIfEmpty()` before every top-up + end of `migrate.js`, one transaction; JSON when `store.json`/`auth.json` load. Idempotent
+  WITHOUT a flag (detects old names) -> data uploaded later with an old demo name is renamed at the next boot. Renames EMPLOYEE survey rows only, attendances, legacy `px_users` columns, SLA units,
+  `px_user_scopes` ("all divisions" expanded so access is identical), `event_manager_directorates`; NOT `px_audit_log`/old evidence CSVs/upload file names. Main DB: 3640 survey rows, EMPLOYEE 4920 = 4920.
+  Gotchas: `store.json` keeps old names until `npm run db:export -- --replace`; directorate names may contain commas -> quote them in CSV (`csvCell()` in tests). Tests: Module 44 (6, 2 SQL-only) ->
+  SQL 278/278, 0 skip; JSON full suite NOT run (in-process jsonStorage check 11/11); no separate QC yet (with slice B).
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

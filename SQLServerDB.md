@@ -182,3 +182,12 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 - Tidak ada perubahan skema. Label empat katalog di `px_app_settings` (`metric_types`, `scale_types`, `target_audiences`, `update_frequencies`) diganti ke Inggris saat server start (`topUpOptionLabels()`), **hanya** untuk label yang masih persis default Indonesia lama; hasil edit admin dan `value` tidak pernah ditimpa. Aman diulang. Rollback ke JSON tidak memerlukan langkah khusus.
 - Pemeriksaan: `SELECT setting_key, setting_value FROM dbo.px_app_settings WHERE setting_key IN ('metric_types','scale_types','target_audiences','update_frequencies');`
 - Batas waktu 120 menit (transkrip, Gemma, upload) diatur di `.env` (`TRANSCRIBE_TIMEOUT_MS`, `OLLAMA_TIMEOUT_MS`, `SUMMARY_JOB_TIMEOUT_MS`, `REQUEST_TIMEOUT_MS`; semua opsional) - tidak ada hubungannya dengan koneksi database.
+
+## 15. Master 12 Direktorat Riil (v2.31.0)
+
+- Tidak ada perubahan skema. `px_directorates`/`px_divisions` kini berisi 12 direktorat riil bank (daftar dan pemetaan di `docs/08` §16). Nama demo lama di data di-rename otomatis saat server start (`migrateDirectorates()`, satu transaksi, aman diulang); log hanya muncul bila ada perubahan: `Directorate master migrated to the 12 real directorates: ...`.
+- Ikut di-rename: baris survei EMPLOYEE (`org_unit_1`), `px_attendances`, `px_users` (kolom legacy), `px_user_scopes`, `px_recruitment_sla_by_unit.unit`, setting `event_manager_directorates`. Tidak di-rename: `px_audit_log`.
+- Data yang diunggah belakangan dengan nama demo lama ikut di-rename pada start berikutnya.
+- `node server/db/migrate.js --reset` memuat `store.json` (masih bernama lama) lalu langsung menjalankan rename yang sama. Agar `store.json` ikut bernama baru: `npm run db:export -- --replace` (server dihentikan dulu).
+- Tidak ada migrasi balik; nama lama hanya kembali lewat restore backup `.bak` dari sebelum v2.31.0.
+- Pemeriksaan: `SELECT directorate_name FROM dbo.px_directorates ORDER BY directorate_id;`

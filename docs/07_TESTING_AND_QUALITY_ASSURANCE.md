@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    43 MODUL PENGUJIAN    │     272 AUTOMATED TESTS     │       100% PASS RATE          │
+│    44 MODUL PENGUJIAN    │     278 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -889,3 +889,22 @@ Modul 42 memakai backend kedua dengan Ollama dan Video Extractor **palsu** yang 
 **Data nyata (bukan bagian suite, laporan developer)**: ringkasan AI tersimpan pada 3 video user lulus validator lama dan baru. Gemma asli dipakai **satu kali** untuk diagnosis lewat skrip terpisah yang tidak menulis ke database.
 
 **Tidak diuji / tidak terverifikasi**: suite JSON penuh; QC terpisah; perilaku Gemma asli pada transkrip pendek lain (hanya satu video yang didiagnosis); distorsi makna halus tidak terdeteksi oleh validator (batasan desain). Dua kasus positif adalah parafrase buatan developer, bukan keluaran Gemma asli.
+
+## 🏢 27. Master 12 Direktorat Riil & Migrasi Nama Direktorat - v2.31.0 (2026-10-19)
+
+**Regression suite: 278 test di SQL Server** (angka dari laporan developer, backend kedua, 0 skip; penulis dokumen ini tidak menjalankan ulang suite). 278 = 272 (v2.30.3) + 6 (Modul 44). Hitungan statis `await runTest(` di `tests/regressionTest.js` kini 265 vs hasil jalan 278 (selisih 13, sama dengan v2.30.3). **Suite JSON penuh tidak dijalankan**; developer hanya menjalankan cek in-process `jsonStorage` pada salinan cadangan `store.json` (11/11 lulus; `store.json` dipulihkan, hash identik). `vite build` OK. **Belum ada QC terpisah** (dijadwalkan bersama irisan B, v2.32.0).
+
+**Modul 44 = 6 tes** (dihitung dari kode: 6 pemanggilan `runTest`). 4 tes jalan di SQL dan JSON; 2 tes khusus SQL (menulis langsung ke database) di-skip di JSON dengan pesan. Data dibaca dari database (backend SQL) atau `store.json` (backend JSON, hanya baca).
+
+| # | Jenis | Backend | Yang diuji (Modul 44) |
+| :-: | :---: | :---: | :--- |
+| 1 | Positif | SQL + JSON | `GET /api/directorates` mengembalikan tepat 12 nama riil (tanpa nama demo, tanpa baris "PT Bank CIMB Niaga Tbk"); divisi pengecualian ada di induk barunya (Treasury Operations dan Investment Banking & Markets di Treasury & Capital Market, Internal Audit Group di Corporate Assurance, Central Operations & Services di Operations, Technology, Analytics & AI) |
+| 2 | Positif | SQL + JSON | Tidak ada baris survei EMPLOYEE bernama direktorat lama, dan setiap pasangan direktorat + divisi EMPLOYEE ada di direktori |
+| 3 | Positif | SQL + JSON | Fungsi murni: pengecualian divisi dulu lalu default, trim + case-insensitive; `migrateScopes` ("semua divisi" Finance & Operations -> 3 cakupan dengan akses sama); `migrateDirectorateOptions`; `planDirectory` (urutan seed, direktorat tak dikenal dipertahankan, hitungan removed/moved, jalan kedua = `null`) |
+| 4 | Negatif | SQL + JSON | Nama baru, nama tak dikenal/mirip (`Digital Banking Specialist`, `Universitas Indonesia`, `PT Bank CIMB Niaga Tbk`), string kosong, `null`, `undefined`, dan nilai bukan array tidak diubah |
+| 5 | Positif | SQL | `storage.migrateDirectorates()` dijalankan ulang pada database yang sudah termigrasi = 0 perubahan |
+| 6 | Positif / Negatif | SQL | Baris lama yang ditanam di-rename (EMPLOYEE `Finance & Operations` + `Treasury Operations` -> Treasury & Capital Market; `' consumer banking'` tak ter-trim dan huruf kecil -> Consumer & EBB), baris `CAMPUS_STUDENT` bertuliskan `Information Technology` tidak disentuh, cakupan user "semua divisi" diperluas; jalan ulang = 0; data uji dihapus di `finally` |
+
+**Modul lama disesuaikan** (jumlah tesnya tidak berubah): Modul 5, 7, 8, 11, 15, 24 memakai nama direktorat baru; Modul 15 kini mengharapkan >= 12 direktorat (sebelumnya >= 7) dan mencari `Operations, Technology, Analytics & AI`. Helper baru `csvCell()` (bagian atas `tests/regressionTest.js`) mengutip nilai yang mengandung koma/kutip/baris baru; Modul 35/36/39 memakainya untuk direktorat/divisi di 23 baris CSV.
+
+**Tidak diuji / tidak terverifikasi**: suite JSON penuh; QC terpisah; jalur muat JSON (`getStore()` / `auth.json`) hanya lewat cek in-process developer, bukan tes otomatis; rename `px_attendances`, `px_users`, `px_recruitment_sla_by_unit` dan setting `event_manager_directorates` di SQL tidak punya tes tanam data (hanya fungsi murni dan hasil migrasi database utama).
