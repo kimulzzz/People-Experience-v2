@@ -380,6 +380,64 @@ CREATE TABLE dbo.px_ess_results (
 );
 GO
 
+-- Exit Interview (v2.38.0): one row per employee exit from the "Termination Report" .xlsx (Admin upload) plus a
+-- Directorate (and optional Division) column. Key = (nik, effective_date): a re-upload of the same exit UPDATES the row.
+-- source: UPLOAD (Admin upload), TEMPLATE_IMPORT (scripts/import-exit-template.js, dummy directorate + surrogate NIK),
+-- SEED_DUMMY (generated demo rows; a month only gets them while it has no row at all, and real rows of a month replace them).
+-- career_scores_json = the 15 career statements (1-6, null = not answered) or NULL when none was answered.
+IF OBJECT_ID(N'dbo.px_exit_interview_uploads', N'U') IS NULL
+CREATE TABLE dbo.px_exit_interview_uploads (
+  upload_id           NVARCHAR(64)   NOT NULL CONSTRAINT PK_px_exit_uploads PRIMARY KEY,
+  file_name           NVARCHAR(260)  NOT NULL CONSTRAINT DF_px_exit_up_file DEFAULT (N''),
+  source              VARCHAR(20)    NOT NULL CONSTRAINT CK_px_exit_up_src CHECK (source IN ('UPLOAD', 'TEMPLATE_IMPORT', 'SEED_DUMMY')),
+  total_rows          INT            NOT NULL CONSTRAINT DF_px_exit_up_total DEFAULT (0),
+  inserted_rows       INT            NOT NULL CONSTRAINT DF_px_exit_up_ins DEFAULT (0),
+  updated_rows        INT            NOT NULL CONSTRAINT DF_px_exit_up_upd DEFAULT (0),
+  removed_dummy_rows  INT            NOT NULL CONSTRAINT DF_px_exit_up_dummy DEFAULT (0),
+  period_from         DATE           NULL,
+  period_to           DATE           NULL,
+  uploaded_by         NVARCHAR(200)  NOT NULL CONSTRAINT DF_px_exit_up_by DEFAULT (N'HR Admin'),
+  uploaded_at         DATETIME2(3)   NOT NULL CONSTRAINT DF_px_exit_up_ts DEFAULT (SYSUTCDATETIME())
+);
+GO
+IF OBJECT_ID(N'dbo.px_exit_interviews', N'U') IS NULL
+CREATE TABLE dbo.px_exit_interviews (
+  exit_id                INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_px_exit_interviews PRIMARY KEY,
+  upload_id              NVARCHAR(64)   NOT NULL,
+  nik                    NVARCHAR(50)   NOT NULL,
+  employee_name          NVARCHAR(200)  NOT NULL CONSTRAINT DF_px_exit_name DEFAULT (N''),
+  effective_date         DATE           NOT NULL,
+  leaving_reason         NVARCHAR(100)  NULL,
+  leaving_reason_detail  NVARCHAR(100)  NULL,
+  grade                  NVARCHAR(20)   NULL,
+  score_factor           NVARCHAR(20)   NULL,
+  directorate            NVARCHAR(200)  NOT NULL,
+  division               NVARCHAR(200)  NULL,
+  destination_industry   NVARCHAR(500)  NULL,     -- column H as answered
+  new_company            NVARCHAR(500)  NULL,     -- column I as answered
+  new_company_std        NVARCHAR(500)  NULL,     -- column I standardized with the alias table at import time
+  new_position           NVARCHAR(500)  NULL,
+  pull_factors           NVARCHAR(MAX)  NULL,     -- K (multi-select, " | " separated)
+  improve_factors        NVARCHAR(MAX)  NULL,     -- L
+  new_company_offers     NVARCHAR(MAX)  NULL,     -- M
+  internal_factors       NVARCHAR(MAX)  NULL,     -- N
+  career_scores_json     NVARCHAR(400)  NULL,     -- O..AC
+  alumni_network         VARCHAR(3)     NULL CONSTRAINT CK_px_exit_alumni CHECK (alumni_network IN ('Yes', 'No')),
+  privacy_consent        VARCHAR(3)     NULL CONSTRAINT CK_px_exit_privacy CHECK (privacy_consent IN ('Yes', 'No')),
+  recommend              VARCHAR(3)     NULL CONSTRAINT CK_px_exit_recommend CHECK (recommend IN ('Yes', 'No')),
+  suggestions            NVARCHAR(MAX)  NULL,     -- AG
+  source                 VARCHAR(20)    NOT NULL CONSTRAINT CK_px_exit_src CHECK (source IN ('UPLOAD', 'TEMPLATE_IMPORT', 'SEED_DUMMY')),
+  created_at             DATETIME2(3)   NOT NULL CONSTRAINT DF_px_exit_ts DEFAULT (SYSUTCDATETIME()),
+  updated_at             DATETIME2(3)   NULL,
+  CONSTRAINT UQ_px_exit_nik_date UNIQUE (nik, effective_date)
+);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_px_exit_date' AND object_id = OBJECT_ID(N'dbo.px_exit_interviews'))
+  CREATE INDEX IX_px_exit_date ON dbo.px_exit_interviews(effective_date);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_px_exit_dir' AND object_id = OBJECT_ID(N'dbo.px_exit_interviews'))
+  CREATE INDEX IX_px_exit_dir ON dbo.px_exit_interviews(directorate, division);
+GO
+
 IF OBJECT_ID(N'dbo.px_acknowledged_alerts', N'U') IS NULL
 CREATE TABLE dbo.px_acknowledged_alerts (
   metric_id        INT           NOT NULL CONSTRAINT PK_px_ack_alerts PRIMARY KEY,

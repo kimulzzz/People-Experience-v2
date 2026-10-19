@@ -76,7 +76,7 @@ Lalu set `STORAGE_BACKEND=sql` di `.env` dan restart server.
 | **Windows Authentication** | di SSMS pilih *Windows Authentication* (akun Windows administrator) — akses penuh ke seluruh server |
 | **Cek dari aplikasi** | `http://localhost:5000/api/health` → bagian `database` (server, edisi, jumlah baris tabel kunci) |
 
-Tabel aplikasi berawalan `px_` (25 tabel). Yang paling sering dilihat: `px_metrics`, `px_metric_targets`, `px_survey_uploaded_responses`, `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` (kolom `file_path` + `transcript`).
+Tabel aplikasi berawalan `px_` (32 tabel sejak v2.38.0). Yang paling sering dilihat: `px_metrics`, `px_metric_targets`, `px_survey_uploaded_responses`, `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` (kolom `file_path` + `transcript`).
 
 > Jangan mengubah data langsung lewat SSMS tanpa alasan kuat — validasi dan perhitungan skor berjalan di aplikasi.
 
@@ -96,6 +96,7 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 | Restore | `RESTORE DATABASE PeopleExperiencePX FROM DISK = N'D:\backup\px.bak' WITH REPLACE;` (hentikan aplikasi dulu) |
 | Salinan format JSON | `npm run db:export` → `server/data/store.from-sql.json` (tidak menimpa apa pun) |
 | Backup file foto/video | salin folder `server/uploads/` (tidak ikut backup database) |
+| Backup file asli ESS & Exit Interview | salin folder `server/data/ess-uploads/` dan `server/data/exit-uploads/` (tidak ikut backup database; berisi data per karyawan, simpan di lokasi internal) |
 
 ---
 
@@ -142,6 +143,8 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 | Satuan nilai aktual tiap metrik (`px_metrics.unit`) | `px_metrics` | Admin Parameters → field "Actual Value Unit" |
 | Sumber survei tiap metrik SURVEY (`px_metrics.survey_source`: `SYSTEM` / `ESS`) | `px_metrics` | Admin Parameters → dropdown "Survey Source" |
 | Hasil ESS per metrik, periode dan unit org (v2.32.0) | `px_ess_results` (+ batch di `px_survey_uploads`) | Upload ringkasan `.xlsx` di Explore Metrics / detail metrik (Admin atau PIC); file asli di `server/data/ess-uploads/` |
+| Data exit karyawan untuk dashboard Exit Interview (v2.38.0) | `px_exit_interviews` (+ batch di `px_exit_interview_uploads`) | Upload `.xlsx` di tab Exit Interview (Admin); file asli di `server/data/exit-uploads/` |
+| Kata kunci pengelompokan Exit Interview (`exit_interview_k_factors`, `_m_themes`, `_n_themes`, `_company_aliases`, `_none_answers`) | `px_app_settings` | `PUT /api/admin/settings/:key` (list `{value, label}`; belum ada UI) |
 | Parameter journey/checkpoint/metric/target/bobot | `px_journeys`, `px_checkpoints`, `px_metrics`, `px_metric_targets` | menu Admin Parameters |
 
 > **Perhatian:** `node server/db/migrate.js --reset` menghapus semua tabel `px_*` termasuk `px_email_settings` — pengaturan email harus diisi ulang setelahnya.
@@ -202,3 +205,14 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 - `node server/db/migrate.js --reset` memuat ulang dari `store.json` yang belum berisi hasil ESS: hasil ESS yang diunggah hilang (diganti seed demo), sementara file aslinya tetap tertinggal di `server/data/ess-uploads/`. Ekspor dulu (`npm run db:export`) bila perlu.
 - Rollback ke JSON tidak memerlukan langkah khusus (JSON menjalankan pembersihan dan seed yang sama saat `store.json` dimuat).
 - Pemeriksaan: `SELECT metric_id, survey_year, survey_month, COUNT(*) AS n FROM dbo.px_ess_results GROUP BY metric_id, survey_year, survey_month ORDER BY 1, 2, 3;`
+
+## 17. Exit Interview (v2.38.0)
+
+- Tabel baru `px_exit_interviews` (satu baris per exit karyawan, `UNIQUE (nik, effective_date)`, index `effective_date` dan `(directorate, division)`) dan `px_exit_interview_uploads` (riwayat batch). Dibuat otomatis saat server start. Rincian kolom: `docs/08` §18. Jumlah tabel kini 32.
+- **Data sensitif**: tabel ini menyimpan NIK, nama, dan jawaban terbuka karyawan yang keluar. API hanya memberi Admin akses ke baris per karyawan (export CSV); User hanya menerima agregat.
+- **Data saat ini (laporan developer)**: Jan-Agu 2026 dummy (`source = 'SEED_DUMMY'`, 1.613 baris); Sep 2026 = 205 baris dari file asli `docs/Template Report Exit Interview.xlsx` (`source = 'TEMPLATE_IMPORT'`, direktorat/divisi dummy, NIK pengganti `<NIK>-<nomor baris>`). File asli itu dan folder `server/data/exit-uploads/` ada di `.gitignore` - data asli hanya ada di database lokal dan folder itu.
+- **Seed dummy**: saat start (bila `SEED_DEMO_DATA` bukan `false`) bulan Jan-Sep 2026 yang belum punya baris exit sama sekali diisi dummy (log `Seeded demo Exit Interview rows for: ...`). Upload atau impor data asli satu bulan menghapus dummy bulan itu.
+- **Backup**: `.bak` memuat kedua tabel. Salinan file upload ada di `server/data/exit-uploads/` (tidak ikut `.bak`).
+- **Ekspor JSON**: `npm run db:export` (dan `-- --replace`) ikut menulis semua baris exit, termasuk data asli, ke `store.from-sql.json` / `store.json` - **jangan commit** file hasil ekspor seperti itu.
+- `node server/db/migrate.js --reset` menghapus kedua tabel; `store.json` di repo tidak berisi data exit, jadi data asli hilang dan diganti dummy saat start berikutnya. Impor ulang: `npm run exit:import-template -- "docs/Template Report Exit Interview.xlsx"`.
+- Pemeriksaan: `SELECT FORMAT(effective_date, 'yyyy-MM') AS ym, source, COUNT(*) AS n FROM dbo.px_exit_interviews GROUP BY FORMAT(effective_date, 'yyyy-MM'), source ORDER BY ym, source;`

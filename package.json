@@ -12,7 +12,8 @@
     "preview": "vite preview",
     "db:migrate": "node server/db/migrate.js",
     "db:export": "node server/db/exportToJson.js",
-    "auth:create-admin": "node scripts/create-admin.js"
+    "auth:create-admin": "node scripts/create-admin.js",
+    "exit:import-template": "node scripts/import-exit-template.js"
   },
   "keywords": [],
   "author": "",

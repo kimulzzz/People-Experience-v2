@@ -2,6 +2,51 @@
 
 Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Management & Scoring System dicatat di dalam dokumen ini mengikuti standar [Semantic Versioning](https://semver.org/).
 
+## [2.38.0] - 2026-10-19
+
+### Dashboard Exit Interview: Alasan Karyawan Resign dari Upload Termination Report (.xlsx) (Added)
+
+- **Permintaan user**: area Exit Survey diberi menu baru "Dashboard Exit Interview" yang menunjukkan mengapa karyawan resign. Tata letak dari `docs/exit interview dashboard template.pptx` (slide 1: 6 kartu; slide 2: A/B), data dari `docs/Template Report Exit Interview.xlsx` (hanya September 2026, tanpa kolom Directorate); periode lain dummy acak (minimal Jan-Sep 2026), tema sama dengan web PX.
+- **Keputusan user**: data September asli tetap **lokal** (file di `.gitignore`, hanya diimpor ke SQL Server lokal; repo ada di GitHub); upload `.xlsx` oleh Admin; semua login boleh membuka dashboard sesuai cakupan (USER hanya agregat direktorat miliknya).
+- **Aturan kartu (dari user, `server/services/exitInterviewService.js` `summarizeExitInterviews`)**. Voluntary = kolom D `NORMAL_RESIGNATION`; *mover* = voluntary dengan kolom E `MOVE_COMPANY` atau `BETTER_OFFER`.
+
+  | Kartu | Kolom | Basis | Aturan |
+  | :--- | :--- | :--- | :--- |
+  | 1 Reasons for resignation | E | baris voluntary | `MOVE_COMPANY` + `BETTER_OFFER` = "Move company"; kode lain ditampilkan sebagai teks (`OWN_BUSINESS` -> "Own business") |
+  | 2 Destination industry | H | mover yang menjawab H | "Perbankan / Asuransi / Keuangan Lainnya" = Financial, jawaban lain = Non-financial |
+  | 3 Top 10 financial-sector destinations | I (dengan H Financial) | mover Financial | nama distandarkan lewat tabel alias (kata kunci terpanjang menang); nama di luar alias dipakai apa adanya |
+  | 4 Pull factors | K (multi, pemisah `\|`) | semua mover | Compensation / Position / Job / Reputation / Other, jumlah record per opsi; KPI = % Compensation |
+  | 5 Career satisfaction (movers) | O..AC (15 pernyataan, 1-6) | mover dengan minimal satu skor | rata-rata per orang dibulatkan ke 1-6 (half up), plus rata-rata keseluruhan dan % dari 6 |
+  | 6 Would you recommend | AF | mover yang menjawab Yes/No | Yes vs No |
+  | A (slide 2) | M | mover yang menjawab M | tema dari kata kunci, jumlah karyawan unik per tema (satu orang bisa di beberapa tema) |
+  | B (slide 2) | N | mover dengan skor karier | tema dibagi karier-negatif (bucket 1-3) vs karier-positif (4-6), plus selisih pp |
+
+  Judul slide 2 (`headline`) disusun dari data (dua tema A teratas + tema B dengan selisih positif terbesar). Pengelompokan berbasis aturan kata kunci, **tanpa AI**.
+- **Tabel baru (kedua backend, dibuat saat boot)**: `px_exit_interviews` (satu baris per exit; `UNIQUE (nik, effective_date)`, index `effective_date` dan `(directorate, division)`, `source` `UPLOAD`/`TEMPLATE_IMPORT`/`SEED_DUMMY`) dan `px_exit_interview_uploads` (riwayat batch). JSON: `exitInterviews`, `exitInterviewUploads`. Ikut `dropAllTables`, `importStore`, `exportToJson.js` dan hitungan `migrate.js`. Jumlah tabel `px_*` 30 -> **32**. Rincian: `docs/08` §18.
+- **Endpoint baru**:
+
+  | Endpoint | Akses | Perilaku |
+  | :--- | :--- | :--- |
+  | `GET /api/exit-interview/summary` | semua login | `mode`, `year`, `month`, `directorate`, `sub_directorate`; USER dibatasi cakupan (direktorat lain 403); hanya agregat, tanpa NIK/nama/teks jawaban; untuk USER kartu 3 hanya memuat nama dari daftar alias |
+  | `GET /api/exit-interview/template` | Admin | `Template_Exit_Interview.xlsx` |
+  | `POST /api/exit-interview/upload` | Admin | field `file`, hanya `.xlsx`, maks 20 MB; validasi atomik; upsert per NIK + tanggal |
+  | `GET /api/exit-interview/uploads` | Admin | riwayat upload |
+  | `GET /api/exit-interview/export` | Admin | CSV semua baris filter aktif, formula-escape |
+
+  Bulan/tahun tidak valid -> 400; file bukan `.xlsx` -> 400 (upload ESS memakai 415). Audit `EXIT_INTERVIEW_UPLOAD`. File asli disimpan di `server/data/exit-uploads/<upload_id>.xlsx` (tidak disajikan, di `.gitignore`); `docs/Template Report Exit Interview.xlsx` juga di `.gitignore`.
+- **Setting baru di `px_app_settings`** (di-seed sekali bila belum ada, ubah lewat `PUT /api/admin/settings/:key`, belum ada UI): `exit_interview_k_factors`, `exit_interview_m_themes`, `exit_interview_n_themes`, `exit_interview_company_aliases` (36 alias), `exit_interview_none_answers` (akhiran `*` = diawali frasa). Format `{value, label}`; `value` = kata kunci yang cocok di awal sebuah kata jawaban.
+- **`server/services/xlsxUtils.js` (baru)**: pembaca/penulis `.xlsx` minimal (`readFirstSheet`, `buildXlsx`, `colLetter`) dipindah dari `essSummaryService.js`, kini dipakai bersama; `essSummaryService` tetap mengekspor `readFirstSheet`/`buildXlsx`.
+- **Data di database utama (laporan developer)**: September 2026 = file template asli diimpor (`npm run exit:import-template`, 205 baris, source `TEMPLATE_IMPORT`). NIK di file itu tersamar dan bertabrakan (hanya 20 NIK berbeda), jadi tiap baris diberi NIK pengganti `<NIK>-<nomor baris>`; direktorat/divisi diisi **dummy** deterministik. Impor ini menggantikan 203 baris dummy September. Januari-Agustus 2026 = dummy (`SEED_DUMMY`): 189, 182, 225, 226, 186, 234, 186, 185 = 1.613 baris; total 1.818; ke-12 direktorat ada di setiap bulan dummy. Instalasi baru tanpa impor mendapat dummy September (203) saat boot.
+- **Aturan dummy**: boot (bila `SEED_DEMO_DATA` bukan `false`) hanya menambah dummy ke bulan Jan-Sep 2026 yang belum punya baris sama sekali; upload atau impor data asli satu bulan menghapus dummy bulan itu. Dummy dibangkitkan dari distribusi agregat (PRNG ber-seed per bulan), bobot direktorat = partisipasi ESS + 150; jawaban "Other" dummy = tiga frasa pendek karangan; nama perusahaan asuransi/multifinance/non-keuangan dummy berakhiran "(dummy)". Tidak ada baris, nama atau verbatim dari file template di kode.
+- **Angka YTD 2026 bankwide (laporan developer)**: "January - October 2026 \| 1,082 voluntary exit records as of September 2026"; 1.818 record, 608 mover. Reasons: Move company 608, Personal 146, Family 138, Own business 126, Study 38, Health 20, Performance issue 6. Industri: Financial 347 (66,6%) / Non-financial 174 (33,4%), basis 521. Top 10: Permata 62, Maybank 58, Danamon 46, OCBC NISP 33, DBS 13, BTN 12, UOB 11, Sinarmas 10, SMBC 10, Mega 8. Pull factors: Compensation 382 (62,8%), Position 151, Job 118, Reputation 46, Other 35. Karier: bucket 1-6 = 10/18/40/146/257/72, rata-rata 4,50/6 (75%), basis 543 (68 negatif / 475 positif). Recommend 509 Yes / 34 No. A: Compensation & benefits 395, Higher position 134, Better-fit job 125, Company reputation 57, Location / commute 19, Family & personal 13, Other 2. MTD 2026-09: 205 record, 121 voluntary, 69 mover, Financial 45 (80,4%).
+- **Frontend**: tab Header **Exit Interview**; `src/components/ExitInterviewDashboard.jsx` (di-*lazy load*, chunk sendiri ~350 KB; bundle utama 520 KB) mengikuti filter Header; toolbar Admin: Download Template, Upload (modal dengan tabel error), Export CSV (filter aktif), Upload history. `MetricDetailModal.jsx`: metrik Exit Survey (metrik 26, dikenali dari nama/sumber data) mendapat tombol "Open Exit Interview Dashboard". Data exit interview **tidak** mengubah skor metrik 26 maupun PX Index.
+- **Skrip**: `npm run exit:import-template -- "<path .xlsx>"` (`scripts/import-exit-template.js`) untuk impor lokal file asli tanpa kolom Directorate.
+- **Tes**: Modul 47 (13 tes, khusus SQL; dilewati di JSON). Suite penuh SQL (backend kedua, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **228/228 lulus, 0 gagal, 16 dilewati** (laporan developer). JSON: hanya cek in-process terarah. Jumlah data setelah run tidak berubah (ESS 572, upload 205, respons 2.788, user 1). Detail: `docs/07` §32. QC berjalan paralel; hasilnya belum tercatat di sini.
+- **Risiko / belum dikerjakan**: belum ada hapus upload/baris exit (selain lewat SQL); belum ada ukuran grup minimum (USER yang memfilter satu divisi bisa mengenali individu dari angka kecil); direktorat data September adalah dummy; `npm run db:export -- --replace` akan menulis baris template asli ke `server/data/store.json` - **jangan commit** ekspor seperti itu; tampilan UI belum diverifikasi developer di browser; file asli upload belum bisa diunduh lewat API. `/api/health` `version` = `2.38.0`. Tidak ada env baru.
+
+- **QC (terarah): LULUS DENGAN CATATAN.** Semua kartu YTD 2026, MTD 2026-09 dan filter Human Resources dihitung ulang langsung dari `px_exit_interviews` dan cocok 100%; payload summary tanpa NIK/nama/saran; USER: direktorat sendiri 200, lainnya 403, endpoint Admin 403; bulan/tahun invalid 400; 8 jenis upload salah ditolak tanpa menyimpan apa pun; upload valid + upload ulang (upsert) di 2031-01 lalu dibersihkan; UI (kartu 1-6, A, B, toolbar Admin, modal upload, riwayat, tombol dari metrik 26, tampilan USER) tanpa NaN/undefined dan tanpa scroll horizontal di 1280px. Diperbaiki setelah QC: `period_to` batch dummy kini hari terakhir bulan (dulu tanggal 1 bulan berikutnya) di kedua backend, 9 record yang ada dikoreksi; `server/data/store.from-sql.json` (output default `npm run db:export`) masuk `.gitignore` karena bisa memuat baris asli. Catatan: kolom D kosong diterima (tidak dihitung voluntary); tidak ada ambang jumlah minimum per kelompok (keputusan produk); record upload `seed-exit-2026-09` tetap di riwayat walau barisnya sudah diganti impor template; file asli upload belum bisa diunduh dari UI.
+---
+
 ## [2.37.0] - 2026-10-19
 
 ### Periode MTD ESS = Bulan Template & Data Dummy ESS 2026 per Kuartal (Changed)

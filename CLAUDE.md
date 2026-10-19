@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(301-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(314-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,8 +75,8 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (301 cases on SQL; v2.37.0 run 215/215, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
-| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (30 `px_*` tables), JSON→SQL migration, rollback |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (314 cases on SQL; v2.38.0 run 228/228, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
+| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (32 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
 ## Compliance constraints (do not violate)
@@ -638,6 +638,14 @@ domain model, not just descriptive:
   every SURVEY metric (`period_window.basis` always `MONTH`), ESS only when template Year-Month = Y-M; `update_frequency` is reminders-only again. Dummy ESS 2026-03/06/09 (fictional, 429 rows
   + 33 uploads) via `ESS_SEED_DUMMY_PERIODS`; seed top-up is now per (metric, period) - gotcha: deleting all rows of a seeded period re-inserts the seed on next boot unless `SEED_DEMO_DATA=false`.
   Effect: YTD 2026 PX 83.72 -> 85.27, MTD 2025-12 82.92 -> 80.36. Tests: Module 46 now 13 (12 on JSON) -> SQL 215/215, 16 skipped; full JSON suite not run.
+
+- **v2.38.0** (2026-10-19, see `CHANGELOG.md` [2.38.0], `docs/02` §5.4, `docs/04` "Catatan v2.38.0", `docs/05`, `docs/06`, `docs/07` §32, `docs/08` §18, `SQLServerDB.md` §17): new tab **Exit Interview**
+  (why employees resign; layout from `docs/exit interview dashboard template.pptx`). Admin uploads the HR "Termination Report" `.xlsx` (A..AG + Directorate/Division; atomic, upsert on NIK + Effective
+  Resignation Date) -> `px_exit_interviews` + `px_exit_interview_uploads` (32 tables); `exitInterviewService.js` builds 6 cards + themes A/B rule-based (keyword lists in `px_app_settings` `exit_interview_*`,
+  no AI); `.xlsx` reader/writer moved to `xlsxUtils.js`. `GET /api/exit-interview/summary` for every login (USER: own scope, aggregates only); template/upload/uploads/export Admin only. Not in any score.
+  DATA: Sep 2026 = the REAL file imported LOCALLY (`npm run exit:import-template -- "<path>"`, 205 rows, dummy directorates, surrogate NIK `<NIK>-<row>`); Jan-Aug dummy (1,613); real data of a month replaces
+  its dummy, boot only fills months with no rows. NEVER commit the real file, `server/data/exit-uploads/`, Export CSVs, or a `db:export` (store.json / store.from-sql.json) made from this DB.
+  Gotchas: `migrate --reset` loses the real rows (re-import); no delete, no minimum group size (small divisions can identify people). Tests: Module 47 (13, SQL only) -> SQL 228/228, 16 skipped; JSON full suite not run.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

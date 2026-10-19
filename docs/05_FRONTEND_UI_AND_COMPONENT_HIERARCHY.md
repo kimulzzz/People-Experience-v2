@@ -51,6 +51,7 @@ graph TD
     MainView -->|Tab: Calculator| Calculator["Calculator.jsx<br/>(Sticky Action Column, Density View, Date Badges)"]
     MainView -->|Tab: Events| EventManager["EventManager.jsx<br/>(Signature Programs, QR Codes, PPT Export)"]
     MainView -->|Tab: Action Library| ActionLib["ActionLibraryView.jsx<br/>(Deficit Improvement Action Catalog)"]
+    MainView -->|Tab: Exit Interview| ExitDash["ExitInterviewDashboard.jsx (v2.38.0, lazy)<br/>(6 Cards + Themes A/B, Admin Upload/Export)"]
     
     %% Modals Layer
     App --> ModalDetail["MetricDetailModal.jsx<br/>(ESS Dimensions Breakdown & Respondent Logs)"]
@@ -398,3 +399,17 @@ API kini bisa mengirim indeks dan skor `null` serta status `NO_DATA` (lihat `doc
 | `Calculator.jsx` (Explore Metrics) | Baris `NO_DATA`: nilai aktual, skor dan tanggal "—", badge abu-abu "No Data". |
 | `MetricDetailModal.jsx` | Nilai "—", "No survey data in this period - left out of the index", badge abu-abu "No Data", pertanyaan berlabel "No Data" tanpa skor. Catatan "Annual metric: shows the result of Jan–Sep 2026" untuk metrik tahunan pada filter MTD **dihapus di v2.37.0** (MTD kini selalu satu bulan, `period_window.basis = 'MONTH'`). |
 | `TrendChart.jsx` | Titik `null` menjadi celah (garis dipotong per segmen), tooltip "—". |
+
+## Catatan v2.38.0 - Tab "Exit Interview" (`ExitInterviewDashboard.jsx`)
+
+Dashboard alasan resign (API: `docs/04` "Catatan v2.38.0"; kolom file: `docs/02` §5.4). Dua slide `docs/exit interview dashboard template.pptx` dibangun ulang sebagai kartu bertema PX (variabel `--theme-*`, ikut pilihan Theme).
+
+| Komponen | Perubahan |
+| :--- | :--- |
+| `Header.jsx` | Tombol nav baru **Exit Interview** (ikon `DoorOpen`, `activeTab === 'exit-interview'`) di antara "Action Library & AI Alerts" dan "About"; tampil untuk semua login. |
+| `App.jsx` | `ExitInterviewDashboard` di-load dengan `React.lazy` + `Suspense` (spinner) agar Recharts dan komponen ini tidak menambah bundle utama (chunk sendiri ~350 KB, bundle utama 520 KB; angka build dari laporan developer). Menerima `filterOptions` Header (YTD/MTD, tahun, bulan, direktorat, sub-direktorat). Handler `onOpenExitInterview` menutup detail metrik lalu pindah ke tab ini. |
+| `ExitInterviewDashboard.jsx` (baru) | Hero "Voluntary Exits \| Exit Interview Summary" dengan `subtitle` server (mis. "January - October 2026 \| 1,082 voluntary exit records as of September 2026") dan tiga angka (Voluntary exits, Company moves, All exit records). Slide 1 = 6 kartu bernomor dengan baris "Base: ...": 1 Reasons for resignation, 2 Destination industry (pie), 3 Top 10 financial-sector destinations, 4 Attractions of the new employer (pull factors) + KPI Compensation, 5 Career satisfaction (movers) (bucket 1-6 + rata-rata), 6 Would you recommend CIMB Niaga? (pie). Slide 2: judul = `headline` server, kartu A "What the new employer offers" dan B "Internal factors by career satisfaction" (Career-dissatisfied 1-3 vs Career-satisfied 4-6). Data diambil ulang setiap filter berubah (`fetchWithRetry`). USER melihat catatan "Aggregates of your data scope only."; untuk USER kartu 3 menampilkan "Only institutions of the standard name list are shown." |
+| Toolbar Admin (di komponen yang sama) | **Download Template (.xlsx)**, **Upload (.xlsx)** (modal: file picker `accept=".xlsx"`, pesan sukses dari server, tabel error Row / Column / Problem bila ditolak), **Export CSV (current filter)**, **Upload history** (tabel Uploaded at, File, Source [Upload / Template import / Dummy (seed)], Rows, New, Updated, Dummy replaced, Period, By). Setelah upload sukses dashboard dan riwayat dimuat ulang. |
+| `MetricDetailModal.jsx` | Prop baru `onOpenExitInterview`. Tombol **Open Exit Interview Dashboard** di bawah nama metrik bila nama atau `source_of_data` metrik cocok `/exit (survey\|interview)/i` (saat ini metrik 26 "Exit Survey — resignation experience"); dikenali dari teks, bukan dari id. |
+
+Tidak diuji otomatis: render semua komponen di atas (Modul 47 menguji lewat API). Pengecekan di browser tidak dilaporkan developer; tampilan mobile belum dicek.

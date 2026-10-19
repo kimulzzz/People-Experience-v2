@@ -14,6 +14,8 @@ const {
   initialEssResults,
   initialEssUploads,
   initialOperationalRecords,
+  EXIT_SEED_MONTHS,
+  generateExitInterviewDummy,
   initialAppSettings,
   initialEmailSettings,
   LEGACY_OPTION_LABELS,
@@ -122,6 +124,51 @@ function topUpStoreEssSeed(s) {
   return todo;
 }
 const nextEssResultId = s => (s.essResults || []).reduce((mx, r) => Math.max(mx, r.ess_result_id || 0), 0) + 1;
+
+// Exit Interview (v2.38.0) - same rules as sqlStorage: key (nik, effective_date) compared case-insensitively on the NIK.
+const EXIT_FIELDS = ['nik', 'employee_name', 'effective_date', 'leaving_reason', 'leaving_reason_detail', 'grade', 'score_factor', 'directorate',
+  'division', 'destination_industry', 'new_company', 'new_company_std', 'new_position', 'pull_factors', 'improve_factors', 'new_company_offers',
+  'internal_factors', 'career_scores', 'alumni_network', 'privacy_consent', 'recommend', 'suggestions'];
+const exitKey = r => `${String(r.nik).trim().toLowerCase()}|${r.effective_date}`;
+const nextExitId = s => (s.exitInterviews || []).reduce((mx, r) => Math.max(mx, r.exit_id || 0), 0) + 1;
+const nextMonthStartStr = ym => { const [y, m] = ym.split('-').map(n => parseInt(n, 10)); return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`; };
+// Last calendar day of 'YYYY-MM' (an inclusive period end, e.g. for the upload history).
+const lastDayOfMonthStr = ym => { const [y, m] = ym.split('-').map(n => parseInt(n, 10)); return `${ym}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}`; };
+function exitMonthCountsOf(s) {
+  const by = new Map();
+  (s.exitInterviews || []).forEach(r => {
+    const key = r.effective_date.slice(0, 7);
+    const e = by.get(key) || { year: parseInt(key.slice(0, 4), 10), month: parseInt(key.slice(5, 7), 10), total: 0, dummy: 0 };
+    e.total++;
+    if (r.source === 'SEED_DUMMY') e.dummy++;
+    by.set(key, e);
+  });
+  return [...by.values()].sort((a, b) => a.year - b.year || a.month - b.month);
+}
+// Demo exit rows for every seed month without any exit row (same rule as sqlStorage.topUpExitInterviewSeed).
+function topUpStoreExitSeed(s) {
+  s.exitInterviews = s.exitInterviews || [];
+  s.exitInterviewUploads = s.exitInterviewUploads || [];
+  const have = new Set(exitMonthCountsOf(s).map(m => `${m.year}-${m.month}`));
+  const todo = (EXIT_SEED_MONTHS || []).filter(m => !have.has(`${m.year}-${m.month}`));
+  if (!todo.length) return [];
+  const all = generateExitInterviewDummy((s.directorates || []).length ? s.directorates.map(d => ({ directorate_name: d.directorate_name || d.name, divisions: d.divisions || d.sub_directorates || [] })) : undefined);
+  const added = [];
+  const now = new Date().toISOString();
+  todo.forEach(({ year, month }) => {
+    const ym = `${year}-${String(month).padStart(2, '0')}`;
+    const rows = all.filter(r => r.effective_date.startsWith(ym) && r.directorate);
+    if (!rows.length) return;
+    const uploadId = `seed-exit-${ym}`;
+    s.exitInterviewUploads = s.exitInterviewUploads.filter(u => u.upload_id !== uploadId);
+    s.exitInterviewUploads.push({ upload_id: uploadId, file_name: `Exit_Interview_Dummy_${ym}.xlsx`, source: 'SEED_DUMMY', total_rows: rows.length,
+      inserted_rows: rows.length, updated_rows: 0, removed_dummy_rows: 0, period_from: `${ym}-01`, period_to: lastDayOfMonthStr(ym), uploaded_by: 'Seed (dummy)', uploaded_at: now });
+    let id = nextExitId(s);
+    rows.forEach(r => s.exitInterviews.push({ exit_id: id++, ...JSON.parse(JSON.stringify(r)), upload_id: uploadId, created_at: now, updated_at: null }));
+    added.push(ym);
+  });
+  return added;
+}
 
 function getStore() {
   if (!store) {
@@ -234,6 +281,8 @@ function getStore() {
         if (String(process.env.SEED_DEMO_DATA || 'true').toLowerCase() !== 'false') {
           const seededEss = topUpStoreEssSeed(store);
           if (seededEss.length) console.log(`[jsonStorage] Seeded demo ESS summaries: ${seededEss.join(', ')}.`);
+          const seededExit = topUpStoreExitSeed(store);
+          if (seededExit.length) console.log(`[jsonStorage] Seeded demo Exit Interview rows for: ${seededExit.join(', ')}.`);
         }
         saveStore();
       } catch (err) {
@@ -243,6 +292,7 @@ function getStore() {
       }
     } else {
       store = loadInitialStore();
+      if (String(process.env.SEED_DEMO_DATA || 'true').toLowerCase() !== 'false') topUpStoreExitSeed(store);
       saveStore();
     }
   }
@@ -1196,6 +1246,64 @@ const storage = {
     saveStore();
     return { record, replaced_rows: replaced };
   },
+  // --- EXIT INTERVIEW (v2.38.0) --- same contract as sqlStorage
+  getExitInterviews({ from, to } = {}) {
+    return (getStore().exitInterviews || [])
+      .filter(r => (!from || r.effective_date >= from) && (!to || r.effective_date <= to))
+      .sort((a, b) => (a.effective_date < b.effective_date ? -1 : a.effective_date > b.effective_date ? 1 : a.exit_id - b.exit_id))
+      .map(r => JSON.parse(JSON.stringify({ career_scores: null, updated_at: null, ...r })));
+  },
+  getExitInterviewMonthCounts() {
+    return exitMonthCountsOf(getStore());
+  },
+  getExitInterviewUploads() {
+    return [...(getStore().exitInterviewUploads || [])]
+      .sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : a.uploaded_at > b.uploaded_at ? -1 : (a.upload_id < b.upload_id ? 1 : -1)))
+      .map(u => ({ ...u }));
+  },
+  saveExitInterviewUpload(meta, rows) {
+    const s = getStore();
+    s.exitInterviews = s.exitInterviews || [];
+    s.exitInterviewUploads = s.exitInterviewUploads || [];
+    let removed = 0;
+    if (meta.source !== 'SEED_DUMMY') {
+      const months = new Set(rows.map(r => r.effective_date.slice(0, 7)));
+      const before = s.exitInterviews.length;
+      s.exitInterviews = s.exitInterviews.filter(r => !(r.source === 'SEED_DUMMY' && months.has(r.effective_date.slice(0, 7))));
+      removed = before - s.exitInterviews.length;
+    }
+    const byKey = new Map(s.exitInterviews.map(r => [exitKey(r), r]));
+    const now = new Date().toISOString();
+    let inserted = 0;
+    let updated = 0;
+    let id = nextExitId(s);
+    rows.forEach(r => {
+      const values = {};
+      EXIT_FIELDS.forEach(k => { values[k] = r[k] === undefined ? null : JSON.parse(JSON.stringify(r[k])); });
+      values.employee_name = values.employee_name || '';
+      const existing = byKey.get(exitKey(r));
+      if (existing) {
+        Object.assign(existing, values, { nik: existing.nik, upload_id: meta.upload_id, source: meta.source, updated_at: now });
+        updated++;
+      } else {
+        const row = { exit_id: id++, upload_id: meta.upload_id, ...values, source: meta.source, created_at: now, updated_at: null };
+        s.exitInterviews.push(row);
+        byKey.set(exitKey(row), row);
+        inserted++;
+      }
+    });
+    const record = { ...meta, total_rows: rows.length, inserted_rows: inserted, updated_rows: updated, removed_dummy_rows: removed,
+      period_from: meta.period_from || null, period_to: meta.period_to || null, uploaded_by: meta.uploaded_by || 'HR Admin', uploaded_at: now };
+    s.exitInterviewUploads.push(record);
+    saveStore();
+    return { record: { ...record }, inserted, updated, removed_dummy: removed };
+  },
+  topUpExitInterviewSeed() {
+    const added = topUpStoreExitSeed(getStore());
+    if (added.length) saveStore();
+    return added;
+  },
+
   deleteEssResultsForMetric(metric_id) {
     const s = getStore();
     const id = parseInt(metric_id);

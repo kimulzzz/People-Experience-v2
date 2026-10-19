@@ -30,7 +30,8 @@ import {
   Sparkles,
   Table,
   LayoutGrid,
-  MinusCircle
+  MinusCircle,
+  DoorOpen
 } from 'lucide-react';
 import { formatMetricValue } from '../utils/formatMetricValue';
 import { monthName } from '../utils/months';
@@ -101,7 +102,8 @@ export default function MetricDetailModal({
   period: periodProp = 'YTD',
   filterOptions = null,
   onOpenSurveyUpload,
-  onOpenSurveyQuestionSettings
+  onOpenSurveyQuestionSettings,
+  onOpenExitInterview
 }) {
   // The dashboard filter (YTD / MTD + year + month) decides the period; the `period` prop is only a fallback when no
   // filter is passed (App.jsx passes filterOptions only, so the badge used to read Year-to-Date even in MTD mode).
@@ -244,6 +246,16 @@ export default function MetricDetailModal({
               <h2 className="text-xl font-black text-gray-900 mt-1">
                 {detailData?.metric_name || 'Metric Details'}
               </h2>
+              {/* v2.38.0: the exit survey metric links to the Exit Interview dashboard (found by name / data source, not by id) */}
+              {onOpenExitInterview && detailData && /exit (survey|interview)/i.test(`${detailData.metric_name || ''} ${detailData.source_of_data || ''}`) && (
+                <button
+                  onClick={onOpenExitInterview}
+                  className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg text-white shadow-sm"
+                  style={{ backgroundColor: 'var(--theme-base)' }}
+                >
+                  <DoorOpen className="w-3.5 h-3.5" /> Open Exit Interview Dashboard
+                </button>
+              )}
             </div>
           </div>
 

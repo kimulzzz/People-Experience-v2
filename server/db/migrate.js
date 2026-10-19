@@ -33,6 +33,8 @@ const jsonCounts = s => ({
   survey_uploads: (s.surveyUploads || []).length,
   survey_responses: (s.surveyUploadedResponses || []).length,
   ess_results: (s.essResults || []).length,
+  exit_interviews: (s.exitInterviews || []).length,
+  exit_interview_uploads: (s.exitInterviewUploads || []).length,
   custom_survey_questions: Object.keys(s.customSurveyQuestions || {}).length,
   acknowledged_alerts: (s.acknowledgedAlerts || []).length,
   operational_records: Object.values(s.operationalRecords || {}).reduce((n, a) => n + (a || []).length, 0)

@@ -52,6 +52,9 @@ async function main() {
     surveyUploads: await storage.getSurveyUploads(),
     surveyUploadedResponses: await storage.getAllResponsesByPeriod(null),
     essResults: await storage.getEssResults(null), // ESS result summaries (v2.32.0)
+    // Exit Interview rows (v2.38.0) incl. TEMPLATE_IMPORT rows = real per-employee data: keep such an export local
+    exitInterviews: await storage.getExitInterviews(),
+    exitInterviewUploads: (await storage.getExitInterviewUploads()).reverse(),
     media: await storage.getAllMedia(),
     customSurveyQuestions,
     acknowledgedAlerts: await storage.getAcknowledgedAlerts(),
@@ -77,7 +80,8 @@ async function main() {
   console.log(`Exported -> ${target}`);
   console.log(`  journeys ${store.journeys.length}, metrics ${store.metrics.length}, events ${store.events.length}, ` +
     `attendances ${store.attendances.length}, feedback ${store.feedbackResponses.length}, media ${store.media.length}, ` +
-    `survey responses ${store.surveyUploadedResponses.length}, ESS results ${store.essResults.length}`);
+    `survey responses ${store.surveyUploadedResponses.length}, ESS results ${store.essResults.length}, ` +
+    `exit interviews ${store.exitInterviews.length}`);
   console.log(replace
     ? 'EXPORT_OK. Now set STORAGE_BACKEND=json in .env and restart the server.'
     : 'EXPORT_OK. To roll back to the JSON store with this data: rerun with --replace (server stopped), then set STORAGE_BACKEND=json.');

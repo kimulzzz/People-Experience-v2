@@ -40,7 +40,7 @@ Script `scripts/sqlserver/Setup-SqlServer.ps1` (idempoten, log di `scripts/sqlse
 
 ---
 
-## 3. Skema (`server/db/schema.sql` — 30 tabel sejak v2.32.0, prefix `px_`)
+## 3. Skema (`server/db/schema.sql` — 32 tabel sejak v2.38.0, prefix `px_`)
 
 | Kelompok | Tabel | Catatan |
 | :--- | :--- | :--- |
@@ -53,6 +53,7 @@ Script `scripts/sqlserver/Setup-SqlServer.ps1` (idempoten, log di `scripts/sqlse
 | Signature Event | `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` | `UNIQUE(event_id, nip)` pada absensi & feedback (NIP tetap kunci utama responden). FK `ON DELETE CASCADE` ke `px_events`. **`px_media.file_path`** = path file di disk (mis. `/uploads/media-….mp4`) + `caption`, `ai_generated_description`, `transcript`, `transcript_segments` (JSON), `transcript_status`, `duration_seconds`, serta (v2.28.0) 8 kolom AI Summary `summary_*` (lihat §13). |
 | Survei | `px_survey_uploads`, `px_survey_uploaded_responses`, `px_acknowledged_alerts` | Responden **dinormalisasi** (lihat bawah). Index `(metric_id, survey_date)` dan `(org_unit_1, org_unit_2)`. |
 | Ringkasan ESS (v2.32.0) | `px_ess_results` | Data metrik ESS: satu baris per unit org (Bankwide / direktorat) per metrik dan periode, dari file ringkasan `.xlsx` yang diunggah. Batch upload-nya tetap di `px_survey_uploads`. Lihat §17. |
+| Exit Interview (v2.38.0) | `px_exit_interviews`, `px_exit_interview_uploads` | Satu baris per exit karyawan dari file "Termination Report" `.xlsx` + direktorat/divisi; `UNIQUE (nik, effective_date)` (upload ulang = update). Berisi **data per karyawan** (NIK, nama, jawaban terbuka). Tidak dipakai perhitungan skor. Lihat §18. |
 | Login (v2.26.0) | `px_users`, `px_sessions`, `px_audit_log` | `px_users`: `username` UNIQUE (NIP/nama login), `password_hash` (scrypt, tidak pernah dikembalikan API), `role` CHECK `ADMIN`/`USER`, `directorate`/`division` (nama, NULL untuk Admin), `is_active`, `must_change_password`, `failed_attempts`, `locked_until`, `last_login_at`. `px_sessions`: PK `token_hash` (**SHA-256 token cookie**, bukan token-nya), `expires_at`, FK ke user `ON DELETE CASCADE`. `px_audit_log`: waktu, user, `action`, `target`, `ip` — tanpa secret. Dibuat idempoten saat boot/`applySchema()`. |
 | Cakupan User (v2.27.0) | `px_user_scopes` | `user_id` FK ke `px_users` `ON DELETE CASCADE`, `directorate`, `division` (**NULL = semua divisi** direktorat itu), `UNIQUE(user_id, directorate, division)`. Kolom `px_users.directorate`/`division` (v2.26.0) **legacy: tidak ditulis/dipakai lagi**. Dibuat idempoten saat boot. |
 | Drilldown OUTCOME | `px_recruitment_sla_by_unit`, `px_approval_stage_compliance`, `px_hiring_channel_mix`, `px_recognition_categories`, `px_attrition_by_tenure` | Menggantikan objek `operationalRecords` (5 bentuk kolom berbeda dalam satu objek). |
@@ -240,3 +241,50 @@ FROM dbo.px_ess_results GROUP BY metric_id, survey_year, survey_month ORDER BY m
 ```
 
 Diverifikasi oleh Modul 45 (`docs/07` §28).
+
+---
+
+## 18. Pembaruan v2.38.0 - Tabel Exit Interview
+
+Dua tabel baru untuk dashboard Exit Interview (API: `docs/04` "Catatan v2.38.0"; kolom file: `docs/02` §5.4). Dibuat idempoten saat boot (`IF OBJECT_ID(...) IS NULL`, `schema.sql`), tanpa ALTER pada tabel lama. Jumlah tabel 30 -> **32**.
+
+**`px_exit_interview_uploads`** (satu baris per batch): `upload_id` `NVARCHAR(64)` PK (`exit-<ts>-<acak>` untuk upload/impor, `seed-exit-<YYYY-MM>` untuk dummy), `file_name`, `source` (`CK_px_exit_up_src`: `UPLOAD` / `TEMPLATE_IMPORT` / `SEED_DUMMY`), `total_rows`, `inserted_rows`, `updated_rows`, `removed_dummy_rows`, `period_from`/`period_to` (`DATE`), `uploaded_by` (default `HR Admin`), `uploaded_at` (`DATETIME2(3)`, default `SYSUTCDATETIME()`).
+
+**`px_exit_interviews`** (satu baris per exit)
+
+| Kolom | Tipe | Aturan |
+| :--- | :--- | :--- |
+| `exit_id` | `INT IDENTITY` | PK `PK_px_exit_interviews` |
+| `upload_id` | `NVARCHAR(64) NOT NULL` | batch terakhir yang menulis baris ini; tanpa FK |
+| `nik`, `effective_date` | `NVARCHAR(50)`, `DATE` | `UQ_px_exit_nik_date (nik, effective_date)`; kunci upsert |
+| `employee_name` | `NVARCHAR(200)` | default `''` |
+| `leaving_reason`, `leaving_reason_detail` | `NVARCHAR(100) NULL` | kode, mis. `NORMAL_RESIGNATION`, `MOVE_COMPANY` |
+| `grade`, `score_factor` | `NVARCHAR(20) NULL` | |
+| `directorate`, `division` | `NVARCHAR(200)`, `NVARCHAR(200) NULL` | nama master; index `IX_px_exit_dir (directorate, division)` |
+| `destination_industry`, `new_company`, `new_company_std`, `new_position` | `NVARCHAR(500) NULL` | `new_company_std` = nama standar saat impor |
+| `pull_factors`, `improve_factors`, `new_company_offers`, `internal_factors`, `suggestions` | `NVARCHAR(MAX) NULL` | kolom K, L, M, N, AG apa adanya (maks 4000 karakter dari service) |
+| `career_scores_json` | `NVARCHAR(400) NULL` | JSON 15 skor (1-6 atau `null`); NULL bila tidak ada yang diisi |
+| `alumni_network`, `privacy_consent`, `recommend` | `VARCHAR(3) NULL` | CHECK `Yes`/`No` |
+| `source` | `VARCHAR(20)` | `CK_px_exit_src`: `UPLOAD` / `TEMPLATE_IMPORT` / `SEED_DUMMY` |
+| `created_at`, `updated_at` | `DATETIME2(3)` | `updated_at` diisi saat upsert meng-update |
+
+Index `IX_px_exit_date (effective_date)` untuk filter periode. JSON: array `exitInterviews` (field sama, `career_scores` alih-alih `career_scores_json`) dan `exitInterviewUploads`.
+
+**Penulisan** (`saveExitInterviewUpload`, satu transaksi): hapus baris `SEED_DUMMY` di setiap bulan yang ada di file -> `MERGE ... WITH (HOLDLOCK)` per baris pada `(nik, effective_date)` -> insert batch. NIK dibandingkan menurut collation database (tidak peka huruf besar/kecil menurut laporan developer; collation tidak diperiksa penulis); JSON membandingkan NIK lowercase. File asli disimpan di **`server/data/exit-uploads/<upload_id>.xlsx`** (bukan di database, tidak disajikan `/uploads`, di `.gitignore`); dihapus lagi bila transaksi gagal.
+
+**Seed dummy**: setiap boot (bila `SEED_DEMO_DATA` bukan `false`) `topUpExitInterviewSeed()` / `topUpStoreExitSeed()` mengisi bulan Jan-Sep 2026 (`EXIT_SEED_MONTHS`) yang **belum punya baris sama sekali** dengan baris `seedData.generateExitInterviewDummy()` (deterministik, ±15% dari 205 baris per bulan) + batch `seed-exit-<YYYY-MM>` (`uploaded_by` "Seed (dummy)"). Log: `Seeded demo Exit Interview rows for: 2026-01, ...`. Bulan yang punya baris apa pun tidak disentuh, jadi data asli tidak pernah dicampur dummy. Store JSON baru juga langsung diisi dummy.
+
+**Data di database utama** (laporan developer): Jan-Agu 2026 dummy 1.613 baris; Sep 2026 = 205 baris `TEMPLATE_IMPORT` dari file asli (menggantikan 203 baris dummy September; direktorat/divisi dummy, NIK pengganti `<NIK>-<nomor baris>`); total 1.818.
+
+**Ekspor / migrasi / reset**: `exportToJson.js` membawa `exitInterviews` dan `exitInterviewUploads` (log menampilkan `exit interviews <n>`); `migrate.js` mengimpornya (`exit_interviews`, `exit_interview_uploads` di hitungan verifikasi); `dropAllTables()` (`--reset`) menghapus kedua tabel. **Perhatian**: ekspor dari database yang berisi baris `TEMPLATE_IMPORT`/`UPLOAD` memuat data karyawan asli - jangan commit `server/data/store.json` atau `store.from-sql.json` hasil ekspor itu. `server/data/store.json` di repo tidak berisi data exit, jadi `migrate --reset` menghapus data exit asli; server lalu mengisi dummy Jan-Sep 2026 saat start, dan file September harus diimpor ulang (`npm run exit:import-template`).
+
+**Backup**: `.bak` memuat kedua tabel; folder `server/data/exit-uploads/` tidak - salin terpisah bila file asli perlu disimpan.
+
+Pemeriksaan:
+
+```sql
+SELECT FORMAT(effective_date, 'yyyy-MM') AS ym, source, COUNT(*) AS n
+FROM dbo.px_exit_interviews GROUP BY FORMAT(effective_date, 'yyyy-MM'), source ORDER BY ym, source;
+```
+
+Diverifikasi oleh Modul 47 (`docs/07` §32).

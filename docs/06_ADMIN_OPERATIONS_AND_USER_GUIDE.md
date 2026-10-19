@@ -355,3 +355,33 @@ Setelah mengubah `.env`, restart backend. Bila batas ringkasan habis, kartu vide
 - Menghapus metrik ESS di Admin Parameters ikut menghapus hasil ESS dan file aslinya.
 - Data ESS per responden lama dihapus sekali saat upgrade ke v2.32.0. Data saat ini (November 2025) adalah seed: metrik 9 = nilai file user, metrik ESS lain **dummy** - ganti dengan mengunggah hasil asli.
 - **Pengingat e-mail**: metrik ESS bersifat tahunan dengan batas 25 November; mulai 25 November 2026 PIC akan menerima pengingat bila hasil ESS 2026 belum diunggah. Hasil ESS dianggap data bulan periodenya.
+
+---
+
+## Dashboard Exit Interview (v2.38.0)
+
+**Siapa**: semua akun bisa membuka tab **Exit Interview** di Header. Admin melihat data bankwide dan mendapat toolbar data (template, upload, export, riwayat). User hanya melihat **agregat** direktorat dalam cakupannya (direktorat lain ditolak); tidak ada NIK, nama, atau jawaban terbuka yang dikirim ke User. Dari detail metrik 26 (Exit Survey) tombol **Open Exit Interview Dashboard** membuka tab yang sama.
+
+**Filter**: memakai filter Header. YTD = Januari s.d. bulan berjalan tahun itu, MTD = satu bulan; periode dihitung dari **Effective Resignation Date**. Filter Directorate/Sub-Directorate memakai kolom Directorate/Division di file.
+
+**Mengunggah data (Admin)**
+1. Tab Exit Interview -> **Download Template (.xlsx)**. Baris 1 = judul, baris 2 = nama kolom (format "Termination Report" HR, kolom A..AG) + kolom **Directorate** dan **Division**, baris 3 = contoh (hapus sebelum upload).
+2. Isi satu baris per karyawan yang keluar. Kolom **Directorate wajib** dan harus nama direktorat master (sama dengan filter Header); Division boleh kosong, tetapi bila diisi harus divisi dari direktorat itu. Tanggal: tanggal Excel, `YYYY-MM-DD` atau `dd/mm/yyyy`. Skor pernyataan karier 1-6 atau `-`. Ya/Tidak: `Yes`/`No` (juga `Ya`/`Tidak`). Rincian semua kolom: `docs/02` §5.4.
+3. **Upload (.xlsx)** -> pilih file -> **Upload**. Hanya `.xlsx`, maks 20 MB; CSV dan `.xls` ditolak.
+4. Bila ditolak, tidak ada satu baris pun yang tersimpan; tabel Row / Column / Problem menunjukkan semua baris yang harus diperbaiki. Perbaiki lalu unggah ulang file utuh.
+5. Bila sukses, pesan menyebut jumlah baris baru, baris yang di-update, dan baris dummy yang diganti. Riwayat ada di **Upload history**.
+
+**Aturan yang perlu diketahui**
+- **Unggah ulang = update**: baris dengan NIK dan Effective Resignation Date yang sama dengan data tersimpan **diperbarui** (bukan digandakan); NIK yang sama dengan tanggal lain dianggap exit lain. NIK + tanggal yang muncul dua kali dalam satu file ditolak.
+- **Data asli menggantikan dummy per bulan**: bulan Januari-September 2026 berisi data dummy sampai ada data asli. Begitu satu bulan diunggah (atau diimpor), **semua** baris dummy bulan itu dihapus dan diganti isi file. Bulan yang sudah punya baris tidak pernah diisi dummy lagi saat server start. Untuk database produksi, set `SEED_DEMO_DATA=false` sebelum start pertama agar dummy tidak pernah dibuat.
+- Belum ada tombol hapus upload atau baris exit; koreksi dilakukan dengan mengunggah ulang baris yang sama (update).
+- **Export CSV (current filter)** mengunduh semua baris per karyawan untuk periode + filter yang sedang aktif (termasuk nama dan jawaban terbuka). Simpan hanya di lokasi internal.
+- Pengelompokan jawaban (faktor penarik, tema A/B, nama perusahaan standar, jawaban "tidak menjawab") memakai daftar kata kunci di setting `exit_interview_*` (`docs/04` "Catatan v2.38.0"). Belum ada layar untuk mengubahnya; Admin dapat memakai `PUT /api/admin/settings/<key>`. Perubahan langsung berlaku di dashboard.
+- **Ukuran grup kecil**: belum ada batas minimum jumlah orang. User yang memfilter satu divisi dengan sedikit exit bisa mengenali individu dari angka kecil - perhatikan ini saat memberi cakupan divisi.
+
+**Impor file September asli (lokal saja)**
+- File asli `docs/Template Report Exit Interview.xlsx` berisi data per karyawan; file ini ada di `.gitignore` dan **tidak boleh** di-commit (repo tersambung ke GitHub). File ini tidak punya kolom Directorate dan NIK-nya tersamar.
+- Impor ke SQL Server lokal: `npm run exit:import-template -- "<path ke file .xlsx>"`, mis. `npm run exit:import-template -- "docs/Template Report Exit Interview.xlsx"`. Skrip memberi setiap baris direktorat/divisi **dummy** (tetap sama setiap kali dijalankan) dan NIK pengganti `<NIK>-<nomor baris>`, menyimpan dengan sumber "Template import", dan mengganti dummy bulan itu. Menjalankan ulang meng-update baris yang sama. Output terakhir `IMPORT_OK`; bila ditolak, error per baris dicetak dan tidak ada yang tersimpan.
+- Salinan file setiap upload/impor disimpan di `server/data/exit-uploads/` (di `.gitignore`, tidak bisa dibuka lewat browser).
+- **Jangan commit ekspor yang berisi baris asli**: `npm run db:export` (apalagi `-- --replace`, yang menulis ke `server/data/store.json`) ikut membawa semua baris exit interview, termasuk hasil impor template. File CSV hasil **Export CSV** juga jangan dimasukkan ke repo.
+- Setelah `node server/db/migrate.js --reset` (memuat `store.json` tanpa data exit) data asli hilang dan server mengisi dummy lagi saat start; jalankan ulang skrip impor bila perlu.

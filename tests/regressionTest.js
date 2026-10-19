@@ -5966,6 +5966,260 @@ async function runRegressionSuite() {
     });
   }
 
+  // --- MODULE 47 (v2.38.0): EXIT INTERVIEW DASHBOARD - UPLOAD (.XLSX), AGGREGATES, PERIOD / DIRECTORATE FILTER, USER SCOPE ---
+  // Fixtures live in months no other data uses (March + November 2019, January 2030) and are removed at the end by NIK prefix
+  // and by this run's upload ids (SQL Server only: the JSON server keeps its data in memory, so the module is skipped there).
+  console.log('\n📦 MODULE 47: Exit Interview dashboard - .xlsx upload, aggregates, YTD/MTD + directorate filter, USER scope (Positive & Negative Testing)');
+  if (require('../server/db/storage').backend !== 'sql') {
+    console.log('  ⏭️  SKIPPED: Module 47 needs the SQL Server backend (its fixtures are removed through SQL)');
+  } else if (!skipModuleBlock(47)) {
+    const exitSvc = require('../server/services/exitInterviewService');
+    const { buildXlsx: buildXlsx47, readFirstSheet: readSheet47 } = require('../server/services/xlsxUtils');
+    const sql47 = require('mssql');
+    const directory47 = await (await rawFetch(`${BASE_URL}/api/directorates`)).json();
+    const dirA = directory47.find(d => d.divisions.length > 0);
+    const dirB = directory47.find(d => d.directorate_name !== dirA.directorate_name);
+    const divA = dirA.divisions[0];
+    const FIN = 'Perbankan / Asuransi / Keuangan Lainnya';
+    const HEAD47 = [...exitSvc.TEMPLATE_COLUMNS.map(c => c.title), 'Directorate', 'Division'];
+    const serial = iso => (Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) - Date.UTC(1899, 11, 30)) / 86400000;
+    // one Termination Report row (35 cells); scores = up to 15 values, the rest "-"
+    const fx = o => [o.nik, `Regression Exit ${o.nik}`, o.date, o.d || 'NORMAL_RESIGNATION', o.e, 'U7', '70', o.h || '-', o.i || '-', 'Officer',
+      o.k || '-', '-', o.m || '-', o.n || '-', ...Array.from({ length: 15 }, (_, i) => (o.scores && o.scores[i] !== undefined ? o.scores[i] : '-')),
+      'Yes', 'Yes', o.af || '-', o.ag || '-', o.dir === undefined ? dirA.directorate_name : o.dir, o.div || ''];
+    const xlsx47 = rows => buildXlsx47([['Report Exit Interview (regression)'], HEAD47, ...rows], { headerRow: 1 });
+    const postExit = async (buf, fileName = 'module47.xlsx', cookie = null) => {
+      const fd = new FormData();
+      fd.append('file', new Blob([buf]), fileName);
+      return cookie ? realFetch(`${BASE_URL}/api/exit-interview/upload`, { method: 'POST', body: fd, headers: { Cookie: cookie } })
+        : fetch(`${BASE_URL}/api/exit-interview/upload`, { method: 'POST', body: fd });
+    };
+    const summary47 = async (q, cookie = null) => {
+      const r = cookie ? await realFetch(`${BASE_URL}/api/exit-interview/summary?${q}`, { headers: { Cookie: cookie } }) : await fetch(`${BASE_URL}/api/exit-interview/summary?${q}`);
+      return { status: r.status, body: await r.json() };
+    };
+    const counts47 = list => Object.fromEntries((list || []).map(i => [i.label, i.count]));
+    const FIXTURES = [
+      { nik: 'RT47-001', date: serial('2030-01-05'), e: 'MOVE_COMPANY', h: FIN, i: 'Bank Permata', k: 'Kompensasi & benefit yang lebih menarik | Jabatan / posisi lebih tinggi',
+        m: 'Kompensasi & benefit yang lebih menarik', n: 'Kurangnya kesempatan karir', scores: Array(15).fill(2), af: 'No' },
+      { nik: 'RT47-002', date: '2030-01-06', e: 'BETTER_OFFER', h: FIN, i: 'PT Bank Permata Tbk', k: 'Kompensasi & benefit yang lebih menarik', m: 'Lokasi kantor dekat rumah',
+        n: 'Target yang terlalu tinggi | Konflik internal dengan atasan atau rekan kerja', scores: [5, 5, 5, 4], af: 'Yes', div: divA },
+      { nik: 'RT47-003', date: '07/01/2030', e: 'MOVE_COMPANY', h: 'Teknologi Informasi', i: 'PT Startup Fiktif', k: 'Pekerjaan yang lebih sesuai dan disukai | Tidak ada',
+        m: 'Tidak ada', n: 'Budaya kerja tidak sesuai', scores: [4, 3], af: 'Yes', dir: dirB.directorate_name },
+      { nik: 'RT47-004', date: '2030-01-08', e: 'FAMILY' },
+      { nik: 'RT47-005', date: '2030-01-09', e: 'OWN_BUSINESS', dir: dirB.directorate_name },
+      { nik: 'RT47-006', date: '2030-01-10', d: 'END_OF_CONTRACT', e: 'END_OF_CONTRACT' },
+      { nik: 'RT47-007', date: '2030-01-11', e: 'MOVE_COMPANY', k: 'Mobil dinas', m: 'Reputasi perusahaan yang lebih baik', ag: '=HYPERLINK("http://x")' },
+      { nik: 'RT47-010', date: '2030-01-12', e: 'MOVE_COMPANY', h: FIN, i: 'Koperasi Fiktif Sejahtera', k: 'Kompensasi & benefit yang lebih menarik' },
+      { nik: 'RT47-008', date: '15/03/2019', e: 'PERSONAL' },
+      { nik: 'RT47-009', date: '2019-11-20', e: 'MOVE_COMPANY' }
+    ];
+    const runStart47 = new Date();
+    const uploadIds47 = [];
+    const userIds47 = [];
+    const filesBefore47 = fs47 => (fs47.existsSync(exitSvc.EXIT_UPLOAD_DIR) ? fs47.readdirSync(exitSvc.EXIT_UPLOAD_DIR).length : 0);
+    const fs47 = require('fs');
+    const dirFiles0 = filesBefore47(fs47);
+    let userCookie47 = null;
+    try {
+      await runTest('[POSITIVE] Admin uploads a Termination Report .xlsx (Excel serial, ISO and dd/mm/yyyy dates, extra Directorate/Division columns): 10 rows stored, audited', async () => {
+        const res = await postExit(await xlsx47(FIXTURES.map(fx)), 'module47_fixtures.xlsx');
+        const body = await res.json();
+        assert.strictEqual(res.status, 200, JSON.stringify(body).slice(0, 400));
+        uploadIds47.push(body.upload_id);
+        assert.deepStrictEqual([body.rows_imported, body.inserted_rows, body.updated_rows, body.removed_dummy_rows], [10, 10, 0, 0]);
+        assert.deepStrictEqual(body.months, ['2019-03', '2019-11', '2030-01']);
+        assert.ok(fs47.existsSync(require('path').join(exitSvc.EXIT_UPLOAD_DIR, `${body.upload_id}.xlsx`)), 'original file kept (non-public folder)');
+        const audit = await require('../server/db/storage').getAuditLog(30);
+        assert.ok(audit.some(a => a.action === 'EXIT_INTERVIEW_UPLOAD' && String(a.target).includes(body.upload_id)), 'EXIT_INTERVIEW_UPLOAD audit entry');
+        const hist = await (await fetch(`${BASE_URL}/api/exit-interview/uploads`)).json();
+        assert.ok(hist.some(u => u.upload_id === body.upload_id && u.source === 'UPLOAD' && /Regression Suite Admin|\(/.test(u.uploaded_by)));
+      });
+
+      await runTest('[POSITIVE] MTD 2030-01 bankwide: every card equals the hand-computed values of the fixtures (reasons, industry, top 10, pull factors + KPI, career buckets + average, recommend, themes A and B)', async () => {
+        const { status, body: s } = await summary47('mode=MTD&year=2030&month=01');
+        assert.strictEqual(status, 200);
+        assert.deepStrictEqual(s.counts, { total_records: 8, voluntary_records: 7, movers: 5 });
+        assert.deepStrictEqual(counts47(s.reasons.items), { 'Move company': 5, Family: 1, 'Own business': 1 });
+        assert.strictEqual(s.reasons.base, 7);
+        assert.deepStrictEqual([s.industry.base, counts47(s.industry.items)], [4, { Financial: 3, 'Non-financial': 1 }]);
+        assert.strictEqual(s.industry.items[0].pct, 75);
+        assert.deepStrictEqual([s.top_financial.base, s.top_financial.items.map(i => [i.label, i.count])], [3, [['PT Bank Permata Tbk', 2], ['Koperasi Fiktif Sejahtera', 1]]]);
+        assert.deepStrictEqual([s.pull_factors.base, counts47(s.pull_factors.items), s.pull_factors.kpi.pct], [5, { Compensation: 3, Position: 1, Job: 1, Reputation: 0, Other: 1 }, 60]);
+        assert.deepStrictEqual([s.career.base, s.career.buckets.map(b => b.count), s.career.average, s.career.negative, s.career.positive], [3, [0, 1, 0, 1, 1, 0], 3.42, 1, 2]);
+        assert.deepStrictEqual([s.recommend.base, counts47(s.recommend.items)], [3, { Yes: 2, No: 1 }]);
+        assert.deepStrictEqual([s.themes_open.base, counts47(s.themes_open.items)], [3, { 'Compensation & benefits': 1, 'Location / commute': 1, 'Company reputation': 1 }]);
+        const b = s.themes_internal;
+        assert.deepStrictEqual([b.negative_base, b.positive_base], [1, 2]);
+        const cellOf = label => { const i = b.items.find(x => x.label === label); return i ? [i.negative.count, i.positive.count] : null; };
+        assert.deepStrictEqual(cellOf('Career progression & certainty'), [1, 0]);
+        assert.deepStrictEqual(cellOf('Workload, targets & role fit'), [0, 1]);
+        assert.deepStrictEqual(cellOf('Leadership, fairness & voice'), [0, 1]);
+        assert.deepStrictEqual(cellOf('Work environment & culture'), [0, 1]);
+        assert.strictEqual(b.items.length, 4);
+        assert.ok(/^January 2030 \| 7 voluntary exit records as of January 2030$/.test(s.subtitle), s.subtitle);
+      });
+
+      await runTest('[POSITIVE] Period window on Effective Resignation Date: YTD 2019 = both 2019 rows, MTD 2019-03 = only March; YTD of a future year (2030) is empty', async () => {
+        const ytd = (await summary47('mode=YTD&year=2019')).body;
+        assert.deepStrictEqual([ytd.counts.total_records, ytd.counts.voluntary_records, ytd.counts.movers], [2, 2, 1]);
+        assert.strictEqual(ytd.period.label, 'January - December 2019');
+        const mtd = (await summary47('mode=MTD&year=2019&month=3')).body;
+        assert.deepStrictEqual([mtd.counts.total_records, mtd.counts.movers, counts47(mtd.reasons.items)], [1, 0, { Personal: 1 }]);
+        const future = (await summary47('mode=YTD&year=2030')).body;
+        assert.strictEqual(future.counts.total_records, 0, 'a future year has no elapsed month');
+        assert.ok(/No exit records/.test(future.subtitle));
+        assert.strictEqual(future.career.base, 0);
+      });
+
+      await runTest('[POSITIVE] Directorate and division filter: directorate B = its 2 rows, directorate A + division = the 1 row of that division', async () => {
+        const b = (await summary47(`mode=MTD&year=2030&month=01&directorate=${encodeURIComponent(dirB.directorate_name)}`)).body;
+        assert.deepStrictEqual([b.counts.total_records, b.counts.voluntary_records, b.counts.movers, b.scope.label], [2, 2, 1, dirB.directorate_name]);
+        const a = (await summary47(`mode=MTD&year=2030&month=01&directorate=${encodeURIComponent(dirA.directorate_name)}&sub_directorate=${encodeURIComponent(divA)}`)).body;
+        assert.deepStrictEqual([a.counts.total_records, a.counts.movers, a.recommend.base], [1, 1, 1]);
+      });
+
+      await runTest('[NEGATIVE] Bad filters answer 400 (month 13, month missing for MTD, year "20x6") - never a 500', async () => {
+        for (const q of ['mode=MTD&year=2030&month=13', 'mode=MTD&year=2030', 'mode=YTD&year=20x6', 'mode=MTD&year=2030&month=1a']) {
+          const r = await summary47(q);
+          assert.strictEqual(r.status, 400, q);
+          assert.ok(r.body.error, q);
+        }
+      });
+
+      await runTest('[POSITIVE] Re-upload of an existing NIK + date UPDATES that row (upsert) and a new row is inserted', async () => {
+        const changed = FIXTURES.find(f => f.nik === 'RT47-002');
+        const res = await postExit(await xlsx47([fx({ ...changed, af: 'No' }), fx({ nik: 'RT47-011', date: '2030-01-13', e: 'STUDY' })]), 'module47_upsert.xlsx');
+        const body = await res.json();
+        assert.strictEqual(res.status, 200, JSON.stringify(body).slice(0, 300));
+        uploadIds47.push(body.upload_id);
+        assert.deepStrictEqual([body.inserted_rows, body.updated_rows], [1, 1]);
+        const s = (await summary47('mode=MTD&year=2030&month=01')).body;
+        assert.deepStrictEqual([s.counts.total_records, counts47(s.recommend.items)], [9, { Yes: 1, No: 2 }]);
+        assert.strictEqual(counts47(s.reasons.items).Study, 1);
+      });
+
+      await runTest('[NEGATIVE] Upload validation refuses the whole file (400, nothing stored): unknown directorate, bad date, score 7, duplicate NIK + date, missing NIK, division of another directorate, no Directorate column', async () => {
+        const good = fx({ nik: 'RT47N-001', date: '2030-02-03', e: 'MOVE_COMPANY' });
+        const cases = [
+          ['unknown directorate', [good, fx({ nik: 'RT47N-002', date: '2030-02-04', e: 'FAMILY', dir: 'Direktorat Fiktif 47' })], /not in the directorate master/],
+          ['bad date', [good, fx({ nik: 'RT47N-003', date: '31/02/2030', e: 'FAMILY' })], /Effective Resignation Date must be a date/],
+          ['score 7', [good, fx({ nik: 'RT47N-004', date: '2030-02-05', e: 'FAMILY', scores: [5, 7] })], /1-6/],
+          ['duplicate', [good, fx({ nik: 'RT47N-001', date: '2030-02-03', e: 'FAMILY' })], /more than once/],
+          ['missing NIK', [good, fx({ nik: '', date: '2030-02-06', e: 'FAMILY' })], /NIK is empty/],
+          ['foreign division', [good, fx({ nik: 'RT47N-005', date: '2030-02-07', e: 'FAMILY', div: 'Division Fiktif 47' })], /does not belong/]
+        ];
+        for (const [name, rows, re] of cases) {
+          const r = await postExit(await xlsx47(rows), `module47_${name.replace(/\s+/g, '_')}.xlsx`);
+          const body = await r.json();
+          assert.strictEqual(r.status, 400, name);
+          assert.ok(Array.isArray(body.errors) && body.errors.some(e => re.test(e.reason) && e.row_number), `${name}: ${JSON.stringify(body.errors).slice(0, 200)}`);
+        }
+        const noDir = await buildXlsx47([['t'], exitSvc.TEMPLATE_COLUMNS.map(c => c.title), good.slice(0, 33)], { headerRow: 1 });
+        const r = await postExit(noDir, 'module47_nodir.xlsx');
+        assert.strictEqual(r.status, 400);
+        assert.ok(/Directorate/.test(JSON.stringify(await r.json())));
+        const s = (await summary47('mode=MTD&year=2030&month=02')).body;
+        assert.strictEqual(s.counts.total_records, 0, 'none of the refused files stored a row');
+      });
+
+      await runTest('[NEGATIVE] Not an .xlsx: a .csv file and garbage bytes named .xlsx are refused with 400; no file field -> 400', async () => {
+        const csv = await postExit(Buffer.from('NIK,EMP NAME\nRT47N-9,x\n'), 'module47.csv');
+        assert.strictEqual(csv.status, 400);
+        assert.ok(/\.xlsx/.test((await csv.json()).error));
+        const junk = await postExit(Buffer.from('this is not a zip'), 'module47_junk.xlsx');
+        assert.strictEqual(junk.status, 400);
+        assert.ok(/not a valid Excel/i.test((await junk.json()).error));
+        const none = await fetch(`${BASE_URL}/api/exit-interview/upload`, { method: 'POST', body: new FormData() });
+        assert.strictEqual(none.status, 400);
+        assert.strictEqual(filesBefore47(fs47) - dirFiles0, uploadIds47.length, 'refused files were not kept on disk');
+      });
+
+      await runTest('[POSITIVE] Template download is a valid .xlsx: title row, header row with NIK ... Directorate + Division (35 columns), an example row that passes the validator', async () => {
+        const r = await fetch(`${BASE_URL}/api/exit-interview/template`);
+        assert.strictEqual(r.status, 200);
+        assert.ok(/spreadsheetml/.test(r.headers.get('content-type')));
+        const rows = await readSheet47(Buffer.from(await r.arrayBuffer()));
+        const header = rows.find(x => x.row_number === 2).cells.map(c => c && c.value);
+        assert.deepStrictEqual([header.length, header[0], header[2], header[33], header[34]], [35, 'NIK', 'Effective Resignation Date', 'Directorate', 'Division']);
+        const v = exitSvc.validateExitSheet(rows, directory47);
+        assert.deepStrictEqual([v.errors.length, v.rows.length], [0, 1]);
+      });
+
+      await runTest('[POSITIVE] Admin CSV export follows the filter and escapes formulas; [NEGATIVE] no NIK of another month leaks into it', async () => {
+        const r = await fetch(`${BASE_URL}/api/exit-interview/export?mode=MTD&year=2030&month=01`);
+        assert.strictEqual(r.status, 200);
+        const text = await r.text();
+        const lines = text.replace(/^﻿/, '').split('\r\n');
+        assert.strictEqual(lines.length, 1 + 9, 'header + 9 rows of January 2030');
+        assert.ok(text.includes('RT47-001') && !text.includes('RT47-008'), 'only rows of the filter');
+        assert.ok(text.includes(`"'=HYPERLINK(""http://x"")"`), 'formula escaped');
+      });
+
+      await runTest('[POSITIVE] USER of directorate A: 200 with the aggregates of A only and NO NIK, name, unknown company name or verbatim in the payload', async () => {
+        const stamp47 = Date.now().toString(36);
+        const username = `rt47u${stamp47}`;
+        const created = await adminJson('POST', '/api/admin/users', { username, full_name: 'Regression Exit User', email: `${username}@example.test`, role: 'USER', scopes: [{ directorate: dirA.directorate_name, divisions: null }] });
+        assert.strictEqual(created.status, 201);
+        const cb = await created.json();
+        userIds47.push(cb.user.user_id);
+        const { res, cookie } = await loginAs(username, cb.temporary_password);
+        assert.strictEqual(res.status, 200);
+        const ch = await rawFetch(`${BASE_URL}/api/auth/change-password`, jsonBody('POST', { current_password: cb.temporary_password, new_password: STRONG }, cookie));
+        assert.strictEqual(ch.status, 200);
+        userCookie47 = cookie;
+        const s = await summary47('mode=MTD&year=2030&month=01', cookie);
+        assert.strictEqual(s.status, 200);
+        assert.deepStrictEqual(s.body.counts, { total_records: 7, voluntary_records: 6, movers: 4 }, 'rows of directorate A only (incl. RT47-011 of the upsert test)');
+        assert.deepStrictEqual(s.body.top_financial.items.map(i => i.label), ['PT Bank Permata Tbk'], 'unknown free-text employer hidden from a USER');
+        assert.strictEqual(s.body.top_financial.base, 3);
+        const text = JSON.stringify(s.body);
+        for (const secret of ['RT47-', 'Regression Exit', 'Koperasi Fiktif', 'HYPERLINK', 'Lokasi kantor', 'Mobil dinas']) assert.ok(!text.includes(secret), `USER payload leaks "${secret}"`);
+        const admin = JSON.stringify((await summary47('mode=MTD&year=2030&month=01')).body);
+        assert.ok(admin.includes('Koperasi Fiktif') && !admin.includes('RT47-'), 'the Admin sees the name list, still no NIK');
+      });
+
+      await runTest('[NEGATIVE] USER: another directorate -> 403; template / upload / history / export -> 403', async () => {
+        assert.ok(userCookie47, 'user from the previous test');
+        assert.strictEqual((await summary47(`mode=MTD&year=2030&month=01&directorate=${encodeURIComponent(dirB.directorate_name)}`, userCookie47)).status, 403);
+        for (const p of ['/api/exit-interview/template', '/api/exit-interview/uploads', '/api/exit-interview/export?mode=MTD&year=2030&month=01']) {
+          assert.strictEqual((await realFetch(`${BASE_URL}${p}`, { headers: { Cookie: userCookie47 } })).status, 403, p);
+        }
+        const up = await postExit(await xlsx47([fx({ nik: 'RT47N-U1', date: '2030-02-10', e: 'FAMILY' })]), 'module47_user.xlsx', userCookie47);
+        assert.strictEqual(up.status, 403);
+        assert.strictEqual((await realFetch(`${BASE_URL}/api/exit-interview/summary?mode=YTD&year=2026`)).status, 401, 'no login -> 401');
+      });
+
+      await runTest('[NEGATIVE] Boot top-up never touches a month that already has exit rows (seed months keep their row counts and sources; fixture months untouched)', async () => {
+        const st = require('../server/db/storage');
+        const before = JSON.stringify(await st.getExitInterviewMonthCounts());
+        const added = await st.topUpExitInterviewSeed();
+        assert.deepStrictEqual(added, [], 'every seed month already has rows');
+        assert.strictEqual(JSON.stringify(await st.getExitInterviewMonthCounts()), before);
+        const months = await st.getExitInterviewMonthCounts();
+        assert.ok(months.some(m => m.year === 2030 && m.month === 1 && m.dummy === 0 && m.total === 9));
+      });
+    } finally {
+      const pool = await new sql47.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
+        user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
+      try {
+        // only this module's own rows: the fixture NIK prefixes and the upload batches made by this run
+        await pool.request().query("DELETE FROM dbo.px_exit_interviews WHERE nik LIKE 'RT47-%' OR nik LIKE 'RT47N-%'");
+        const ids = [...uploadIds47];
+        (await pool.request().input('t', sql47.DateTime2(3), runStart47).query("SELECT upload_id FROM dbo.px_exit_interview_uploads WHERE file_name LIKE 'module47[_]%' AND uploaded_at >= DATEADD(minute, -5, @t)"))
+          .recordset.forEach(r => { if (!ids.includes(r.upload_id)) ids.push(r.upload_id); });
+        for (const id of ids) {
+          await pool.request().input('u', sql47.NVarChar, id).query('DELETE FROM dbo.px_exit_interviews WHERE upload_id = @u; DELETE FROM dbo.px_exit_interview_uploads WHERE upload_id = @u');
+          const f = require('path').join(exitSvc.EXIT_UPLOAD_DIR, `${id}.xlsx`);
+          if (fs47.existsSync(f)) fs47.unlinkSync(f);
+        }
+      } finally {
+        await pool.close();
+      }
+      for (const id of userIds47) await adminJson('DELETE', `/api/admin/users/${id}`);
+    }
+  }
+
   // --- SUMMARY ---
   console.log('\n================================================================');
   console.log(`📊 REGRESSION TEST SUMMARY: ${passedTests}/${totalTests} Tests Passed (${failedTests} Failed)${SKIP_MODULES.size ? `, ${skippedTests} test(s) SKIPPED + whole module block(s) skipped: modules ${[...SKIP_MODULES].join(', ')}` : ''}`);

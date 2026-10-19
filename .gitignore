@@ -10,3 +10,9 @@ server/data/auth.json
 server/tmp-transcribe/
 # original ESS summary uploads (audit trail, v2.32.0) - kept on the server, never committed
 server/data/ess-uploads/
+# original Exit Interview uploads (per-employee data, v2.38.0) - kept on the server, never committed
+server/data/exit-uploads/
+# the real September 2026 exit interview report (per-employee data) stays local - import it with npm run exit:import-template
+docs/Template Report Exit Interview.xlsx
+# default output of npm run db:export - may contain real per-employee rows (exit interviews, v2.38.0); never commit
+server/data/store.from-sql.json

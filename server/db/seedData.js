@@ -1456,6 +1456,163 @@ function generateInitialEssResults() {
 
 const { results: initialEssResults, uploads: initialEssUploads } = generateInitialEssResults();
 
+// Exit Interview demo rows (v2.38.0), source 'SEED_DUMMY'. Generated - deterministically, one seeded PRNG per month - from
+// AGGREGATE distributions of the September 2026 "Termination Report" (category frequencies, option labels, score shares)
+// and the voluntary-exit totals of the "exit interview dashboard template" deck. No employee row, name or free-text answer
+// of that file is copied here. Months January - September 2026; the storage boot top-up inserts a month only while it has
+// no exit row at all, and real rows (upload / template import) of a month replace that month's dummy rows.
+const EXIT_SEED_MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(month => ({ year: 2026, month }));
+const EXIT_SEED_ROWS_PER_MONTH = 205; // +/-15% per month
+const EXIT_LEAVING_REASONS = [ // [LEAVING REASON, weight] - September 2026 counts
+  ['NORMAL_RESIGNATION', 121], ['END_OF_CONTRACT', 33], ['NORMAL_RETIREMENT', 18], ['END_OF_EDUCATION_PROGRAM', 8],
+  ['DO_NOT_PASS_PROBATION', 8], ['CANCEL_HIRE', 7], ['PERJANJIAN_BERSAMA', 6], ['DO_NOT_PASS_EDUCATION', 4]
+];
+const EXIT_RESIGNATION_DETAILS = [ // LEAVING REASON DETAIL of a NORMAL_RESIGNATION - deck totals (Move company 584 split 42:27)
+  ['MOVE_COMPANY', 355], ['BETTER_OFFER', 229], ['FAMILY', 164], ['PERSONAL', 155], ['OWN_BUSINESS', 97], ['STUDY', 41],
+  ['HEALTH', 21], ['PERFORMANCE_ISSUE', 5]
+];
+const EXIT_PB_DETAILS = [['NON_COMPLIANCE_PB', 1], ['PERFORMANCE_ISSUE_PB', 1], ['FRAUD_PB', 1]];
+const EXIT_GRADES = [['U7', 44], ['U10', 40], ['U8', 32], ['MT', 30], ['U6', 25], ['U9', 18], ['U5', 6], ['U4', 5], ['U1', 2], ['U2', 1], ['U3', 1], ['UNG', 1]];
+const EXIT_FINANCIAL_INDUSTRY = 'Perbankan / Asuransi / Keuangan Lainnya';
+const EXIT_FINANCIAL_SHARE = 0.666;
+const EXIT_OTHER_INDUSTRIES = ['Teknologi Informasi', 'Media / Periklanan', 'Manufaktur', 'Otomotif', 'Ritel', 'Telekomunikasi',
+  'Logistik', 'Pendidikan', 'Kesehatan', 'Konsultan', 'Travel & Pariwisata', 'Energi / Pertambangan', 'Properti', 'Wiraswasta'];
+const EXIT_FINANCIAL_COMPANIES = [ // standardized legal names, weights ~ the deck's top-10 + a tail of other institutions
+  ['PT Bank Danamon Indonesia Tbk', 44], ['PT Bank Maybank Indonesia Tbk', 44], ['PT Bank Permata Tbk', 40], ['PT Bank OCBC NISP Tbk', 21],
+  ['PT Bank SMBC Indonesia Tbk', 15], ['PT Bank Sinarmas Tbk', 15], ['PT Bank DBS Indonesia', 12], ['PT Bank Mandiri (Persero) Tbk', 10],
+  ['PT Bank Mega Tbk', 9], ['PT Bank UOB Indonesia', 9], ['PT Bank KEB Hana Indonesia', 7], ['PT Bank Central Asia Tbk', 7],
+  ['PT Bank Tabungan Negara (Persero) Tbk', 6], ['Citibank N.A. Indonesia', 6], ['PT Bank Rakyat Indonesia (Persero) Tbk', 5],
+  ['PT Bank Negara Indonesia (Persero) Tbk', 5], ['PT Bank Syariah Indonesia Tbk', 5], ['PT Bank HSBC Indonesia', 4],
+  ['PT Bank Panin Indonesia Tbk', 4], ['PT Bank Jago Tbk', 3], ['PT Asuransi Jiwa Sejahtera (dummy)', 4], ['PT Multifinance Nusantara (dummy)', 4]
+];
+const EXIT_OTHER_COMPANIES = ['PT Solusi Digital Nusantara (dummy)', 'PT Media Kreasi Indonesia (dummy)', 'PT Manufaktur Jaya Abadi (dummy)',
+  'PT Ritel Sejahtera (dummy)', 'PT Logistik Prima (dummy)', 'PT Telekomunikasi Mandala (dummy)', 'PT Konsultan Bisnis Utama (dummy)'];
+const EXIT_POSITIONS = ['Relationship Manager', 'Account Officer', 'Credit Analyst', 'Branch Manager', 'Sales Executive', 'Assistant Manager',
+  'Manager', 'Senior Officer', 'Officer', 'Analyst', 'Team Leader', 'Supervisor', 'Business Development'];
+// Multi-select option labels of the exit form (K, L, M) with the share of answering rows that tick each one.
+const EXIT_MOVE_OPTIONS = [
+  ['Kompensasi & benefit yang lebih menarik', 0.66], ['Jabatan / posisi lebih tinggi', 0.16], ['Pekerjaan yang lebih sesuai dan disukai', 0.15],
+  ['Reputasi perusahaan yang lebih baik', 0.03]
+];
+// Short neutral answers outside the option list (written for the demo, not taken from the file) -> the "Other" groups.
+const EXIT_OTHER_ANSWERS = ['Lokasi kantor lebih dekat', 'Jam kerja lebih fleksibel', 'Waktu lebih banyak untuk keluarga'];
+const EXIT_INTERNAL_OPTIONS = [ // N, [label, % when career-positive, % when career-negative]
+  ['Kurangnya kesempatan karir', 43, 70], ['Kompensasi & Benefit yang tidak kompetitif', 37, 45], ['Target yang terlalu tinggi', 35, 30],
+  ['Pekerjaan yang tidak sesuai', 26, 25], ['Lingkungan kerja yang tidak mendukung', 21, 40], ['Budaya kerja tidak sesuai', 15, 30],
+  ['Kurangnya pelatihan & pengembangan', 14, 25], ['Kurangnya penyediaan infrastruktur & fasilitas kerja', 5, 8],
+  ['Tidak ada tantangan pekerjaan lagi', 5, 5], ['Konflik internal dengan atasan atau rekan kerja', 4, 20]
+];
+const EXIT_CAREER_LEVELS = [[1, 2.4], [2, 4.1], [3, 8.0], [4, 24.8], [5, 45.7], [6, 14.9]]; // respondent level 1-6 (deck shares, %)
+const EXIT_ANSWER_SHARE = { mover: 0.9, voluntary: 0.75, other: 0.12 }; // share of rows that filled in the questionnaire
+// Directorate weights = the ESS participation sizes (+ a floor so that small directorates still have exits most months).
+const EXIT_DIRECTORATE_FLOOR = 150;
+
+function mulberry32(seedValue) {
+  let a = seedValue >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// directorates: [{ directorate_name, divisions }] (the master); defaults to the seed master.
+function generateExitInterviewDummy(directorates = initialDirectorates) {
+  const rows = [];
+  let seq = 0;
+  const dirWeights = (directorates || []).map(d => {
+    const ess = ESS_SEED_PARTICIPATION.find(([name]) => name === d.directorate_name);
+    return [d, (ess ? ess[1] : 100) + EXIT_DIRECTORATE_FLOOR];
+  });
+  EXIT_SEED_MONTHS.forEach(({ year, month }) => {
+    const rnd = mulberry32(year * 100 + month + 7919);
+    const pick = list => { const total = list.reduce((s, x) => s + x[1], 0); let r = rnd() * total; for (const x of list) { r -= x[1]; if (r < 0) return x[0]; } return list[list.length - 1][0]; };
+    const one = list => list[Math.floor(rnd() * list.length)];
+    const ticks = options => options.filter(([, p]) => rnd() < p).map(([label]) => label);
+    const mm = String(month).padStart(2, '0');
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const count = Math.round(EXIT_SEED_ROWS_PER_MONTH * (0.85 + 0.3 * rnd()));
+    for (let i = 0; i < count; i++) {
+      seq++;
+      const reason = pick(EXIT_LEAVING_REASONS);
+      const detail = reason === 'NORMAL_RESIGNATION' ? pick(EXIT_RESIGNATION_DETAILS) : (reason === 'PERJANJIAN_BERSAMA' ? pick(EXIT_PB_DETAILS) : reason);
+      const voluntary = reason === 'NORMAL_RESIGNATION';
+      const mover = voluntary && (detail === 'MOVE_COMPANY' || detail === 'BETTER_OFFER');
+      const answered = rnd() < (mover ? EXIT_ANSWER_SHARE.mover : (voluntary ? EXIT_ANSWER_SHARE.voluntary : EXIT_ANSWER_SHARE.other));
+      const dir = dirWeights.length ? pick(dirWeights) : null;
+      const divisions = dir && Array.isArray(dir.divisions) ? dir.divisions : [];
+      const row = {
+        upload_id: `seed-exit-${year}-${mm}`,
+        nik: `D${String(year).slice(2)}${mm}${String(i + 1).padStart(4, '0')}`,
+        employee_name: `Dummy Employee ${String(seq).padStart(4, '0')}`,
+        effective_date: `${year}-${mm}-${String(1 + Math.floor(rnd() * lastDay)).padStart(2, '0')}`,
+        leaving_reason: reason,
+        leaving_reason_detail: detail,
+        grade: pick(EXIT_GRADES),
+        score_factor: rnd() < 0.45 ? '0' : String(Math.max(30, Math.min(90, Math.round(68 + (rnd() + rnd() + rnd() - 1.5) * 24)))),
+        directorate: dir ? dir.directorate_name : null,
+        division: divisions.length && rnd() < 0.85 ? one(divisions) : null,
+        destination_industry: null, new_company: null, new_company_std: null, new_position: null,
+        pull_factors: null, improve_factors: null, new_company_offers: null, internal_factors: null,
+        career_scores: null, alumni_network: null, privacy_consent: null, recommend: null, suggestions: null,
+        source: 'SEED_DUMMY'
+      };
+      if (answered) {
+        const level = pick(EXIT_CAREER_LEVELS);
+        const negative = level <= 3;
+        row.career_scores = Array.from({ length: 15 }, (_, q) => {
+          const r = rnd();
+          let s = level + (r < 0.2 ? -1 : (r > 0.8 ? 1 : 0));
+          if (q === 1 && rnd() < 0.35) s -= 1; // statement 2 (fair promotion) runs a little lower
+          return Math.max(1, Math.min(6, s));
+        });
+        const multi = options => { const t = ticks(options); if (rnd() < 0.07) t.push(one(EXIT_OTHER_ANSWERS)); return (t.length ? t : [one(options)[0]]).join(' | '); };
+        if (mover) {
+          if (rnd() < 0.95) {
+            const financial = rnd() < EXIT_FINANCIAL_SHARE;
+            row.destination_industry = financial ? EXIT_FINANCIAL_INDUSTRY : one(EXIT_OTHER_INDUSTRIES);
+            row.new_company = rnd() < 0.05 ? null : (financial ? pick(EXIT_FINANCIAL_COMPANIES) : one(EXIT_OTHER_COMPANIES));
+            row.new_company_std = row.new_company;
+          }
+          row.new_position = rnd() < 0.9 ? one(EXIT_POSITIONS) : null;
+          row.pull_factors = multi(EXIT_MOVE_OPTIONS);
+          row.new_company_offers = multi(EXIT_MOVE_OPTIONS);
+        } else if (voluntary && rnd() < 0.25) {
+          row.destination_industry = one(EXIT_OTHER_INDUSTRIES);
+        }
+        row.improve_factors = multi(EXIT_MOVE_OPTIONS);
+        const internal = EXIT_INTERNAL_OPTIONS.map(([label, pos, neg]) => [label, (negative ? neg : pos) / 100]);
+        const picked = ticks(internal);
+        row.internal_factors = (picked.length ? picked : [EXIT_INTERNAL_OPTIONS[0][0]]).join(' | ');
+        row.alumni_network = rnd() < 0.84 ? 'Yes' : 'No';
+        row.privacy_consent = 'Yes';
+        row.recommend = rnd() < (negative ? 0.7 : 0.95) ? 'Yes' : 'No';
+      }
+      rows.push(row);
+    }
+  });
+  return rows;
+}
+const initialExitInterviews = generateExitInterviewDummy();
+
+// A deterministic directorate (+ division) for one numeric key - e.g. a row number of the real September template, which
+// has no directorate column (scripts/import-exit-template.js). Same weights as the demo rows above.
+function exitDummyOrgUnit(directorates, key) {
+  const list = (directorates && directorates.length ? directorates : initialDirectorates).map(d => {
+    const ess = ESS_SEED_PARTICIPATION.find(([name]) => name === d.directorate_name);
+    return [d, (ess ? ess[1] : 100) + EXIT_DIRECTORATE_FLOOR];
+  });
+  const rnd = mulberry32((parseInt(key, 10) || 0) * 7919 + 104729);
+  const total = list.reduce((s, x) => s + x[1], 0);
+  let r = rnd() * total;
+  let dir = list[list.length - 1][0];
+  for (const x of list) { r -= x[1]; if (r < 0) { dir = x[0]; break; } }
+  const divisions = Array.isArray(dir.divisions) ? dir.divisions : [];
+  return { directorate: dir.directorate_name, division: divisions.length && rnd() < 0.85 ? divisions[Math.floor(rnd() * divisions.length)] : null };
+}
+
 // Per-metric operational drilldown records for OUTCOME metrics whose "raw data" is an internal
 // HR operational breakdown table (not individual survey responses) — e.g. recruitment SLA by
 // unit, approval-stage compliance, hiring channel mix, recognition categories, attrition by
@@ -1566,6 +1723,150 @@ const initialAppSettings = {
       { value: 'ONLINE', label: 'Online Streaming (Zoom / Teams)' }
     ],
     description: 'Pilihan format pelaksanaan pada form Create Signature Event'
+  },
+  // Exit Interview dashboard (v2.38.0) - rule-based grouping of the answers, no AI. Every list is { value, label }:
+  // value = a keyword/phrase that must appear at the START of a word in the answer (case, punctuation and extra spaces
+  // ignored), label = the group it counts for. One answer may hit several groups; the longest keyword is tried first.
+  exit_interview_k_factors: {
+    value: [
+      { value: 'kompensasi', label: 'Compensation' },
+      { value: 'benefit', label: 'Compensation' },
+      { value: 'jabatan', label: 'Position' },
+      { value: 'posisi lebih tinggi', label: 'Position' },
+      { value: 'pekerjaan yang lebih sesuai', label: 'Job' },
+      { value: 'reputasi', label: 'Reputation' }
+    ],
+    description: 'Exit Interview kartu 4 (kolom K): kata kunci -> faktor penarik (Compensation / Position / Job / Reputation); jawaban lain = Other'
+  },
+  exit_interview_m_themes: {
+    value: [
+      { value: 'kompensasi', label: 'Compensation & benefits' },
+      { value: 'benefit', label: 'Compensation & benefits' },
+      { value: 'gaji', label: 'Compensation & benefits' },
+      { value: 'salary', label: 'Compensation & benefits' },
+      { value: 'insentif', label: 'Compensation & benefits' },
+      { value: 'bonus', label: 'Compensation & benefits' },
+      { value: 'tunjangan', label: 'Compensation & benefits' },
+      { value: 'jabatan', label: 'Higher position' },
+      { value: 'posisi lebih tinggi', label: 'Higher position' },
+      { value: 'promosi', label: 'Higher position' },
+      { value: 'pekerjaan yang lebih sesuai', label: 'Better-fit job' },
+      { value: 'jobdesk', label: 'Better-fit job' },
+      { value: 'fleksib', label: 'Better-fit job' },
+      { value: 'work life', label: 'Better-fit job' },
+      { value: 'reputasi', label: 'Company reputation' },
+      { value: 'lokasi', label: 'Location / commute' },
+      { value: 'jarak', label: 'Location / commute' },
+      { value: 'dekat', label: 'Location / commute' },
+      { value: 'domisili', label: 'Location / commute' },
+      { value: 'keluarga', label: 'Family & personal' },
+      { value: 'family', label: 'Family & personal' },
+      { value: 'menikah', label: 'Family & personal' },
+      { value: 'pribadi', label: 'Family & personal' },
+      { value: 'personal', label: 'Family & personal' },
+      { value: 'kesehatan', label: 'Family & personal' }
+    ],
+    description: 'Exit Interview slide 2 A (kolom M, apa yang ditawarkan perusahaan baru): kata kunci -> tema; jawaban lain = Other'
+  },
+  exit_interview_n_themes: {
+    value: [
+      { value: 'kurangnya kesempatan karir', label: 'Career progression & certainty' },
+      { value: 'karir', label: 'Career progression & certainty' },
+      { value: 'karier', label: 'Career progression & certainty' },
+      { value: 'jenjang', label: 'Career progression & certainty' },
+      { value: 'promosi', label: 'Career progression & certainty' },
+      { value: 'kompensasi', label: 'Compensation & recognition' },
+      { value: 'benefit', label: 'Compensation & recognition' },
+      { value: 'gaji', label: 'Compensation & recognition' },
+      { value: 'insentif', label: 'Compensation & recognition' },
+      { value: 'penghargaan', label: 'Compensation & recognition' },
+      { value: 'apresiasi', label: 'Compensation & recognition' },
+      { value: 'konflik', label: 'Leadership, fairness & voice' },
+      { value: 'atasan', label: 'Leadership, fairness & voice' },
+      { value: 'leadership', label: 'Leadership, fairness & voice' },
+      { value: 'pimpinan', label: 'Leadership, fairness & voice' },
+      { value: 'lingkungan kerja', label: 'Work environment & culture' },
+      { value: 'budaya', label: 'Work environment & culture' },
+      { value: 'pelatihan', label: 'Learning & development' },
+      { value: 'pengembangan', label: 'Learning & development' },
+      { value: 'training', label: 'Learning & development' },
+      { value: 'sertifikasi', label: 'Learning & development' },
+      { value: 'infrastruktur', label: 'Processes, tools & facilities' },
+      { value: 'fasilitas', label: 'Processes, tools & facilities' },
+      { value: 'prosedur', label: 'Processes, tools & facilities' },
+      { value: 'sistem', label: 'Processes, tools & facilities' },
+      { value: 'target', label: 'Workload, targets & role fit' },
+      { value: 'pekerjaan yang tidak sesuai', label: 'Workload, targets & role fit' },
+      { value: 'workload', label: 'Workload, targets & role fit' },
+      { value: 'beban kerja', label: 'Workload, targets & role fit' },
+      { value: 'lembur', label: 'Workload, targets & role fit' },
+      { value: 'tantangan', label: 'Workload, targets & role fit' }
+    ],
+    description: 'Exit Interview slide 2 B (kolom N, faktor internal): kata kunci -> tema; jawaban lain = Other'
+  },
+  exit_interview_company_aliases: {
+    value: [
+      { value: 'danamon', label: 'PT Bank Danamon Indonesia Tbk' },
+      { value: 'maybank', label: 'PT Bank Maybank Indonesia Tbk' },
+      { value: 'may bank', label: 'PT Bank Maybank Indonesia Tbk' },
+      { value: 'permata', label: 'PT Bank Permata Tbk' },
+      { value: 'ocbc', label: 'PT Bank OCBC NISP Tbk' },
+      { value: 'smbc', label: 'PT Bank SMBC Indonesia Tbk' },
+      { value: 'btpn syariah', label: 'PT Bank BTPN Syariah Tbk' },
+      { value: 'btpn', label: 'PT Bank SMBC Indonesia Tbk' },
+      { value: 'sinarmas', label: 'PT Bank Sinarmas Tbk' },
+      { value: 'dbs', label: 'PT Bank DBS Indonesia' },
+      { value: 'mandiri', label: 'PT Bank Mandiri (Persero) Tbk' },
+      { value: 'bank mega', label: 'PT Bank Mega Tbk' },
+      { value: 'uob', label: 'PT Bank UOB Indonesia' },
+      { value: 'oub', label: 'PT Bank UOB Indonesia' },
+      { value: 'hana bank', label: 'PT Bank KEB Hana Indonesia' },
+      { value: 'keb hana', label: 'PT Bank KEB Hana Indonesia' },
+      { value: 'bank tabungan negara', label: 'PT Bank Tabungan Negara (Persero) Tbk' },
+      { value: 'btn', label: 'PT Bank Tabungan Negara (Persero) Tbk' },
+      { value: 'citibank', label: 'Citibank N.A. Indonesia' },
+      { value: 'citi bank', label: 'Citibank N.A. Indonesia' },
+      { value: 'mufg', label: 'MUFG Bank, Ltd. Jakarta Branch' },
+      { value: 'panin dubai syariah', label: 'PT Bank Panin Dubai Syariah Tbk' },
+      { value: 'panin', label: 'PT Bank Panin Indonesia Tbk' },
+      { value: 'krom bank', label: 'PT Krom Bank Indonesia Tbk' },
+      { value: 'bank central asia', label: 'PT Bank Central Asia Tbk' },
+      { value: 'bca', label: 'PT Bank Central Asia Tbk' },
+      { value: 'bank rakyat indonesia', label: 'PT Bank Rakyat Indonesia (Persero) Tbk' },
+      { value: 'bri', label: 'PT Bank Rakyat Indonesia (Persero) Tbk' },
+      { value: 'bank negara indonesia', label: 'PT Bank Negara Indonesia (Persero) Tbk' },
+      { value: 'bni', label: 'PT Bank Negara Indonesia (Persero) Tbk' },
+      { value: 'bank syariah indonesia', label: 'PT Bank Syariah Indonesia Tbk' },
+      { value: 'bsi', label: 'PT Bank Syariah Indonesia Tbk' },
+      { value: 'hsbc', label: 'PT Bank HSBC Indonesia' },
+      { value: 'standard chartered', label: 'Standard Chartered Bank Indonesia' },
+      { value: 'bank jago', label: 'PT Bank Jago Tbk' },
+      { value: 'seabank', label: 'PT Bank Seabank Indonesia' }
+    ],
+    description: 'Exit Interview kartu 3 (kolom I): kata kunci nama perusahaan -> nama legal standar; nama lain dipakai apa adanya'
+  },
+  exit_interview_none_answers: {
+    value: [
+      { value: 'tidak ada', label: 'No answer' },
+      { value: 'tidak', label: 'No answer' },
+      { value: 'na', label: 'No answer' },
+      { value: 'n a', label: 'No answer' },
+      { value: 'none', label: 'No answer' },
+      { value: 'nihil', label: 'No answer' },
+      { value: 'no', label: 'No answer' },
+      { value: 'tidak juga', label: 'No answer' },
+      { value: 'tidak bisa saya sebutkan', label: 'No answer' },
+      { value: 'confidential', label: 'No answer' },
+      { value: 'rahasia', label: 'No answer' },
+      { value: 'confidence', label: 'No answer' },
+      { value: 'perbankan swasta', label: 'No answer' },
+      { value: 'tidak pindah*', label: 'Not moving' },
+      { value: 'berhenti tidak karena*', label: 'Not moving' },
+      { value: 'belum bekerja*', label: 'Not moving' },
+      { value: 'belum mendapatkan pekerjaan*', label: 'Not moving' },
+      { value: 'not moving*', label: 'Not moving' }
+    ],
+    description: 'Exit Interview: jawaban yang dianggap "tidak menjawab" (sama persis; akhiran * = diawali frasa itu); "-" dan kosong selalu tidak menjawab'
   }
 };
 
@@ -1637,6 +1938,10 @@ module.exports = {
   initialSurveyUploadedResponses,
   initialEssResults,
   initialEssUploads,
-  initialOperationalRecords
+  initialOperationalRecords,
+  EXIT_SEED_MONTHS,
+  generateExitInterviewDummy,
+  exitDummyOrgUnit,
+  initialExitInterviews
 };
 

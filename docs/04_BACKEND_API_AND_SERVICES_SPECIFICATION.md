@@ -597,3 +597,57 @@ Pengujian: `docs/07` §30 (Modul 46).
 **Seed ESS**: `seedData.generateInitialEssResults()` juga membuat periode dummy `ESS_SEED_DUMMY_PERIODS` (2026-03, 2026-06, 2026-09; 429 baris + 33 batch). `sqlStorage.topUpEssSeed()` / `jsonStorage.topUpStoreEssSeed()` kini menyisipkan per (metrik, periode) yang belum punya baris dan mengembalikan daftar `upload_id` yang ditambahkan. Rincian: `docs/08` §17, `CHANGELOG.md` [2.37.0].
 
 Pengujian: `docs/07` §31 (Modul 46).
+
+---
+
+## Catatan v2.38.0 - Dashboard Exit Interview
+
+**Ringkasan**: dashboard baru "mengapa karyawan resign" dari file HR "Termination Report" `.xlsx` (satu baris per exit) + kolom Directorate/Division. Logika di `server/services/exitInterviewService.js`; tabel `px_exit_interviews` dan `px_exit_interview_uploads` (`docs/08` §18); kamus kolom `docs/02` §5.4; panduan Admin `docs/06`. Pengelompokan jawaban berbasis aturan kata kunci dari `px_app_settings`, **tanpa AI** (on-premise). Data ini tidak dipakai `calculationEngine`/`alertEngine` (skor metrik 26 dan PX Index tidak berubah). `/api/health` `version` = `2.38.0`; tidak ada env baru.
+
+**Endpoint** (semua butuh login; `ADMIN_ONLY` = selain Admin 403)
+
+| Endpoint | Akses | Parameter / perilaku |
+| :--- | :--- | :--- |
+| `GET /api/exit-interview/summary` | semua login | `mode=YTD\|MTD` (default YTD), `year` (default tahun berjalan, harus 4 digit), `month` (1-12, wajib untuk MTD), `directorate`, `sub_directorate`. Cakupan lewat `auth.scopeFilter` (USER: direktorat di luar cakupan -> 403; tanpa filter = gabungan cakupannya). Bulan/tahun tidak valid -> 400. Respons: `period` (`label`, `from`, `to`, `last_data_month`, `last_data_label`), `scope.label`, `subtitle`, `counts` (`total_records`, `voluntary_records`, `movers`), `reasons`, `industry`, `top_financial`, `pull_factors`, `career`, `recommend`, `themes_open`, `themes_internal`, `headline`. Hanya agregat: tanpa NIK, nama, atau teks jawaban. Non-Admin: `top_financial` hanya memuat nama dari daftar alias (`unlisted_names_hidden: true`). |
+| `GET /api/exit-interview/template` | Admin | `Template_Exit_Interview.xlsx` (sheet "Termination Report": judul, 33 kolom standar + `Directorate`, `Division`, satu baris contoh yang lolos validator). |
+| `POST /api/exit-interview/upload` | Admin | `multipart/form-data` field `file`, multer memory storage (tidak pernah ke `/uploads`), maks 20 MB (lebih -> 413). Tanpa file -> 400; ekstensi selain `.xlsx` -> **400** (beda dengan ESS yang 415); workbook rusak atau satu baris salah -> 400 `{ error, errors: [{ row_number, column, reason }] }`, tidak ada yang tersimpan. Sukses -> 200 `{ success, upload_id, file_name, source, rows_imported, inserted_rows, updated_rows, removed_dummy_rows, period_from, period_to, months, message }`. Audit `EXIT_INTERVIEW_UPLOAD` (target: jumlah baris, bulan, batch; tanpa data karyawan). `uploaded_by` = `Nama (username)`. |
+| `GET /api/exit-interview/uploads` | Admin | Riwayat batch terbaru dulu (`upload_id`, `file_name`, `source`, `total_rows`, `inserted_rows`, `updated_rows`, `removed_dummy_rows`, `period_from`, `period_to`, `uploaded_by`, `uploaded_at`). |
+| `GET /api/exit-interview/export` | Admin | Parameter sama dengan summary; CSV semua baris dalam periode + filter org (`Exit_Interview_<YYYY-MM>.csv` / `Exit_Interview_YTD_<tahun>.csv`), UTF-8 BOM, sel teks berawalan `= + - @` tab/CR diberi `'` (kecuali angka bertanda). Kolom: `docs/02` §5.4. |
+
+**Periode** (`resolveExitPeriod`): jendela sama dengan scorecard (`filterUtils.periodWindow`) pada `effective_date`: YTD tahun berjalan = 1 Januari s.d. akhir bulan berjalan (jam server), tahun lalu = setahun penuh, tahun depan = kosong; MTD = tepat bulan itu. Label mis. `January - October 2026` atau `September 2026`.
+
+**Aturan agregat** (`summarizeExitInterviews`, fungsi murni). Voluntary = `leaving_reason = NORMAL_RESIGNATION`; mover = voluntary dengan `leaving_reason_detail` `MOVE_COMPANY` atau `BETTER_OFFER`.
+
+| Bagian | Basis | Aturan |
+| :--- | :--- | :--- |
+| `reasons` (kartu 1, kolom E) | voluntary | `MOVE_COMPANY` + `BETTER_OFFER` = "Move company"; kode lain jadi teks ("Own business"); kosong = "Not specified". |
+| `industry` (kartu 2, H) | mover yang menjawab H | Financial bila H (dinormalisasi) = "Perbankan / Asuransi / Keuangan Lainnya", selain itu Non-financial. |
+| `top_financial` (kartu 3, I) | mover Financial | `standardizeCompany`: alias dengan kata kunci terpanjang yang cocok, selain itu nama apa adanya (spasi dirapikan); 10 teratas; `named` = jumlah yang menyebut nama. |
+| `pull_factors` (kartu 4, K) | semua mover | Jawaban dipecah per `\|`; tiap bagian dicocokkan ke `exit_interview_k_factors` (bisa beberapa grup), tidak cocok = Other; jumlah record per opsi; `kpi` = % Compensation. |
+| `career` (kartu 5, O..AC) | mover dengan minimal satu skor | Rata-rata per orang, `careerBucket` = pembulatan half-up ke 1..6; `average` (2 desimal), `average_pct` = average/6; `negative` = bucket 1-3, `positive` = 4-6. |
+| `recommend` (kartu 6, AF) | mover yang menjawab Yes/No | Yes vs No. |
+| `themes_open` (A, M) | mover yang menjawab M | Tema dari `exit_interview_m_themes`, karyawan unik per tema. |
+| `themes_internal` (B, N) | mover negatif vs positif (kartu 5) | Tema dari `exit_interview_n_themes`; per tema `negative`/`positive` `{count, pct}` dan `gap_pp`. |
+| `headline` | - | "Movers highlight <dua tema A teratas>[; <tema B dengan gap_pp positif terbesar> is the clearest satisfaction gap]". |
+
+Pencocokan kata kunci (`normalizeAnswer`/`hasKeyword`): huruf kecil, setiap rangkaian non huruf/angka jadi satu spasi, kata kunci harus cocok di **awal sebuah kata** (`fleksib` cocok dengan "fleksibilitas", `bri` tidak cocok dengan "fabric"). Jawaban kosong, `-`, atau yang ada di `exit_interview_none_answers` (sama persis; akhiran `*` = diawali frasa itu) dianggap tidak menjawab. Aturan dibaca dari database pada setiap request (`loadRules`; fallback seed hanya bila key hilang), jadi perubahan setting langsung berlaku untuk semua kartu. `new_company_std` yang tersimpan hanya dipakai ekspor.
+
+**Setting baru** (`px_app_settings`, di-seed sekali bila key belum ada, tidak pernah menimpa; ubah lewat `PUT /api/admin/settings/:key` dengan list `{value, label}` tidak kosong; belum ada UI; tidak termasuk setting "hanya label")
+
+| Key | Isi |
+| :--- | :--- |
+| `exit_interview_k_factors` | kata kunci kolom K -> Compensation / Position / Job / Reputation |
+| `exit_interview_m_themes` | kata kunci kolom M -> 6 tema (Compensation & benefits, Higher position, Better-fit job, Company reputation, Location / commute, Family & personal) |
+| `exit_interview_n_themes` | kata kunci kolom N -> 7 tema (Career progression & certainty, Compensation & recognition, Leadership, fairness & voice, Work environment & culture, Learning & development, Processes, tools & facilities, Workload, targets & role fit) |
+| `exit_interview_company_aliases` | 36 alias nama perusahaan -> nama legal standar |
+| `exit_interview_none_answers` | 18 frasa "tidak menjawab" / "tidak pindah" |
+
+**Validasi & impor** (`validateExitSheet`, `importExitInterviews`): layout dan aturan per kolom di `docs/02` §5.4. Atomik: error apa pun -> tidak ada yang disimpan. Sukses: file asli ditulis ke `server/data/exit-uploads/<upload_id>.xlsx` (`upload_id` = `exit-<ts>-<acak>`), lalu `storage.saveExitInterviewUpload(meta, rows)` dalam satu transaksi: hapus baris `SEED_DUMMY` di bulan-bulan yang ada di file, lalu upsert per `(nik, effective_date)` (SQL: `MERGE` dengan `HOLDLOCK`, NIK dibandingkan menurut collation database - tidak peka huruf besar/kecil menurut laporan developer, collation tidak diperiksa penulis; JSON: NIK lowercase), lalu catat batch. Gagal simpan -> file asli dihapus lagi. Opsi khusus skrip impor template: `assignOrgUnit(rowNumber)` (direktorat bila file tanpa kolom Directorate) dan `surrogateNik` (NIK + `-<nomor baris>`). `exitOriginalFilePath(upload_id)` ada tetapi belum dipakai route mana pun (file asli belum bisa diunduh lewat API).
+
+**Storage (kedua backend, kontrak sama)**: `getExitInterviews({ from, to })`, `getExitInterviewMonthCounts()`, `getExitInterviewUploads()`, `saveExitInterviewUpload(meta, rows)` -> `{ record, inserted, updated, removed_dummy }`, `topUpExitInterviewSeed()` (boot, dan dipakai tes). Boot top-up hanya bila `SEED_DEMO_DATA` bukan `false`: bulan `EXIT_SEED_MONTHS` (Jan-Sep 2026) yang belum punya baris sama sekali mendapat baris `seed.generateExitInterviewDummy()` + batch `seed-exit-<YYYY-MM>` (`uploaded_by` "Seed (dummy)"). Bulan yang sudah punya baris apa pun tidak disentuh.
+
+**`server/services/xlsxUtils.js` (baru)**: `readFirstSheet`, `buildXlsx`, `colLetter`, `colIndex`, `decodeXml`, `xmlEsc` dipindah dari `essSummaryService.js` (tabel "Catatan v2.32.0" di atas masih menyebut fungsi itu di sana; `essSummaryService` tetap mengekspor `readFirstSheet` dan `buildXlsx` sehingga pemanggil lama tidak berubah).
+
+**Skrip**: `npm run exit:import-template -- "<path .xlsx>"` (`scripts/import-exit-template.js`): menjalankan `storage.init()`, lalu impor dengan `source: 'TEMPLATE_IMPORT'`, direktorat/divisi dummy deterministik (`seed.exitDummyOrgUnit`) dan NIK pengganti; mencatat audit `EXIT_INTERVIEW_UPLOAD` dengan username `script:import-exit-template`. Dijalankan ulang = baris yang sama di-update (NIK pengganti sama).
+
+Pengujian: `docs/07` §32 (Modul 47).

@@ -184,3 +184,39 @@ Satu file = satu metrik ESS dan satu periode; aturan lengkap ada di `docs/SURVEY
 | F <nama index> | `index_score` | desimal 0-100 | Skor metrik; pecahan 0-1 dikali 100. |
 | G.. <pertanyaan> | `questions` (`questions_json`) | JSON `[{label, score}]` | `label` = teks header file, `score` 0-100 atau `null`. |
 | - | `upload_id`, `metric_id`, `created_at` | - | `upload_id` = batch di `px_survey_uploads` (riwayat). |
+
+### 5.4 Berkas Exit Interview "Termination Report" (.xlsx) dan Tabel `px_exit_interviews` (sejak v2.38.0)
+
+Satu file = satu atau beberapa bulan exit karyawan (satu baris per exit), diunggah Admin di tab **Exit Interview** (`POST /api/exit-interview/upload`, lihat `docs/04` "Catatan v2.38.0"). Template: `GET /api/exit-interview/template` (`Template_Exit_Interview.xlsx`: baris 1 judul, baris 2 nama kolom, baris 3 contoh yang harus dihapus). Data ini **tidak** masuk skor metrik 26 (Exit Survey) maupun PX Index; hanya untuk dashboard Exit Interview.
+
+**Layout yang dibaca** (`exitInterviewService.validateExitSheet`): baris header = baris pertama (dari 30 baris teratas) yang berisi sel `NIK`. Mulai kolom NIK diambil 33 kolom standar berurutan (A..AG pada template); kolom A-G dicek namanya, kolom H..AG diambil menurut posisi (teks pertanyaan boleh berubah). Kolom `Directorate`/`Direktorat` dan `Division`/`Divisi`/`Sub Directorate` dikenali dari namanya di posisi mana pun (template: AH dan AI) dan tidak ikut dihitung sebagai kolom standar.
+
+| Kolom | Isi (header template) | Field tersimpan | Validasi / normalisasi | Dipakai di |
+| :---: | :--- | :--- | :--- | :--- |
+| A | NIK | `nik` | wajib, maks 50 karakter; NIK + tanggal tidak boleh ganda dalam satu file | kunci upsert `(nik, effective_date)` |
+| B | EMP NAME | `employee_name` | maks 200 | export saja |
+| C | Effective Resignation Date | `effective_date` | wajib; serial Excel, `YYYY-MM-DD`, `dd/mm/yyyy`, `dd-mm-yyyy`, `dd.mm.yyyy`; 2000-2100 | filter periode YTD/MTD |
+| D | LEAVING REASON | `leaving_reason` | huruf besar, spasi/strip -> `_` | `NORMAL_RESIGNATION` = voluntary |
+| E | LEAVING REASON DETAIL | `leaving_reason_detail` | sama dengan D | Kartu 1; `MOVE_COMPANY`/`BETTER_OFFER` = mover |
+| F | Grade | `grade` | maks 20 | export saja |
+| G | SCORE FACTOR | `score_factor` | maks 20 | export saja |
+| H | pindah ke perusahaan bank/non-bank | `destination_industry` | maks 500 | Kartu 2 (Financial = "Perbankan / Asuransi / Keuangan Lainnya"), Kartu 3 |
+| I | nama perusahaan baru | `new_company`, `new_company_std` | maks 500; `new_company_std` = nama standar dari alias saat impor | Kartu 3 (distandarkan ulang saat dibaca) |
+| J | posisi di perusahaan baru | `new_position` | maks 500 | export saja |
+| K | komponen kompensasi/benefit yang lebih menarik (multi) | `pull_factors` | maks 4000; opsi dipisah `\|` | Kartu 4 |
+| L | komponen yang perlu ditingkatkan (bukan pindah) | `improve_factors` | maks 4000 | export saja |
+| M | apa yang ditawarkan perusahaan baru (multi) | `new_company_offers` | maks 4000 | Slide 2 A |
+| N | faktor internal lain (multi) | `internal_factors` | maks 4000 | Slide 2 B |
+| O..AC | 15 pernyataan karier | `career_scores` (`career_scores_json`) | bilangan bulat 1-6 atau `-`/kosong; NULL bila tidak ada yang diisi | Kartu 5, pembagian negatif/positif Slide 2 B |
+| AD | CIMB Niaga Alumni Network | `alumni_network` | `Yes`/`Ya`/`Y` atau `No`/`Tidak`/`N`; `-`/kosong = NULL | export saja |
+| AE | persetujuan Kebijakan Privasi | `privacy_consent` | sama dengan AD | export saja |
+| AF | merekomendasikan Bank CIMB Niaga | `recommend` | sama dengan AD | Kartu 6 |
+| AG | saran atau masukan | `suggestions` | maks 4000 | export saja |
+| AH | Directorate | `directorate` | **wajib**; harus ada di master direktorat (tidak peka huruf besar/spasi) | filter direktorat, cakupan USER |
+| AI | Division | `division` | opsional; harus divisi dari direktorat baris itu | filter divisi |
+| - | - | `upload_id`, `source`, `created_at`, `updated_at` | `source` = `UPLOAD` / `TEMPLATE_IMPORT` / `SEED_DUMMY` | riwayat, export |
+
+Teks `-` atau kosong disimpan sebagai NULL. Satu kesalahan di baris mana pun menolak seluruh file (`errors: [{ row_number, column, reason }]`), tidak ada yang tersimpan. Jawaban yang dianggap "tidak menjawab" (mis. `tidak ada`, `n/a`, `confidential`, `tidak pindah...`) diatur di setting `exit_interview_none_answers`.
+
+**Ekspor CSV Admin** (`GET /api/exit-interview/export`, `Exit_Interview_<YYYY-MM>.csv` atau `Exit_Interview_YTD_<tahun>.csv`, UTF-8 BOM, formula-escape):
+`NIK, Employee_Name, Effective_Resignation_Date, Leaving_Reason, Leaving_Reason_Detail, Grade, Score_Factor, Directorate, Division, Destination_Industry, New_Company, New_Company_Standardized, New_Position, Pull_Factors, Improve_Factors, New_Company_Offers, Internal_Factors, Career_S1..Career_S15, Career_Mean, Alumni_Network, Privacy_Consent, Recommend, Suggestions, Source, Upload_ID, Created_At, Updated_At`. Berisi data per karyawan: simpan hanya di lokasi internal.

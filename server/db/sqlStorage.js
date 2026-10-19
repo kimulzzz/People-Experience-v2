@@ -956,6 +956,11 @@ async function importStore(store, log = () => {}) {
     // ESS result summaries (v2.32.0)
     for (const r of store.essResults || []) await insertEssResult(tx, r.upload_id, r);
     counts.ess_results = (store.essResults || []).length;
+    // Exit Interview (v2.38.0)
+    for (const u of store.exitInterviewUploads || []) await insertExitUpload(tx, u);
+    counts.exit_interview_uploads = (store.exitInterviewUploads || []).length;
+    await bulkInsertExitRows(tx, (store.exitInterviews || []).map(r => ({ ...r, source: r.source || 'UPLOAD' })));
+    counts.exit_interviews = (store.exitInterviews || []).length;
     // a store.json from before v2.32.0 still holds per-respondent ESS rows: same one-time cleanup as the upgrade boot
     if (!Array.isArray(store.essResults)) {
       const cleaned = await cleanupEssRespondentRows(tx);
@@ -1122,6 +1127,117 @@ async function topUpEssSeed() {
   return todo;
 }
 
+// ------------------------------------------------------------------ Exit Interview (px_exit_interviews, v2.38.0)
+const EXIT_TEXT_COLS = ['nik', 'employee_name', 'leaving_reason', 'leaving_reason_detail', 'grade', 'score_factor', 'directorate', 'division',
+  'destination_industry', 'new_company', 'new_company_std', 'new_position', 'pull_factors', 'improve_factors', 'new_company_offers',
+  'internal_factors', 'alumni_network', 'privacy_consent', 'recommend', 'suggestions'];
+const EXIT_SELECT = 'SELECT e.*, CONVERT(char(10), e.effective_date, 23) AS effective_date_str FROM dbo.px_exit_interviews e';
+const rowToExit = r => {
+  const out = { exit_id: r.exit_id, upload_id: r.upload_id };
+  EXIT_TEXT_COLS.forEach(c => { out[c] = r[c] === undefined ? null : r[c]; });
+  out.effective_date = r.effective_date_str;
+  out.career_scores = parseJson(r.career_scores_json, null);
+  out.source = r.source;
+  out.created_at = iso(r.created_at);
+  out.updated_at = iso(r.updated_at);
+  return out;
+};
+const rowToExitUpload = r => ({
+  upload_id: r.upload_id,
+  file_name: r.file_name,
+  source: r.source,
+  total_rows: r.total_rows,
+  inserted_rows: r.inserted_rows,
+  updated_rows: r.updated_rows,
+  removed_dummy_rows: r.removed_dummy_rows,
+  period_from: r.period_from_str || null,
+  period_to: r.period_to_str || null,
+  uploaded_by: r.uploaded_by,
+  uploaded_at: iso(r.uploaded_at)
+});
+const exitParams = (row, uploadId) => {
+  const p = { upload_id: uploadId || row.upload_id, effective_date: T.date(row.effective_date), source: row.source || 'UPLOAD',
+    career_scores_json: Array.isArray(row.career_scores) ? JSON.stringify(row.career_scores) : null };
+  EXIT_TEXT_COLS.forEach(c => { p[c] = row[c] === undefined || row[c] === null ? null : String(row[c]); });
+  p.employee_name = row.employee_name || '';
+  return p;
+};
+const monthBounds = ym => { const [y, m] = ym.split('-').map(n => parseInt(n, 10)); return { start: `${ym}-01`, end: nextMonthStart(y, m) }; };
+// Last calendar day of 'YYYY-MM' (an inclusive period end, e.g. for the upload history).
+const lastDayOfMonthStr = ym => { const [y, m] = ym.split('-').map(n => parseInt(n, 10)); return `${ym}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}`; };
+
+async function insertExitUpload(tx, u) {
+  await run(`INSERT INTO dbo.px_exit_interview_uploads (upload_id, file_name, source, total_rows, inserted_rows, updated_rows, removed_dummy_rows, period_from, period_to, uploaded_by${u.uploaded_at ? ', uploaded_at' : ''})
+             VALUES (@upload_id, @file_name, @source, @total_rows, @inserted_rows, @updated_rows, @removed_dummy_rows, @period_from, @period_to, @uploaded_by${u.uploaded_at ? ', @uploaded_at' : ''})`, {
+    upload_id: u.upload_id, file_name: String(u.file_name || '').slice(0, 260), source: u.source || 'UPLOAD', total_rows: u.total_rows || 0,
+    inserted_rows: u.inserted_rows || 0, updated_rows: u.updated_rows || 0, removed_dummy_rows: u.removed_dummy_rows || 0,
+    period_from: u.period_from ? T.date(u.period_from) : null, period_to: u.period_to ? T.date(u.period_to) : null,
+    uploaded_by: String(u.uploaded_by || 'HR Admin').slice(0, 200), ...(u.uploaded_at ? { uploaded_at: toDateObj(u.uploaded_at) } : {})
+  }, tx);
+}
+
+async function bulkInsertExitRows(tx, rows) {
+  if (!rows.length) return;
+  const table = new sql.Table('dbo.px_exit_interviews');
+  table.create = false;
+  table.columns.add('upload_id', sql.NVarChar(64), { nullable: false });
+  table.columns.add('nik', sql.NVarChar(50), { nullable: false });
+  table.columns.add('employee_name', sql.NVarChar(200), { nullable: false });
+  table.columns.add('effective_date', sql.Date, { nullable: false });
+  ['leaving_reason', 'leaving_reason_detail'].forEach(c => table.columns.add(c, sql.NVarChar(100), { nullable: true }));
+  ['grade', 'score_factor'].forEach(c => table.columns.add(c, sql.NVarChar(20), { nullable: true }));
+  table.columns.add('directorate', sql.NVarChar(200), { nullable: false });
+  table.columns.add('division', sql.NVarChar(200), { nullable: true });
+  ['destination_industry', 'new_company', 'new_company_std', 'new_position'].forEach(c => table.columns.add(c, sql.NVarChar(500), { nullable: true }));
+  ['pull_factors', 'improve_factors', 'new_company_offers', 'internal_factors'].forEach(c => table.columns.add(c, sql.NVarChar(sql.MAX), { nullable: true }));
+  table.columns.add('career_scores_json', sql.NVarChar(400), { nullable: true });
+  ['alumni_network', 'privacy_consent', 'recommend'].forEach(c => table.columns.add(c, sql.VarChar(3), { nullable: true }));
+  table.columns.add('suggestions', sql.NVarChar(sql.MAX), { nullable: true });
+  table.columns.add('source', sql.VarChar(20), { nullable: false });
+  table.columns.add('created_at', sql.DateTime2(3), { nullable: false });
+  rows.forEach(r => table.rows.add(
+    r.upload_id, r.nik, r.employee_name || '', sqlDateObj(r.effective_date), r.leaving_reason || null, r.leaving_reason_detail || null,
+    r.grade || null, r.score_factor || null, r.directorate, r.division || null, r.destination_industry || null, r.new_company || null,
+    r.new_company_std || null, r.new_position || null, r.pull_factors || null, r.improve_factors || null, r.new_company_offers || null,
+    r.internal_factors || null, Array.isArray(r.career_scores) ? JSON.stringify(r.career_scores) : null, r.alumni_network || null,
+    r.privacy_consent || null, r.recommend || null, r.suggestions || null, r.source || 'SEED_DUMMY', toDateObj(r.created_at)
+  ));
+  await new sql.Request(tx).bulk(table);
+}
+
+async function exitMonthCounts() {
+  return (await run(`SELECT YEAR(effective_date) AS y, MONTH(effective_date) AS m, COUNT(*) AS total,
+                            SUM(CASE WHEN source = 'SEED_DUMMY' THEN 1 ELSE 0 END) AS dummy
+                     FROM dbo.px_exit_interviews GROUP BY YEAR(effective_date), MONTH(effective_date) ORDER BY y, m`))
+    .map(r => ({ year: r.y, month: r.m, total: r.total, dummy: r.dummy }));
+}
+
+// Demo exit rows (seed.generateExitInterviewDummy) for every seed month that has NO exit row at all, so an uploaded or
+// imported month is never mixed with dummy rows. Generated against the directorate master in the database. Returns the
+// months added ('YYYY-MM').
+async function topUpExitInterviewSeed() {
+  const have = new Set((await exitMonthCounts()).map(m => `${m.year}-${m.month}`));
+  const todo = (seed.EXIT_SEED_MONTHS || []).filter(m => !have.has(`${m.year}-${m.month}`));
+  if (!todo.length) return [];
+  const directorates = await storage.getDirectorates();
+  const all = seed.generateExitInterviewDummy(directorates.length ? directorates : undefined);
+  const added = [];
+  await inTransaction(async tx => {
+    for (const { year, month } of todo) {
+      const ym = `${year}-${String(month).padStart(2, '0')}`;
+      const rows = all.filter(r => r.effective_date.startsWith(ym) && r.directorate);
+      if (!rows.length) continue;
+      const uploadId = `seed-exit-${ym}`;
+      await run('DELETE FROM dbo.px_exit_interview_uploads WHERE upload_id = @u', { u: uploadId }, tx);
+      await insertExitUpload(tx, { upload_id: uploadId, file_name: `Exit_Interview_Dummy_${ym}.xlsx`, source: 'SEED_DUMMY', total_rows: rows.length,
+        inserted_rows: rows.length, period_from: `${ym}-01`, period_to: lastDayOfMonthStr(ym), uploaded_by: 'Seed (dummy)' });
+      await bulkInsertExitRows(tx, rows.map(r => ({ ...r, upload_id: uploadId })));
+      added.push(ym);
+    }
+  });
+  return added;
+}
+
 // ------------------------------------------------------------------ response filter -> SQL
 function nextMonthStart(year, monthNum) {
   return monthNum === 12 ? `${year + 1}-01-01` : `${year}-${String(monthNum + 1).padStart(2, '0')}-01`;
@@ -1204,6 +1320,8 @@ const storage = {
       await topUpSeedResponses();
       const seededEss = await topUpEssSeed();
       if (seededEss.length) console.log(`[sqlStorage] Seeded demo ESS summaries: ${seededEss.join(', ')}.`);
+      const seededExit = await topUpExitInterviewSeed();
+      if (seededExit.length) console.log(`[sqlStorage] Seeded demo Exit Interview rows for: ${seededExit.join(', ')}.`);
     }
     const info = await this.health();
     console.log(`[sqlStorage] Connected to ${info.server} / ${info.database} (${info.edition})`);
@@ -1232,7 +1350,7 @@ const storage = {
   // Drops every px_* table (children first). Used only by migrate.js --reset.
   async dropAllTables() {
     const tables = ['px_recruitment_sla_by_unit', 'px_approval_stage_compliance', 'px_hiring_channel_mix',
-      'px_recognition_categories', 'px_attrition_by_tenure', 'px_acknowledged_alerts', 'px_ess_results', 'px_survey_uploaded_responses',
+      'px_recognition_categories', 'px_attrition_by_tenure', 'px_acknowledged_alerts', 'px_ess_results', 'px_exit_interviews', 'px_exit_interview_uploads', 'px_survey_uploaded_responses',
       'px_survey_uploads', 'px_media', 'px_feedback_responses', 'px_attendances', 'px_event_questions', 'px_events',
       'px_reminder_log', 'px_email_settings', 'px_app_settings', 'px_survey_questions', 'px_custom_survey_questions', 'px_master_survey_questions', 'px_divisions', 'px_directorates', 'px_action_library',
       'px_metric_targets', 'px_metrics', 'px_checkpoints', 'px_journeys'];
@@ -1981,6 +2099,60 @@ const storage = {
     });
     return { record, replaced_rows: replaced };
   },
+  // ---- Exit Interview (v2.38.0)
+  // Rows with effective_date inside [from, to] (YYYY-MM-DD, both optional), oldest first.
+  async getExitInterviews({ from, to } = {}) {
+    const where = [];
+    const params = {};
+    if (from) { where.push('e.effective_date >= @from'); params.from = T.date(from); }
+    if (to) { where.push('e.effective_date <= @to'); params.to = T.date(to); }
+    const rows = await run(`${EXIT_SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY e.effective_date, e.exit_id`, params);
+    return rows.map(rowToExit);
+  },
+  // [{ year, month, total, dummy }] per month that has exit rows.
+  getExitInterviewMonthCounts: exitMonthCounts,
+  async getExitInterviewUploads() {
+    const rows = await run(`SELECT u.*, CONVERT(char(10), u.period_from, 23) AS period_from_str, CONVERT(char(10), u.period_to, 23) AS period_to_str
+                            FROM dbo.px_exit_interview_uploads u ORDER BY u.uploaded_at DESC, u.upload_id DESC`);
+    return rows.map(rowToExitUpload);
+  },
+  // One validated upload, atomic. Key (nik, effective_date): an existing row is UPDATED, a new one inserted. Real rows of a
+  // month remove that month's SEED_DUMMY rows first (dummy rows only stand in for months without data).
+  // Returns { record, inserted, updated, removed_dummy }.
+  async saveExitInterviewUpload(meta, rows) {
+    return inTransaction(async tx => {
+      let removed = 0;
+      if (meta.source !== 'SEED_DUMMY') {
+        const months = [...new Set(rows.map(r => r.effective_date.slice(0, 7)))];
+        for (const ym of months) {
+          const b = monthBounds(ym);
+          const del = await run(`DELETE FROM dbo.px_exit_interviews WHERE source = 'SEED_DUMMY' AND effective_date >= @s AND effective_date < @e;
+                                  SELECT @@ROWCOUNT AS n;`, { s: T.date(b.start), e: T.date(b.end) }, tx);
+          removed += del[0] ? del[0].n : 0;
+        }
+      }
+      let inserted = 0;
+      let updated = 0;
+      for (const r of rows) {
+        const p = exitParams({ ...r, source: meta.source }, meta.upload_id);
+        const setList = EXIT_TEXT_COLS.filter(c => c !== 'nik').map(c => `${c} = @${c}`).join(', ');
+        const res = await run(`MERGE dbo.px_exit_interviews WITH (HOLDLOCK) AS t
+                                 USING (SELECT @nik AS nik, CAST(@effective_date AS DATE) AS effective_date) AS s
+                                 ON t.nik = s.nik AND t.effective_date = s.effective_date
+                               WHEN MATCHED THEN UPDATE SET upload_id = @upload_id, ${setList}, career_scores_json = @career_scores_json,
+                                 source = @source, updated_at = SYSUTCDATETIME()
+                               WHEN NOT MATCHED THEN INSERT (upload_id, effective_date, career_scores_json, source, ${EXIT_TEXT_COLS.join(', ')})
+                                 VALUES (@upload_id, @effective_date, @career_scores_json, @source, ${EXIT_TEXT_COLS.map(c => '@' + c).join(', ')})
+                               OUTPUT $action AS act;`, p, tx);
+        if (res[0] && res[0].act === 'UPDATE') updated++; else inserted++;
+      }
+      const record = { ...meta, total_rows: rows.length, inserted_rows: inserted, updated_rows: updated, removed_dummy_rows: removed };
+      await insertExitUpload(tx, record);
+      return { record, inserted, updated, removed_dummy: removed };
+    });
+  },
+  topUpExitInterviewSeed, // exposed for the regression suite (boot top-up of the demo exit rows)
+
   async deleteEssResultsForMetric(metric_id) {
     const rows = await run('DELETE FROM dbo.px_ess_results WHERE metric_id = @id; SELECT @@ROWCOUNT AS n;', { id: parseInt(metric_id, 10) });
     return rows[0] ? rows[0].n : 0;

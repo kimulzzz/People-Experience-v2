@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    46 MODUL PENGUJIAN    │     301 AUTOMATED TESTS     │       100% PASS RATE          │
+│    47 MODUL PENGUJIAN    │     314 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -1007,3 +1007,29 @@ Perubahan tampilan saja (`MetricDetailModal.jsx`) + teks `ess_summary.descriptio
 Modul 11, 35 dan 45 tidak berubah. **Risiko tes**: tes 3d menulis langsung ke `px_ess_results` database bersama (backend utama :5000 bisa sesaat membaca nilai probe 77.77 untuk metrik 9 MTD 2026-06); tes 4 tetap sebentar mengubah `update_frequency` metrik 8.
 
 **Tidak diuji / tidak terverifikasi**: suite JSON penuh; modul 8, 24, 27, 32, 38, 41, 42, 43 (dilewati); top-up ulang seed di backend JSON hanya lewat cek in-process; tampilan UI (penghapusan catatan "Annual metric" tidak punya tes render; pengecekan browser tidak dilaporkan developer).
+
+## 32. v2.38.0 - Dashboard Exit Interview
+
+**Regression suite: 228/228 lulus, 0 gagal, 16 dilewati, di SQL Server** (angka dari laporan developer, backend kedua; penulis dokumen ini tidak menjalankan ulang suite) dengan `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`. 228 = 215 (v2.37.0) + 13 (Modul 47). Ukuran suite penuh di SQL kini 314 = 301 + 13 (dihitung penulis, bukan dari output). Hitungan statis `await runTest(` 301 (288 + 13). **Suite JSON penuh tidak dijalankan**; Modul 47 sendiri dilewati di JSON (fixture dibersihkan lewat SQL); developer hanya menjalankan cek in-process terarah pada backend JSON. Jumlah data setelah run tidak berubah: ESS 572 baris, 205 upload, 2.788 baris respons, 1 user. Hasil QC (berjalan paralel) belum tercatat di sini.
+
+**Modul 47 = 13 tes, khusus SQL** (dihitung dari kode: 13 pemanggilan `runTest`). Fixture memakai bulan yang tidak dipakai data lain (2019-03, 2019-11, 2030-01, 2030-02) dengan NIK berawalan `RT47-`/`RT47N-`; di `finally` baris fixture, batch upload run ini, file asli di `server/data/exit-uploads/` dan akun USER sementara dihapus. File uji dibuat dengan `xlsxUtils.buildXlsx`.
+
+| # | Jenis | Yang diuji |
+| :---: | :--- | :--- |
+| 1 | Positif | Admin upload `.xlsx` (tanggal serial Excel, ISO dan dd/mm/yyyy; kolom Directorate/Division tambahan): 10 baris tersimpan, bulan 2019-03/2019-11/2030-01, audit tercatat. |
+| 2 | Positif | MTD 2030-01 bankwide: setiap kartu (reasons, industry, top 10, pull factors + KPI, bucket karier + rata-rata, recommend, tema A dan B) sama dengan nilai yang dihitung manual dari fixture. |
+| 3 | Positif | Jendela periode pada Effective Resignation Date: YTD 2019 = kedua baris 2019, MTD 2019-03 = hanya Maret; YTD tahun depan (2030) kosong. |
+| 4 | Positif | Filter direktorat B = 2 barisnya; direktorat A + divisi = 1 baris divisi itu. |
+| 5 | Negatif | Filter salah -> 400 (bulan 13, MTD tanpa bulan, tahun "20x6"), tidak pernah 500. |
+| 6 | Positif | Upload ulang NIK + tanggal yang sudah ada meng-update baris itu (upsert); baris baru di-insert. |
+| 7 | Negatif | File ditolak seluruhnya (400, tidak ada yang tersimpan): direktorat tak dikenal, tanggal salah, skor 7, NIK + tanggal ganda, NIK kosong, divisi milik direktorat lain, tanpa kolom Directorate. |
+| 8 | Negatif | Bukan `.xlsx`: file `.csv` dan byte acak bernama `.xlsx` -> 400; tanpa field file -> 400. |
+| 9 | Positif | Template valid: baris judul, header NIK ... Directorate + Division (35 kolom), baris contoh lolos validator. |
+| 10 | Positif/Negatif | Export CSV Admin mengikuti filter dan meng-escape formula; NIK bulan lain tidak ikut. |
+| 11 | Positif | USER direktorat A: 200 dengan agregat A saja; payload tanpa NIK, nama, nama perusahaan di luar alias, atau verbatim. |
+| 12 | Negatif | USER: direktorat lain -> 403; template / upload / history / export -> 403. |
+| 13 | Negatif | Top-up boot (`storage.topUpExitInterviewSeed()`) tidak menyentuh bulan yang sudah punya baris (jumlah dan source bulan seed tetap; bulan fixture tidak berubah). |
+
+**Risiko tes**: Modul 47 menulis ke database bersama; selama run, backend utama (:5000) bisa sesaat melihat baris fixture 2019/2030 (di luar periode yang biasa dilihat). Audit `EXIT_INTERVIEW_UPLOAD` dari tes tetap di `px_audit_log`.
+
+**Tidak diuji / tidak terverifikasi**: suite JSON penuh dan Modul 47 di JSON; modul 8, 24, 27, 32, 38, 41, 42, 43 (dilewati); render `ExitInterviewDashboard.jsx`, modal upload dan tombol di `MetricDetailModal.jsx` (tidak ada tes UI; pengecekan browser tidak dilaporkan developer); skrip `npm run exit:import-template` tidak punya tes otomatis (hasilnya di database utama dilaporkan developer: 205 baris September); angka YTD/MTD bankwide di `CHANGELOG.md` [2.38.0] berasal dari laporan developer, tidak dihitung ulang penulis.

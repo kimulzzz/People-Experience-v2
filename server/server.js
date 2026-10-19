@@ -18,6 +18,7 @@ const { generateSurveyCsvTemplate } = require('./services/surveyTemplateService'
 const { processSurveyCsv } = require('./services/surveyImportService');
 const { generateSurveyEvidenceCsv } = require('./services/surveyEvidenceService');
 const { importEssSummary, generateEssTemplateXlsx, generateEssEvidenceCsv, essOriginalFilePath } = require('./services/essSummaryService');
+const { importExitInterviews, resolveExitPeriod, getExitInterviewSummary, generateExitTemplateXlsx, generateExitExportCsv } = require('./services/exitInterviewService');
 const { isEssMetric } = require('./db/surveySource');
 const { getPendingUploadReminders, sendPendingUploadReminders, startReminderScheduler } = require('./services/reminderService');
 const emailSettingsService = require('./services/emailSettingsService');
@@ -129,12 +130,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.37.0' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.38.0' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.37.0',
+    version: '2.38.0',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',
@@ -857,6 +858,80 @@ app.get('/api/surveys/responses/:metric_id', async (req, res) => {
     const responses = await storage.getUploadedResponsesByMetric(req.params.metric_id);
     if (req.user.role === 'ADMIN') return res.json(responses);
     res.json(auth.rowsForViewer(req.user, await auth.getPicMetric(req.user, req.params.metric_id), responses));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 4c. Exit Interview dashboard (v2.38.0). Every login may read the aggregates (a USER only of their own data scope:
+// another directorate -> 403); the per-employee rows (upload, template, history, CSV export) are Admin only.
+const exitUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } }); // never written to /uploads
+const exitUploadSingle = (req, res, next) => exitUpload.single('file')(req, res, err => {
+  if (!err) return next();
+  if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'The exit interview file exceeds the 20 MB limit.' });
+  return res.status(400).json({ error: 'The uploaded file could not be processed (send one .xlsx file in the field "file").' });
+});
+
+app.get('/api/exit-interview/summary', async (req, res) => {
+  try {
+    const scope = auth.scopeFilter(req, res);
+    if (scope === null) return;
+    const period = resolveExitPeriod(req.query);
+    if (period.error) return res.status(400).json({ error: period.error });
+    res.json(await getExitInterviewSummary(period, scope, { isAdmin: req.user.role === 'ADMIN' }));
+  } catch (err) {
+    console.error('Exit interview summary error:', err);
+    res.status(500).json({ error: 'Failed to build the exit interview summary' });
+  }
+});
+
+app.get('/api/exit-interview/template', ADMIN_ONLY, async (req, res) => {
+  try {
+    const xlsx = await generateExitTemplateXlsx();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="Template_Exit_Interview.xlsx"');
+    res.send(xlsx);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/exit-interview/upload', ADMIN_ONLY, exitUploadSingle, async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Choose the exit interview Excel file (.xlsx) to upload.' });
+    const fileName = repairUploadedName(req.file.originalname || 'exit_interview.xlsx');
+    const ext = path.extname(fileName).toLowerCase();
+    if (ext !== '.xlsx') return res.status(400).json({ error: `Only the exit interview Excel file (.xlsx) is accepted, not ${ext || 'a file without extension'}. CSV and the old .xls format are not accepted.` });
+    const result = await importExitInterviews(req.file.buffer, fileName, { uploadedBy: `${req.user.full_name} (${req.user.username})`.slice(0, 200) });
+    if (!result.success) return res.status(result.status || 400).json(result);
+    await auth.audit(req, 'EXIT_INTERVIEW_UPLOAD', { target: `${result.rows_imported} rows (${result.inserted_rows} new, ${result.updated_rows} updated, ${result.removed_dummy_rows} dummy replaced); ${result.months.join(' ')}; batch ${result.upload_id}` });
+    const { status, ...body } = result;
+    res.json(body);
+  } catch (err) {
+    console.error('Exit interview upload error:', err);
+    res.status(500).json({ error: 'The exit interview file could not be stored; nothing was imported.' });
+  }
+});
+
+app.get('/api/exit-interview/uploads', ADMIN_ONLY, async (req, res) => {
+  try {
+    res.json(await storage.getExitInterviewUploads());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/exit-interview/export', ADMIN_ONLY, async (req, res) => {
+  try {
+    const scope = auth.scopeFilter(req, res);
+    if (scope === null) return;
+    const period = resolveExitPeriod(req.query);
+    if (period.error) return res.status(400).json({ error: period.error });
+    const { csv } = await generateExitExportCsv(period, scope);
+    const tag = period.mode === 'MTD' ? `${period.year}-${String(period.month).padStart(2, '0')}` : `YTD_${period.year}`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="Exit_Interview_${tag}.csv"`);
+    res.send(csv);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

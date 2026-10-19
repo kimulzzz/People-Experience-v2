@@ -23,6 +23,8 @@ import { AuthContext, useAuth } from './utils/AuthContext';
 import { UNAUTHORIZED_EVENT } from './utils/apiClient';
 import { fetchWithRetry } from './utils/fetchWithRetry';
 import { getPublicCodes, isPublicRoute } from './utils/publicRoute';
+// Loaded on first use (it brings Recharts) so the main bundle does not grow (v2.38.0).
+const ExitInterviewDashboard = React.lazy(() => import('./components/ExitInterviewDashboard'));
 
 // Derived from the real browser clock (not a frozen literal) so the Dashboard's default year
 // tracks forward automatically instead of silently staying on a past year — this mirrors the
@@ -413,6 +415,12 @@ function AppContent() {
           </div>
         )}
 
+        {activeTab === 'exit-interview' && (
+          <React.Suspense fallback={<div className="flex items-center justify-center min-h-[300px]"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#ED1C24]" /></div>}>
+            <ExitInterviewDashboard filterOptions={filterOptions} />
+          </React.Suspense>
+        )}
+
         {activeTab === 'glossary' && <GlossaryView />}
 
       </main>
@@ -427,6 +435,10 @@ function AppContent() {
           setSelectedMetricDetailId(null);
           setPreSelectedSurveyMetricId(metricId);
           setIsSurveyImportOpen(true);
+        }}
+        onOpenExitInterview={() => {
+          setSelectedMetricDetailId(null);
+          setActiveTab('exit-interview');
         }}
         onOpenSurveyQuestionSettings={isAdmin ? (metricId) => {
           setSelectedMetricDetailId(null);

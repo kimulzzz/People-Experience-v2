@@ -16,7 +16,8 @@ import {
   Mail,
   Users,
   LogOut,
-  UserCircle2
+  UserCircle2,
+  DoorOpen
 } from 'lucide-react';
 import CimbLogo from './CimbLogo';
 import { THEME_PRESETS, applyTheme, getSavedThemeId } from '../utils/theme';
@@ -426,6 +427,19 @@ export default function Header({
           >
             <Sparkles className="w-4 h-4" />
             <span>Action Library & AI Alerts</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('exit-interview')}
+            className={`px-4 py-2 text-xs font-semibold rounded-md flex items-center space-x-2 transition ${
+              activeTab === 'exit-interview'
+                ? 'bg-white font-bold shadow-sm'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
+            }`}
+            style={activeTab === 'exit-interview' ? { color: 'var(--theme-base)' } : undefined}
+          >
+            <DoorOpen className="w-4 h-4" />
+            <span>Exit Interview</span>
           </button>
 
           <button
