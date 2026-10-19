@@ -1367,6 +1367,8 @@ const storage = {
         if (!d.startsWith(targetPrefix)) return false;
       } else if (mode === 'YTD') {
         if (year && !d.startsWith(year)) return false;
+        // endMonth is capped by the clock in parseFilterOptions (current year -> this month); '00' = a future year
+        if (endMonth === '00') return false;
         if (endMonth && d > `${year}-${endMonth}-31`) return false;
       }
 

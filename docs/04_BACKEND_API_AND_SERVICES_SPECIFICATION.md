@@ -41,7 +41,7 @@ Backend dibangun menggunakan **Node.js dan Express.js** sebagai REST API Server 
 ### 2.2 Modul Kalkulasi & Analitik Metrik
 | Method | Endpoint | Deskripsi | Parameter Query / Body |
 | :---: | :--- | :--- | :--- |
-| `GET` | `/api/metrics/calculate` | Mengkalkulasi skor PE Index konsolidasi, skor journey, checkpoint, dan rincian 27 metrik (mendukung mode YTD/MTD & filter Direktorat). Tahun default diambil dari jam server saat ini (bukan lagi dibekukan ke `2026`). Response menyertakan `available_years` (daftar tahun yang benar-benar punya data survei di database, dipakai untuk mengisi dropdown Tahun di Header secara dinamis). Sejak v2.15.0, setiap metrik menyertakan `target_value_normalized` — `target_value` (yang tersimpan dalam skala asli metrik, mis. `4.00` untuk RATING_5) dikonversi ke skala 0-100 yang sama dengan `normalized_score`/`min_threshold` via `normalizeTarget()`, dan status HEALTHY/WARNING/CRITICAL kini dihitung dari perbandingan yang sudah senormalisasi ini (sebelumnya WARNING nyaris tidak pernah tercapai untuk metrik RATING_5/QUOTA_COUNT karena target mentah dibandingkan langsung dengan skor 0-100) | `mode=YTD\|MTD`, `year` (default: tahun berjalan), `month=01..12`, `endMonth` (opsional, mode YTD saja — batasi kumulatif s/d akhir bulan tertentu), `directorate=...`, `sub_directorate=...` |
+| `GET` | `/api/metrics/calculate` | Mengkalkulasi skor PE Index konsolidasi, skor journey, checkpoint, dan rincian 27 metrik (mendukung mode YTD/MTD & filter Direktorat). Tahun default diambil dari jam server saat ini (bukan lagi dibekukan ke `2026`). Response menyertakan `available_years` (daftar tahun yang benar-benar punya data survei di database, dipakai untuk mengisi dropdown Tahun di Header secara dinamis). Sejak v2.15.0, setiap metrik menyertakan `target_value_normalized` — `target_value` (yang tersimpan dalam skala asli metrik, mis. `4.00` untuk RATING_5) dikonversi ke skala 0-100 yang sama dengan `normalized_score`/`min_threshold` via `normalizeTarget()`, dan status HEALTHY/WARNING/CRITICAL kini dihitung dari perbandingan yang sudah senormalisasi ini (sebelumnya WARNING nyaris tidak pernah tercapai untuk metrik RATING_5/QUOTA_COUNT karena target mentah dibandingkan langsung dengan skor 0-100) | `mode=YTD\|MTD`, `year` (default: tahun berjalan), `month=01..12`, `endMonth` (opsional, mode YTD saja — batasi kumulatif s/d akhir bulan tertentu; sejak v2.36.0 tidak pernah melewati bulan berjalan, lihat "Catatan v2.36.0"), `directorate=...`, `sub_directorate=...` |
 | `GET` | `/api/metrics/trends` | Mengambil deret waktu Performance Trend, **bisa lintas tahun** (mis. November 2025 s/d Februari 2026) via `startYear`/`startMonth`/`endYear`/`endMonth` — tidak lagi dibekukan ke satu tahun atau ke 2026. `mode=YTD` (default) → tiap titik adalah rata-rata kumulatif Januari **tahunnya sendiri** s/d bulan tersebut (reset tiap 1 Januari, konvensi YTD standar — rentang lintas tahun menampilkan kurva YTD tiap tahun berurutan, bukan satu akumulasi menerus); `mode=MTD` → tiap titik berdiri sendiri (trivial lintas tahun). **Hanya bulan yang benar-benar lengkap yang dikembalikan** — bulan berjalan dan seterusnya **tidak muncul sama sekali** di array `trends`. `endYear`/`endMonth` selalu di-clamp ke bulan lengkap terakhir di tahun manapun yang diminta, sekalipun user meminta rentang jauh ke masa depan. Response menyertakan `year`, `last_complete_month`, dan `available_years` (daftar tahun yang benar-benar punya data di database, dari `storage.getAvailableSurveyYears()`) agar frontend tahu batas rentang & opsi tahun yang valid. Setiap titik trend menyertakan field `year` dan dihitung via `calculatePEIndex()` (metode normalisasi + bobot per-metrik yang **identik** dengan scorecard utama `/api/metrics/calculate`) | `mode` (`YTD`\|`MTD`), `year`, `startYear`, `startMonth`, `endYear`, `endMonth`, `directorate`, `sub_directorate` |
 | `GET` | `/api/metrics/:metric_id/detail`| Mengambil rincian drilldown metrik (question breakdown, responses table / HR operational logs). Untuk metrik OUTCOME, field `operational_records` (breakdown SLA/channel/recognition per unit) sejak v2.16.0 dibaca dari database (`storage.getOperationalRecords(metric_id)`, sumber: `seedData.js`'s `initialOperationalRecords`), bukan lagi array statis inline di `calculationEngine.js` — metrik tanpa tabel breakdown seeded mengembalikan `[]`. `total_respondents` selalu berupa hitungan respons asli dari database (bisa `0`), tidak lagi memakai placeholder fiktif untuk metrik ESS tanpa data | `period=YTD` atau `mode=YTD\|MTD&year=2026&month=01` |
 | `GET` | `/api/directorates` | Mengambil daftar 7 Direktorat CIMB Niaga beserta Sub-Direktorat / Divisi terkait | `-` |
@@ -533,13 +533,57 @@ Perubahan terkait: `updateMedia` (`sqlStorage.js`, `jsonStorage.js`) kini meneri
 
 | Aspek | Aturan |
 | :--- | :--- |
-| Periode (*carry-forward*) | Batas akhir: YTD tahun Y = Y-12 (atau `endMonth` bila ada, mis. titik tren YTD); MTD Y-M = Y-M. Dipakai hasil dengan (tahun, bulan) terbesar yang <= batas itu, dari tahun mana pun. |
+| Periode (*carry-forward*, **diganti v2.36.0**: periode ketat, lihat "Catatan v2.36.0") | Batas akhir: YTD tahun Y = Y-12 (atau `endMonth` bila ada, mis. titik tren YTD); MTD Y-M = Y-M. Dipakai hasil dengan (tahun, bulan) terbesar yang <= batas itu, dari tahun mana pun. |
 | Level org | Tanpa filter direktorat: baris `BANKWIDE` (bila tidak ada: gabungan baris direktorat). Filter direktorat: baris direktorat itu. Filter divisi tanpa direktorat: baris direktorat induk divisi (`essDirectorateFor`; divisi tak dikenal -> tanpa data). Akun USER dengan `scopes`: gabungan berbobot partisipasi baris direktorat dalam cakupan (tiap direktorat sekali), tidak pernah baris Bankwide. |
 | Nilai metrik | `raw_value` = `index`, `sample_size` = `participation`, `last_survey_date` = `YYYY-MM`; tambahan `ess_period`, `ess_period_label`, `ess_level`. Normalisasi/status seperti metrik `PERCENTAGE` lain. |
-| Tanpa hasil | `raw_value` statis metrik, `sample_size` 0, `last_survey_date` = `last_survey_date` metrik atau hari ini. |
-| Tren | `response_count` per titik ikut menjumlah partisipasi ESS (lewat `sample_size`), jadi bulan setelah hasil ESS terakhir memakai nilai yang sama (carry-forward). |
+| Tanpa hasil (**diganti v2.36.0**: `NO_DATA`, skor `null`) | `raw_value` statis metrik, `sample_size` 0, `last_survey_date` = `last_survey_date` metrik atau hari ini. |
+| Tren | `response_count` per titik ikut menjumlah partisipasi ESS (lewat `sample_size`). Carry-forward ke bulan/tahun berikutnya berlaku sampai v2.35.0; sejak v2.36.0 hanya dalam tahun hasil itu. |
 | Detail (`getMetricDetail` -> `buildEssDetail`) | `is_ess_summary: true`, `ess_summary` (`summary_score` = index, `percent_neutral`/`percent_unfavorable` = `null`, `participation`, `period_label`), `questions_breakdown` bertipe `ESS_PERCENT` (`percent_favorable` = skor file), `ess_results_by_directorate` (Admin/tanpa scope: semua baris, Bankwide dulu; USER: hanya direktorat dalam cakupan; `is_selected`), `ess_upload`, `ess_division_filtered`, `total_respondents` = partisipasi, `responses: []`. Pertanyaan file dicocokkan ke pertanyaan terkonfigurasi lewat teks yang dinormalisasi (huruf kecil, non-alfanumerik jadi spasi); tidak cocok -> `key` `ess_q<N>`, label "Question N". Bila metrik ESS tidak punya hasil, detail jatuh ke jalur survei lama (placeholder `ess_summary`). |
 
 **Storage (kedua backend, kontrak sama)**: `getEssResults(metric_id|null, { year, month })`, `getLatestEssPeriod(metric_id, endYear, endMonth)`, `saveEssResultUpload(meta, rows)` (insert ke `px_survey_uploads` + hapus baris metrik/periode yang sama + insert baris baru, satu transaksi; mengembalikan `{ record, replaced_rows }`), `deleteEssResultsForMetric(metric_id)`. `getLatestEssPeriod` dan `deleteEssResultsForMetric` belum dipanggil kode lain. `hasSurveyDataInPeriod` kini juga benar bila ada hasil ESS bertanggal tanggal 1 bulannya dalam rentang (pengingat e-mail), `getAvailableSurveyYears` ikut memuat `survey_year` ESS.
 
 **Tidak berubah**: tidak ada env aplikasi atau setting baru; `/api/health` `version` = `2.32.0`. Pengujian: `docs/07` §28 (Modul 45).
+
+---
+
+## Catatan v2.36.0 - Jendela Periode YTD/MTD & Status NO_DATA
+
+**Ringkasan**: YTD tahun berjalan kini berhenti di akhir bulan berjalan (jam server); periode baca tiap metrik SURVEY ditentukan `update_frequency`; ESS tidak lagi *carry-forward* lintas tahun; metrik SURVEY tanpa data di jendelanya menjadi `NO_DATA` (skor `null`) dan keluar dari indeks, rollup dan alert. Model lengkap: `docs/01` §3.1, §3.7, §4, §5. Detail dan angka sebelum/sesudah: `CHANGELOG.md` [2.36.0]. Tidak ada endpoint, tabel, setting, atau env baru; `/api/health` `version` = `2.36.0`.
+
+**Fungsi baru di `server/db/filterUtils.js`**
+
+| Fungsi | Perilaku |
+| :--- | :--- |
+| `ytdEndMonth(year, endMonth)` | Bulan akhir jendela YTD: bulan berjalan untuk tahun berjalan, 12 untuk tahun lalu, 0 (jendela kosong) untuk tahun depan, `NaN` untuk tahun tidak valid. `endMonth` 1-12 dipertahankan tetapi dibatasi ke nilai itu. |
+| `effectiveMetricPeriod(metric, { mode, year, month, endMonth })` | Metrik `update_frequency = 'ONE_TIME_ANNUAL'` pada MTD -> `{ mode: 'YTD', endMonth: month }`; selain itu periode tidak diubah. |
+| `periodWindow({ mode, year, month, endMonth })` | `{ from, to, basis }`: MTD -> `MONTH` (tanggal 1 s.d. akhir bulan), YTD -> `YEAR_TO_MONTH` (1 Jan s.d. akhir bulan batas; tahun depan `from`/`to` `null`). `null` untuk tahun/bulan tidak valid. |
+
+`parseFilterOptions` mode YTD kini selalu mengisi `endMonth` dengan `ytdEndMonth` (`'00'` = tahun depan). `sqlStorage.buildResponseFilter`: jendela kosong atau tahun bukan 4 digit -> `1 = 0`. `jsonStorage.applyResponseFilters`: `endMonth === '00'` -> tidak ada baris. `essSummaryService.selectEssResult` memakai jendela yang sama (MTD = tepat Y-M; YTD = hasil terbaru tahun Y dengan bulan <= batas), menggantikan aturan carry-forward di "Catatan v2.32.0".
+
+**Field response `GET /api/metrics/calculate` (juga setiap titik `GET /api/metrics/trends` lewat `calculatePEIndex()`)**
+
+| Field | Sejak v2.36.0 |
+| :--- | :--- |
+| `px_index`, `pe_index` | `null` bila `px_index_basis = 'NONE'` |
+| `px_index_basis` (baru) | `'BOTH'` (0.70 Survey + 0.30 Outcome) / `'SURVEY_ONLY'` / `'OUTCOME_ONLY'` / `'NONE'` |
+| `survey_index`, `outcome_index` | `null` bila tidak ada metrik aktif berdata (dulu 0) |
+| `no_data_metrics_count` (baru) | Jumlah metrik aktif (tidak `is_disabled` / `excluded_from_index`) berstatus `NO_DATA` |
+| `active_metrics_count`, `survey_metrics_count`, `outcome_metrics_count` | Hanya metrik aktif yang berdata |
+| `disabled_metrics_count` | Metrik `is_disabled` atau `excluded_from_index` (dulu `total_metrics - active_metrics_count`, sehingga metrik `NO_DATA` tidak terhitung di sini) |
+| `metrics[].status` | Tambahan nilai `'NO_DATA'` |
+| `metrics[].has_data` (baru) | `false` untuk metrik SURVEY tanpa data di jendelanya; OUTCOME selalu `true` |
+| `metrics[].raw_value`, `normalized_score`, `gap` | `null` bila `has_data = false` (tidak ada fallback `raw_value` statis); `sample_size` 0 |
+| `metrics[].update_frequency` (baru) | `update_frequency` metrik (default `'MONTHLY'`) |
+| `metrics[].period_window` (baru) | `periodWindow()` periode efektif metrik SURVEY; OUTCOME `null` |
+| `journeys[].overall_score` | `null` bila tidak ada metrik berdata (dulu 0); baru `has_data`, `no_data_count` |
+| `checkpoints[].score` | `null` bila tidak ada metrik berdata (dulu 0); baru `has_data` |
+
+**Trend (`computeMonthlyTrends`)**: titik dengan `survey_index = null` mengirim `px_index` dan `pe_index` `null` (celah), bukan Outcome saja.
+
+**Detail (`GET /api/metrics/:metric_id/detail`)**: metrik SURVEY memakai periode efektif yang sama dengan scorecard (`effectiveMetricPeriod`). Field baru: `update_frequency` dan `period_window` pada detail SURVEY (jalur survei dan detail ESS dengan hasil), `has_data` hanya pada jalur survei (termasuk ESS tanpa hasil). Detail OUTCOME tidak berubah dan tidak mengirim field ini. Tanpa data (metrik ESS tanpa hasil di jendela, atau survei tanpa baris): `status: 'NO_DATA'`, `has_data: false`, `current_raw_value` dan `normalized_score` `null`, `total_respondents` 0; `questions_breakdown[]` non-`FREE_TEXT` mendapat `avg_score`/`normalized_score` (dan `percent_yes` bila ada) `null` - skor default/terkonfigurasi tidak dipakai lagi; placeholder `ess_summary` metrik ESS mendapat `summary_score` dan `percent_*` `null`.
+
+**Lainnya**: `alertEngine.getAlertsAndRecommendations` melewati metrik `has_data === false` (tanpa itu `null < min_threshold` bernilai benar sehingga metrik tanpa data muncul sebagai CRITICAL). `surveyImportService.processSurveyCsv`: `affected_metrics[].normalized_score` = `null` (dulu 0) bila metrik `NO_DATA` di jendela YTD saat ini.
+
+**Metrik khusus**: 2/5/7/12 memakai aturan survei bulanan biasa (2 dan 5 tetap exempted pada filter direktorat). Metrik 12 hanya dari baris surveinya; sinkron feedback event masih menulis `px_metrics.raw_value` lewat `storage.updateMetricScore(12, ...)`, tetapi scorecard dan detail tidak lagi memakainya sebagai fallback. Metrik 11 (OUTCOME, kuota event live) tidak berubah.
+
+Pengujian: `docs/07` §30 (Modul 46).

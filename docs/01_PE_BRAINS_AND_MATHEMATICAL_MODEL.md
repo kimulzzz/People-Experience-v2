@@ -88,6 +88,15 @@ $$W_{\text{survey}} = 0.70 \quad (70\%), \qquad W_{\text{outcome}} = 0.30 \quad 
 
 $$PE\ Index = 0.70 \times Index_{\text{survey}} + 0.30 \times Index_{\text{outcome}}$$
 
+**Komponen tanpa data (sejak v2.36.0)**: indeks komponen yang tidak punya satu pun metrik berdata dalam periode terpilih bernilai `null`; bobot 70/30 tidak dipaksakan. `GET /api/metrics/calculate` mengirim `px_index_basis`:
+
+| `px_index_basis` | Kondisi | PX Index |
+| :--- | :--- | :--- |
+| `BOTH` | Survey Index dan Outcome Index berdata | $0.70 \times Index_{\text{survey}} + 0.30 \times Index_{\text{outcome}}$ |
+| `SURVEY_ONLY` | Tidak ada metrik Outcome aktif | = Survey Index |
+| `OUTCOME_ONLY` | Tidak ada metrik survei berdata (mis. tahun depan) | = Outcome Index |
+| `NONE` | Keduanya kosong | `null` |
+
 ---
 
 ### 3.2 Normalisasi Skor Level Pertanyaan (4 Tipe Pertanyaan)
@@ -164,6 +173,8 @@ Dimana:
 - $|M_{\text{survey}}| = 20$ metrik.
 - $|M_{\text{outcome}}| = 7$ metrik.
 
+**Implementasi (`calculatePEIndex()`, sejak v2.36.0)**: kedua rerata di atas adalah rerata berbobot (`weight` per metrik, default 1.0) dan hanya mencakup metrik aktif yang **punya data di jendela periode** (jumlahnya tidak selalu 20/7). Metrik SURVEY tanpa data (`NO_DATA`, §4) dan metrik yang dikecualikan filter direktorat (`is_disabled` / `excluded_from_index`, §6) tidak masuk pembilang maupun penyebut. Aturan yang sama berlaku untuk skor checkpoint (§3.5, rerata berbobot semua metrik berdata) dan journey (§3.6, 70/30 per journey, atau satu komponen saja bila komponen lain kosong). Journey/checkpoint tanpa metrik berdata bernilai `null` dengan `has_data: false`.
+
 ---
 
 ### 3.8 Model Agregasi Skor Butir Pertanyaan ESS (Employee Sentiment Survey)
@@ -181,22 +192,34 @@ Dimana:
 
 ---
 
-## ⏳ 4. Model Agregasi Waktu: Period Filter (YTD vs Bulanan)
+## ⏳ 4. Model Agregasi Waktu: Period Filter (YTD vs MTD)
 
-Sistem menerapkan dua mode komputasi temporal:
+Aturan sejak v2.36.0. Jendela periode dihitung di `server/db/filterUtils.js` (`ytdEndMonth`, `effectiveMetricPeriod`, `periodWindow`, `parseFilterOptions`) dan dipakai kedua backend storage (`sqlStorage.buildResponseFilter`, `jsonStorage.applyResponseFilters`), sehingga SQL Server dan JSON membaca baris yang sama.
 
-1. **Year-to-Date (YTD) - Default Global**:
-   - Menghitung seluruh data transaksi dan respon survei yang tercatat mulai dari awal tahun berjalan (misal: 1 Januari 2026) hingga tanggal terkini (*running year cumulative*).
-   - Memberikan gambaran performa makro jangka panjang bank.
+1. **Year-to-Date (YTD) - default**:
+   - Tahun berjalan (jam server): 1 Januari s.d. **akhir bulan berjalan**. Contoh: 19 Okt 2026 -> 2026-01-01 s.d. 2026-10-31. Baris bertanggal setelah bulan ini tidak ikut.
+   - Tahun lalu: setahun penuh (Januari-Desember). Tahun depan: jendela kosong (semua metrik SURVEY `NO_DATA`).
+   - `endMonth` eksplisit (titik Performance Trend mode YTD) dipakai, tetapi tidak pernah melewati batas di atas.
 
-2. **Monthly Period (Bulanan - YYYY-MM)**:
-   - Memfilter himpunan data $D_{\text{filter}} = \{d \in D \mid \text{Format}(d.\text{date}, \text{'YYYY-MM'}) = \text{SelectedMonth}\}$.
-   - Menghasilkan indeks murni untuk bulan tersebut (misal: `2026-03` untuk Maret 2026).
-   - Memungkinkan analisis komparasi *Month-over-Month (MoM)*.
+2. **Month-to-Date (MTD, `YYYY-MM`)**:
+   - $D_{\text{filter}} = \{d \in D \mid \text{Format}(d.\text{date}, \text{'YYYY-MM'}) = \text{SelectedMonth}\}$ - hanya bulan itu, untuk metrik berperiode bulanan.
 
-3. **12-Month Progression Trend Engine**:
-   - Mengeksekusi komputasi $PE(t)$ untuk setiap $t \in [1..12]$ menghasilkan time series:
-     $$\mathbf{Trend} = \big[ (PE_{\text{Jan}}, S_{\text{Jan}}, O_{\text{Jan}}), (PE_{\text{Feb}}, S_{\text{Feb}}, O_{\text{Feb}}), \dots, (PE_{\text{Des}}, S_{\text{Des}}, O_{\text{Des}}) \big]$$
+3. **Periode per metrik (`effectiveMetricPeriod`, ditentukan `update_frequency`)**:
+
+   | Jenis metrik | YTD tahun Y | MTD Y-M |
+   | :--- | :--- | :--- |
+   | SURVEY `MONTHLY` (default) | Januari s.d. batas YTD | Hanya bulan M |
+   | SURVEY `ONE_TIME_ANNUAL` (semua metrik ESS; survei SYSTEM yang diset Annual oleh admin) | Januari s.d. batas YTD | Januari s.d. M tahun Y (= YTD Y s.d. M, tetap dibatasi jam server) |
+   | ESS (ringkasan `.xlsx`, `selectEssResult`) | Hasil terbaru tahun Y yang bulannya di dalam jendela | Hasil terbaru tahun Y s.d. bulan M (metrik ESS bertipe annual) |
+   | OUTCOME | Snapshot saat ini, tanpa filter periode | Sama |
+
+   Tidak ada *carry-forward* lintas tahun (aturan v2.32.0 dihapus). Contoh dengan satu-satunya hasil ESS 2025-11: metrik 9 = 92 pada MTD 2025-11, MTD 2025-12 dan YTD 2025; `NO_DATA` pada MTD 2025-10, MTD 2026-09 dan YTD 2026. Response menyertakan `period_window = { from, to, basis: 'MONTH' | 'YEAR_TO_MONTH' }` per metrik SURVEY (OUTCOME `null`).
+
+4. **Status `NO_DATA`**: metrik SURVEY tanpa data di jendelanya -> `has_data: false`, `raw_value` / `normalized_score` / `gap` = `null`, `sample_size` = 0. Tidak ada fallback ke `raw_value` statis (juga untuk metrik 12, yang `raw_value`-nya masih ditulis sinkron feedback event). Metrik ini tidak ikut Survey Index, rollup journey/checkpoint (§3.7) dan alert (§5). Metrik OUTCOME tidak pernah `NO_DATA`.
+
+5. **Performance Trend (`computeMonthlyTrends`)**:
+   - Hanya bulan yang sudah lengkap (s.d. bulan lengkap terakhir); mode YTD = kumulatif Januari tahun titik itu s.d. bulan titik, mode MTD = per bulan. Setiap titik dihitung dengan `calculatePEIndex()` yang sama dengan scorecard, jadi aturan 1-4 berlaku per titik.
+   - Titik tanpa data survei: `survey_index` dan `px_index` = `null` (celah di grafik), bukan PX dari Outcome saja.
 
 ---
 
@@ -222,6 +245,7 @@ Sistem mengimplementasikan deteksi anomali kinerja secara real-time untuk setiap
 3. **Critical Deficit (Merah)**: $\text{Normalized Score}_m < \text{Min Threshold}$ ($< 75.0\%$).
    - Memicu pembuatan entri pada **Pusat Peringatan & Defisit Kinerja PE** (`/api/alerts`).
    - Otomatis menghubungkan metrik yang defisit ke **Action Library** untuk memunculkan inisiatif perbaikan berbasis AI dan SOP internal CIMB Niaga.
+4. **No Data (abu-abu, sejak v2.36.0)**: metrik SURVEY tanpa data di periode terpilih (`status: 'NO_DATA'`, skor `null`). Tidak dibandingkan dengan target/threshold dan tidak pernah memicu alert (`alertEngine.js` melewati metrik dengan `has_data === false`).
 
 ---
 

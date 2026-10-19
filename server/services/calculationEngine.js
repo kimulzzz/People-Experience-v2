@@ -3,6 +3,7 @@ const storage = require('../db/storage');
 const { getQuestionsForMetric } = require('./metricQuestionService');
 const { isEssMetric } = require('../db/surveySource');
 const { selectEssResult, essOrgFor, essOriginalFilePath } = require('./essSummaryService');
+const { effectiveMetricPeriod, periodWindow } = require('../db/filterUtils');
 
 // Default year for YTD/unparseable period requests, derived from the real server clock
 // instead of a hardcoded literal — this dataset happens to be seeded for 2026 (today's real
@@ -309,10 +310,12 @@ async function computeMonthlyTrends(filterOptions = {}) {
       year: yearStr,
       has_actual_data: responseCount > 0,
       response_count: responseCount,
+      // A month without any survey data is a gap in the chart (null), not an Outcome-only PX value (v2.36.0):
+      // the Outcome Index is a flat snapshot, so plotting it alone would look like a sudden drop.
       survey_index: periodResult.survey_index,
       outcome_index: periodResult.outcome_index,
-      px_index: periodResult.px_index,
-      pe_index: periodResult.px_index // backward compatibility
+      px_index: periodResult.survey_index === null ? null : periodResult.px_index,
+      pe_index: periodResult.survey_index === null ? null : periodResult.px_index // backward compatibility
     };
   }));
 }
@@ -416,25 +419,31 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
     let rawVal = parseFloat(m.raw_value || 0);
     let sampleSize = null;
     let lastSurveyDate = null;
+    // v2.36.0: a SURVEY metric only has a value when it has data INSIDE the selected window; without it the metric
+    // is NO_DATA (no static raw_value fallback) and stays out of every index, rollup and alert. OUTCOME metrics are
+    // current snapshots and always have a value.
+    let hasData = true;
     const isEss = m.metric_type === 'SURVEY' && isEssMetric(m);
     let essResult = null;
+    // The period this metric is read for: an annual metric under MTD reads Jan..that month (update_frequency).
+    const mp = effectiveMetricPeriod(m, { mode, year, month, endMonth });
+    const metricFilter = { ...queryFilter, mode: mp.mode, endMonth: mp.endMonth };
 
     if (isEss) {
-      // ESS metric (v2.32.0): the uploaded ESS summary, not per-respondent rows. The latest result on or before the
-      // period's end is carried forward; sample size = participation. No result -> the static raw_value, like any
-      // survey metric without data.
-      essResult = selectEssResult(essResults, m.metric_id, { mode, year, month, endMonth },
+      // ESS metric (v2.32.0): the uploaded ESS summary, not per-respondent rows. Only a result whose (year, month)
+      // lies inside the window counts (v2.36.0, no carry-forward); sample size = participation.
+      essResult = selectEssResult(essResults, m.metric_id, mp,
         essOrgFor({ directorate: essDirectorate, scopes, bankwide: bankwideReadOnly }));
       if (essResult) {
         rawVal = essResult.index;
         sampleSize = essResult.participation;
         lastSurveyDate = essResult.period;
       } else {
+        hasData = false;
         sampleSize = 0;
-        lastSurveyDate = normalizeDateString(m.last_survey_date) || todayDateString();
       }
     } else if (m.metric_type === 'SURVEY') {
-      const responses = await storage.getResponsesByMetricAndPeriod(m.metric_id, bankwideReadOnly ? { ...queryFilter, directorate: 'ALL', sub_directorate: 'ALL', scopes: null } : queryFilter);
+      const responses = await storage.getResponsesByMetricAndPeriod(m.metric_id, bankwideReadOnly ? { ...metricFilter, directorate: 'ALL', sub_directorate: 'ALL', scopes: null } : metricFilter);
       sampleSize = responses.length;
 
       if (responses.length > 0) {
@@ -444,7 +453,7 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
         const rawDate = lastResp.survey_date || lastResp.created_at;
         lastSurveyDate = normalizeDateString(rawDate) || todayDateString();
       } else {
-        lastSurveyDate = normalizeDateString(m.last_survey_date) || todayDateString();
+        hasData = false;
       }
     } else {
       // OUTCOME METRICS — last ingestion date is a real database field (`last_data_date`,
@@ -454,12 +463,14 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       lastSurveyDate = normalizeDateString(rawDate) || todayDateString();
     }
 
-    const normScore = normalizeScore({ ...m, ...targetConfig }, rawVal);
+    const normScore = hasData ? normalizeScore({ ...m, ...targetConfig }, rawVal) : null;
     const minThreshold = parseFloat(targetConfig.min_threshold || 75);
     const normalizedTarget = normalizeTarget(m, targetConfig);
 
     let status = 'HEALTHY';
-    if (normScore < minThreshold) {
+    if (!hasData) {
+      status = 'NO_DATA';
+    } else if (normScore < minThreshold) {
       status = 'CRITICAL';
     } else if (normScore < normalizedTarget) {
       status = 'WARNING';
@@ -481,14 +492,18 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       target_value_normalized: parseFloat(normalizedTarget.toFixed(2)),
       target_display: targetConfig.target_display,
       min_threshold: targetConfig.min_threshold,
-      raw_value: parseFloat(rawVal.toFixed(2)),
+      raw_value: hasData ? parseFloat(rawVal.toFixed(2)) : null,
       unit: m.unit,
-      normalized_score: parseFloat(normScore.toFixed(2)),
+      normalized_score: hasData ? parseFloat(normScore.toFixed(2)) : null,
       weight,
       status,
+      has_data: hasData,
+      update_frequency: m.update_frequency || 'MONTHLY',
+      // the dates this SURVEY metric was read for (OUTCOME = current snapshot, no window)
+      period_window: m.metric_type === 'SURVEY' ? periodWindow(mp) : null,
       sample_size: sampleSize,
       last_survey_date: lastSurveyDate,
-      gap: parseFloat((normalizedTarget - normScore).toFixed(2)),
+      gap: hasData ? parseFloat((normalizedTarget - normScore).toFixed(2)) : null,
       is_employee_metric: isEmployeeMetric,
       target_audience: m.target_audience || (isEmployeeMetric ? 'EMPLOYEE' : 'EXTERNAL_MARKET'),
       is_disabled: isDisabled,
@@ -502,35 +517,43 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
     };
   }));
 
-  // 2. Separate Active Survey vs Outcome metrics (Excluding Disabled non-employee metrics when directorate is selected)
-  const activeMetrics = enrichedMetrics.filter(m => !m.is_disabled && !m.excluded_from_index);
+  // 2. Separate Active Survey vs Outcome metrics (Excluding Disabled non-employee metrics when directorate is selected,
+  // and - v2.36.0 - NO_DATA survey metrics, which have no value in this window)
+  const activeMetrics = enrichedMetrics.filter(m => !m.is_disabled && !m.excluded_from_index && m.has_data);
+  const noDataMetrics = enrichedMetrics.filter(m => !m.is_disabled && !m.excluded_from_index && !m.has_data);
   const activeSurveyMetrics = activeMetrics.filter(m => m.metric_type === 'SURVEY');
   const activeOutcomeMetrics = activeMetrics.filter(m => m.metric_type === 'OUTCOME');
 
-  // 3. Survey Index (calculated exclusively from active survey metrics)
+  // 3. Survey Index (weighted mean over the active survey metrics WITH data; null when none has data)
   const totalSurveyWeight = activeSurveyMetrics.reduce((sum, m) => sum + m.weight, 0);
   const weightedSurveySum = activeSurveyMetrics.reduce((sum, m) => sum + (m.normalized_score * m.weight), 0);
-  const surveyIndex = totalSurveyWeight > 0 ? weightedSurveySum / totalSurveyWeight : 0;
+  const surveyIndex = totalSurveyWeight > 0 ? weightedSurveySum / totalSurveyWeight : null;
 
-  // 4. Outcome Index (calculated exclusively from active outcome metrics)
+  // 4. Outcome Index (calculated exclusively from active outcome metrics; null when there are none)
   const totalOutcomeWeight = activeOutcomeMetrics.reduce((sum, m) => sum + m.weight, 0);
   const weightedOutcomeSum = activeOutcomeMetrics.reduce((sum, m) => sum + (m.normalized_score * m.weight), 0);
-  const outcomeIndex = totalOutcomeWeight > 0 ? weightedOutcomeSum / totalOutcomeWeight : 0;
+  const outcomeIndex = totalOutcomeWeight > 0 ? weightedOutcomeSum / totalOutcomeWeight : null;
 
-  // 5. Consolidated PX Index: 70% Survey + 30% Outcomes (adaptive if only survey or outcome available)
-  let pxIndex = 0;
-  if (totalSurveyWeight > 0 && totalOutcomeWeight > 0) {
+  // 5. Consolidated PX Index: 70% Survey + 30% Outcomes; when one component has no data the other one alone
+  // (px_index_basis says which), null when neither has data.
+  let pxIndex = null;
+  let pxIndexBasis = 'NONE';
+  if (surveyIndex !== null && outcomeIndex !== null) {
     pxIndex = (0.70 * surveyIndex) + (0.30 * outcomeIndex);
-  } else if (totalSurveyWeight > 0) {
+    pxIndexBasis = 'BOTH';
+  } else if (surveyIndex !== null) {
     pxIndex = surveyIndex;
-  } else if (totalOutcomeWeight > 0) {
+    pxIndexBasis = 'SURVEY_ONLY';
+  } else if (outcomeIndex !== null) {
     pxIndex = outcomeIndex;
+    pxIndexBasis = 'OUTCOME_ONLY';
   }
+  const round2 = v => (v === null ? null : parseFloat(v.toFixed(2)));
 
   // 6. Rollup by Journey
   const journeySummaries = journeys.map(j => {
     const jMetrics = enrichedMetrics.filter(m => m.journey_id === j.journey_id);
-    const jActiveMetrics = jMetrics.filter(m => !m.is_disabled && !m.excluded_from_index);
+    const jActiveMetrics = jMetrics.filter(m => !m.is_disabled && !m.excluded_from_index && m.has_data);
     const jSurvey = jActiveMetrics.filter(m => m.metric_type === 'SURVEY');
     const jOutcome = jActiveMetrics.filter(m => m.metric_type === 'OUTCOME');
 
@@ -540,7 +563,7 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
     const oWeight = jOutcome.reduce((s, m) => s + m.weight, 0);
     const oScore = oWeight > 0 ? jOutcome.reduce((s, m) => s + (m.normalized_score * m.weight), 0) / oWeight : null;
 
-    let jOverallScore = 0;
+    let jOverallScore = null; // null = no metric of this journey has data in the window
     if (sScore !== null && oScore !== null) {
       jOverallScore = (0.70 * sScore) + (0.30 * oScore);
     } else if (sScore !== null) {
@@ -562,10 +585,12 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       icon: j.icon,
       survey_score: sScore !== null ? parseFloat(sScore.toFixed(2)) : null,
       outcome_score: oScore !== null ? parseFloat(oScore.toFixed(2)) : null,
-      overall_score: parseFloat(jOverallScore.toFixed(2)),
+      overall_score: round2(jOverallScore),
+      has_data: jOverallScore !== null,
       metrics_count: jMetrics.length,
       active_metrics_count: jActiveMetrics.length,
       disabled_metrics_count: disabledCount,
+      no_data_count: jMetrics.filter(m => !m.is_disabled && !m.excluded_from_index && !m.has_data).length,
       survey_count: jSurvey.length,
       outcome_count: jOutcome.length,
       critical_count: criticalCount,
@@ -577,16 +602,17 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
   // 7. Rollup by Checkpoint
   const checkpointSummaries = checkpoints.map(cp => {
     const cpMetrics = enrichedMetrics.filter(m => m.checkpoint_id === cp.checkpoint_id);
-    const cpActiveMetrics = cpMetrics.filter(m => !m.is_disabled && !m.excluded_from_index);
+    const cpActiveMetrics = cpMetrics.filter(m => !m.is_disabled && !m.excluded_from_index && m.has_data);
     const totalWeight = cpActiveMetrics.reduce((s, m) => s + m.weight, 0);
-    const cpScore = totalWeight > 0 ? cpActiveMetrics.reduce((s, m) => s + (m.normalized_score * m.weight), 0) / totalWeight : 0;
+    const cpScore = totalWeight > 0 ? cpActiveMetrics.reduce((s, m) => s + (m.normalized_score * m.weight), 0) / totalWeight : null;
 
     return {
       checkpoint_id: cp.checkpoint_id,
       journey_id: cp.journey_id,
       checkpoint_name: cp.checkpoint_name,
       experience_owner: cp.experience_owner,
-      score: parseFloat(cpScore.toFixed(2)),
+      score: round2(cpScore),
+      has_data: cpScore !== null,
       metrics_count: cpMetrics.length,
       active_metrics_count: cpActiveMetrics.length,
       metrics: cpMetrics
@@ -615,14 +641,16 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       is_directorate_filtered: isDirectorateFiltered,
       scopes
     },
-    px_index: parseFloat(pxIndex.toFixed(2)),
-    pe_index: parseFloat(pxIndex.toFixed(2)), // backward compatibility
-    survey_index: parseFloat(surveyIndex.toFixed(2)),
-    outcome_index: parseFloat(outcomeIndex.toFixed(2)),
+    px_index: round2(pxIndex),
+    pe_index: round2(pxIndex), // backward compatibility
+    px_index_basis: pxIndexBasis, // 'BOTH' | 'SURVEY_ONLY' | 'OUTCOME_ONLY' | 'NONE' (v2.36.0)
+    survey_index: round2(surveyIndex),
+    outcome_index: round2(outcomeIndex),
     weights_formula: '70% Survey + 30% Outcomes (Normalized across active metrics)',
     total_metrics: enrichedMetrics.length,
     active_metrics_count: activeMetrics.length,
-    disabled_metrics_count: enrichedMetrics.length - activeMetrics.length,
+    disabled_metrics_count: enrichedMetrics.filter(m => m.is_disabled || m.excluded_from_index).length,
+    no_data_metrics_count: noDataMetrics.length,
     survey_metrics_count: activeSurveyMetrics.length,
     outcome_metrics_count: activeOutcomeMetrics.length,
     monthly_trends: monthlyTrends,
@@ -704,6 +732,10 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
   const isSurvey = metric.metric_type === 'SURVEY';
   // ESS is decided by the metric's survey_source (v2.29.0); the old text test is only a fallback when it is empty.
   const isEss = isSurvey && isEssMetric(metric);
+  // v2.36.0: the period this metric is read for (an annual metric under MTD reads Jan..that month), same as the scorecard
+  const mp = effectiveMetricPeriod(metric, { mode, year, month, endMonth });
+  const metricFilter = { ...queryFilter, mode: mp.mode, endMonth: mp.endMonth };
+  const windowInfo = { update_frequency: metric.update_frequency || 'MONTHLY', period_window: isSurvey ? periodWindow(mp) : null };
 
   if (!isSurvey) {
     // Outcome metric: Internal HR system data
@@ -793,17 +825,17 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
   // ESS metric with an uploaded ESS summary for this period (v2.32.0)
   if (isEss) {
     const essDirectorate = await essDirectorateFor(directorate, subDirectorate, scopes);
-    const essResult = selectEssResult(await storage.getEssResults(id), id, { mode, year, month, endMonth },
+    const essResult = selectEssResult(await storage.getEssResults(id), id, mp,
       essOrgFor({ directorate: essDirectorate, scopes }));
     if (essResult) {
-      return buildEssDetail({ id, metric, targetConfig, journey, checkpoint, isEmployeeMetric, isDisabled, disabledReason,
-        periodString, queryFilter, essResult, scopes, subDirectorate, essDirectorate });
+      return { ...windowInfo, ...await buildEssDetail({ id, metric, targetConfig, journey, checkpoint, isEmployeeMetric, isDisabled, disabledReason,
+        periodString, queryFilter, essResult, scopes, subDirectorate, essDirectorate }) };
     }
   }
 
   // Survey metric logic
   const questions = await storage.getSurveyQuestions(id);
-  const responses = await storage.getResponsesByMetricAndPeriod(id, queryFilter);
+  const responses = await storage.getResponsesByMetricAndPeriod(id, metricFilter);
 
   const questionBreakdown = questions.map(q => {
     const qType = q.type || 'SCALE_1_5';
@@ -971,19 +1003,28 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
   // Real response count from the database — no fabricated population placeholder. A metric
   // with genuinely zero responses reports 0, not an invented "typical ESS sample size".
   const totalRespondents = responses.length;
-  
-  let overallAvg = responses.length > 0 
+
+  // v2.36.0: no data in the window (an ESS metric without a result here, or no survey rows) -> NO_DATA with null
+  // scores, exactly like the scorecard; no static raw_value / default ESS score fallback.
+  const hasData = !isEss && responses.length > 0;
+  const overallAvg = hasData
     ? responses.reduce((acc, r) => acc + (parseFloat(r.rating_score) || 0), 0) / responses.length
-    : parseFloat(metric.raw_value || 0);
-
-  if (isEss && responses.length === 0 && essSummary) {
-    overallAvg = essSummary.summary_score;
-  }
-
-  const normalizedOverall = isEss && responses.length === 0 && essSummary
-    ? essSummary.summary_score
-    : normalizeScore({ ...metric, ...targetConfig }, overallAvg);
+    : null;
+  const normalizedOverall = hasData ? normalizeScore({ ...metric, ...targetConfig }, overallAvg) : null;
   const normalizedTargetSurvey = normalizeTarget(metric, targetConfig);
+  if (!hasData) {
+    // no answers in the window: the questions carry no score either (no default/configured fallback values)
+    questionBreakdown.forEach(q => {
+      if (q.type === 'FREE_TEXT') return;
+      q.avg_score = null;
+      q.normalized_score = null;
+      if (q.percent_yes !== undefined) q.percent_yes = null;
+    });
+  }
+  if (essSummary) {
+    // the ESS card of a period without an uploaded summary: no score, only the explanation
+    essSummary = { ...essSummary, summary_score: null, percent_favorable: null, percent_neutral: null, percent_unfavorable: null };
+  }
 
   return {
     metric: {
@@ -1026,10 +1067,12 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
     target_value_normalized: parseFloat(normalizedTargetSurvey.toFixed(2)),
     target_display: targetConfig.target_display,
     min_threshold: targetConfig.min_threshold,
-    current_raw_value: parseFloat(overallAvg.toFixed(2)),
+    current_raw_value: hasData ? parseFloat(overallAvg.toFixed(2)) : null,
     unit: metric.unit,
-    normalized_score: parseFloat(normalizedOverall.toFixed(2)),
-    status: normalizedOverall < targetConfig.min_threshold ? 'CRITICAL' : (normalizedOverall < normalizedTargetSurvey ? 'WARNING' : 'HEALTHY'),
+    normalized_score: hasData ? parseFloat(normalizedOverall.toFixed(2)) : null,
+    has_data: hasData,
+    ...windowInfo,
+    status: !hasData ? 'NO_DATA' : (normalizedOverall < targetConfig.min_threshold ? 'CRITICAL' : (normalizedOverall < normalizedTargetSurvey ? 'WARNING' : 'HEALTHY')),
     period: periodString,
     filter_options: queryFilter,
     total_respondents: totalRespondents,

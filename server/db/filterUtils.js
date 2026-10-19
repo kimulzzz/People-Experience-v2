@@ -10,6 +10,51 @@ const { normalizeScopes } = require('./scopeUtils');
 const CURRENT_YEAR = String(new Date().getFullYear());
 
 /**
+ * v2.36.0: last month (1-12) a YTD window of `year` covers, by the REAL server clock: the current month for the
+ * current year (YTD = Jan 1 .. end of this month), December for a past year, 0 (= empty window) for a future year.
+ * An explicit endMonth (Performance Trend points) is kept but never goes past that cap. NaN for an invalid year.
+ */
+function ytdEndMonth(year, endMonth = null) {
+  const y = parseInt(year, 10);
+  if (!/^\d{4}$/.test(String(year)) || !Number.isFinite(y)) return NaN;
+  const now = new Date();
+  const cap = y < now.getFullYear() ? 12 : (y === now.getFullYear() ? now.getMonth() + 1 : 0);
+  const em = parseInt(endMonth, 10);
+  return em >= 1 && em <= 12 ? Math.min(em, cap) : cap;
+}
+
+/**
+ * v2.36.0: the period a SURVEY metric is read for, driven by its update_frequency. A ONE_TIME_ANNUAL metric (all ESS
+ * metrics; also a SYSTEM survey an admin sets to annual) under MTD Y-M reads the year up to that month (= YTD Y with
+ * endMonth M, still capped by the clock); a MONTHLY metric (default) keeps the selected period as is.
+ */
+function effectiveMetricPeriod(metric, { mode, year, month, endMonth }) {
+  const isAnnual = String((metric && metric.update_frequency) || '').toUpperCase() === 'ONE_TIME_ANNUAL';
+  if (String(mode || '').toUpperCase() === 'MTD' && isAnnual) return { mode: 'YTD', year, month, endMonth: month };
+  return { mode, year, month, endMonth };
+}
+
+/**
+ * v2.36.0: the date window a period really covers, for the UI: { from, to, basis } with dates YYYY-MM-DD and basis
+ * 'MONTH' (MTD) or 'YEAR_TO_MONTH' (YTD, end capped by the clock). A future year gives from/to null (empty window);
+ * null for an invalid year/month.
+ */
+function periodWindow({ mode, year, month, endMonth }) {
+  if (!/^\d{4}$/.test(String(year))) return null;
+  const y = parseInt(year, 10);
+  const pad = n => String(n).padStart(2, '0');
+  const lastDay = m => new Date(Date.UTC(y, m, 0)).getUTCDate();
+  if (String(mode || '').toUpperCase() === 'MTD') {
+    const m = parseInt(month, 10);
+    if (!(m >= 1 && m <= 12)) return null;
+    return { from: `${y}-${pad(m)}-01`, to: `${y}-${pad(m)}-${pad(lastDay(m))}`, basis: 'MONTH' };
+  }
+  const em = ytdEndMonth(year, endMonth);
+  if (!(em >= 1 && em <= 12)) return { from: null, to: null, basis: 'YEAR_TO_MONTH' };
+  return { from: `${y}-01-01`, to: `${y}-${pad(em)}-${pad(lastDay(em))}`, basis: 'YEAR_TO_MONTH' };
+}
+
+/**
  * Normalises the many accepted filter shapes into one object. Returns null when no filter was
  * given at all (callers then return every row unfiltered).
  *   'YTD' | 'ALL' | '2026' | '2026-03'          (string period)
@@ -57,6 +102,12 @@ function parseFilterOptions(filterOptions) {
     // at least one entry (ANDed with the single directorate/sub-directorate above). An empty list
     // matches nothing; absent = no scope restriction.
     if (Array.isArray(filterOptions.scopes)) scopes = normalizeScopes(filterOptions.scopes);
+  }
+
+  // YTD window end, capped by the clock (see ytdEndMonth): '00' = a future year (matches nothing).
+  if (mode === 'YTD') {
+    const em = ytdEndMonth(year, endMonth);
+    if (Number.isFinite(em)) endMonth = String(em).padStart(2, '0');
   }
 
   return { mode, year, month, directorate, subDirectorate, endMonth, scopes };
@@ -118,4 +169,4 @@ function todayDateString() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-module.exports = { CURRENT_YEAR, parseFilterOptions, normalizeDateString, todayDateString };
+module.exports = { CURRENT_YEAR, ytdEndMonth, effectiveMetricPeriod, periodWindow, parseFilterOptions, normalizeDateString, todayDateString };

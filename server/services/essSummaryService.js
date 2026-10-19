@@ -12,6 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const JSZip = require('jszip');
 const storage = require('../db/storage');
+const { ytdEndMonth } = require('../db/filterUtils');
 
 // Original uploaded files are kept for the audit trail OUTSIDE server/uploads (which is served to every login).
 const ESS_UPLOAD_DIR = path.join(__dirname, '..', 'data', 'ess-uploads');
@@ -323,10 +324,11 @@ function poolRows(rows) {
 }
 
 /**
- * Which ESS result applies to one metric for a period + org selection (carry-forward rule):
- * the latest result whose (year, month) is on or before the period's end, from any earlier year.
+ * Which ESS result applies to one metric for a period + org selection (v2.36.0: strict period, no carry-forward):
+ * MTD Y-M -> only a result of exactly Y-M; YTD Y -> the latest result of year Y whose month lies inside the YTD
+ * window (Jan .. the clock-capped end month, see filterUtils.ytdEndMonth). A result outside the window is never used.
  *   results   : every ESS result row (all metrics) - fetched once per calculation
- *   period    : { mode, year, month, endMonth }  (YTD Y [endMonth M] -> Y-M or Y-12; MTD Y-M -> Y-M)
+ *   period    : { mode, year, month, endMonth }
  *   org       : { directorates: null | [names] }  null = bankwide (no directorate filter)
  * Returns null (no data) or { year, month, period, index, participation, questions, level, rows }.
  */
@@ -334,10 +336,17 @@ function selectEssResult(results, metricId, period, org) {
   const y = parseInt(period.year, 10);
   if (!Number.isFinite(y)) return null;
   const mode = String(period.mode || 'YTD').toUpperCase();
-  let m = mode === 'MTD' ? parseInt(period.month, 10) : (period.endMonth ? parseInt(period.endMonth, 10) : 12);
-  if (!(m >= 1 && m <= 12)) m = 12;
-  const endKey = y * 100 + m;
-  const mine = (results || []).filter(r => r.metric_id === metricId && r.survey_year * 100 + r.survey_month <= endKey);
+  let inWindow;
+  if (mode === 'MTD') {
+    const m = parseInt(period.month, 10);
+    if (!(m >= 1 && m <= 12)) return null;
+    inWindow = r => r.survey_year === y && r.survey_month === m;
+  } else {
+    const end = ytdEndMonth(String(period.year), period.endMonth);
+    if (!(end >= 1 && end <= 12)) return null; // a future year (or invalid year): empty window
+    inWindow = r => r.survey_year === y && r.survey_month <= end;
+  }
+  const mine = (results || []).filter(r => r.metric_id === metricId && inWindow(r));
   if (!mine.length) return null;
   const latestKey = mine.reduce((mx, r) => Math.max(mx, r.survey_year * 100 + r.survey_month), 0);
   const rows = mine.filter(r => r.survey_year * 100 + r.survey_month === latestKey);

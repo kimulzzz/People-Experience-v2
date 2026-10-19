@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    45 MODUL PENGUJIAN    │     288 AUTOMATED TESTS     │       100% PASS RATE          │
+│    46 MODUL PENGUJIAN    │     298 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -955,3 +955,34 @@ Modul 42 memakai backend kedua dengan Ollama dan Video Extractor **palsu** yang 
 ## 29. v2.33.0 - Tampilan ESS tanpa Favorable/Neutral/Unfavorable
 
 Perubahan tampilan saja (`MetricDetailModal.jsx`) + teks `ess_summary.description`; tidak ada tes baru. Suite penuh SQL di backend kedua dengan `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`: **202/202 lulus, 0 gagal, 16 tes SKIPPED** (Modul 8, 24, 27, 32) + blok 38/41/42/43 dilewati. `vite build` OK. Suite JSON tidak dijalankan.
+
+## 30. v2.36.0 - Jendela Periode YTD/MTD & Status NO_DATA
+
+**Regression suite: 212/212 lulus, 0 gagal, 16 dilewati, di SQL Server** (angka dari laporan developer, backend kedua; penulis dokumen ini tidak menjalankan ulang suite) dengan `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`. 212 = 202 (v2.35.0, setelan skip yang sama) + 10 (Modul 46). Ukuran suite penuh di SQL kini 298 = 288 + 10 (dihitung penulis, bukan dari output). Hitungan statis `await runTest(` 285 (275 + 10). **Suite JSON penuh tidak dijalankan**; developer hanya menjalankan cek in-process terarah pada backend JSON (`store.json` dipulihkan byte-per-byte). Data tes run ini dibersihkan; jumlah kembali ke ESS 143 baris, 172 upload, 2.788 baris respons, 1 user.
+
+**Modul 46 = 10 tes** (dihitung dari kode: 10 pemanggilan `runTest`). Metrik uji: 8 (Onboarding 30/60/90, SYSTEM) dan Role Clarity (ESS, metrik 9).
+
+| # | Jenis | Yang diuji (Modul 46) |
+| :-: | :---: | :--- |
+| 1 | Positif | YTD tahun berjalan berakhir di bulan berjalan: `endMonth` = bulan ini dan `endMonth=12` memberi `sample_size` sama dengan YTD default. Khusus SQL: satu baris probe bertanggal tanggal 5 bulan depan diunggah ke metrik 8 (tidak ikut YTD, ikut MTD bulan itu) lalu dihapus lagi (`module46_window_probe.csv`). Di JSON dan pada bulan Desember bagian probe dilewati. |
+| 2 | Positif | YTD tahun lalu = setahun penuh (= `endMonth=12` = Jan-Nov + Desember); MTD September terakhir yang sudah lewat hanya berisi baris bulan itu (detail dan scorecard sama). |
+| 3 | Positif | ESS (annual): Role Clarity MTD 2025-11 = MTD 2025-12 = YTD 2025 = 92, `period_window` MTD 2025-12 = 2025-01-01 s.d. 2025-12-31 `YEAR_TO_MONTH`; MTD 2025-10, MTD September tahun ini dan YTD tahun ini = `NO_DATA` (`has_data` false, skor/`gap` `null`, `sample_size` 0). |
+| 4 | Positif | Metrik 8 diubah ke Annual lewat `PUT /api/admin/metrics/8`: MTD 2025-06 = YTD 2025 s.d. Juni (scorecard dan detail), `period_window` `YEAR_TO_MONTH`; dikembalikan ke nilai semula di `finally`, lalu MTD kembali hanya Juni. |
+| 5 | Positif | Metrik OUTCOME: nilai sama untuk YTD tahun ini, MTD 2025-03 dan YTD tahun depan; tidak pernah `NO_DATA`; `period_window` `null`; `outcome_index` sama. |
+| 6 | Positif | Survey Index = rerata berbobot metrik survei berdata saja (dihitung ulang dari nilai per metrik, toleransi 0.02); `no_data_metrics_count` cocok; `px_index_basis` `BOTH` dan PX = 0.7 S + 0.3 O; skor survei journey dihitung ulang; `has_data` journey/checkpoint konsisten dengan skor `null`. |
+| 7 | Positif | `/api/alerts` tidak memuat metrik `NO_DATA`; setiap `current_score` berupa angka. |
+| 8 | Positif | Detail metrik `NO_DATA` menjawab 200 dengan skor `null`: Role Clarity YTD tahun ini (`ess_summary.summary_score` `null`) dan metrik 8 MTD Januari tahun depan (`total_respondents` 0, tidak ada skor default per pertanyaan). |
+| 9 | Negatif | Tahun depan: `survey_index` `null`, `px_index_basis` `OUTCOME_ONLY`, PX = Outcome, semua metrik SURVEY `NO_DATA`; `year=20x6` -> 200 tanpa crash. |
+| 10 | Negatif | Trend MTD Jan 2025 s.d. Des tahun ini: tidak ada `NaN` di response; `px_index` `null` tepat di titik yang `survey_index`-nya `null`. |
+
+**Modul lama disesuaikan** (jumlah tes tidak berubah):
+
+| Modul | Perubahan |
+| :--- | :--- |
+| 11 | Detail 11 metrik ESS dibaca dengan `mode=YTD&year=2025` (hasil seed 2025-11 tidak lagi terbawa ke tahun berjalan); assertion tidak berubah. |
+| 35 | Daftar alert yang diharapkan tidak memuat metrik `NO_DATA`. |
+| 45 | Tes carry-forward diganti nama menjadi "Strict ESS period": cek level org membaca YTD 2025 (nilai 92 / 91 / 92.33 tidak berubah); kasus "early" (YTD 2025 s.d. Oktober) kini `NO_DATA` dengan skor `null` (dulu fallback `raw_value` statis); tambahan MTD 2025-10 = `NO_DATA`; panggilan detail ESS lain memakai YTD 2025. |
+
+**Risiko tes**: tes 4 Modul 46 sebentar mengubah `update_frequency` metrik 8; backend tes berbagi database dengan backend utama (:5000, scheduler aktif), jadi pembacaan backend utama selama beberapa detik itu bisa memakai setelan Annual.
+
+**Tidak diuji / tidak terverifikasi**: suite JSON penuh; modul 8, 24, 27, 32, 38, 41, 42, 43 (dilewati); tampilan UI (tidak ada tes render untuk "—" / "No Data" / celah TrendChart); bagian probe tes 1 di backend JSON.

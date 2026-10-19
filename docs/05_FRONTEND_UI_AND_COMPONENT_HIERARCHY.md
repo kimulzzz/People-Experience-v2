@@ -387,3 +387,14 @@ Field API `percent_*` tetap dikirim server (kompatibilitas) tetapi tidak dipakai
 ## Catatan v2.35.0 - Label Period di detail metrik mengikuti filter YTD/MTD
 
 `MetricDetailModal.jsx` menurunkan periode dari `filterOptions` Dashboard (bukan prop `period`, yang tidak dikirim `App.jsx`): badge "Period: YTD 2026" untuk YTD dan "Period: September 2026" untuk MTD; tautan Evidence memakai `period=<tahun>` atau `period=<tahun-bulan>` yang sama.
+
+## Catatan v2.36.0 - Tampilan Indeks `null` & Metrik "No Data"
+
+API kini bisa mengirim indeks dan skor `null` serta status `NO_DATA` (lihat `docs/04` "Catatan v2.36.0"). Tidak ada komponen baru.
+
+| Komponen | Perilaku |
+| :--- | :--- |
+| `Dashboard.jsx` | Indeks `null` tampil "—" (tanpa "/ 100"). Catatan basis PX bila `px_index_basis` bukan `BOTH` ("No survey data in this period: the PX Index is based on the Outcome metrics only." / "No Outcome data: ..." / "No data in this period."). Baris "N survey metric(s) ... no data in this period and ... left out of the index." dari `no_data_metrics_count`. Kartu journey tanpa data: "No Data" (bukan "Exempted"); baris metrik `NO_DATA` abu-abu dengan ikon `MinusCircle`, label "No Data", tanpa persen. |
+| `Calculator.jsx` (Explore Metrics) | Baris `NO_DATA`: nilai aktual, skor dan tanggal "—", badge abu-abu "No Data". |
+| `MetricDetailModal.jsx` | Nilai "—", "No survey data in this period - left out of the index", badge abu-abu "No Data", pertanyaan berlabel "No Data" tanpa skor. Metrik tahunan pada filter MTD (`period_window.basis = 'YEAR_TO_MONTH'`) mendapat catatan "Annual metric: shows the result of Jan–Sep 2026" (bulan dari `period_window`, `monthShort`). |
+| `TrendChart.jsx` | Titik `null` menjadi celah (garis dipotong per segmen), tooltip "—". |

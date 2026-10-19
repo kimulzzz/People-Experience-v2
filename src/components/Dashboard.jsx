@@ -60,7 +60,11 @@ export default function Dashboard({
   }
 
   const { px_index, pe_index, survey_index, outcome_index, journeys, metrics } = calculationData;
-  const currentPxIndex = px_index !== undefined ? px_index : (pe_index || 0);
+  const currentPxIndex = px_index !== undefined ? px_index : (pe_index ?? null);
+  // v2.36.0: an index is null when none of its metrics has data in the selected period
+  const fmtIndex = v => (v === null || v === undefined ? '—' : v.toFixed(2));
+  const pxBasis = calculationData.px_index_basis;
+  const noDataCount = calculationData.no_data_metrics_count || 0;
   const criticalAlerts = alertsData?.alerts?.filter(a => a.severity === 'CRITICAL') || [];
   const warningAlerts = alertsData?.alerts?.filter(a => a.severity === 'WARNING') || [];
 
@@ -104,14 +108,26 @@ export default function Dashboard({
 
             <div className="flex items-baseline space-x-3">
               <span className="text-6xl sm:text-7xl font-extrabold tracking-tight text-white">
-                {currentPxIndex.toFixed(2)}
+                {fmtIndex(currentPxIndex)}
               </span>
-              <span className="text-2xl font-bold text-red-100">/ 100</span>
+              {currentPxIndex !== null && <span className="text-2xl font-bold text-red-100">/ 100</span>}
             </div>
 
             <p className="text-sm text-red-50 font-medium">
-              Formula: <strong className="text-white">70% Survey Results</strong> ({survey_index.toFixed(2)}%) + <strong className="text-white">30% Outcome (HR Data)</strong> ({outcome_index.toFixed(2)}%)
+              Formula: <strong className="text-white">70% Survey Results</strong> ({survey_index === null ? 'no data' : `${survey_index.toFixed(2)}%`}) + <strong className="text-white">30% Outcome (HR Data)</strong> ({outcome_index === null ? 'no data' : `${outcome_index.toFixed(2)}%`})
             </p>
+            {(pxBasis === 'OUTCOME_ONLY' || pxBasis === 'SURVEY_ONLY' || pxBasis === 'NONE') && (
+              <p className="text-xs text-amber-200 font-semibold">
+                {pxBasis === 'OUTCOME_ONLY' && 'No survey data in this period: the PX Index is based on the Outcome metrics only.'}
+                {pxBasis === 'SURVEY_ONLY' && 'No Outcome data: the PX Index is based on the survey results only.'}
+                {pxBasis === 'NONE' && 'No data in this period.'}
+              </p>
+            )}
+            {noDataCount > 0 && (
+              <p className="text-xs text-red-100">
+                {noDataCount} survey metric{noDataCount === 1 ? ' has' : 's have'} no data in this period and {noDataCount === 1 ? 'is' : 'are'} left out of the index.
+              </p>
+            )}
 
             <div className="pt-2 flex flex-wrap gap-2">
               <button
@@ -147,14 +163,14 @@ export default function Dashboard({
               </div>
 
               <div className="flex items-baseline space-x-2">
-                <span className="text-3xl font-extrabold text-white">{survey_index.toFixed(2)}</span>
-                <span className="text-xs text-gray-400">%</span>
+                <span className="text-3xl font-extrabold text-white">{fmtIndex(survey_index)}</span>
+                <span className="text-xs text-gray-400">{survey_index === null ? 'No data in this period' : '%'}</span>
               </div>
 
               <div className="w-full bg-black/40 rounded-full h-2 overflow-hidden">
                 <div 
                   className="bg-[#16C0B7] h-2 rounded-full transition-all duration-500 shadow-sm" 
-                  style={{ width: `${Math.min(survey_index, 100)}%` }}
+                  style={{ width: `${Math.min(survey_index ?? 0, 100)}%` }}
                 />
               </div>
               <p className="text-[11px] text-gray-300">
@@ -175,14 +191,14 @@ export default function Dashboard({
               </div>
 
               <div className="flex items-baseline space-x-2">
-                <span className="text-3xl font-extrabold text-white">{outcome_index.toFixed(2)}</span>
-                <span className="text-xs text-gray-400">%</span>
+                <span className="text-3xl font-extrabold text-white">{fmtIndex(outcome_index)}</span>
+                <span className="text-xs text-gray-400">{outcome_index === null ? 'No data' : '%'}</span>
               </div>
 
               <div className="w-full bg-black/40 rounded-full h-2 overflow-hidden">
                 <div 
                   className="bg-[#2563EB] h-2 rounded-full transition-all duration-500 shadow-sm" 
-                  style={{ width: `${Math.min(outcome_index, 100)}%` }}
+                  style={{ width: `${Math.min(outcome_index ?? 0, 100)}%` }}
                 />
               </div>
               <p className="text-[11px] text-gray-300">
@@ -369,7 +385,7 @@ export default function Dashboard({
 
                     <div className="text-right">
                       <span className="text-2xl font-black text-white">
-                        {j.overall_score !== null && j.overall_score !== undefined ? j.overall_score.toFixed(1) : 'Exempted'}
+                        {j.overall_score !== null && j.overall_score !== undefined ? j.overall_score.toFixed(1) : (j.no_data_count > 0 ? 'No Data' : 'Exempted')}
                       </span>
                       {j.overall_score !== null && j.overall_score !== undefined && (
                         <span className="text-xs text-red-100 font-bold">%</span>
@@ -417,8 +433,9 @@ export default function Dashboard({
                   <div className="flex flex-col space-y-1 max-h-40 overflow-y-auto pr-0.5">
                     {j.metrics?.map(m => {
                       const isDisabled = m.is_disabled === true;
-                      const StatusIcon = isDisabled ? MinusCircle : m.status === 'CRITICAL' ? AlertCircle : m.status === 'WARNING' ? AlertTriangle : CheckCircle2;
-                      const statusLabel = isDisabled ? 'Exempted' : m.status === 'CRITICAL' ? 'Critical' : m.status === 'WARNING' ? 'Warning' : 'On Target';
+                      const isNoData = !isDisabled && m.status === 'NO_DATA';
+                      const StatusIcon = isDisabled || isNoData ? MinusCircle : m.status === 'CRITICAL' ? AlertCircle : m.status === 'WARNING' ? AlertTriangle : CheckCircle2;
+                      const statusLabel = isDisabled ? 'Exempted' : isNoData ? 'No Data' : m.status === 'CRITICAL' ? 'Critical' : m.status === 'WARNING' ? 'Warning' : 'On Target';
                       return (
                         <button
                           key={m.metric_id}
@@ -428,6 +445,7 @@ export default function Dashboard({
                           }}
                           className={`w-full text-[10px] font-semibold pl-1.5 pr-2 py-1 rounded-md border transition flex items-center justify-between space-x-2 ${
                             isDisabled ? 'bg-black/20 text-white/50 border-white/10 opacity-70 cursor-not-allowed' :
+                            isNoData ? 'bg-gray-500/60 text-white/90 border-gray-300/40 hover:bg-gray-500/70' :
                             m.status === 'CRITICAL' ? 'bg-black/30 text-red-100 border-red-300/50 hover:bg-black/40' :
                             m.status === 'WARNING' ? 'bg-amber-500/90 text-white border-amber-300 hover:bg-amber-500' :
                             'bg-emerald-500/90 text-white border-emerald-300 hover:bg-emerald-500'
@@ -444,7 +462,7 @@ export default function Dashboard({
                           </span>
                           <span className="flex items-center space-x-1 shrink-0">
                             <span className="font-bold uppercase tracking-wide text-[9px]">{statusLabel}</span>
-                            {!isDisabled && <span className="font-bold">({m.normalized_score}%)</span>}
+                            {!isDisabled && !isNoData && <span className="font-bold">({m.normalized_score}%)</span>}
                           </span>
                         </button>
                       );

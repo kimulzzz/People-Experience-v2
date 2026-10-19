@@ -536,7 +536,8 @@ async function runRegressionSuite() {
 
   for (const item of essMetricsToTest) {
     await runTest(`Verify ESS Metric #${item.id} (${item.name}) has valid dimension, % favorable summary, and visible/required config`, async () => {
-      const res = await fetch(`${BASE_URL}/api/metrics/${item.id}/detail?period=YTD`);
+      // v2.36.0: strict ESS period - the seed result (2025-11) is read through a 2025 window (no carry-forward into this year)
+      const res = await fetch(`${BASE_URL}/api/metrics/${item.id}/detail?mode=YTD&year=2025`);
       assert.strictEqual(res.status, 200);
       const data = await res.json();
       assert.strictEqual(data.is_ess, true, `Metric #${item.id} must be recognized as ESS`);
@@ -545,7 +546,7 @@ async function runRegressionSuite() {
       assert(data.ess_summary.summary_score >= item.minScore, `Metric #${item.id} summary score (${data.ess_summary.summary_score}) should be >= ${item.minScore}`);
       assert.strictEqual(data.questions_breakdown.length, item.qCount, `Metric #${item.id} should have ${item.qCount} questions`);
       
-      // v2.32.0: an ESS metric reads its uploaded ESS summary (seed: 2025-11, carried forward into the current year)
+      // v2.32.0: an ESS metric reads its uploaded ESS summary (seed: 2025-11; v2.36.0: only inside a window containing it)
       assert.strictEqual(data.is_ess_summary, true, `Metric #${item.id} must be read from its ESS summary`);
       assert.strictEqual(data.ess_period, '2025-11', `Metric #${item.id} uses the latest ESS result on or before the period`);
       assert.strictEqual(data.total_respondents, 7756, 'total respondents = participation of the Bankwide row');
@@ -2756,7 +2757,8 @@ async function runRegressionSuite() {
       const at = await aj(`/api/metrics/trends?mode=YTD&${dq(A)}`);
       assert.deepStrictEqual(ut.trends.map(t => t.px_index), at.trends.map(t => t.px_index), 'trend series');
       const alerts = await uj(u, '/api/alerts');
-      const expected = empMetrics(adm).filter(m => m.status !== 'HEALTHY').map(m => m.metric_id).sort((a, b) => a - b);
+      // v2.36.0: a NO_DATA metric (no survey data in the window) is not a deficit and raises no alert
+      const expected = empMetrics(adm).filter(m => m.status !== 'HEALTHY' && m.status !== 'NO_DATA').map(m => m.metric_id).sort((a, b) => a - b);
       const got = alerts.alerts.filter(a => !a.is_bankwide_readonly).map(a => a.metric_id).sort((a, b) => a - b);
       assert.deepStrictEqual(got, expected, 'alerts = deficits of the in-scope data');
       alerts.alerts.filter(a => !a.is_bankwide_readonly).forEach(a => assert.strictEqual(a.current_score, adm.metrics.find(m => m.metric_id === a.metric_id).normalized_score, 'alert score is computed from in-scope data'));
@@ -5486,8 +5488,10 @@ async function runRegressionSuite() {
         assert.ok(log.some(e => e.action === 'SURVEY_UPLOAD' && e.target.includes(`ESS summary metric ${RC};`) && e.target.includes(body.upload_id)), 'audited');
       });
 
-      await runTest('[POSITIVE] Period carry-forward and org level: ALL YTD (this year) = Bankwide 92 / 7756 from 2025-11; Business Banking 91 / 449; a Human Resources division reads Human Resources (92.33 / 129, flagged); YTD 2025 to October = no data (static fallback), full 2025 and MTD 2025-11 = the result', async () => {
-        const year = new Date().getFullYear();
+      // v2.36.0: strict period (no carry-forward) - the 2025-11 result only counts in a window that contains 2025-11,
+      // so the org-level checks read YTD 2025 (was: YTD of the current year via carry-forward).
+      await runTest('[POSITIVE] Strict ESS period and org level: YTD 2025 = Bankwide 92 / 7756 from 2025-11; Business Banking 91 / 449; a Human Resources division reads Human Resources (92.33 / 129, flagged); YTD 2025 to October and MTD 2025-10 = NO_DATA, full 2025 and MTD 2025-11 = the result', async () => {
+        const year = 2025;
         const all = await m9calc(`mode=YTD&year=${year}`);
         assert.strictEqual(all.normalized_score, 92); assert.strictEqual(all.sample_size, 7756);
         assert.strictEqual(all.last_survey_date, '2025-11'); assert.strictEqual(all.ess_level, 'BANKWIDE');
@@ -5501,16 +5505,18 @@ async function runRegressionSuite() {
         assert.strictEqual(hrDetail.normalized_score, 92.33);
         const early = await m9calc('mode=YTD&year=2025&endMonth=10');
         assert.strictEqual(early.sample_size, 0, 'no ESS result on or before October 2025');
-        assert.strictEqual(early.normalized_score, parseFloat(m9.raw_value), 'falls back to the static raw_value like any survey metric without data');
+        assert.strictEqual(early.status, 'NO_DATA', 'no static raw_value fallback any more (v2.36.0)');
+        assert.strictEqual(early.normalized_score, null);
         assert.strictEqual(early.ess_period, null);
         const full = await m9calc('mode=YTD&year=2025');
         assert.strictEqual(full.normalized_score, 92); assert.strictEqual(full.sample_size, 7756);
         assert.strictEqual((await m9calc('mode=MTD&year=2025&month=11')).normalized_score, 92);
         assert.strictEqual((await m9calc('mode=MTD&year=2025&month=10')).sample_size, 0);
+        assert.strictEqual((await m9calc('mode=MTD&year=2025&month=10')).status, 'NO_DATA');
       });
 
       await runTest('[POSITIVE] Detail of an ESS metric: participation, period "November 2025", per-question % favorable from the file (neutral/unfavorable null), results by directorate (Bankwide first for the Admin) and the upload of the period', async () => {
-        const d = await aj45(`/api/metrics/${RC}/detail?mode=YTD&year=${new Date().getFullYear()}`);
+        const d = await aj45(`/api/metrics/${RC}/detail?mode=YTD&year=2025`); // v2.36.0: the window must contain 2025-11
         assert.strictEqual(d.is_ess_summary, true);
         assert.strictEqual(d.total_respondents, 7756);
         assert.strictEqual(d.ess_period_label, 'November 2025');
@@ -5527,14 +5533,14 @@ async function runRegressionSuite() {
 
       await runTest('[POSITIVE] A User scoped to two directorates (one with a division subset) gets the participation-weighted mean of both directorate rows, never the Bankwide row', async () => {
         const u = await mkUser45('s', [{ directorate: 'Business Banking', divisions: null }, { directorate: 'Special Asset', divisions: null }]);
-        const calc = await asUj45(u, '/api/metrics/calculate?period=YTD');
+        const calc = await asUj45(u, '/api/metrics/calculate?mode=YTD&year=2025'); // v2.36.0: strict period
         const m = calc.metrics.find(x => x.metric_id === RC);
         assert.strictEqual(m.sample_size, 449 + 39);
         assert.strictEqual(m.normalized_score, parseFloat(((91 * 449 + 98 * 39) / 488).toFixed(2)));
-        const d = await asUj45(u, `/api/metrics/${RC}/detail?period=YTD`);
+        const d = await asUj45(u, `/api/metrics/${RC}/detail?mode=YTD&year=2025`);
         assert.deepStrictEqual(d.ess_results_by_directorate.map(r => r.directorate).sort(), ['Business Banking', 'Special Asset']);
         assert.ok(d.ess_results_by_directorate.every(r => r.org_level === 'DIRECTORATE'), 'no Bankwide row for a User');
-        const one = await asUj45(u, `/api/metrics/calculate?period=YTD&directorate=${encodeURIComponent('Special Asset')}`);
+        const one = await asUj45(u, `/api/metrics/calculate?mode=YTD&year=2025&directorate=${encodeURIComponent('Special Asset')}`);
         assert.strictEqual(one.metrics.find(x => x.metric_id === RC).normalized_score, 98);
         // an employee directorate row the user may not see stays a 403
         assert.strictEqual((await rawFetch(`${BASE_URL}/api/metrics/${RC}/detail?period=YTD&directorate=${encodeURIComponent('Human Resources')}`, asUser(u.cookie))).status, 403);
@@ -5549,7 +5555,7 @@ async function runRegressionSuite() {
         assert.strictEqual(body.replaced_previous, true);
         assert.strictEqual(body.replaced_rows, 13);
         assert.strictEqual(await history45(), before + 1, 'history keeps both upload records');
-        const d = await aj45(`/api/metrics/${RC}/detail?period=YTD`);
+        const d = await aj45(`/api/metrics/${RC}/detail?mode=YTD&year=2025`);
         assert.strictEqual(d.ess_results_by_directorate.length, 13);
         assert.strictEqual(d.ess_upload.upload_id, body.upload_id);
         const evRes = await fetch(`${BASE_URL}/api/surveys/evidence?metric_id=${RC}&period=YTD`);
@@ -5690,6 +5696,195 @@ async function runRegressionSuite() {
       for (const id of metrics45) await adminJson('DELETE', `/api/admin/metrics/${id}`);
       for (const id of users45) await adminJson('DELETE', `/api/admin/users/${id}`);
     }
+  }
+
+  // --- MODULE 46 (v2.36.0): EXACT PERIOD WINDOWS - YTD UP TO THIS MONTH, STRICT ESS PERIOD, NO_DATA INSTEAD OF A STATIC FALLBACK ---
+  // YTD of the current year = Jan 1 .. end of the current month (real clock), a past year = the full year, MTD = that
+  // month only; an ESS result only counts inside the window; a SURVEY metric without data in the window is NO_DATA
+  // (null scores) and stays out of the Survey Index, the journey / checkpoint rollups and the alerts.
+  console.log('\n📦 MODULE 46: Exact period windows (YTD to this month, strict ESS period) and NO_DATA survey metrics (Positive & Negative Testing)');
+  {
+    const aj46 = async q => (await adminJson('GET', q)).json();
+    const now46 = new Date();
+    const Y46 = now46.getFullYear();
+    const M46 = now46.getMonth() + 1;
+    const mm46 = n => String(n).padStart(2, '0');
+    const calc46 = q => aj46(`/api/metrics/calculate?${q}`);
+    const metricOf46 = (calc, id) => calc.metrics.find(m => m.metric_id === id);
+    const params46 = (await aj46('/api/admin/parameters')).metrics;
+    const rc46 = params46.find(m => m.metric_type === 'SURVEY' && m.survey_source === 'ESS' && /role clarity/i.test(m.metric_name));
+    const RC46 = rc46 ? rc46.metric_id : 9;
+    const SYS46 = 8; // Onboarding 30/60/90 (SYSTEM survey, employee metric)
+    const isSql46 = () => require('../server/db/storage').backend === 'sql';
+
+    await runTest('[POSITIVE] YTD of the current year ends with the current month: a response dated next month is left out of YTD but counted in MTD of that month (planted and removed again)', async () => {
+      if (M46 === 12) { console.log('     (December: there is no later month in this year - only the window equality is checked)'); }
+      const ytd0 = metricOf46(await calc46(`mode=YTD&year=${Y46}`), SYS46).sample_size;
+      // the default YTD window equals an explicit endMonth = this month, and an endMonth past this month is capped to it
+      assert.strictEqual(metricOf46(await calc46(`mode=YTD&year=${Y46}&endMonth=${mm46(M46)}`), SYS46).sample_size, ytd0);
+      assert.strictEqual(metricOf46(await calc46(`mode=YTD&year=${Y46}&endMonth=12`), SYS46).sample_size, ytd0, 'endMonth beyond this month is capped');
+      if (M46 === 12) return;
+      if (!isSql46()) { console.log('     (JSON backend: the planted response cannot be removed from outside the server - planting skipped)'); return; }
+      const next = `${Y46}-${mm46(M46 + 1)}`;
+      const mtd0 = metricOf46(await calc46(`mode=MTD&year=${Y46}&month=${mm46(M46 + 1)}`), SYS46).sample_size;
+      const csv = [
+        'nip,employee_name,cimb_email,directorate,division,metric_id,metric_name,q1_role_clarity,q2_supervisor_support,q3_buddy_support,q4_resource_access,verbatim_feedback,survey_date',
+        `8846001,Regression Window46,window46@cimbniaga.co.id,Human Resources,People Experience & Culture,${SYS46},Onboarding 30/60/90 Satisfaction Index,4.0,4.0,4.0,4.0,Module 46 window probe,${next}-05`
+      ].join('\r\n');
+      let uploadId = null;
+      try {
+        const res = await adminJson('POST', '/api/surveys/upload', { csvText: csv, fileName: 'module46_window_probe.csv', metric_id: SYS46 });
+        const body = await res.json();
+        assert.strictEqual(res.status, 200, JSON.stringify(body).slice(0, 300));
+        uploadId = body.upload_id || (body.upload && body.upload.upload_id) || null;
+        assert.strictEqual(body.valid_rows, 1);
+        assert.strictEqual(metricOf46(await calc46(`mode=YTD&year=${Y46}`), SYS46).sample_size, ytd0, `a response dated ${next}-05 is outside YTD ${Y46}`);
+        assert.strictEqual(metricOf46(await calc46(`mode=MTD&year=${Y46}&month=${mm46(M46 + 1)}`), SYS46).sample_size, mtd0 + 1, `but inside MTD ${next}`);
+      } finally {
+        const sql = require('mssql');
+        const pool = await new sql.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
+          user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
+        try {
+          // only this test's own probe: by upload id when known, else by its unique NIP + file name
+          const ids = uploadId ? [uploadId] : (await pool.request().query("SELECT upload_id FROM dbo.px_survey_uploads WHERE file_name = 'module46_window_probe.csv'")).recordset.map(r => r.upload_id);
+          for (const id of ids) {
+            await pool.request().input('u', sql.NVarChar, id).query('DELETE FROM dbo.px_survey_uploaded_responses WHERE upload_id = @u');
+            await pool.request().input('u', sql.NVarChar, id).query('DELETE FROM dbo.px_survey_uploads WHERE upload_id = @u');
+          }
+        } finally {
+          await pool.close();
+        }
+      }
+    });
+
+    await runTest('[POSITIVE] A past year YTD is the full year (= endMonth 12, more than up to November); MTD counts only the rows of that month', async () => {
+      const full = metricOf46(await calc46('mode=YTD&year=2025'), SYS46);
+      assert.strictEqual(metricOf46(await calc46('mode=YTD&year=2025&endMonth=12'), SYS46).sample_size, full.sample_size);
+      const toNov = metricOf46(await calc46('mode=YTD&year=2025&endMonth=11'), SYS46).sample_size;
+      const dec = metricOf46(await calc46('mode=MTD&year=2025&month=12'), SYS46).sample_size;
+      assert.ok(dec > 0, 'the seed has December 2025 rows');
+      assert.strictEqual(full.sample_size, toNov + dec, 'full year = Jan..Nov + December');
+      const sep = `${Y46 - (M46 > 9 ? 0 : 1)}-09`;
+      const d = await aj46(`/api/metrics/${SYS46}/detail?mode=MTD&year=${sep.slice(0, 4)}&month=09`);
+      assert.strictEqual(d.total_respondents, metricOf46(await calc46(`mode=MTD&year=${sep.slice(0, 4)}&month=09`), SYS46).sample_size);
+      assert.ok(d.responses.length > 0 && d.responses.every(r => String(r.survey_date).startsWith(sep)), `MTD ${sep}: only rows of that month`);
+    });
+
+    await runTest('[POSITIVE] ESS (annual) period: Role Clarity MTD 2025-11 = MTD 2025-12 = YTD 2025 = 92 (an annual metric under MTD reads Jan..that month); MTD 2025-10, MTD of September this year and YTD this year = NO_DATA (no carry-forward across years)', async () => {
+      assert.strictEqual(rc46 ? rc46.update_frequency : 'ONE_TIME_ANNUAL', 'ONE_TIME_ANNUAL');
+      assert.strictEqual(metricOf46(await calc46('mode=MTD&year=2025&month=11'), RC46).normalized_score, 92);
+      const dec = metricOf46(await calc46('mode=MTD&year=2025&month=12'), RC46);
+      assert.strictEqual(dec.normalized_score, 92);
+      assert.deepStrictEqual(dec.period_window, { from: '2025-01-01', to: '2025-12-31', basis: 'YEAR_TO_MONTH' });
+      assert.strictEqual(metricOf46(await calc46('mode=YTD&year=2025'), RC46).normalized_score, 92);
+      for (const q of ['mode=MTD&year=2025&month=10', `mode=MTD&year=${Y46}&month=09`, `mode=YTD&year=${Y46}`]) {
+        const m = metricOf46(await calc46(q), RC46);
+        assert.deepStrictEqual([m.status, m.has_data, m.raw_value, m.normalized_score, m.sample_size, m.gap], ['NO_DATA', false, null, null, 0, null], q);
+      }
+    });
+
+    await runTest('[POSITIVE] A SYSTEM survey set to Annual reads Jan..M under MTD Y-M (= YTD Y up to M); back to Monthly it reads only month M (setting restored)', async () => {
+      const before = params46.find(m => m.metric_id === SYS46).update_frequency || 'MONTHLY';
+      const mtdMonthly = metricOf46(await calc46('mode=MTD&year=2025&month=06'), SYS46);
+      assert.deepStrictEqual(mtdMonthly.period_window, { from: '2025-06-01', to: '2025-06-30', basis: 'MONTH' });
+      const ytdToJune = metricOf46(await calc46('mode=YTD&year=2025&endMonth=06'), SYS46);
+      assert.ok(ytdToJune.sample_size > mtdMonthly.sample_size, 'Jan..June holds more rows than June alone');
+      try {
+        assert.strictEqual((await adminJson('PUT', `/api/admin/metrics/${SYS46}`, { update_frequency: 'ONE_TIME_ANNUAL' })).status, 200);
+        const mtdAnnual = metricOf46(await calc46('mode=MTD&year=2025&month=06'), SYS46);
+        assert.deepStrictEqual([mtdAnnual.sample_size, mtdAnnual.raw_value], [ytdToJune.sample_size, ytdToJune.raw_value]);
+        assert.deepStrictEqual(mtdAnnual.period_window, { from: '2025-01-01', to: '2025-06-30', basis: 'YEAR_TO_MONTH' });
+        const d = await aj46(`/api/metrics/${SYS46}/detail?mode=MTD&year=2025&month=06`);
+        assert.strictEqual(d.total_respondents, ytdToJune.sample_size);
+        assert.strictEqual(d.update_frequency, 'ONE_TIME_ANNUAL');
+        assert.strictEqual(d.period_window.basis, 'YEAR_TO_MONTH');
+      } finally {
+        await adminJson('PUT', `/api/admin/metrics/${SYS46}`, { update_frequency: before });
+      }
+      assert.strictEqual(metricOf46(await calc46('mode=MTD&year=2025&month=06'), SYS46).sample_size, mtdMonthly.sample_size, 'Monthly again');
+    });
+
+    await runTest('[POSITIVE] OUTCOME metrics are a current snapshot: the same value for any YTD / MTD filter, never NO_DATA', async () => {
+      const a = await calc46(`mode=YTD&year=${Y46}`);
+      const b = await calc46('mode=MTD&year=2025&month=03');
+      const c = await calc46(`mode=YTD&year=${Y46 + 1}`);
+      const outA = a.metrics.filter(m => m.metric_type === 'OUTCOME');
+      assert.ok(outA.length > 0);
+      for (const m of outA) {
+        for (const other of [b, c]) {
+          const x = metricOf46(other, m.metric_id);
+          assert.deepStrictEqual([x.status === 'NO_DATA', x.raw_value, x.period_window], [false, m.raw_value, null], `metric ${m.metric_id}`);
+        }
+      }
+      assert.strictEqual(a.outcome_index, c.outcome_index);
+    });
+
+    await runTest('[POSITIVE] Survey Index = weighted mean of the survey metrics WITH data only; PX = 70/30 with basis BOTH; journeys / checkpoints only roll up metrics with data', async () => {
+      const c = await calc46(`mode=YTD&year=${Y46}`);
+      const live = c.metrics.filter(m => !m.is_disabled && !m.excluded_from_index);
+      const noData = live.filter(m => m.status === 'NO_DATA');
+      assert.ok(noData.length > 0 && noData.every(m => m.metric_type === 'SURVEY' && m.normalized_score === null), 'the ESS metrics have no data this year');
+      assert.strictEqual(c.no_data_metrics_count, noData.length);
+      const surveys = live.filter(m => m.metric_type === 'SURVEY' && m.has_data);
+      const w = surveys.reduce((s, m) => s + m.weight, 0);
+      const expected = surveys.reduce((s, m) => s + m.normalized_score * m.weight, 0) / w;
+      assert.ok(Math.abs(c.survey_index - expected) < 0.02, `survey_index ${c.survey_index} vs ${expected.toFixed(2)}`);
+      assert.strictEqual(c.survey_metrics_count, surveys.length);
+      assert.strictEqual(c.px_index_basis, 'BOTH');
+      assert.ok(Math.abs(c.px_index - (0.7 * c.survey_index + 0.3 * c.outcome_index)) < 0.02);
+      for (const j of c.journeys) {
+        const jm = j.metrics.filter(m => !m.is_disabled && !m.excluded_from_index && m.has_data && m.metric_type === 'SURVEY');
+        if (!jm.length) assert.strictEqual(j.survey_score, null, `journey ${j.journey_id}`);
+        else {
+          const jw = jm.reduce((s, m) => s + m.weight, 0);
+          assert.ok(Math.abs(j.survey_score - jm.reduce((s, m) => s + m.normalized_score * m.weight, 0) / jw) < 0.02, `journey ${j.journey_id}`);
+        }
+        assert.strictEqual(j.has_data, j.overall_score !== null);
+      }
+      assert.ok(c.checkpoints.every(cp => (cp.score === null) === !cp.has_data));
+    });
+
+    await runTest('[POSITIVE] Alerts never list a NO_DATA metric (no Score Deficit alert without data)', async () => {
+      const c = await calc46(`mode=YTD&year=${Y46}`);
+      const noDataIds = new Set(c.metrics.filter(m => m.status === 'NO_DATA').map(m => m.metric_id));
+      const alerts = await aj46('/api/alerts');
+      assert.ok(Array.isArray(alerts.alerts));
+      assert.ok(alerts.alerts.every(a => !noDataIds.has(a.metric_id) && typeof a.current_score === 'number'), JSON.stringify(alerts.alerts.map(a => a.metric_id)));
+    });
+
+    await runTest('[POSITIVE] Detail of a NO_DATA metric answers 200 with null scores (ESS without a result in the window; SYSTEM survey in a month without rows)', async () => {
+      const ess = await aj46(`/api/metrics/${RC46}/detail?mode=YTD&year=${Y46}`);
+      assert.deepStrictEqual([ess.status, ess.has_data, ess.current_raw_value, ess.normalized_score], ['NO_DATA', false, null, null]);
+      assert.ok(ess.ess_summary && ess.ess_summary.summary_score === null, 'the ESS card has no score for this period');
+      const sys = await aj46(`/api/metrics/${SYS46}/detail?mode=MTD&year=${Y46 + 1}&month=01`);
+      assert.deepStrictEqual([sys.status, sys.has_data, sys.current_raw_value, sys.normalized_score, sys.total_respondents], ['NO_DATA', false, null, null, 0]);
+      assert.ok(sys.questions_breakdown.filter(q => q.type !== 'FREE_TEXT').every(q => q.normalized_score === null && q.avg_score === null), 'no default question scores');
+    });
+
+    await runTest('[NEGATIVE] A future year has no survey data: Survey Index null, PX Index = Outcome only (basis OUTCOME_ONLY), every SURVEY metric NO_DATA; an invalid year does not crash', async () => {
+      const f = await calc46(`mode=YTD&year=${Y46 + 1}`);
+      assert.strictEqual(f.survey_index, null);
+      assert.strictEqual(f.px_index_basis, 'OUTCOME_ONLY');
+      assert.strictEqual(f.px_index, f.outcome_index);
+      assert.ok(f.metrics.filter(m => m.metric_type === 'SURVEY').every(m => m.status === 'NO_DATA'));
+      assert.ok(f.journeys.every(j => j.overall_score === null || typeof j.overall_score === 'number'));
+      const bad = await adminJson('GET', '/api/metrics/calculate?mode=YTD&year=20x6');
+      assert.strictEqual(bad.status, 200);
+      const b = await bad.json();
+      assert.ok(b.survey_index === null || typeof b.survey_index === 'number');
+    });
+
+    await runTest('[NEGATIVE] Trend points of months without survey data are gaps (null survey and PX index), never NaN; months with data have numbers', async () => {
+      const r = await adminJson('GET', `/api/metrics/trends?mode=MTD&startYear=2025&startMonth=01&endYear=${Y46}&endMonth=12`);
+      assert.strictEqual(r.status, 200);
+      const text = await r.text();
+      assert.ok(!/NaN/.test(text));
+      const body = JSON.parse(text);
+      const pts = body.trends;
+      assert.ok(Array.isArray(pts) && pts.length > 0);
+      assert.ok(pts.every(p => (p.survey_index === null) === (p.px_index === null)), 'PX is a gap exactly where the survey index is');
+      assert.ok(pts.every(p => p.survey_index === null || typeof p.survey_index === 'number'));
+    });
   }
 
   // --- SUMMARY ---

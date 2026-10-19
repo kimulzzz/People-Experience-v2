@@ -168,10 +168,25 @@ export default function TrendChart({
     return paddingTop + (1 - (clamped - minVal) / (maxVal - minVal)) * plotHeight;
   };
 
-  // Generate SVG path points
-  const pePoints = trendData.map((d, i) => `${getX(i)},${getY(d.px_index !== undefined ? d.px_index : d.pe_index)}`).join(' ');
-  const surveyPoints = trendData.map((d, i) => `${getX(i)},${getY(d.survey_index)}`).join(' ');
-  const outcomePoints = trendData.map((d, i) => `${getX(i)},${getY(d.outcome_index)}`).join(' ');
+  // Generate SVG path points. A month without data (null index, v2.36.0) is a gap: each line is split into
+  // segments of consecutive months that have a value.
+  const hasVal = v => v !== null && v !== undefined && !Number.isNaN(v);
+  const pxOf = d => (d.px_index !== undefined ? d.px_index : d.pe_index);
+  const lineSegments = valueOf => {
+    const segs = [];
+    let cur = [];
+    trendData.forEach((d, i) => {
+      const v = valueOf(d);
+      if (hasVal(v)) cur.push(`${getX(i)},${getY(v)}`);
+      else if (cur.length) { segs.push(cur); cur = []; }
+    });
+    if (cur.length) segs.push(cur);
+    return segs.map(s => s.join(' '));
+  };
+  const pePoints = lineSegments(pxOf);
+  const surveyPoints = lineSegments(d => d.survey_index);
+  const outcomePoints = lineSegments(d => d.outcome_index);
+  const fmtPoint = v => (hasVal(v) ? `${v}%` : '—');
 
   const activeHover = hoveredMonth !== null ? trendData[hoveredMonth] : null;
 
@@ -350,40 +365,49 @@ export default function TrendChart({
             })}
 
             {/* Outcome Trend Line (Royal Blue #2563EB - Highly Distinct) */}
-            <polyline
-              fill="none"
-              stroke="#2563EB"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              points={outcomePoints}
-            />
+            {outcomePoints.map((pts, si) => (
+              <polyline
+                key={`o-${si}`}
+                fill="none"
+                stroke="#2563EB"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                points={pts}
+              />
+            ))}
 
             {/* Survey Trend Line (Digital Teal #16C0B7) */}
-            <polyline
-              fill="none"
-              stroke="#16C0B7"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              points={surveyPoints}
-            />
+            {surveyPoints.map((pts, si) => (
+              <polyline
+                key={`s-${si}`}
+                fill="none"
+                stroke="#16C0B7"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                points={pts}
+              />
+            ))}
 
             {/* PX Index Trend Line (Corporate Primary Red #ED1C24 Highlighted) */}
-            <polyline
-              fill="none"
-              stroke="#ED1C24"
-              strokeWidth="3.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              points={pePoints}
-            />
+            {pePoints.map((pts, si) => (
+              <polyline
+                key={`p-${si}`}
+                fill="none"
+                stroke="#ED1C24"
+                strokeWidth="3.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                points={pts}
+              />
+            ))}
 
             {/* Monthly Data Points & Interactive Hover Circles */}
             {trendData.map((d, i) => {
               const cx = getX(i);
-              const val = d.px_index !== undefined ? d.px_index : d.pe_index;
-              const cy = getY(val);
+              const val = pxOf(d);
+              const cy = hasVal(val) ? getY(val) : null;
               const isSelected = selectedPeriod === d.month_code;
               const isHovered = hoveredMonth === i;
 
@@ -410,35 +434,46 @@ export default function TrendChart({
                   )}
 
                   {/* Survey Point (Teal) */}
-                  <circle
-                    cx={cx}
-                    cy={getY(d.survey_index)}
-                    r="3.5"
-                    fill="#16C0B7"
-                    stroke="#FFFFFF"
-                    strokeWidth="1.5"
-                  />
+                  {hasVal(d.survey_index) && (
+                    <circle
+                      cx={cx}
+                      cy={getY(d.survey_index)}
+                      r="3.5"
+                      fill="#16C0B7"
+                      stroke="#FFFFFF"
+                      strokeWidth="1.5"
+                    />
+                  )}
 
                   {/* Outcome Point (Royal Blue) */}
-                  <circle
-                    cx={cx}
-                    cy={getY(d.outcome_index)}
-                    r="3.5"
-                    fill="#2563EB"
-                    stroke="#FFFFFF"
-                    strokeWidth="1.5"
-                  />
+                  {hasVal(d.outcome_index) && (
+                    <circle
+                      cx={cx}
+                      cy={getY(d.outcome_index)}
+                      r="3.5"
+                      fill="#2563EB"
+                      stroke="#FFFFFF"
+                      strokeWidth="1.5"
+                    />
+                  )}
+
+                  {/* Hover target of a month without data (no point is drawn) */}
+                  {cy === null && (
+                    <rect x={cx - 8} y={paddingTop} width="16" height={plotHeight} fill="transparent" />
+                  )}
 
                   {/* PX Index Main Point (Red — pale if this complete month simply had zero
                       responses uploaded yet, still real data, just empty) */}
-                  <circle
-                    cx={cx}
-                    cy={cy}
-                    r={isSelected ? 6.5 : (isHovered ? 6 : 4.5)}
-                    fill={d.has_actual_data ? '#ED1C24' : '#FCA5A5'}
-                    stroke="#FFFFFF"
-                    strokeWidth="2"
-                  />
+                  {cy !== null && (
+                    <circle
+                      cx={cx}
+                      cy={cy}
+                      r={isSelected ? 6.5 : (isHovered ? 6 : 4.5)}
+                      fill={d.has_actual_data ? '#ED1C24' : '#FCA5A5'}
+                      stroke="#FFFFFF"
+                      strokeWidth="2"
+                    />
+                  )}
 
                   {/* Month Label */}
                   <text
@@ -470,8 +505,8 @@ export default function TrendChart({
             </span>
             <div className="font-extrabold text-[#231F20] text-sm">
               {activeHover
-                ? `${monthName(activeHover.month_code.slice(5))} ${activeHover.year} (PX Index: ${activeHover.px_index || activeHover.pe_index}%)`
-                : (selectedPeriod === 'YTD' ? `Year-to-Date ${year} (PX Index: ${ytdPeIndex || '-'}%)` : `Month ${selectedPeriod.includes('-') ? `${monthName(selectedPeriod.split('-')[1])} ${selectedPeriod.split('-')[0]}` : selectedPeriod}`)}
+                ? `${monthName(activeHover.month_code.slice(5))} ${activeHover.year} (PX Index: ${fmtPoint(pxOf(activeHover))})`
+                : (selectedPeriod === 'YTD' ? `Year-to-Date ${year} (PX Index: ${fmtPoint(ytdPeIndex)})` : `Month ${selectedPeriod.includes('-') ? `${monthName(selectedPeriod.split('-')[1])} ${selectedPeriod.split('-')[0]}` : selectedPeriod}`)}
             </div>
           </div>
         </div>
@@ -481,13 +516,13 @@ export default function TrendChart({
           <div className="text-center sm:text-right">
             <div className="text-[10px] text-gray-500 uppercase font-bold">Survey (70%)</div>
             <div className="font-black text-[#0D9488] text-sm">
-              {activeHover ? `${activeHover.survey_index}%` : '-'}
+              {activeHover ? fmtPoint(activeHover.survey_index) : '-'}
             </div>
           </div>
           <div className="text-center sm:text-right border-l pl-3 border-gray-200">
             <div className="text-[10px] text-gray-500 uppercase font-bold">Outcome (30%)</div>
             <div className="font-black text-[#2563EB] text-sm">
-              {activeHover ? `${activeHover.outcome_index}%` : '-'}
+              {activeHover ? fmtPoint(activeHover.outcome_index) : '-'}
             </div>
           </div>
           <div className="text-center sm:text-right border-l pl-3 border-gray-200">

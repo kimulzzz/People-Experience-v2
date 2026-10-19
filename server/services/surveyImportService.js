@@ -406,7 +406,7 @@ async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetM
       metric_id: mid,
       metric_name: metricObj?.metric_name || `Metric #${mid}`,
       calculated_raw_avg: parseFloat(mAvg.toFixed(2)),
-      normalized_score: metricObj?.normalized_score || 0
+      normalized_score: metricObj?.normalized_score ?? null // null = NO_DATA in the current YTD window (v2.36.0)
     };
   });
 

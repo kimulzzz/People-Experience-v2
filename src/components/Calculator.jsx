@@ -106,6 +106,9 @@ export default function Calculator({
 
   const { metrics, journeys, checkpoints, pe_index, survey_index, outcome_index, period, year } = calculationData;
 
+  // v2.36.0: an index without any metric data in the period is null -> "—"
+  const fmtPct = v => (v === null || v === undefined ? '—' : `${v.toFixed(2)}%`);
+
   // Filtered metrics
   const filteredMetrics = metrics.filter(m => {
     if (selectedJourneyFilter !== 'ALL' && m.journey_id !== parseInt(selectedJourneyFilter)) {
@@ -181,12 +184,12 @@ export default function Calculator({
         <div className="flex items-center space-x-3 bg-white/15 px-4 py-3 rounded-xl border border-white/20 shrink-0">
           <div className="text-right">
             <span className="text-[10px] uppercase font-bold text-red-100 block">PX Index ({periodLabel})</span>
-            <span className="text-2xl font-black text-white">{(calculationData.px_index ?? pe_index).toFixed(2)}%</span>
+            <span className="text-2xl font-black text-white">{fmtPct(calculationData.px_index !== undefined ? calculationData.px_index : pe_index)}</span>
           </div>
           <div className="h-8 w-px bg-white/20" />
           <div className="text-xs space-y-0.5">
-            <div><span className="text-red-100 font-medium">Survey (70%):</span> <strong className="text-white">{survey_index.toFixed(2)}%</strong></div>
-            <div><span className="text-red-100 font-medium">Outcome (30%):</span> <strong className="text-white">{outcome_index.toFixed(2)}%</strong></div>
+            <div><span className="text-red-100 font-medium">Survey (70%):</span> <strong className="text-white">{fmtPct(survey_index)}</strong></div>
+            <div><span className="text-red-100 font-medium">Outcome (30%):</span> <strong className="text-white">{fmtPct(outcome_index)}</strong></div>
           </div>
         </div>
       </div>
@@ -411,9 +414,10 @@ export default function Calculator({
                   const rawDate = m.last_survey_date || todayDateString();
                   // ESS metrics (v2.32.0) show the period of the uploaded ESS summary, e.g. "November 2025"
                   const isEssRow = isSurvey && m.survey_source === 'ESS';
-                  const displayDate = (isEssRow && m.ess_period_label) || normalizeDateString(rawDate) || rawDate;
-
                   const isDisabled = m.is_disabled === true;
+                  // v2.36.0: a survey metric without data in the selected period (no score, not in the index)
+                  const isNoData = !isDisabled && m.status === 'NO_DATA';
+                  const displayDate = isNoData ? '—' : ((isEssRow && m.ess_period_label) || normalizeDateString(rawDate) || rawDate);
 
                   return (
                     <tr
@@ -515,6 +519,11 @@ export default function Calculator({
                       <td className={`py-3 ${isFit ? 'px-2' : 'px-3.5'} text-right whitespace-nowrap`}>
                         {isDisabled ? (
                           <span className="text-xs font-bold text-gray-400">N/A</span>
+                        ) : isNoData ? (
+                          <>
+                            <div className="text-xs font-black text-gray-400">—</div>
+                            <span className="text-[9.5px] text-gray-400 block leading-tight">Tgt: {m.target_display}</span>
+                          </>
                         ) : (
                           <>
                             <div className="text-xs font-black text-gray-900">
@@ -530,6 +539,10 @@ export default function Calculator({
                         {isDisabled ? (
                           <div className="text-center py-1 text-[10px] font-bold text-gray-400 bg-gray-200/60 rounded">
                             Exempted (0%)
+                          </div>
+                        ) : isNoData ? (
+                          <div className="text-center py-1 text-[10px] font-bold text-gray-400 bg-gray-100 rounded" title="No survey data in the selected period">
+                            —
                           </div>
                         ) : (
                           <>
@@ -560,6 +573,10 @@ export default function Calculator({
                         {isDisabled ? (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold bg-gray-200 text-gray-500">
                             Exempted
+                          </span>
+                        ) : isNoData ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold bg-gray-200 text-gray-500" title="No survey data in the selected period - left out of the index">
+                            No Data
                           </span>
                         ) : (
                           <span className={`inline-flex items-center space-x-0.5 px-2 py-0.5 rounded-full text-[9.5px] font-bold ${

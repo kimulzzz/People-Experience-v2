@@ -42,7 +42,8 @@ async function getAlertsAndRecommendations(scope = {}) {
   const uploadedVerbatims = isScoped ? null : ((await storage.getAllUploadedVerbatims()) || []);
   const acknowledgedList = (await storage.getAcknowledgedAlerts()) || [];
 
-  const deficientMetrics = calculation.metrics.filter(metric => !metric.is_disabled).filter(metric => {
+  // NO_DATA metrics (no survey data in the window, v2.36.0) have no score, so they never raise a deficit alert.
+  const deficientMetrics = calculation.metrics.filter(metric => !metric.is_disabled && metric.has_data !== false).filter(metric => {
     const isCritical = metric.normalized_score < metric.min_threshold;
     // Compare against the target on the same 0-100 scale as normalized_score (RATING_5 / QUOTA_COUNT
     // targets are stored in their native scale) — same rule as the metric status in calculatePEIndex().

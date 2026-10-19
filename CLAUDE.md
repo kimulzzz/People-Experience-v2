@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(288-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(298-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (288 cases on SQL; v2.32.0 run 209/209 with media modules skipped; full JSON suite not re-run since v2.30.1) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (298 cases on SQL; v2.36.0 run 212/212, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (30 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
@@ -624,6 +624,14 @@ domain model, not just descriptive:
 - **v2.35.0** (2026-10-19, see `CHANGELOG.md` [2.35.0]): metric detail "Period" badge now follows the Dashboard filter ("YTD 2026" /
   "September 2026"); it was stuck on Year-to-Date because `App.jsx` passes only `filterOptions`, never `period`. The Evidence link
   follows the same period (`period=2026` / `2026-09`). Suite SQL 202/202, 16 skipped (event + media).
+
+- **v2.36.0** (2026-10-19, see `CHANGELOG.md` [2.36.0], `docs/01` §3.1/§3.7/§4/§5, `docs/04` "Catatan v2.36.0", `docs/05`, `docs/07` §30): user asked to check YTD/MTD. Gaps found: YTD had no
+  cap (whole year), ESS carried forward across years, SURVEY metrics without data fell back to static `raw_value`. Now (`filterUtils.js` `ytdEndMonth`/`effectiveMetricPeriod`/`periodWindow`):
+  YTD current year = Jan..end of this month (past year full, future year empty); `update_frequency` drives the read period (MONTHLY: MTD = that month; ONE_TIME_ANNUAL incl. all ESS: MTD Y-M =
+  YTD Y to M); ESS strict inside the window (replaces v2.32.0 carry-forward); no data -> `status NO_DATA`, `has_data false`, null scores, out of index/rollups/alerts; indexes can be `null`
+  (`px_index_basis` BOTH/SURVEY_ONLY/OUTCOME_ONLY/NONE). OUTCOME = unfiltered snapshot. Effect: YTD 2026 PX 84.43 -> 83.72 (11 ESS NO_DATA until a 2026 ESS upload); 2025 unchanged.
+  Gotchas: callers of calculate/detail must handle `null` (no more 0/default question scores); Module 46 briefly PUTs metric 8 to Annual (shared DB). Tests: Module 46 (10), Modules 11/35/45
+  adjusted -> SQL 212/212, 16 skipped (`TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`); JSON only targeted in-process checks. No new endpoint/table/setting/env.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

@@ -1145,9 +1145,13 @@ function buildResponseFilter(filterOptions, params) {
     else {
       const y = parseInt(year, 10);
       params.f_start = T.date(`${y}-01-01`);
-      const em = endMonth ? parseInt(endMonth, 10) : NaN;
-      params.f_end = T.date(em >= 1 && em <= 12 ? nextMonthStart(y, em) : `${y + 1}-01-01`);
-      where.push('survey_date >= @f_start AND survey_date < @f_end');
+      // endMonth is always set for a valid year (parseFilterOptions caps it by the clock); 0 = a future year
+      const em = endMonth ? parseInt(endMonth, 10) : 12;
+      if (!(em >= 1 && em <= 12)) where.push('1 = 0');
+      else {
+        params.f_end = T.date(nextMonthStart(y, em));
+        where.push('survey_date >= @f_start AND survey_date < @f_end');
+      }
     }
   }
   if (directorate && directorate !== 'ALL') { params.f_dir = directorate; where.push('org_unit_1 = @f_dir'); }
