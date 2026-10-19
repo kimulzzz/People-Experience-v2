@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    46 MODUL PENGUJIAN    │     298 AUTOMATED TESTS     │       100% PASS RATE          │
+│    46 MODUL PENGUJIAN    │     301 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -960,7 +960,7 @@ Perubahan tampilan saja (`MetricDetailModal.jsx`) + teks `ess_summary.descriptio
 
 **Regression suite: 212/212 lulus, 0 gagal, 16 dilewati, di SQL Server** (angka dari laporan developer, backend kedua; penulis dokumen ini tidak menjalankan ulang suite) dengan `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`. 212 = 202 (v2.35.0, setelan skip yang sama) + 10 (Modul 46). Ukuran suite penuh di SQL kini 298 = 288 + 10 (dihitung penulis, bukan dari output). Hitungan statis `await runTest(` 285 (275 + 10). **Suite JSON penuh tidak dijalankan**; developer hanya menjalankan cek in-process terarah pada backend JSON (`store.json` dipulihkan byte-per-byte). Data tes run ini dibersihkan; jumlah kembali ke ESS 143 baris, 172 upload, 2.788 baris respons, 1 user.
 
-**Modul 46 = 10 tes** (dihitung dari kode: 10 pemanggilan `runTest`). Metrik uji: 8 (Onboarding 30/60/90, SYSTEM) dan Role Clarity (ESS, metrik 9).
+**Modul 46 = 10 tes** (dihitung dari kode: 10 pemanggilan `runTest`). Tes 3, 4, 6 dan 8 diubah di v2.37.0 (lihat §31). Metrik uji: 8 (Onboarding 30/60/90, SYSTEM) dan Role Clarity (ESS, metrik 9).
 
 | # | Jenis | Yang diuji (Modul 46) |
 | :-: | :---: | :--- |
@@ -986,3 +986,24 @@ Perubahan tampilan saja (`MetricDetailModal.jsx`) + teks `ess_summary.descriptio
 **Risiko tes**: tes 4 Modul 46 sebentar mengubah `update_frequency` metrik 8; backend tes berbagi database dengan backend utama (:5000, scheduler aktif), jadi pembacaan backend utama selama beberapa detik itu bisa memakai setelan Annual.
 
 **Tidak diuji / tidak terverifikasi**: suite JSON penuh; modul 8, 24, 27, 32, 38, 41, 42, 43 (dilewati); tampilan UI (tidak ada tes render untuk "—" / "No Data" / celah TrendChart); bagian probe tes 1 di backend JSON.
+
+## 31. v2.37.0 - Periode MTD ESS = Bulan Template, Seed ESS 2026
+
+**Regression suite: 215/215 lulus, 0 gagal, 16 dilewati, di SQL Server** (angka dari laporan developer, backend kedua; penulis dokumen ini tidak menjalankan ulang suite) dengan `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`. 215 = 212 (v2.36.0) + 3 (Modul 46). Ukuran suite penuh di SQL kini 301 = 298 + 3 (dihitung penulis, bukan dari output). Hitungan statis `await runTest(` 288 (285 + 3). **Suite JSON penuh tidak dijalankan**; developer hanya menjalankan cek in-process terarah pada backend JSON (`store.json` dipulihkan). Jumlah data setelah run: ESS 572 baris (143 + 429 seed 2026), 205 upload (172 + 33), 2.788 baris respons, 1 user.
+
+**Modul 46 = 13 tes di SQL, 12 di JSON** (dihitung dari kode: 13 pemanggilan `runTest`, satu di dalam `if (isSql46())`). Perubahan terhadap §30:
+
+| Tes | Status | Yang diuji |
+| :--- | :--- | :--- |
+| 3 lama ("ESS annual": MTD 2025-12 = 92, `YEAR_TO_MONTH`) | Dihapus | Diganti tiga tes di bawah. |
+| 3a | Baru, Positif | Role Clarity (metrik 9) MTD 2025-11 = YTD 2025 = 92 (`ess_period` 2025-11; `period_window` 2025-11-01 s.d. 2025-11-30 `MONTH`); MTD 2026-06 = nilai Bankwide seed 2026-06; YTD 2026 = seed 2026-09; detail MTD 2026-06: `ess_period` 2026-06, 13 baris `ess_results_by_directorate`, basis `MONTH`. `update_frequency` tetap `ONE_TIME_ANNUAL`. |
+| 3b | Baru, Negatif | Role Clarity MTD 2025-12 = `NO_DATA` (skor/`gap` `null`, `sample_size` 0, jendela 2025-12-01 s.d. 2025-12-31 `MONTH`); tidak ada metrik ESS berdata pada MTD 2025-12, 2025-10, 2026-01 dan 2026-10; tepat 11 metrik ESS berdata dengan `ess_period` = periode itu pada MTD 2025-11, 2026-03, 2026-06 dan 2026-09; YTD 2026: kesebelasnya 2026-09. |
+| 3c | Baru, Positif | Baris 2025-11 Role Clarity (13 unit org: index, partisipasi, skor pertanyaan) sama persis dengan seed dari file asli user; Bankwide = 92. |
+| 3d | Baru, Positif/Negatif, khusus SQL | Upload `.xlsx` Role Clarity 2026-06 mengganti 13 baris seed (`replaced_rows` 13) dan tetap ada setelah `storage.init()` (top-up boot); setelah semua baris 2026-06 dihapus, `init()` menyisipkan 13 baris `seed-ess-9-2026-06` lagi. Batch upload probe dan filenya dihapus di `finally`. |
+| 4 | Ditulis ulang | Metrik 8 diset Annual: MTD 2025-06 tetap hanya Juni (`sample_size`/`raw_value` sama dengan setelan Monthly, basis `MONTH`, juga di detail); setelan dikembalikan di `finally`. |
+| 6 | Periode diganti | Cek "Survey Index = rerata metrik berdata" memakai MTD 2025-12 (SYSTEM berdata, ESS tidak), karena YTD tahun berjalan kini punya ESS. |
+| 8 | Periode diganti | Detail ESS `NO_DATA` memakai MTD 2025-12 (dulu YTD tahun berjalan). |
+
+Modul 11, 35 dan 45 tidak berubah. **Risiko tes**: tes 3d menulis langsung ke `px_ess_results` database bersama (backend utama :5000 bisa sesaat membaca nilai probe 77.77 untuk metrik 9 MTD 2026-06); tes 4 tetap sebentar mengubah `update_frequency` metrik 8.
+
+**Tidak diuji / tidak terverifikasi**: suite JSON penuh; modul 8, 24, 27, 32, 38, 41, 42, 43 (dilewati); top-up ulang seed di backend JSON hanya lewat cek in-process; tampilan UI (penghapusan catatan "Annual metric" tidak punya tes render; pengecekan browser tidak dilaporkan developer).

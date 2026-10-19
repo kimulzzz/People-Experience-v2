@@ -127,7 +127,7 @@ Buka **Admin Parameters → Metric Parameters → Edit** pada metrik yang dituju
 | **Monthly (Periodic Update Every Month)** (dulu Bulanan) | Metrik yang datanya perlu di-upload/diperbarui setiap bulan (default untuk sebagian besar metrik). |
 | **Annual (One Upload for the Full Year)** (dulu Tahunan) | Metrik yang cukup diupload sekali dan dipakai untuk kalkulasi sepanjang tahun — contoh default: 11 metrik **ESS (Employee Sentiment Survey)**. |
 
-**Sejak v2.36.0 pilihan ini juga menentukan periode baca metrik Survey** (bukan hanya pengingat): **Monthly** -> filter MTD hanya membaca bulan terpilih; **Annual** -> filter MTD membaca Januari s.d. bulan terpilih tahun itu (= YTD s.d. bulan itu). Mengubah pilihan ini langsung mengubah nilai metrik pada filter MTD. Metrik tanpa data di periode terpilih tampil "No Data" dan tidak ikut indeks (lihat `docs/01` §4).
+**Periode baca**: di v2.36.0 pilihan ini sempat menentukan periode filter MTD (Annual = Januari s.d. bulan terpilih). **Sejak v2.37.0 tidak lagi**: filter MTD selalu membaca hanya bulan terpilih untuk semua metrik Survey (metrik ESS: hanya hasil yang Month + Year di template-nya sama dengan bulan itu), jadi mengubah pilihan ini tidak mengubah nilai metrik; pilihan ini hanya dipakai pengingat e-mail (§7.2). Metrik tanpa data di periode terpilih tampil "No Data" dan tidak ikut indeks (lihat `docs/01` §4).
 
 ### 7.2 Pengingat Upload Survei Manual (Reminder Email PIC)
 Khusus metrik bertipe **Survey**, tersedia toggle **"This survey is still uploaded manually by the PIC (enable email reminders)"**.

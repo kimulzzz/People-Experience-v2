@@ -1095,26 +1095,28 @@ async function cleanupEssRespondentRows(outerTx) {
   return outerTx ? work(outerTx) : inTransaction(work);
 }
 
-// Demo ESS summaries (seed): only for an ESS metric that has no ESS result at all, so an upload is never overwritten.
+// Demo ESS summaries (seed), per (metric, period) (v2.37.0): a seed period is only added when that ESS metric has no
+// result for that period yet, so an upload of the same period is never overwritten. Returns the seed upload ids added.
 async function topUpEssSeed() {
   const seedRows = seed.initialEssResults || [];
   if (!seedRows.length) return [];
   const ess = new Set(await essMetricIds());
-  const have = new Set((await run('SELECT DISTINCT metric_id FROM dbo.px_ess_results')).map(r => r.metric_id));
-  const todo = [...new Set(seedRows.map(r => r.metric_id))].filter(id => ess.has(id) && !have.has(id));
+  const periodKey = r => `${r.metric_id}|${parseInt(r.survey_year, 10)}-${parseInt(r.survey_month, 10)}`;
+  const have = new Set((await run('SELECT DISTINCT metric_id, survey_year, survey_month FROM dbo.px_ess_results')).map(periodKey));
+  const todo = [...new Set(seedRows.filter(r => ess.has(r.metric_id) && !have.has(periodKey(r))).map(r => r.upload_id))];
   if (!todo.length) return [];
   await inTransaction(async tx => {
-    for (const id of todo) {
-      const up = (seed.initialEssUploads || []).find(u => u.metric_id === id);
+    for (const uploadId of todo) {
+      const up = (seed.initialEssUploads || []).find(u => u.upload_id === uploadId);
       if (up) {
         await run(`IF NOT EXISTS (SELECT 1 FROM dbo.px_survey_uploads WHERE upload_id = @upload_id)
                      INSERT INTO dbo.px_survey_uploads (upload_id, metric_id, file_name, total_rows, valid_rows, invalid_rows, calculated_avg_score, uploaded_by, uploaded_at)
                      VALUES (@upload_id, @metric_id, @file_name, @total_rows, @valid_rows, @invalid_rows, @avg, @uploaded_by, @uploaded_at)`, {
-          upload_id: up.upload_id, metric_id: id, file_name: up.file_name, total_rows: up.total_rows, valid_rows: up.valid_rows,
+          upload_id: up.upload_id, metric_id: up.metric_id, file_name: up.file_name, total_rows: up.total_rows, valid_rows: up.valid_rows,
           invalid_rows: up.invalid_rows, avg: up.calculated_avg_score, uploaded_by: up.uploaded_by, uploaded_at: toDateObj(up.uploaded_at)
         }, tx);
       }
-      for (const r of seedRows.filter(x => x.metric_id === id)) await insertEssResult(tx, r.upload_id, r);
+      for (const r of seedRows.filter(x => x.upload_id === uploadId)) await insertEssResult(tx, r.upload_id, r);
     }
   });
   return todo;
@@ -1201,7 +1203,7 @@ const storage = {
     if (String(process.env.SEED_DEMO_DATA || 'true').toLowerCase() !== 'false') {
       await topUpSeedResponses();
       const seededEss = await topUpEssSeed();
-      if (seededEss.length) console.log(`[sqlStorage] Seeded the demo ESS summary (2025-11) of metric(s) ${seededEss.join(', ')}.`);
+      if (seededEss.length) console.log(`[sqlStorage] Seeded demo ESS summaries: ${seededEss.join(', ')}.`);
     }
     const info = await this.health();
     console.log(`[sqlStorage] Connected to ${info.server} / ${info.database} (${info.edition})`);

@@ -61,7 +61,8 @@ function buildInitialStore() {
     ],
     surveyUploadedResponses: initialSurveyUploadedResponses,
     // ESS result summaries (v2.32.0): one row per org unit (Bankwide + directorates) per metric and period
-    essResults: initialEssResults.map((r, i) => ({ ess_result_id: i + 1, ...JSON.parse(JSON.stringify(r)), created_at: '2025-11-30T10:00:00.000Z' })),
+    essResults: initialEssResults.map((r, i) => ({ ess_result_id: i + 1, ...JSON.parse(JSON.stringify(r)),
+      created_at: (initialEssUploads.find(u => u.upload_id === r.upload_id) || {}).uploaded_at || '2025-11-30T10:00:00.000Z' })),
     media: [
       {
         media_id: 'med-1',

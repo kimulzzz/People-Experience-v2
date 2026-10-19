@@ -5770,20 +5770,99 @@ async function runRegressionSuite() {
       assert.ok(d.responses.length > 0 && d.responses.every(r => String(r.survey_date).startsWith(sep)), `MTD ${sep}: only rows of that month`);
     });
 
-    await runTest('[POSITIVE] ESS (annual) period: Role Clarity MTD 2025-11 = MTD 2025-12 = YTD 2025 = 92 (an annual metric under MTD reads Jan..that month); MTD 2025-10, MTD of September this year and YTD this year = NO_DATA (no carry-forward across years)', async () => {
-      assert.strictEqual(rc46 ? rc46.update_frequency : 'ONE_TIME_ANNUAL', 'ONE_TIME_ANNUAL');
-      assert.strictEqual(metricOf46(await calc46('mode=MTD&year=2025&month=11'), RC46).normalized_score, 92);
-      const dec = metricOf46(await calc46('mode=MTD&year=2025&month=12'), RC46);
-      assert.strictEqual(dec.normalized_score, 92);
-      assert.deepStrictEqual(dec.period_window, { from: '2025-01-01', to: '2025-12-31', basis: 'YEAR_TO_MONTH' });
-      assert.strictEqual(metricOf46(await calc46('mode=YTD&year=2025'), RC46).normalized_score, 92);
-      for (const q of ['mode=MTD&year=2025&month=10', `mode=MTD&year=${Y46}&month=09`, `mode=YTD&year=${Y46}`]) {
-        const m = metricOf46(await calc46(q), RC46);
-        assert.deepStrictEqual([m.status, m.has_data, m.raw_value, m.normalized_score, m.sample_size, m.gap], ['NO_DATA', false, null, null, 0, null], q);
-      }
+    // v2.37.0: an ESS result only counts in MTD for EXACTLY its template month (Year + Month); update_frequency no
+    // longer changes the period. Seed: 2025-11 (metric 9 = the user's real file) + dummy quarters 2026-03/06/09.
+    const essSeed46 = require('../server/db/seedData').initialEssResults;
+    const seedBank46 = (y, m) => essSeed46.find(r => r.metric_id === RC46 && r.survey_year === y && r.survey_month === m && r.org_level === 'BANKWIDE').index_score;
+    const essOf46 = c => c.metrics.filter(m => m.metric_type === 'SURVEY' && m.survey_source === 'ESS');
+
+    await runTest('[POSITIVE] ESS period = the template month: Role Clarity MTD 2025-11 = YTD 2025 = 92 (basis MONTH); MTD 2026-06 = the seeded 2026-06 bankwide value; YTD 2026 reads the latest quarter 2026-09', async () => {
+      assert.strictEqual(rc46 ? rc46.update_frequency : 'ONE_TIME_ANNUAL', 'ONE_TIME_ANNUAL', 'still annual (reminders only)');
+      const nov = metricOf46(await calc46('mode=MTD&year=2025&month=11'), RC46);
+      assert.deepStrictEqual([nov.normalized_score, nov.ess_period], [92, '2025-11']);
+      assert.deepStrictEqual(nov.period_window, { from: '2025-11-01', to: '2025-11-30', basis: 'MONTH' });
+      const y25 = metricOf46(await calc46('mode=YTD&year=2025'), RC46);
+      assert.deepStrictEqual([y25.normalized_score, y25.ess_period], [92, '2025-11']);
+      const jun = metricOf46(await calc46('mode=MTD&year=2026&month=06'), RC46);
+      assert.deepStrictEqual([jun.normalized_score, jun.ess_period, jun.sample_size > 0], [seedBank46(2026, 6), '2026-06', true]);
+      const y26 = metricOf46(await calc46('mode=YTD&year=2026'), RC46);
+      assert.deepStrictEqual([y26.normalized_score, y26.ess_period], [seedBank46(2026, 9), '2026-09']);
+      const d = await aj46(`/api/metrics/${RC46}/detail?mode=MTD&year=2026&month=06`);
+      assert.deepStrictEqual([d.ess_period, d.normalized_score, d.ess_results_by_directorate.length, d.period_window.basis], ['2026-06', seedBank46(2026, 6), 13, 'MONTH']);
     });
 
-    await runTest('[POSITIVE] A SYSTEM survey set to Annual reads Jan..M under MTD Y-M (= YTD Y up to M); back to Monthly it reads only month M (setting restored)', async () => {
+    await runTest('[NEGATIVE] ESS outside its template month is NO_DATA: MTD 2025-12 (the month after the result), 2025-10, 2026-01 and 2026-10 have no ESS metric with data; MTD 2025-11 / 2026-03 / 2026-06 / 2026-09 and YTD 2026 have all 11', async () => {
+      const dec = metricOf46(await calc46('mode=MTD&year=2025&month=12'), RC46);
+      assert.deepStrictEqual([dec.status, dec.has_data, dec.raw_value, dec.normalized_score, dec.sample_size, dec.gap, dec.ess_period || null], ['NO_DATA', false, null, null, 0, null, null]);
+      assert.deepStrictEqual(dec.period_window, { from: '2025-12-01', to: '2025-12-31', basis: 'MONTH' });
+      for (const p of ['2025-12', '2025-10', '2026-01', '2026-10']) {
+        const ess = essOf46(await calc46(`mode=MTD&year=${p.slice(0, 4)}&month=${p.slice(5)}`));
+        assert.ok(ess.length >= 11 && ess.every(m => m.status === 'NO_DATA'), `MTD ${p}: ${ess.filter(m => m.has_data).map(m => m.metric_id)}`);
+      }
+      for (const p of ['2025-11', '2026-03', '2026-06', '2026-09']) {
+        const ess = essOf46(await calc46(`mode=MTD&year=${p.slice(0, 4)}&month=${p.slice(5)}`)).filter(m => m.metric_id <= 27);
+        assert.ok(ess.length === 11 && ess.every(m => m.has_data && m.ess_period === p), `MTD ${p}`);
+      }
+      const ytd = essOf46(await calc46('mode=YTD&year=2026')).filter(m => m.metric_id <= 27);
+      assert.ok(ytd.length === 11 && ytd.every(m => m.ess_period === '2026-09'), 'YTD 2026 = the latest quarter');
+    });
+
+    await runTest('[POSITIVE] The 2025-11 rows of Role Clarity are still exactly the user\'s real file (index + participation + question scores of all 13 org units)', async () => {
+      const d = await aj46(`/api/metrics/${RC46}/detail?mode=MTD&year=2025&month=11`);
+      const seedRows = essSeed46.filter(r => r.metric_id === RC46 && r.survey_year === 2025 && r.survey_month === 11);
+      assert.strictEqual(d.ess_results_by_directorate.length, 13);
+      for (const r of seedRows) {
+        const got = d.ess_results_by_directorate.find(x => (r.org_level === 'BANKWIDE' ? x.org_level === 'BANKWIDE' : x.directorate === r.directorate));
+        assert.ok(got, r.directorate || 'Bankwide');
+        assert.deepStrictEqual([got.index_score, got.participation, got.questions.map(q => q.score)],
+          [parseFloat(r.index_score.toFixed(2)), r.participation, r.questions.map(q => q.score)], r.directorate || 'Bankwide');
+      }
+      assert.strictEqual(d.ess_results_by_directorate.find(x => x.org_level === 'BANKWIDE').index_score, 92);
+    });
+
+    if (isSql46()) {
+      await runTest('[POSITIVE/NEGATIVE] (SQL Server) Boot top-up per (metric, period): an upload of a seeded period is never overwritten by the dummy rows; a period without rows gets its seed back', async () => {
+        const st = require('../server/db/storage');
+        const ess46 = require('../server/services/essSummaryService');
+        const sql = require('mssql');
+        const file = await essXlsx([ESS_HEAD('Role Clarity & DS Support Index', ['Q1', 'Q2', 'Q3']), ['PT Bank CIMB Niaga Tbk', 'Bankwide', 2026, 'June', 321, 0.7777, 0.7, 0.8, 0.8]]);
+        let uploadId = null;
+        const pool = await new sql.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
+          user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
+        try {
+          const res = await postEssFile(RC46, file, 'module46_overwrite_probe.xlsx');
+          const body = await res.json();
+          assert.strictEqual(res.status, 200, JSON.stringify(body).slice(0, 300));
+          uploadId = body.upload_id;
+          assert.deepStrictEqual([body.period, body.replaced_rows], ['2026-06', 13], 'the upload replaced the 13 seeded rows');
+          await st.init(); // the boot top-up
+          const after = await st.getEssResults(RC46, { year: 2026, month: 6 });
+          assert.deepStrictEqual(after.map(r => [r.upload_id, r.index_score, r.participation]), [[uploadId, 77.77, 321]], 'the dummy rows did not come back over the upload');
+          assert.strictEqual(metricOf46(await calc46('mode=MTD&year=2026&month=06'), RC46).normalized_score, 77.77);
+          // no rows left for the period -> the seed is inserted again (this also restores the seed state)
+          await pool.request().input('m', sql.Int, RC46).query('DELETE FROM dbo.px_ess_results WHERE metric_id = @m AND survey_year = 2026 AND survey_month = 6');
+          await st.init();
+          const back = await st.getEssResults(RC46, { year: 2026, month: 6 });
+          assert.strictEqual(back.length, 13);
+          assert.ok(back.every(r => r.upload_id === `seed-ess-${RC46}-2026-06`));
+          assert.strictEqual(metricOf46(await calc46('mode=MTD&year=2026&month=06'), RC46).normalized_score, seedBank46(2026, 6));
+        } finally {
+          const left = await st.getEssResults(RC46, { year: 2026, month: 6 });
+          if (left.length !== 13 || left.some(r => !String(r.upload_id).startsWith('seed-ess-'))) {
+            await pool.request().input('m', sql.Int, RC46).query('DELETE FROM dbo.px_ess_results WHERE metric_id = @m AND survey_year = 2026 AND survey_month = 6');
+            await st.init();
+          }
+          if (uploadId) {
+            await pool.request().input('u', sql.NVarChar, uploadId).query('DELETE FROM dbo.px_survey_uploads WHERE upload_id = @u');
+            const f = require('path').join(ess46.ESS_UPLOAD_DIR, `${uploadId}.xlsx`);
+            if (require('fs').existsSync(f)) require('fs').unlinkSync(f);
+          }
+          await pool.close();
+        }
+      });
+    }
+
+    await runTest('[POSITIVE] update_frequency no longer changes the period: a SYSTEM survey set to Annual still reads only month M under MTD Y-M (basis MONTH); setting restored', async () => {
       const before = params46.find(m => m.metric_id === SYS46).update_frequency || 'MONTHLY';
       const mtdMonthly = metricOf46(await calc46('mode=MTD&year=2025&month=06'), SYS46);
       assert.deepStrictEqual(mtdMonthly.period_window, { from: '2025-06-01', to: '2025-06-30', basis: 'MONTH' });
@@ -5792,12 +5871,12 @@ async function runRegressionSuite() {
       try {
         assert.strictEqual((await adminJson('PUT', `/api/admin/metrics/${SYS46}`, { update_frequency: 'ONE_TIME_ANNUAL' })).status, 200);
         const mtdAnnual = metricOf46(await calc46('mode=MTD&year=2025&month=06'), SYS46);
-        assert.deepStrictEqual([mtdAnnual.sample_size, mtdAnnual.raw_value], [ytdToJune.sample_size, ytdToJune.raw_value]);
-        assert.deepStrictEqual(mtdAnnual.period_window, { from: '2025-01-01', to: '2025-06-30', basis: 'YEAR_TO_MONTH' });
+        assert.deepStrictEqual([mtdAnnual.sample_size, mtdAnnual.raw_value], [mtdMonthly.sample_size, mtdMonthly.raw_value]);
+        assert.deepStrictEqual(mtdAnnual.period_window, { from: '2025-06-01', to: '2025-06-30', basis: 'MONTH' });
         const d = await aj46(`/api/metrics/${SYS46}/detail?mode=MTD&year=2025&month=06`);
-        assert.strictEqual(d.total_respondents, ytdToJune.sample_size);
+        assert.strictEqual(d.total_respondents, mtdMonthly.sample_size);
         assert.strictEqual(d.update_frequency, 'ONE_TIME_ANNUAL');
-        assert.strictEqual(d.period_window.basis, 'YEAR_TO_MONTH');
+        assert.strictEqual(d.period_window.basis, 'MONTH');
       } finally {
         await adminJson('PUT', `/api/admin/metrics/${SYS46}`, { update_frequency: before });
       }
@@ -5820,10 +5899,10 @@ async function runRegressionSuite() {
     });
 
     await runTest('[POSITIVE] Survey Index = weighted mean of the survey metrics WITH data only; PX = 70/30 with basis BOTH; journeys / checkpoints only roll up metrics with data', async () => {
-      const c = await calc46(`mode=YTD&year=${Y46}`);
+      const c = await calc46('mode=MTD&year=2025&month=12'); // v2.37.0: SYSTEM surveys have December rows, ESS has no December result
       const live = c.metrics.filter(m => !m.is_disabled && !m.excluded_from_index);
       const noData = live.filter(m => m.status === 'NO_DATA');
-      assert.ok(noData.length > 0 && noData.every(m => m.metric_type === 'SURVEY' && m.normalized_score === null), 'the ESS metrics have no data this year');
+      assert.ok(noData.length > 0 && noData.every(m => m.metric_type === 'SURVEY' && m.normalized_score === null), 'the ESS metrics have no data in December 2025');
       assert.strictEqual(c.no_data_metrics_count, noData.length);
       const surveys = live.filter(m => m.metric_type === 'SURVEY' && m.has_data);
       const w = surveys.reduce((s, m) => s + m.weight, 0);
@@ -5853,7 +5932,7 @@ async function runRegressionSuite() {
     });
 
     await runTest('[POSITIVE] Detail of a NO_DATA metric answers 200 with null scores (ESS without a result in the window; SYSTEM survey in a month without rows)', async () => {
-      const ess = await aj46(`/api/metrics/${RC46}/detail?mode=YTD&year=${Y46}`);
+      const ess = await aj46(`/api/metrics/${RC46}/detail?mode=MTD&year=2025&month=12`); // v2.37.0: no ESS result in December 2025
       assert.deepStrictEqual([ess.status, ess.has_data, ess.current_raw_value, ess.normalized_score], ['NO_DATA', false, null, null]);
       assert.ok(ess.ess_summary && ess.ess_summary.summary_score === null, 'the ESS card has no score for this period');
       const sys = await aj46(`/api/metrics/${SYS46}/detail?mode=MTD&year=${Y46 + 1}&month=01`);

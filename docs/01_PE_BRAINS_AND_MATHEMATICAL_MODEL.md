@@ -194,7 +194,7 @@ Dimana:
 
 ## ⏳ 4. Model Agregasi Waktu: Period Filter (YTD vs MTD)
 
-Aturan sejak v2.36.0. Jendela periode dihitung di `server/db/filterUtils.js` (`ytdEndMonth`, `effectiveMetricPeriod`, `periodWindow`, `parseFilterOptions`) dan dipakai kedua backend storage (`sqlStorage.buildResponseFilter`, `jsonStorage.applyResponseFilters`), sehingga SQL Server dan JSON membaca baris yang sama.
+Aturan sejak v2.36.0; periode MTD per metrik diubah di v2.37.0. Jendela periode dihitung di `server/db/filterUtils.js` (`ytdEndMonth`, `periodWindow`, `parseFilterOptions`) dan dipakai kedua backend storage (`sqlStorage.buildResponseFilter`, `jsonStorage.applyResponseFilters`), sehingga SQL Server dan JSON membaca baris yang sama.
 
 1. **Year-to-Date (YTD) - default**:
    - Tahun berjalan (jam server): 1 Januari s.d. **akhir bulan berjalan**. Contoh: 19 Okt 2026 -> 2026-01-01 s.d. 2026-10-31. Baris bertanggal setelah bulan ini tidak ikut.
@@ -202,18 +202,17 @@ Aturan sejak v2.36.0. Jendela periode dihitung di `server/db/filterUtils.js` (`y
    - `endMonth` eksplisit (titik Performance Trend mode YTD) dipakai, tetapi tidak pernah melewati batas di atas.
 
 2. **Month-to-Date (MTD, `YYYY-MM`)**:
-   - $D_{\text{filter}} = \{d \in D \mid \text{Format}(d.\text{date}, \text{'YYYY-MM'}) = \text{SelectedMonth}\}$ - hanya bulan itu, untuk metrik berperiode bulanan.
+   - $D_{\text{filter}} = \{d \in D \mid \text{Format}(d.\text{date}, \text{'YYYY-MM'}) = \text{SelectedMonth}\}$ - hanya bulan itu, untuk **setiap** metrik SURVEY (sejak v2.37.0 juga metrik Annual dan ESS); `period_window.basis` selalu `MONTH`.
 
-3. **Periode per metrik (`effectiveMetricPeriod`, ditentukan `update_frequency`)**:
+3. **Periode per metrik** (sejak v2.37.0 tidak lagi ditentukan `update_frequency`, yang kembali hanya untuk pengingat e-mail):
 
    | Jenis metrik | YTD tahun Y | MTD Y-M |
    | :--- | :--- | :--- |
-   | SURVEY `MONTHLY` (default) | Januari s.d. batas YTD | Hanya bulan M |
-   | SURVEY `ONE_TIME_ANNUAL` (semua metrik ESS; survei SYSTEM yang diset Annual oleh admin) | Januari s.d. batas YTD | Januari s.d. M tahun Y (= YTD Y s.d. M, tetap dibatasi jam server) |
-   | ESS (ringkasan `.xlsx`, `selectEssResult`) | Hasil terbaru tahun Y yang bulannya di dalam jendela | Hasil terbaru tahun Y s.d. bulan M (metrik ESS bertipe annual) |
+   | SURVEY SYSTEM (Monthly maupun Annual) | Januari s.d. batas YTD | Hanya bulan M |
+   | ESS (ringkasan `.xlsx`, `selectEssResult`) | Hasil terbaru tahun Y yang bulannya di dalam jendela | Hanya hasil yang Year + Month template-nya = Y-M; selain itu `NO_DATA` |
    | OUTCOME | Snapshot saat ini, tanpa filter periode | Sama |
 
-   Tidak ada *carry-forward* lintas tahun (aturan v2.32.0 dihapus). Contoh dengan satu-satunya hasil ESS 2025-11: metrik 9 = 92 pada MTD 2025-11, MTD 2025-12 dan YTD 2025; `NO_DATA` pada MTD 2025-10, MTD 2026-09 dan YTD 2026. Response menyertakan `period_window = { from, to, basis: 'MONTH' | 'YEAR_TO_MONTH' }` per metrik SURVEY (OUTCOME `null`).
+   Tidak ada *carry-forward* (aturan v2.32.0 dihapus). Aturan v2.36.0 "metrik Annual pada MTD Y-M = Januari s.d. M" (`effectiveMetricPeriod`) dihapus di v2.37.0. Contoh dengan hasil ESS 2025-11 (file asli) + dummy 2026-03/06/09 (v2.37.0): metrik 9 = 92 pada MTD 2025-11 dan YTD 2025; `NO_DATA` pada MTD 2025-10, MTD 2025-12, MTD 2026-01 dan MTD 2026-10; MTD 2026-03 / 2026-06 / 2026-09 = hasil kuartal itu (MTD 2026-06 = 91.8); YTD 2026 (per 19 Okt 2026) = hasil 2026-09 (93.7). Response menyertakan `period_window = { from, to, basis }` per metrik SURVEY (`MONTH` untuk MTD, `YEAR_TO_MONTH` untuk YTD; OUTCOME `null`).
 
 4. **Status `NO_DATA`**: metrik SURVEY tanpa data di jendelanya -> `has_data: false`, `raw_value` / `normalized_score` / `gap` = `null`, `sample_size` = 0. Tidak ada fallback ke `raw_value` statis (juga untuk metrik 12, yang `raw_value`-nya masih ditulis sinkron feedback event). Metrik ini tidak ikut Survey Index, rollup journey/checkpoint (§3.7) dan alert (§5). Metrik OUTCOME tidak pernah `NO_DATA`.
 

@@ -24,17 +24,6 @@ function ytdEndMonth(year, endMonth = null) {
 }
 
 /**
- * v2.36.0: the period a SURVEY metric is read for, driven by its update_frequency. A ONE_TIME_ANNUAL metric (all ESS
- * metrics; also a SYSTEM survey an admin sets to annual) under MTD Y-M reads the year up to that month (= YTD Y with
- * endMonth M, still capped by the clock); a MONTHLY metric (default) keeps the selected period as is.
- */
-function effectiveMetricPeriod(metric, { mode, year, month, endMonth }) {
-  const isAnnual = String((metric && metric.update_frequency) || '').toUpperCase() === 'ONE_TIME_ANNUAL';
-  if (String(mode || '').toUpperCase() === 'MTD' && isAnnual) return { mode: 'YTD', year, month, endMonth: month };
-  return { mode, year, month, endMonth };
-}
-
-/**
  * v2.36.0: the date window a period really covers, for the UI: { from, to, basis } with dates YYYY-MM-DD and basis
  * 'MONTH' (MTD) or 'YEAR_TO_MONTH' (YTD, end capped by the clock). A future year gives from/to null (empty window);
  * null for an invalid year/month.
@@ -169,4 +158,4 @@ function todayDateString() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-module.exports = { CURRENT_YEAR, ytdEndMonth, effectiveMetricPeriod, periodWindow, parseFilterOptions, normalizeDateString, todayDateString };
+module.exports = { CURRENT_YEAR, ytdEndMonth, periodWindow, parseFilterOptions, normalizeDateString, todayDateString };

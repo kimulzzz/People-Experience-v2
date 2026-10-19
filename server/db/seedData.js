@@ -1365,19 +1365,40 @@ const ESS_ROLE_CLARITY_ROWS = [
   [90.3333, 95, 88, 88]
 ];
 
+// v2.37.0: dummy ESS summaries for 2026, one per quarter (March, June, September), for every ESS metric (the user's
+// real file only covers 2025-11). Each org unit starts from its own 2025-11 row and drifts deterministically:
+// +0.3..+1.0 pp per quarter with +/-1.5 pp noise (clamped 0-100); question scores keep their 2025-11 distance to the
+// index (+/-1); participation = the 2025-11 participation +/-3%. Inserted by the boot top-up per (metric, period),
+// only when that metric has no result for that period yet.
+const ESS_SEED_DUMMY_PERIODS = [{ year: 2026, month: 3 }, { year: 2026, month: 6 }, { year: 2026, month: 9 }];
+
 function generateInitialEssResults() {
   const { DEFAULT_METRIC_QUESTIONS } = require('../services/metricQuestionService');
   const results = [];
   const uploads = [];
   const clamp = v => Math.min(100, Math.max(0, v));
   const r2 = v => Math.round(v * 100) / 100;
+  const pad = n => String(n).padStart(2, '0');
+  const pushUpload = (uploadId, m, fileName, rowCount, uploadedAt) => uploads.push({
+    upload_id: uploadId,
+    metric_id: m.metric_id,
+    file_name: fileName,
+    total_rows: rowCount,
+    valid_rows: rowCount,
+    invalid_rows: 0,
+    calculated_avg_score: results.find(r => r.upload_id === uploadId && r.org_level === 'BANKWIDE').index_score,
+    uploaded_by: 'Seed (dummy)',
+    uploaded_at: uploadedAt
+  });
   initialMetrics.filter(m => m.survey_source === 'ESS').forEach(m => {
     const uploadId = `seed-ess-${m.metric_id}-2025-11`;
     const isRoleClarity = /role clarity/i.test(m.metric_name);
+    const shortName = m.metric_name.replace(/\s*\(ESS\)\s*$/i, '');
     const labels = isRoleClarity
       ? ESS_ROLE_CLARITY_QUESTIONS
       : (DEFAULT_METRIC_QUESTIONS[m.metric_id] || []).filter(q => (q.type || 'SCALE_1_5') !== 'FREE_TEXT').map(q => q.text || q.label);
     const orgRows = [[null, ESS_SEED_BANKWIDE_PARTICIPATION], ...ESS_SEED_PARTICIPATION];
+    const baseRows = []; // the 2025-11 values per org unit: the starting point of the 2026 dummy quarters
     orgRows.forEach(([directorate, participation], i) => {
       let index;
       let scores;
@@ -1388,6 +1409,7 @@ function generateInitialEssResults() {
         index = r2(clamp(i === 0 ? base : base + (((m.metric_id * 7 + i * 13) % 17) - 8) / 2));
         scores = labels.map((_, q) => Math.round(clamp(index + (((q * 5 + i * 3 + m.metric_id) % 7) - 3))));
       }
+      baseRows.push({ directorate, participation, index, scores });
       results.push({
         upload_id: uploadId,
         metric_id: m.metric_id,
@@ -1400,16 +1422,33 @@ function generateInitialEssResults() {
         questions: labels.map((label, q) => ({ label, score: scores[q] === undefined ? null : scores[q] }))
       });
     });
-    uploads.push({
-      upload_id: uploadId,
-      metric_id: m.metric_id,
-      file_name: isRoleClarity ? 'ESS 2025 Result_Role Clarity & DS Support.xlsx' : `ESS 2025 Result_${m.metric_name.replace(/\s*\(ESS\)\s*$/i, '')} (dummy).xlsx`,
-      total_rows: orgRows.length,
-      valid_rows: orgRows.length,
-      invalid_rows: 0,
-      calculated_avg_score: results.find(r => r.upload_id === uploadId && r.org_level === 'BANKWIDE').index_score,
-      uploaded_by: 'Seed (dummy)',
-      uploaded_at: '2025-11-30T10:00:00.000Z'
+    pushUpload(uploadId, m, isRoleClarity ? 'ESS 2025 Result_Role Clarity & DS Support.xlsx' : `ESS 2025 Result_${shortName} (dummy).xlsx`,
+      orgRows.length, '2025-11-30T10:00:00.000Z');
+
+    ESS_SEED_DUMMY_PERIODS.forEach(({ year, month }, qi) => {
+      const quarter = qi + 1;
+      const periodId = `${year}-${pad(month)}`;
+      const dummyId = `seed-ess-${m.metric_id}-${periodId}`;
+      baseRows.forEach((b, i) => {
+        const step = 0.3 + ((m.metric_id * 3 + i * 5) % 8) / 10;                  // +0.3 .. +1.0 pp per quarter
+        const noise = (((m.metric_id * 11 + i * 7 + quarter * 13) % 31) - 15) / 10; // -1.5 .. +1.5 pp
+        const index = r2(clamp(b.index + step * quarter + noise));
+        const scores = b.scores.map((sc, q) => (sc === undefined || sc === null ? null
+          : Math.round(clamp(index + (sc - b.index) + (((m.metric_id + i * 3 + q * 5 + quarter * 7) % 5) - 2) / 2))));
+        results.push({
+          upload_id: dummyId,
+          metric_id: m.metric_id,
+          survey_year: year,
+          survey_month: month,
+          org_level: b.directorate ? 'DIRECTORATE' : 'BANKWIDE',
+          directorate: b.directorate,
+          participation: Math.round(b.participation * (1 + (((m.metric_id * 7 + i * 11 + quarter * 17) % 61) - 30) / 1000)),
+          index_score: index,
+          questions: labels.map((label, q) => ({ label, score: scores[q] === undefined ? null : scores[q] }))
+        });
+      });
+      const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+      pushUpload(dummyId, m, `ESS ${periodId} Result_${shortName} (dummy).xlsx`, baseRows.length, `${periodId}-${pad(lastDay)}T10:00:00.000Z`);
     });
   });
   return { results, uploads };

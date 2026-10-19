@@ -33,7 +33,7 @@ import {
   MinusCircle
 } from 'lucide-react';
 import { formatMetricValue } from '../utils/formatMetricValue';
-import { monthName, monthShort } from '../utils/months';
+import { monthName } from '../utils/months';
 import { surveySourceLabel, surveySourceBadgeClass, surveyTemplateFileName } from '../utils/surveySource';
 
 function normalizeDateString(dateVal) {
@@ -167,11 +167,6 @@ export default function MetricDetailModal({
   const pct = v => (v === null || v === undefined ? '—' : `${v}%`);
   // v2.36.0: a survey metric without data in the selected period (status NO_DATA, null scores)
   const isNoData = detailData?.status === 'NO_DATA';
-  // v2.36.0: an annual metric (update_frequency ONE_TIME_ANNUAL) under an MTD filter reads Jan..that month
-  const win = detailData?.period_window;
-  const annualWindowNote = detailData?.filter_options?.mode === 'MTD' && win?.basis === 'YEAR_TO_MONTH' && win.from && win.to
-    ? `Annual metric: shows the result of ${monthShort(win.from.slice(5, 7))}–${monthShort(win.to.slice(5, 7))} ${win.to.slice(0, 4)}`
-    : null;
 
   const isCampus = detailData?.metric_id === 2 || detailData?.target_audience === 'CAMPUS_STUDENTS';
   const isCandidate = detailData?.metric_id === 5 || detailData?.target_audience === 'JOB_APPLICANTS';
@@ -273,12 +268,6 @@ export default function MetricDetailModal({
             </div>
           ) : (
             <>
-              {annualWindowNote && (
-                <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-[11px] font-semibold text-gray-600">
-                  {annualWindowNote}
-                </div>
-              )}
-
               {/* Summary Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 

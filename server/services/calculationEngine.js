@@ -3,7 +3,7 @@ const storage = require('../db/storage');
 const { getQuestionsForMetric } = require('./metricQuestionService');
 const { isEssMetric } = require('../db/surveySource');
 const { selectEssResult, essOrgFor, essOriginalFilePath } = require('./essSummaryService');
-const { effectiveMetricPeriod, periodWindow } = require('../db/filterUtils');
+const { periodWindow } = require('../db/filterUtils');
 
 // Default year for YTD/unparseable period requests, derived from the real server clock
 // instead of a hardcoded literal — this dataset happens to be seeded for 2026 (today's real
@@ -425,8 +425,9 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
     let hasData = true;
     const isEss = m.metric_type === 'SURVEY' && isEssMetric(m);
     let essResult = null;
-    // The period this metric is read for: an annual metric under MTD reads Jan..that month (update_frequency).
-    const mp = effectiveMetricPeriod(m, { mode, year, month, endMonth });
+    // The period this metric is read for (v2.37.0): exactly the selected period for every SURVEY metric - MTD = that
+    // month only, also for annual/ESS metrics; update_frequency no longer changes the period (reminders only).
+    const mp = { mode, year, month, endMonth };
     const metricFilter = { ...queryFilter, mode: mp.mode, endMonth: mp.endMonth };
 
     if (isEss) {
@@ -732,8 +733,8 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
   const isSurvey = metric.metric_type === 'SURVEY';
   // ESS is decided by the metric's survey_source (v2.29.0); the old text test is only a fallback when it is empty.
   const isEss = isSurvey && isEssMetric(metric);
-  // v2.36.0: the period this metric is read for (an annual metric under MTD reads Jan..that month), same as the scorecard
-  const mp = effectiveMetricPeriod(metric, { mode, year, month, endMonth });
+  // v2.37.0: the period this metric is read for = exactly the selected period (MTD = that month), same as the scorecard
+  const mp = { mode, year, month, endMonth };
   const metricFilter = { ...queryFilter, mode: mp.mode, endMonth: mp.endMonth };
   const windowInfo = { update_frequency: metric.update_frequency || 'MONTHLY', period_window: isSurvey ? periodWindow(mp) : null };
 

@@ -2,6 +2,37 @@
 
 Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Management & Scoring System dicatat di dalam dokumen ini mengikuti standar [Semantic Versioning](https://semver.org/).
 
+## [2.37.0] - 2026-10-19
+
+### Periode MTD ESS = Bulan Template & Data Dummy ESS 2026 per Kuartal (Changed)
+
+- **Permintaan user**: baris template ESS punya kolom Month dan Year - filter MTD harus memakai periode itu, dan MTD tidak boleh kosong semua.
+- **Pemeriksaan (sesi utama)**: pemilihan hasil ESS di engine sudah benar; MTD 2026 kosong karena satu-satunya periode ESS di database adalah 2025-11. Yang tidak sesuai permintaan: aturan v2.36.0 "metrik Annual pada MTD Y-M = Jan s.d. M" membuat hasil ESS 2025-11 ikut terbaca pada MTD 2025-12.
+- **Keputusan user**: MTD ESS = tepat bulan template (Year + Month); tambahkan data dummy ESS 2026 per kuartal.
+- **Periode baca (`server/db/filterUtils.js`, `calculationEngine.js`)**: `effectiveMetricPeriod` dihapus. `calculatePEIndex()` dan `getMetricDetail()` membaca setiap metrik SURVEY tepat pada periode terpilih: MTD Y-M = hanya bulan itu (`period_window.basis` selalu `MONTH`), juga untuk metrik `ONE_TIME_ANNUAL` dan ESS; ESS hanya terhitung bila (Year, Month) template = Y-M. YTD tidak berubah (Januari s.d. bulan akhir yang dibatasi jam server; ESS = hasil terbaru di jendela). `update_frequency` kembali hanya untuk pengingat e-mail. **Menggantikan** aturan MTD metrik Annual di [2.36.0].
+- **Data dummy ESS 2026 (`server/db/seedData.js`)**: `ESS_SEED_DUMMY_PERIODS` = 2026-03, 2026-06, 2026-09. `generateInitialEssResults()` membuat 11 metrik ESS x 13 unit org (Bankwide + 12 direktorat) x 3 periode = 429 baris + 33 batch upload (`seed-ess-<metric>-2026-03` dst., file `ESS 2026-03 Result_<metrik> (dummy).xlsx`, `uploaded_by` "Seed (dummy)", `uploaded_at` hari terakhir bulan itu 10:00Z). Nilai: baris 2025-11 unit org yang sama + drift deterministik +0,3 s.d. +1,0 pp per kuartal, noise ±1,5 pp (clamp 0-100); skor pertanyaan menjaga jaraknya ke index 2025-11 (±1); partisipasi = partisipasi 2025-11 ±3%. Seed 2025-11 tidak berubah (baris metrik 9 tetap sama dengan file asli user). Ini data fiktif.
+- **Top-up seed per (metrik, periode)** (`sqlStorage.topUpEssSeed`, `jsonStorage.topUpStoreEssSeed`): satu periode seed hanya disisipkan bila metrik ESS itu belum punya baris untuk periode tersebut dan `SEED_DEMO_DATA` bukan `false` (dulu: hanya bila metrik belum punya hasil sama sekali, sehingga database yang sudah berisi 2025-11 kini mendapat ketiga kuartal 2026 pada boot pertama). Upload admin tidak pernah ditimpa (upload periode yang sama mengganti baris seed lewat `saveEssResultUpload`, lalu top-up melewatinya). **Efek samping**: bila admin menghapus semua baris satu periode seed, boot berikutnya menyisipkan seed periode itu lagi. Log boot: `Seeded demo ESS summaries: <upload_id>, ...`.
+- **`server/db/initialStore.js`** (store JSON baru): `created_at` baris ESS = `uploaded_at` batch-nya (dulu selalu `2025-11-30T10:00:00.000Z`). SQL tetap memakai waktu insert (inkonsistensi kecil, tidak diubah).
+- **UI (`MetricDetailModal.jsx`)**: catatan "Annual metric: shows the result of ..." dihapus (MTD tidak lagi punya jendela `YEAR_TO_MONTH`).
+- **Angka bankwide (Survey / Outcome / PX, dari laporan developer)**:
+
+  | Periode | v2.36.0 | v2.37.0 |
+  | :--- | :--- | :--- |
+  | YTD 2026 | 87.42 / 75.08 / 83.72 (9/20 metrik survei berdata, 0 ESS) | 89.63 / 75.08 / 85.27 (20/20; ESS dari 2026-09, metrik 9 = 93.7) |
+  | MTD 2026-09 | 88.58 / 75.08 / 84.53 (9/20) | 90.16 / 75.08 / 85.63 (20/20) |
+  | MTD 2026-06 | tidak dilaporkan | 88.58 / 75.08 / 84.53 (metrik 9 = 91.8) |
+  | MTD 2026-03 | tidak dilaporkan | 88.57 / 75.08 / 84.52 |
+  | MTD 2026-10 | 89.87 / 75.08 / 85.43 | tidak berubah (0 ESS) |
+  | MTD 2025-12 | 86.28 / 75.08 / 82.92 (ESS terbawa dari 2025-11) | 82.63 / 75.08 / 80.36 (9/20, 0 ESS) |
+  | MTD 2025-11 | 85.87 / 75.08 / 82.63 | tidak berubah (11 ESS) |
+  | YTD 2025 | 86.21 / 75.08 / 82.87 | tidak berubah |
+
+- **Tes**: Modul 46 kini 13 tes di SQL (12 di JSON): tes ESS annual-MTD diganti 3 tes (MTD = bulan template, NO_DATA di luar bulan itu, baris 2025-11 metrik 9 = file asli) + 1 tes khusus SQL (upload periode seed bertahan setelah top-up boot; periode yang dikosongkan mendapat seed lagi); tes metrik SYSTEM Annual ditulis ulang (MTD tetap satu bulan); 2 tes dipindah ke MTD 2025-12. Modul 11, 35 dan 45 tidak berubah. Suite penuh SQL di backend kedua dengan `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`: **215/215 lulus, 0 gagal, 16 dilewati**. JSON: hanya cek in-process terarah (`store.json` dipulihkan), suite JSON penuh tidak dijalankan. Jumlah data setelah run: ESS 572 baris, 205 upload, 2.788 baris respons, 1 user. Detail: `docs/07` §31.
+- **Catatan**: tidak ada endpoint, tabel, setting, atau env baru; `/api/health` `version` = `2.37.0`. Untuk menghentikan data dummy di database riil: `SEED_DEMO_DATA=false` lalu hapus baris `seed-ess-*-2026-*` (tanpa flag itu baris yang dihapus disisipkan lagi saat boot).
+
+- **QC (terarah): LULUS DENGAN CATATAN.** Angka bankwide sesuai; Survey/Outcome/PX dihitung ulang independen cocok di 10 periode x 2 org (Bankwide + Business Banking); ESS API vs `px_ess_results` 0 selisih; semua MTD `basis MONTH`; metrik 9 2025-11 identik; 44 upload `seed-ess-*` (33 untuk 2026); tidak ada NO_DATA di alerts; UI MTD Sep 2026 (ESS tampil), Okt 2026 dan Des 2025 (ESS NO DATA), detail metrik 9 Jun 2026 (91,8, tanpa catatan "Annual metric"). Catatan (rendah): skor per pertanyaan dummy metrik 9 kembar antar periode (2026-06 = 2025-11, 2026-03 = 2026-09); upload ESS asli ke periode yang berisi seed mengganti baris tetapi record `seed-ess-*` tetap di riwayat (lama, tidak diuji); `/api/alerts` tidak mengikuti filter MTD (lama); `month=13/00` dijawab 200 (lama); upload `seed-ess-9-2025-11` (data Excel asli) berlabel "Seed (dummy)".
+---
+
 ## [2.36.0] - 2026-10-19
 
 ### Jendela Periode YTD/MTD Tepat per Metrik & Status NO_DATA (Changed / Fixed)

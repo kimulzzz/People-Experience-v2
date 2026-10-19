@@ -204,7 +204,7 @@ Metrik SURVEY ber-`survey_source = 'ESS'` kini diisi dari ringkasan hasil ESS `.
 | Kolom | Tipe | Aturan |
 | :--- | :--- | :--- |
 | `ess_result_id` | `INT IDENTITY` | PK `PK_px_ess_results` |
-| `upload_id` | `NVARCHAR(64) NOT NULL` | batch di `px_survey_uploads` (`ess-<ts>-<acak>` untuk upload, `seed-ess-<metric>-2025-11` untuk seed); tanpa FK |
+| `upload_id` | `NVARCHAR(64) NOT NULL` | batch di `px_survey_uploads` (`ess-<ts>-<acak>` untuk upload, `seed-ess-<metric>-<YYYY-MM>` untuk seed: 2025-11, sejak v2.37.0 juga 2026-03/06/09); tanpa FK |
 | `metric_id` | `INT NOT NULL` | tanpa FK (sama seperti tabel survei lain) |
 | `survey_year`, `survey_month` | `SMALLINT`, `TINYINT` | `CK_px_ess_month`: bulan 1-12 |
 | `org_level` | `VARCHAR(12)` | `CK_px_ess_level`: `BANKWIDE` / `DIRECTORATE` |
@@ -228,7 +228,7 @@ Metrik SURVEY ber-`survey_source = 'ESS'` kini diisi dari ringkasan hasil ESS `.
 
 Data SYSTEM tidak disentuh. Hasil database utama (laporan developer): **2.568** baris dan **60** batch kosong dihapus; `seed-batch-2026` tetap (masih berisi baris SYSTEM). JSON (cek developer pada salinan): 2.511 baris. Metrik yang **belakangan** diubah SYSTEM -> ESS tidak dibersihkan lagi: baris per respondennya tetap ada tetapi diabaikan perhitungan.
 
-**Seed demo**: setiap boot (bila `SEED_DEMO_DATA` bukan `false`) `topUpEssSeed()` / `topUpStoreEssSeed()` menambahkan ringkasan 2025-11 (13 baris) + satu record `px_survey_uploads` (`uploaded_by` "Seed (dummy)") **hanya** untuk metrik ESS yang belum punya hasil sama sekali, sehingga upload asli tidak pernah ditimpa. Total seed: 13 x 11 = 143 baris. Seed per responden tidak lagi dibuat untuk metrik ESS.
+**Seed demo** (diubah v2.37.0): setiap boot (bila `SEED_DEMO_DATA` bukan `false`) `topUpEssSeed()` / `topUpStoreEssSeed()` menambahkan per **(metrik, periode)** 13 baris + satu record `px_survey_uploads` (`uploaded_by` "Seed (dummy)") **hanya** bila metrik ESS itu belum punya baris untuk periode tersebut (sampai v2.36.0: hanya bila metrik belum punya hasil sama sekali). Periode seed: 2025-11 (metrik 9 = file asli user) + dummy 2026-03, 2026-06, 2026-09 (`ESS_SEED_DUMMY_PERIODS`, data fiktif). Total seed: 13 x 11 x 4 = 572 baris, 44 batch. Database yang sudah berisi 2025-11 mendapat 429 baris + 33 batch kuartal 2026 pada boot pertama v2.37.0. Upload periode yang sama tidak pernah ditimpa; **efek samping**: bila semua baris satu periode seed dihapus, boot berikutnya menyisipkannya lagi (hentikan dengan `SEED_DEMO_DATA=false`). `created_at` baris seed: SQL = waktu insert, store JSON baru = `uploaded_at` batch-nya. Seed per responden tidak lagi dibuat untuk metrik ESS.
 
 **Ekspor / rollback**: `npm run db:export` membawa `essResults`; `server/db/migrate.js` mengimpornya (`ess_results` di hitungan verifikasi). `server/data/store.json` di repo saat ini belum punya `essResults`, jadi rollback ke JSON atau `migrate --reset` menjalankan pembersihan di atas lalu seed demo; hasil ESS asli yang belum diekspor tidak ikut. `dropAllTables()` (`--reset`) kini juga menghapus `px_ess_results`. Tidak ada migrasi balik ke data per responden.
 

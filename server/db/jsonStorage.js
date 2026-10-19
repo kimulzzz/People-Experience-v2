@@ -105,15 +105,17 @@ function cleanupStoreEssRespondentRows(s) {
   return { responses: before - s.surveyUploadedResponses.length, uploads: uploadsBefore - s.surveyUploads.length };
 }
 
-// Demo ESS summaries: only for an ESS metric that has no ESS result at all (an upload is never overwritten).
+// Demo ESS summaries, per (metric, period) (v2.37.0): a seed period is only added when that ESS metric has no result
+// for that period yet, so an upload of the same period is never overwritten. Returns the seed upload ids added.
 function topUpStoreEssSeed(s) {
   const essIds = new Set((s.metrics || []).filter(m => m.metric_type === 'SURVEY' && isEssMetric(m)).map(m => m.metric_id));
-  const have = new Set((s.essResults || []).map(r => r.metric_id));
-  const todo = [...new Set(initialEssResults.map(r => r.metric_id))].filter(id => essIds.has(id) && !have.has(id));
-  todo.forEach(id => {
-    const up = initialEssUploads.find(u => u.metric_id === id);
+  const periodKey = r => `${r.metric_id}|${parseInt(r.survey_year, 10)}-${parseInt(r.survey_month, 10)}`;
+  const have = new Set((s.essResults || []).map(periodKey));
+  const todo = [...new Set(initialEssResults.filter(r => essIds.has(r.metric_id) && !have.has(periodKey(r))).map(r => r.upload_id))];
+  todo.forEach(uploadId => {
+    const up = initialEssUploads.find(u => u.upload_id === uploadId);
     if (up && !(s.surveyUploads || []).some(u => u.upload_id === up.upload_id)) s.surveyUploads.push(JSON.parse(JSON.stringify(up)));
-    initialEssResults.filter(r => r.metric_id === id).forEach(r => {
+    initialEssResults.filter(r => r.upload_id === uploadId).forEach(r => {
       s.essResults.push({ ess_result_id: nextEssResultId(s), ...JSON.parse(JSON.stringify(r)), created_at: up ? up.uploaded_at : new Date().toISOString() });
     });
   });
@@ -231,7 +233,7 @@ function getStore() {
         }
         if (String(process.env.SEED_DEMO_DATA || 'true').toLowerCase() !== 'false') {
           const seededEss = topUpStoreEssSeed(store);
-          if (seededEss.length) console.log(`[jsonStorage] Seeded the demo ESS summary (2025-11) of metric(s) ${seededEss.join(', ')}.`);
+          if (seededEss.length) console.log(`[jsonStorage] Seeded demo ESS summaries: ${seededEss.join(', ')}.`);
         }
         saveStore();
       } catch (err) {

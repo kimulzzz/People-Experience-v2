@@ -548,14 +548,14 @@ Perubahan terkait: `updateMedia` (`sqlStorage.js`, `jsonStorage.js`) kini meneri
 
 ## Catatan v2.36.0 - Jendela Periode YTD/MTD & Status NO_DATA
 
-**Ringkasan**: YTD tahun berjalan kini berhenti di akhir bulan berjalan (jam server); periode baca tiap metrik SURVEY ditentukan `update_frequency`; ESS tidak lagi *carry-forward* lintas tahun; metrik SURVEY tanpa data di jendelanya menjadi `NO_DATA` (skor `null`) dan keluar dari indeks, rollup dan alert. Model lengkap: `docs/01` §3.1, §3.7, §4, §5. Detail dan angka sebelum/sesudah: `CHANGELOG.md` [2.36.0]. Tidak ada endpoint, tabel, setting, atau env baru; `/api/health` `version` = `2.36.0`.
+**Ringkasan**: YTD tahun berjalan kini berhenti di akhir bulan berjalan (jam server); periode baca tiap metrik SURVEY ditentukan `update_frequency` (**diganti v2.37.0**: MTD selalu satu bulan, lihat "Catatan v2.37.0"); ESS tidak lagi *carry-forward* lintas tahun; metrik SURVEY tanpa data di jendelanya menjadi `NO_DATA` (skor `null`) dan keluar dari indeks, rollup dan alert. Model lengkap: `docs/01` §3.1, §3.7, §4, §5. Detail dan angka sebelum/sesudah: `CHANGELOG.md` [2.36.0]. Tidak ada endpoint, tabel, setting, atau env baru; `/api/health` `version` = `2.36.0`.
 
 **Fungsi baru di `server/db/filterUtils.js`**
 
 | Fungsi | Perilaku |
 | :--- | :--- |
 | `ytdEndMonth(year, endMonth)` | Bulan akhir jendela YTD: bulan berjalan untuk tahun berjalan, 12 untuk tahun lalu, 0 (jendela kosong) untuk tahun depan, `NaN` untuk tahun tidak valid. `endMonth` 1-12 dipertahankan tetapi dibatasi ke nilai itu. |
-| `effectiveMetricPeriod(metric, { mode, year, month, endMonth })` | Metrik `update_frequency = 'ONE_TIME_ANNUAL'` pada MTD -> `{ mode: 'YTD', endMonth: month }`; selain itu periode tidak diubah. |
+| `effectiveMetricPeriod(metric, { mode, year, month, endMonth })` (**dihapus v2.37.0**) | Metrik `update_frequency = 'ONE_TIME_ANNUAL'` pada MTD -> `{ mode: 'YTD', endMonth: month }`; selain itu periode tidak diubah. |
 | `periodWindow({ mode, year, month, endMonth })` | `{ from, to, basis }`: MTD -> `MONTH` (tanggal 1 s.d. akhir bulan), YTD -> `YEAR_TO_MONTH` (1 Jan s.d. akhir bulan batas; tahun depan `from`/`to` `null`). `null` untuk tahun/bulan tidak valid. |
 
 `parseFilterOptions` mode YTD kini selalu mengisi `endMonth` dengan `ytdEndMonth` (`'00'` = tahun depan). `sqlStorage.buildResponseFilter`: jendela kosong atau tahun bukan 4 digit -> `1 = 0`. `jsonStorage.applyResponseFilters`: `endMonth === '00'` -> tidak ada baris. `essSummaryService.selectEssResult` memakai jendela yang sama (MTD = tepat Y-M; YTD = hasil terbaru tahun Y dengan bulan <= batas), menggantikan aturan carry-forward di "Catatan v2.32.0".
@@ -580,10 +580,20 @@ Perubahan terkait: `updateMedia` (`sqlStorage.js`, `jsonStorage.js`) kini meneri
 
 **Trend (`computeMonthlyTrends`)**: titik dengan `survey_index = null` mengirim `px_index` dan `pe_index` `null` (celah), bukan Outcome saja.
 
-**Detail (`GET /api/metrics/:metric_id/detail`)**: metrik SURVEY memakai periode efektif yang sama dengan scorecard (`effectiveMetricPeriod`). Field baru: `update_frequency` dan `period_window` pada detail SURVEY (jalur survei dan detail ESS dengan hasil), `has_data` hanya pada jalur survei (termasuk ESS tanpa hasil). Detail OUTCOME tidak berubah dan tidak mengirim field ini. Tanpa data (metrik ESS tanpa hasil di jendela, atau survei tanpa baris): `status: 'NO_DATA'`, `has_data: false`, `current_raw_value` dan `normalized_score` `null`, `total_respondents` 0; `questions_breakdown[]` non-`FREE_TEXT` mendapat `avg_score`/`normalized_score` (dan `percent_yes` bila ada) `null` - skor default/terkonfigurasi tidak dipakai lagi; placeholder `ess_summary` metrik ESS mendapat `summary_score` dan `percent_*` `null`.
+**Detail (`GET /api/metrics/:metric_id/detail`)**: metrik SURVEY memakai periode efektif yang sama dengan scorecard (`effectiveMetricPeriod`; sejak v2.37.0 periode terpilih apa adanya). Field baru: `update_frequency` dan `period_window` pada detail SURVEY (jalur survei dan detail ESS dengan hasil), `has_data` hanya pada jalur survei (termasuk ESS tanpa hasil). Detail OUTCOME tidak berubah dan tidak mengirim field ini. Tanpa data (metrik ESS tanpa hasil di jendela, atau survei tanpa baris): `status: 'NO_DATA'`, `has_data: false`, `current_raw_value` dan `normalized_score` `null`, `total_respondents` 0; `questions_breakdown[]` non-`FREE_TEXT` mendapat `avg_score`/`normalized_score` (dan `percent_yes` bila ada) `null` - skor default/terkonfigurasi tidak dipakai lagi; placeholder `ess_summary` metrik ESS mendapat `summary_score` dan `percent_*` `null`.
 
 **Lainnya**: `alertEngine.getAlertsAndRecommendations` melewati metrik `has_data === false` (tanpa itu `null < min_threshold` bernilai benar sehingga metrik tanpa data muncul sebagai CRITICAL). `surveyImportService.processSurveyCsv`: `affected_metrics[].normalized_score` = `null` (dulu 0) bila metrik `NO_DATA` di jendela YTD saat ini.
 
 **Metrik khusus**: 2/5/7/12 memakai aturan survei bulanan biasa (2 dan 5 tetap exempted pada filter direktorat). Metrik 12 hanya dari baris surveinya; sinkron feedback event masih menulis `px_metrics.raw_value` lewat `storage.updateMetricScore(12, ...)`, tetapi scorecard dan detail tidak lagi memakainya sebagai fallback. Metrik 11 (OUTCOME, kuota event live) tidak berubah.
 
 Pengujian: `docs/07` §30 (Modul 46).
+
+---
+
+## Catatan v2.37.0 - Periode MTD = Bulan Template ESS & Seed ESS 2026
+
+**Ringkasan**: `effectiveMetricPeriod` dihapus dari `server/db/filterUtils.js` (ekspor kini `CURRENT_YEAR`, `ytdEndMonth`, `periodWindow`, `parseFilterOptions`, `normalizeDateString`, `todayDateString`). `calculatePEIndex()` dan `getMetricDetail()` membaca setiap metrik SURVEY pada periode terpilih apa adanya: MTD Y-M -> hanya bulan itu, `period_window.basis` selalu `MONTH` (`YEAR_TO_MONTH` kini hanya untuk YTD); ESS lewat `selectEssResult` (tidak berubah) = hanya hasil dengan `survey_year`/`survey_month` = Y-M. `update_frequency` tetap dikirim di `metrics[]` dan detail, tetapi kembali hanya dipakai pengingat e-mail. Pernyataan "Catatan v2.36.0" tentang metrik `ONE_TIME_ANNUAL` pada MTD tidak berlaku lagi. Tidak ada endpoint, tabel, setting, atau env baru; `/api/health` `version` = `2.37.0`.
+
+**Seed ESS**: `seedData.generateInitialEssResults()` juga membuat periode dummy `ESS_SEED_DUMMY_PERIODS` (2026-03, 2026-06, 2026-09; 429 baris + 33 batch). `sqlStorage.topUpEssSeed()` / `jsonStorage.topUpStoreEssSeed()` kini menyisipkan per (metrik, periode) yang belum punya baris dan mengembalikan daftar `upload_id` yang ditambahkan. Rincian: `docs/08` §17, `CHANGELOG.md` [2.37.0].
+
+Pengujian: `docs/07` §31 (Modul 46).
