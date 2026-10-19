@@ -1,5 +1,5 @@
 // src/components/ExitInterviewDashboard.jsx
-// Exit Interview dashboard (v2.38.0): why employees resign - the two slides of the "exit interview dashboard template"
+// Exit Interview dashboard (v2.38.0; slide-1 headline v2.39.0): why employees resign - the two slides of the "exit interview dashboard template"
 // deck rebuilt as cards. Data = /api/exit-interview/summary for the Header filters (YTD/MTD + year + month on the
 // Effective Resignation Date, directorate / sub-directorate). Aggregates only; the Admin also gets template download,
 // upload, CSV export and the upload history.
@@ -370,7 +370,9 @@ export default function ExitInterviewDashboard({ filterOptions }) {
               <DoorOpen className="w-3.5 h-3.5" style={{ color: 'var(--theme-base)' }} />
               <span>Exit Interview • {data?.scope?.label || (isAdmin ? 'Bankwide' : 'My scope')}</span>
             </div>
-            <h2 className="text-2xl sm:text-3xl font-black tracking-tight">Voluntary Exits | Exit Interview Summary</h2>
+            <p className="text-xs font-bold uppercase tracking-widest text-red-100">Exit Interview Summary</p>
+            {/* headline of slide 1, generated from cards 1 and 4 (rule-based, v2.39.0) */}
+            <h2 className="text-2xl sm:text-3xl font-black tracking-tight">{data?.overview_headline || 'Exit Interview Summary'}</h2>
             <p className="text-sm text-red-50 font-medium">{data?.subtitle || (loading ? 'Loading…' : '')}</p>
           </div>
           {data && (

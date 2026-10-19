@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(314-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(316-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (314 cases on SQL; v2.38.0 run 228/228, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (316 cases on SQL; v2.39.0 run 230/230, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (32 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
@@ -646,6 +646,10 @@ domain model, not just descriptive:
   DATA: Sep 2026 = the REAL file imported LOCALLY (`npm run exit:import-template -- "<path>"`, 205 rows, dummy directorates, surrogate NIK `<NIK>-<row>`); Jan-Aug dummy (1,613); real data of a month replaces
   its dummy, boot only fills months with no rows. NEVER commit the real file, `server/data/exit-uploads/`, Export CSVs, or a `db:export` (store.json / store.from-sql.json) made from this DB.
   Gotchas: `migrate --reset` loses the real rows (re-import); no delete, no minimum group size (small divisions can identify people). Tests: Module 47 (13, SQL only) -> SQL 228/228, 16 skipped; JSON full suite not run.
+
+- **v2.39.0** (2026-10-19, see `CHANGELOG.md` [2.39.0]): Exit Interview hero title is now "Exit Interview Summary" with a data-generated
+  slide-1 headline (`overview_headline`, rule-based from card 1 reasons + card 4 pull factors, e.g. "Company moves dominate exits;
+  compensation is the main attraction"). Per-card download buttons were requested then cancelled by the user (Export CSV is enough).
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

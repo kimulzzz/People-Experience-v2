@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    47 MODUL PENGUJIAN    │     314 AUTOMATED TESTS     │       100% PASS RATE          │
+│    47 MODUL PENGUJIAN    │     316 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -1033,3 +1033,7 @@ Modul 11, 35 dan 45 tidak berubah. **Risiko tes**: tes 3d menulis langsung ke `p
 **Risiko tes**: Modul 47 menulis ke database bersama; selama run, backend utama (:5000) bisa sesaat melihat baris fixture 2019/2030 (di luar periode yang biasa dilihat). Audit `EXIT_INTERVIEW_UPLOAD` dari tes tetap di `px_audit_log`.
 
 **Tidak diuji / tidak terverifikasi**: suite JSON penuh dan Modul 47 di JSON; modul 8, 24, 27, 32, 38, 41, 42, 43 (dilewati); render `ExitInterviewDashboard.jsx`, modal upload dan tombol di `MetricDetailModal.jsx` (tidak ada tes UI; pengecekan browser tidak dilaporkan developer); skrip `npm run exit:import-template` tidak punya tes otomatis (hasilnya di database utama dilaporkan developer: 205 baris September); angka YTD/MTD bankwide di `CHANGELOG.md` [2.38.0] berasal dari laporan developer, tidak dihitung ulang penulis.
+
+## 33. v2.39.0 - Headline slide 1 Exit Interview
+
+Modul 47 + 2 tes: aturan murni `buildOverviewHeadline` (dominate/lead, seri 0 pp, selisih 6 pp tanpa runner-up, verba tunggal, alasan tak dikenal, pull hanya "Other", input kosong/null) dan headline dari data (fixture 2030-01 dan 2030-03 bankwide, direktorat A, direktorat B tanpa mover, USER direktorat A, Februari 2030 kosong -> kalimat netral; headline slide 2 tidak berubah). **Suite penuh SQL: 230/230 lulus, 0 gagal, 16 dilewati** (`TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; developer, backend kedua). Ukuran suite penuh SQL kini 316 (314 + 2). Tidak ada QC agent terpisah; tampilan dicek main session di browser.

@@ -600,6 +600,10 @@ Pengujian: `docs/07` §31 (Modul 46).
 
 ---
 
+## Catatan v2.39.0 - Headline slide 1 Exit Interview
+
+`GET /api/exit-interview/summary` kini juga mengirim `overview_headline` (string) dari `exitInterviewService.buildOverviewHeadline(reasons, pullFactors)`: alasan teratas kartu 1 ("dominate(s) exits" bila >= 40% record voluntary, selain itu "lead(s) exits"; alasan kedua disebut bila selisih <= 5 pp) + faktor teratas kartu 4 tanpa "Other" (>= 40% -> "is the main attraction", selain itu "is the most cited attraction"; tanpa faktor -> klausa dihilangkan); tanpa data -> "No voluntary exit records in this period". Konstanta di service (`REASON_PHRASES`, `PULL_PHRASES`, `HEADLINE_DOMINANT_PCT`, `HEADLINE_RUNNER_UP_PP`). Headline slide 2 (`headline`) kini dari `buildThemesHeadline` (keluaran sama). Tidak ada endpoint/setting/tabel baru.
+
 ## Catatan v2.38.0 - Dashboard Exit Interview
 
 **Ringkasan**: dashboard baru "mengapa karyawan resign" dari file HR "Termination Report" `.xlsx` (satu baris per exit) + kolom Directorate/Division. Logika di `server/services/exitInterviewService.js`; tabel `px_exit_interviews` dan `px_exit_interview_uploads` (`docs/08` §18); kamus kolom `docs/02` §5.4; panduan Admin `docs/06`. Pengelompokan jawaban berbasis aturan kata kunci dari `px_app_settings`, **tanpa AI** (on-premise). Data ini tidak dipakai `calculationEngine`/`alertEngine` (skor metrik 26 dan PX Index tidak berubah). `/api/health` `version` = `2.38.0`; tidak ada env baru.

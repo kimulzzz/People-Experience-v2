@@ -6190,6 +6190,60 @@ async function runRegressionSuite() {
         assert.strictEqual((await realFetch(`${BASE_URL}/api/exit-interview/summary?mode=YTD&year=2026`)).status, 401, 'no login -> 401');
       });
 
+      // v2.39.0: slide-1 headline generated from cards 1 and 4 (rule-based)
+      await runTest('[POSITIVE] Slide-1 headline rules (pure): top reason >= 40% -> "dominate", < 40% -> "lead", runner-up within 5 pp named, singular verb, pull factor >= 40% "main" / < 40% "most cited", Other never heads it', async () => {
+        const R = (base, list) => ({ base, items: list.map(([label, count]) => ({ label, count })) });
+        const P = (base, list) => ({ base, items: list.map(([label, count]) => ({ label, count })) });
+        const h = exitSvc.buildOverviewHeadline;
+        assert.strictEqual(h(R(10, [['Move company', 5], ['Family', 3], ['Personal', 2]]), P(5, [['Compensation', 3], ['Position', 1], ['Other', 1]])),
+          'Company moves dominate exits; compensation is the main attraction');
+        assert.strictEqual(h(R(10, [['Move company', 4], ['Family', 4]]), P(4, [['Compensation', 4]])),
+          'Company moves and family reasons dominate exits; compensation is the main attraction', 'tie at 40% -> both named, still dominate');
+        assert.strictEqual(h(R(10, [['Family', 3], ['Personal', 3], ['Move company', 2], ['Study', 2]]), P(2, [['Position', 2]])),
+          'Family and personal reasons lead exits; a higher position is the main attraction');
+        assert.strictEqual(h(R(100, [['Move company', 39], ['Family', 33]]), P(39, [['Compensation', 15], ['Job', 10], ['Other', 30]])),
+          'Company moves lead exits; compensation is the most cited attraction', '6 pp gap -> no runner-up; Other (30) is skipped');
+        assert.strictEqual(h(R(3, [['Study', 2], ['Family', 1]]), P(0, [])), 'Further study dominates exits', 'singular verb, no pull clause without movers');
+        assert.strictEqual(h(R(10, [['Relocation', 3], ['Family', 2]]), P(0, [])), 'Relocation leads exits', 'unknown reason = its own label, singular');
+        assert.strictEqual(h(R(4, [['Move company', 4]]), P(4, [['Other', 2], ['Compensation', 0]])), 'Company moves dominate exits', 'only Other named -> no pull clause');
+        for (const empty of [R(0, []), null, { base: 0, items: [] }]) assert.strictEqual(h(empty, P(0, [])), 'No voluntary exit records in this period');
+      });
+
+      await runTest('[POSITIVE] Slide-1 headline from the data: MTD 2030-01 "dominate" (5/8 company moves), March 2030 fixture "lead" with runner-up, per directorate, USER of A gets the headline of A; empty month -> neutral line; slide-2 headline unchanged', async () => {
+        const jan = (await summary47('mode=MTD&year=2030&month=01')).body;
+        assert.strictEqual(jan.overview_headline, 'Company moves dominate exits; compensation is the main attraction');
+        assert.strictEqual(jan.headline, 'Movers highlight company reputation and compensation & benefits; career progression & certainty is the clearest satisfaction gap');
+        assert.strictEqual(jan.headline, exitSvc.buildThemesHeadline(jan.themes_open, jan.themes_internal));
+        // March 2030: bankwide Family 3, Personal 3, Move company 2, Own business 1, Study 1 (base 10); movers name Position 2x, Compensation 1x
+        const mar = [
+          { nik: 'RT47-101', date: '2030-03-02', e: 'FAMILY' }, { nik: 'RT47-102', date: '2030-03-03', e: 'FAMILY' }, { nik: 'RT47-103', date: '2030-03-04', e: 'FAMILY' },
+          { nik: 'RT47-104', date: '2030-03-05', e: 'PERSONAL' }, { nik: 'RT47-105', date: '2030-03-06', e: 'PERSONAL' },
+          { nik: 'RT47-106', date: '2030-03-07', e: 'PERSONAL', dir: dirB.directorate_name },
+          { nik: 'RT47-107', date: '2030-03-08', e: 'MOVE_COMPANY', k: 'Jabatan / posisi lebih tinggi' },
+          { nik: 'RT47-108', date: '2030-03-09', e: 'BETTER_OFFER', k: 'Jabatan / posisi lebih tinggi | Kompensasi & benefit yang lebih menarik' },
+          { nik: 'RT47-109', date: '2030-03-10', e: 'OWN_BUSINESS', dir: dirB.directorate_name },
+          { nik: 'RT47-110', date: '2030-03-11', e: 'STUDY', dir: dirB.directorate_name }
+        ];
+        const up = await postExit(await xlsx47(mar.map(fx)), 'module47_headline.xlsx');
+        const ub = await up.json();
+        assert.strictEqual(up.status, 200, JSON.stringify(ub).slice(0, 300));
+        uploadIds47.push(ub.upload_id);
+        const all = (await summary47('mode=MTD&year=2030&month=03')).body;
+        assert.strictEqual(all.reasons.base, 10);
+        assert.strictEqual(all.overview_headline, 'Family and personal reasons lead exits; a higher position is the main attraction');
+        const a = (await summary47(`mode=MTD&year=2030&month=03&directorate=${encodeURIComponent(dirA.directorate_name)}`)).body;
+        assert.strictEqual(a.overview_headline, 'Family reasons dominate exits; a higher position is the main attraction', 'A: Family 3/7 = 42.9%, Personal 14.3 pp behind');
+        const b = (await summary47(`mode=MTD&year=2030&month=03&directorate=${encodeURIComponent(dirB.directorate_name)}`)).body;
+        assert.strictEqual(b.overview_headline, 'Own-business exits and personal reasons lead exits', 'B: three-way tie at 33.3%, no movers -> no pull clause');
+        assert.ok(userCookie47, 'user from the USER test');
+        const u = await summary47('mode=MTD&year=2030&month=03', userCookie47);
+        assert.strictEqual(u.status, 200);
+        assert.strictEqual(u.body.overview_headline, a.overview_headline, 'USER of A = the headline of A only');
+        const feb = (await summary47('mode=MTD&year=2030&month=02')).body;
+        assert.strictEqual(feb.overview_headline, 'No voluntary exit records in this period');
+        assert.strictEqual(feb.headline, null);
+      });
+
       await runTest('[NEGATIVE] Boot top-up never touches a month that already has exit rows (seed months keep their row counts and sources; fixture months untouched)', async () => {
         const st = require('../server/db/storage');
         const before = JSON.stringify(await st.getExitInterviewMonthCounts());

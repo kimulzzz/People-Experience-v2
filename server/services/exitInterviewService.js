@@ -430,6 +430,69 @@ const isMover = r => isVoluntary(r) && MOVER_DETAILS.includes(r.leaving_reason_d
 
 const sortItems = items => items.sort((a, b) => (a.label === OTHER) - (b.label === OTHER) || b.count - a.count || a.label.localeCompare(b.label));
 
+// ------------------------------------------------------------------ headlines (rule-based wording from the card numbers, no AI)
+const HEADLINE_DOMINANT_PCT = 40; // top share >= 40% -> "dominate(s) exits" / "is the main attraction"
+const HEADLINE_RUNNER_UP_PP = 5; // a runner-up within 5 percentage points of the top reason is named too
+const EMPTY_OVERVIEW_HEADLINE = 'No voluntary exit records in this period';
+// card-1 reason label -> [natural phrase, plural]; any other reason = its own label, singular
+const REASON_PHRASES = {
+  'Move company': ['Company moves', true],
+  'Own business': ['Own-business exits', true],
+  Family: ['Family reasons', true],
+  Personal: ['Personal reasons', true],
+  Study: ['Further study', false],
+  Health: ['Health reasons', true],
+  'Performance issue': ['Performance issues', true],
+  'Not specified': ['Unspecified reasons', true]
+};
+// card-4 pull factor -> phrase ("Other" never heads the headline)
+const PULL_PHRASES = { Compensation: 'compensation', Position: 'a higher position', Job: 'a better-suited job', Reputation: 'company reputation' };
+
+const lowerFirst = s => (s ? s.charAt(0).toLowerCase() + s.slice(1) : s);
+const phraseOfReason = label => REASON_PHRASES[label] || [label, false];
+// "Family reasons" + "Personal reasons" -> "Family and personal reasons"; "Company moves" + "Family reasons" -> "Company moves and family reasons"
+function joinPhrases(a, b) {
+  const wa = a.split(' ');
+  const wb = b.split(' ');
+  if (wa.length > 1 && wb.length > 1 && wa[wa.length - 1] === wb[wb.length - 1]) return `${wa.slice(0, -1).join(' ')} and ${lowerFirst(b)}`;
+  return `${a} and ${lowerFirst(b)}`;
+}
+
+/**
+ * Slide-1 headline (like the deck's "Company moves dominate exits; compensation is the main attraction"). First clause from
+ * card 1: the top reason of the voluntary exits, "dominate(s)" at >= 40% of the base else "lead(s)", a runner-up within
+ * 5 pp is named with it. Second clause from card 4: the top pull factor of the movers ("Other" excluded), "is the main
+ * attraction" at >= 40% of the movers else "is the most cited attraction"; left out when no mover named one.
+ * Pure: takes the reasons / pull_factors objects of summarizeExitInterviews.
+ */
+function buildOverviewHeadline(reasons, pullFactors) {
+  const items = (reasons && reasons.items) || [];
+  if (!reasons || !reasons.base || !items.length) return EMPTY_OVERVIEW_HEADLINE;
+  const [top, second] = items;
+  const [topPhrase, topPlural] = phraseOfReason(top.label);
+  const withRunnerUp = !!second && ((top.count - second.count) * 100) / reasons.base <= HEADLINE_RUNNER_UP_PP;
+  const subject = withRunnerUp ? joinPhrases(topPhrase, phraseOfReason(second.label)[0]) : topPhrase;
+  const plural = withRunnerUp || topPlural;
+  const dominant = (top.count * 100) / reasons.base >= HEADLINE_DOMINANT_PCT;
+  let headline = `${subject} ${dominant ? 'dominate' : 'lead'}${plural ? '' : 's'} exits`;
+  const pull = pullFactors && pullFactors.base
+    ? (pullFactors.items || []).filter(i => i.label !== OTHER && i.count > 0).sort((a, b) => b.count - a.count)[0] : null;
+  if (pull) {
+    const share = (pull.count * 100) / pullFactors.base;
+    headline += `; ${PULL_PHRASES[pull.label] || lowerFirst(pull.label)} is the ${share >= HEADLINE_DOMINANT_PCT ? 'main' : 'most cited'} attraction`;
+  }
+  return headline;
+}
+
+// Slide-2 headline: the two most named themes of card A and the theme with the widest career gap of card B (null = no answers).
+function buildThemesHeadline(themesOpen, themesInternal) {
+  const topA = themesOpen.items.filter(i => i.label !== OTHER).slice(0, 2).map(i => i.label.toLowerCase());
+  if (!topA.length) return null;
+  const gap = themesInternal.negative_base && themesInternal.positive_base
+    ? themesInternal.items.filter(i => i.label !== OTHER && i.gap_pp > 0).sort((a, b) => b.gap_pp - a.gap_pp)[0] : null;
+  return `Movers highlight ${topA.join(' and ')}${gap ? `; ${gap.label.toLowerCase()} is the clearest satisfaction gap` : ''}`;
+}
+
 /**
  * Every card of the dashboard from the rows of one period + org filter (pure: the regression suite recomputes it).
  * options.listUnknownCompanies = false hides new-employer names that are not in the alias table (USER view: a free-text
@@ -554,15 +617,6 @@ function summarizeExitInterviews(rows, rules, options = {}) {
   };
   sortItems(themesInternal.items);
 
-  // headline of slide 2 from the data: the two most named themes of A and the theme with the widest B gap
-  let headline = null;
-  const topA = themesOpen.items.filter(i => i.label !== OTHER).slice(0, 2).map(i => i.label.toLowerCase());
-  if (topA.length) {
-    const gap = negatives.length && positives.length
-      ? themesInternal.items.filter(i => i.label !== OTHER && i.gap_pp > 0).sort((a, b) => b.gap_pp - a.gap_pp)[0] : null;
-    headline = `Movers highlight ${topA.join(' and ')}${gap ? `; ${gap.label.toLowerCase()} is the clearest satisfaction gap` : ''}`;
-  }
-
   return {
     counts: { total_records: rows.length, voluntary_records: voluntary.length, movers: movers.length },
     reasons,
@@ -573,7 +627,8 @@ function summarizeExitInterviews(rows, rules, options = {}) {
     recommend,
     themes_open: themesOpen,
     themes_internal: themesInternal,
-    headline
+    overview_headline: buildOverviewHeadline(reasons, pullFactors), // slide 1 (v2.39.0)
+    headline: buildThemesHeadline(themesOpen, themesInternal) // slide 2
   };
 }
 
@@ -667,6 +722,8 @@ module.exports = {
   resolveExitPeriod,
   filterByOrg,
   summarizeExitInterviews,
+  buildOverviewHeadline,
+  buildThemesHeadline,
   getExitInterviewSummary,
   generateExitTemplateXlsx,
   generateExitExportCsv
