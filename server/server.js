@@ -17,6 +17,8 @@ const { isOllamaAvailable, generateEventSummary } = require('./services/localAiS
 const { generateSurveyCsvTemplate } = require('./services/surveyTemplateService');
 const { processSurveyCsv } = require('./services/surveyImportService');
 const { generateSurveyEvidenceCsv } = require('./services/surveyEvidenceService');
+const { importEssSummary, generateEssTemplateXlsx, generateEssEvidenceCsv, essOriginalFilePath } = require('./services/essSummaryService');
+const { isEssMetric } = require('./db/surveySource');
 const { getPendingUploadReminders, sendPendingUploadReminders, startReminderScheduler } = require('./services/reminderService');
 const emailSettingsService = require('./services/emailSettingsService');
 const auth = require('./services/authService');
@@ -127,12 +129,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.31.0' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.32.0' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.31.0',
+    version: '2.32.0',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',
@@ -429,7 +431,10 @@ app.put('/api/admin/metrics/:id', async (req, res) => {
 // Delete Metric
 app.delete('/api/admin/metrics/:id', async (req, res) => {
   try {
+    // its ESS uploads go with it (documented cascade), so their original files are removed too (v2.32.0)
+    const essUploadIds = (await storage.getSurveyUploads()).filter(u => String(u.metric_id) === String(parseInt(req.params.id, 10))).map(u => u.upload_id);
     const result = await storage.deleteMetric(req.params.id);
+    essUploadIds.forEach(id => { const f = essOriginalFilePath(id); if (f) fs.unlink(f, () => {}); });
     const calculation = await calculatePEIndex();
     res.json({ success: true, ...result, calculation });
   } catch (err) {
@@ -684,6 +689,14 @@ app.get('/api/surveys/template', async (req, res) => {
     const gate = await auth.requirePicMetric(req, res, req.query.metric_id);
     if (!gate) return;
     const metric_id = req.query.metric_id || 'ALL';
+    // An ESS metric (v2.32.0) takes the ESS summary .xlsx, so its template is that workbook.
+    const essMetric = metric_id !== 'ALL' ? (await storage.getMetrics()).find(m => m.metric_id === parseInt(metric_id, 10) && m.metric_type === 'SURVEY' && isEssMetric(m)) : null;
+    if (essMetric) {
+      const xlsx = await generateEssTemplateXlsx(essMetric);
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="Template_ESS_Metric_${essMetric.metric_id}.xlsx"`);
+      return res.send(xlsx);
+    }
     const csvContent = await generateSurveyCsvTemplate(metric_id);
     
     const filename = metric_id === 'ALL' 
@@ -706,6 +719,15 @@ app.get('/api/surveys/evidence', async (req, res) => {
     if (!(await auth.canSeeRespondentData(req.user, metric_id))) return res.status(403).json({ error: 'The survey evidence contains personal respondent data and can only be downloaded by an Admin or the PIC of that metric.' });
     if (!(await checkMetricRef(res, metric_id, { allowAll: true }))) return;
     const picMetric = req.user.role === 'ADMIN' ? null : await auth.getPicMetric(req.user, metric_id);
+    const essMetric = metric_id !== 'ALL' ? (await storage.getMetrics()).find(m => m.metric_id === parseInt(metric_id, 10) && m.metric_type === 'SURVEY' && isEssMetric(m)) : null;
+    if (essMetric) {
+      // ESS (v2.32.0): the stored summary rows of every period with the upload that brought them. A PIC gets only the
+      // directorates of their own scope (the Bankwide row is for the Admin).
+      const essCsv = await generateEssEvidenceCsv(essMetric, { scopes: picMetric ? auth.respondentScopeFor(req.user, picMetric) : null });
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="Evidence_ESS_Summary_Metric_${essMetric.metric_id}.csv"`);
+      return res.send(essCsv);
+    }
     const csvContent = await generateSurveyEvidenceCsv(metric_id, period, { scopes: picMetric ? auth.respondentScopeFor(req.user, picMetric) : null });
     const filename = metric_id === 'ALL'
       ? `Evidence_Survey_Master_All_Metrics_${period}.csv`
@@ -719,8 +741,13 @@ app.get('/api/surveys/evidence', async (req, res) => {
   }
 });
 
-const csvUploadSingle = (req, res, next) => upload.single('csvFile')(req, res, err => {
-  if (!err) return next();
+const csvUploadSingle = (req, res, next) => upload.fields([{ name: 'csvFile', maxCount: 1 }, { name: 'file', maxCount: 1 }])(req, res, err => {
+  if (!err) {
+    req.file = (req.files && ((req.files.csvFile && req.files.csvFile[0]) || (req.files.file && req.files.file[0]))) || undefined;
+    // a second file in the other field is never used: remove it right away
+    Object.values(req.files || {}).flat().forEach(f => { if (f !== req.file) fs.unlink(f.path, () => {}); });
+    return next();
+  }
   if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'The CSV file exceeds the 50 MB limit.' });
   return res.status(400).json({ error: 'The uploaded file could not be processed.' });
 });
@@ -734,11 +761,37 @@ app.post('/api/surveys/upload', PIC_OR_ADMIN, csvUploadSingle, async (req, res) 
     const gate = await auth.requirePicMetric(req, res, metricField);
     if (!gate) return;
 
+    // The uploaded file is read once and removed from disk right away (before any answer is sent): it holds respondent
+    // identities and /uploads is readable by every login.
+    const fileBuf = req.file ? fs.readFileSync(req.file.path) : null;
+    if (req.file) { try { fs.unlinkSync(req.file.path); } catch (_) { /* finally retries */ } }
+
+    // ESS metrics (v2.32.0) take ONLY the ESS summary .xlsx (one row per org unit); SYSTEM metrics keep the CSV import.
+    const fileExt = req.file ? path.extname(repairUploadedName(req.file.originalname || '')).toLowerCase() : '';
+    const targetMetric = metricField !== undefined && /^\d{1,9}$/.test(String(metricField))
+      ? (await storage.getMetrics()).find(m => m.metric_id === parseInt(metricField, 10)) : null;
+    // a file sent to a metric id that does not exist: say so (the CSV-text path keeps its per-row rejection, Module 39)
+    if (req.file && metricField !== undefined && /^\d{1,9}$/.test(String(metricField)) && !targetMetric) {
+      return res.status(404).json({ error: `Metric ${metricField} was not found.` });
+    }
+    if (targetMetric &&targetMetric.metric_type === 'SURVEY' && isEssMetric(targetMetric)) {
+      if (!req.file) return res.status(400).json({ error: 'ESS metrics accept only the ESS summary Excel file (.xlsx). Download the ESS template, fill it in and upload it.' });
+      if (fileExt !== '.xlsx') return res.status(415).json({ error: `ESS metrics accept only the ESS summary Excel file (.xlsx), not ${fileExt || 'a file without extension'}. CSV and the old .xls format are not accepted.` });
+      const uploadedByEss = `${req.user.full_name} (${req.user.username})`.slice(0, 200);
+      const essResult = await importEssSummary(fileBuf, repairUploadedName(req.file.originalname), targetMetric, { uploadedBy: uploadedByEss });
+      if (!essResult.success) return res.status(essResult.status || 400).json(essResult);
+      await auth.audit(req, 'SURVEY_UPLOAD', { target: `ESS summary metric ${targetMetric.metric_id}; period ${essResult.period}; ${essResult.rows_imported} rows${essResult.replaced_previous ? ' (replaced)' : ''}; batch ${essResult.upload_id}` });
+      const { status, ...body } = essResult;
+      // Directorate rows a PIC may not see are not echoed; the bankwide index of the file is the PIC's own upload.
+      return res.json(body);
+    }
+    if (req.file && fileExt === '.xlsx') return res.status(400).json({ error: 'Excel (.xlsx) upload is only for ESS metrics. Upload a CSV file for this survey metric.' });
+
     let csvText = '';
     let fileName = 'manual_survey_data.csv';
 
     if (req.file) {
-      csvText = fs.readFileSync(req.file.path, 'utf8');
+      csvText = fileBuf.toString('utf8');
       fileName = req.file.originalname;
     } else if (req.body && req.body.csvText) {
       csvText = req.body.csvText;
@@ -774,6 +827,24 @@ app.get('/api/surveys/history', async (req, res) => {
     if (!gate) return;
     const history = await storage.getSurveyUploads();
     res.json(req.user.role === 'ADMIN' ? history : history.filter(h => h.metric_id !== null && gate.mine.some(p => p.metric_id === h.metric_id)));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Original ESS summary file of one upload (audit trail, v2.32.0): the Admin, or the PIC of that upload's metric.
+app.get('/api/surveys/ess-file/:upload_id', async (req, res) => {
+  try {
+    const upload = (await storage.getSurveyUploads()).find(u => u.upload_id === req.params.upload_id);
+    if (!upload || upload.metric_id === null) return res.status(404).json({ error: 'Upload not found.' });
+    if (req.user.role !== 'ADMIN' && !(await auth.getPicMetric(req.user, upload.metric_id))) {
+      return res.status(403).json({ error: 'The original ESS file can only be downloaded by an Admin or the PIC of that metric.' });
+    }
+    const filePath = essOriginalFilePath(upload.upload_id);
+    if (!filePath) return res.status(404).json({ error: 'The original file of this upload is not stored (e.g. seed data).' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${String(upload.file_name || 'ESS_summary.xlsx').replace(/["\r\n\\/]/g, '_')}"`);
+    res.sendFile(filePath);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -2,6 +2,7 @@
 const storage = require('../db/storage');
 const { calculatePEIndex } = require('./calculationEngine');
 const { getQuestionsForMetric } = require('./metricQuestionService');
+const { isEssMetric } = require('../db/surveySource');
 
 function normalizeDateString(dateVal) {
   if (!dateVal) return null;
@@ -195,6 +196,16 @@ async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetM
         row_number: rowNum,
         nip,
         reason: `Metric ID ${metricId || 'N/A'} is invalid or is not a SURVEY metric`
+      });
+      return;
+    }
+
+    // Validation 3: an ESS metric takes only its ESS summary .xlsx (v2.32.0), never per-respondent CSV rows
+    if (isEssMetric(metricObj)) {
+      invalidRows.push({
+        row_number: rowNum,
+        nip,
+        reason: `Metric ${metricId} is an ESS metric: upload its ESS summary Excel file (.xlsx) instead of CSV rows`
       });
       return;
     }

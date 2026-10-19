@@ -47,6 +47,8 @@ Sistem People Experience melayani dua kelompok peran utama:
 
 ## 📥 3. Panduan Download Template & Upload Data Survei CSV
 
+> Panduan CSV di bawah hanya untuk metrik survei **System**. Metrik **ESS** sejak v2.32.0 diunggah sebagai ringkasan Excel `.xlsx` - lihat bagian "Upload Ringkasan Hasil ESS (.xlsx) (v2.32.0)" di akhir dokumen ini.
+
 ### Langkah 1: Mengunduh Template CSV
 - Pada tabel *Metrics Explorer* (`Calculator.jsx`), cari metrik survei yang dituju dan klik tombol pill hijau **"Template"**.
 - Berkas `.csv` yang diunduh akan otomatis memuat header kolom yang sesuai dengan butir pertanyaan aktif beserta baris panduan format nilai.
@@ -325,3 +327,29 @@ Setelah mengubah `.env`, restart backend. Bila batas ringkasan habis, kartu vide
 - Hard link hanya bisa dibuat bila `server/uploads` dan `server/tmp-transcribe` ada di **drive/volume NTFS yang sama** (default: ya, keduanya di folder `server`). Bila tidak bisa, sistem otomatis memakai nama acak seperti sebelumnya; transkrip tetap berjalan dan hanya muncul peringatan di console server.
 - Bila Extractor menolak path bernama asli dengan error cepat "file tidak ditemukan/tidak terbaca", sistem mencoba **sekali** lagi dengan nama acak. Bila Extractor mati atau timeout, tidak ada percobaan ulang (gunakan **Try again** setelah Extractor aktif).
 - Bila nama file mengandung karakter khusus (`[ ] ( ) é`) dan monitoring tetap menampilkan nama acak, laporkan: perilaku Extractor asli terhadap karakter itu belum diuji.
+
+---
+
+## 📊 Upload Ringkasan Hasil ESS (.xlsx) (v2.32.0)
+
+**Siapa**: Admin, atau PIC metrik ESS (akun User yang e-mailnya sama dengan Email PIC metrik itu). Metrik ESS saat ini: 9, 13, 15, 16, 17, 18, 21, 22, 24, 25, 27 (badge **ESS Template** di Explore Metrics).
+
+**Yang diunggah**: ringkasan hasil ESS satu periode untuk satu metrik, bukan jawaban per responden: satu baris **Bankwide** (`PT Bank CIMB Niaga Tbk`) dan satu baris per direktorat. Contoh: `docs/ESS 2025 Result_Role Clarity & DS Support.xlsx`. Format kolom dan daftar validasi lengkap: `docs/SURVEY_IMPORT_GUIDE.md` bagian "Hasil ESS".
+
+**Langkah**
+1. Explore Metrics -> baris metrik ESS -> **Template (.xlsx)** (atau dari detail metrik / menu Survey Templates -> "Download ESS Template (.xlsx)"). File `Template_ESS_Metric_<id>.xlsx` sudah berisi header (nama index + pertanyaan aktif) dan nama Bankwide + 12 direktorat.
+2. Isi kolom C Year, D Month (sama untuk semua baris), E Participation, F skor index (mis. `0.92` atau `92`) dan skor pertanyaan di kolom G dst. Baris direktorat tanpa data harus dihapus (baris yang hanya berisi nama + Level akan ditolak karena Year/Month/Participation/F kosong). Simpan sebagai **Excel Workbook (*.xlsx)**.
+3. Klik **Upload** pada metrik itu -> pilih file `.xlsx` -> **Process ESS Summary & Recalculate PX Index**.
+4. Hasil sukses menampilkan periode, jumlah baris, dan index Bankwide. Bila periode itu sudah pernah diunggah, datanya **diganti** (upload lama tetap ada di riwayat).
+5. Bila ditolak, tidak ada yang tersimpan; perbaiki semua baris yang disebut di daftar error lalu unggah ulang.
+
+**Yang perlu diketahui**
+- CSV dan `.xls` tidak diterima untuk metrik ESS; template CSV master (`ALL`) tidak lagi memuat metrik ESS.
+- Skor yang dipakai Dashboard adalah hasil ESS **terakhir sampai periode yang dilihat**, termasuk dari tahun sebelumnya. Contoh: YTD 2026 memakai hasil November 2025 sampai hasil 2026 diunggah.
+- Filter direktorat memakai baris direktorat itu; filter divisi memakai baris direktorat induknya (detail metrik menampilkan catatan "ESS is reported at directorate level").
+- Jumlah sampel = Participation. Ringkasan ESS hanya berisi % favorable; % neutral / % unfavorable tampil "—".
+- **Evidence** metrik ESS = CSV baris ringkasan tersimpan semua periode beserta nama file dan pengunggahnya. PIC hanya mendapat direktorat dalam cakupannya (tanpa baris Bankwide).
+- **Original File** di detail metrik mengunduh file asli yang diunggah (Admin atau PIC metrik itu). File asli disimpan di server di `server/data/ess-uploads/` (tidak bisa dibuka lewat `/uploads`); data seed tidak punya file asli. Folder ini tidak ikut backup database - backup terpisah (lihat `SQLServerDB.md` §16).
+- Menghapus metrik ESS di Admin Parameters ikut menghapus hasil ESS dan file aslinya.
+- Data ESS per responden lama dihapus sekali saat upgrade ke v2.32.0. Data saat ini (November 2025) adalah seed: metrik 9 = nilai file user, metrik ESS lain **dummy** - ganti dengan mengunggah hasil asli.
+- **Pengingat e-mail**: metrik ESS bersifat tahunan dengan batas 25 November; mulai 25 November 2026 PIC akan menerima pengingat bila hasil ESS 2026 belum diunggah. Hasil ESS dianggap data bulan periodenya.

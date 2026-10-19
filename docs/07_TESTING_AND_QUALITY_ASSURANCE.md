@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    44 MODUL PENGUJIAN    │     278 AUTOMATED TESTS     │       100% PASS RATE          │
+│    45 MODUL PENGUJIAN    │     288 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -197,6 +197,15 @@ Pastikan backend server sedang berjalan di port 5000, kemudian jalankan perintah
 ```bash
 node tests/regressionTest.js
 ```
+
+**Melewati modul (sejak v2.32.0)** - untuk perubahan yang tidak menyentuh kode media/transkrip/AI summary (aturan "Workflow wajib" di `CLAUDE.md`):
+
+```bash
+TEST_SKIP_MEDIA=1 node tests/regressionTest.js            # = TEST_SKIP_MODULES=27,32,38,41,42,43
+TEST_SKIP_MODULES=27,32 node tests/regressionTest.js      # daftar modul bebas, pisah koma
+```
+
+Tes di modul yang dilewati dicatat **SKIPPED**, tidak pernah PASS. Modul 27 dan 32 dilewati per tes (`runTest` mencetak `SKIP: <nama>` dan menambah hitungan skip; modul aktif dibaca dari baris header `📦 MODULE <n>:`). Modul 38, 41, 42, 43 dilewati sebagai satu blok (`skipModuleBlock(n)`, karena setup backend kedua/layanan palsu ada di luar `runTest`); tesnya tidak dihitung sama sekali, hanya dicetak `SKIPPED: Module <n> ... none of its tests ran`. Ringkasan akhir menyebut jumlah tes SKIPPED dan daftar modul yang dilewati.
 
 ### Output Pengujian Sukses:
 ```text
@@ -908,3 +917,35 @@ Modul 42 memakai backend kedua dengan Ollama dan Video Extractor **palsu** yang 
 **Modul lama disesuaikan** (jumlah tesnya tidak berubah): Modul 5, 7, 8, 11, 15, 24 memakai nama direktorat baru; Modul 15 kini mengharapkan >= 12 direktorat (sebelumnya >= 7) dan mencari `Operations, Technology, Analytics & AI`. Helper baru `csvCell()` (bagian atas `tests/regressionTest.js`) mengutip nilai yang mengandung koma/kutip/baris baru; Modul 35/36/39 memakainya untuk direktorat/divisi di 23 baris CSV.
 
 **Tidak diuji / tidak terverifikasi**: suite JSON penuh; QC terpisah; jalur muat JSON (`getStore()` / `auth.json`) hanya lewat cek in-process developer, bukan tes otomatis; rename `px_attendances`, `px_users`, `px_recruitment_sla_by_unit` dan setting `event_manager_directorates` di SQL tidak punya tes tanam data (hanya fungsi murni dan hasil migrasi database utama).
+
+## 📊 28. Ringkasan ESS (.xlsx) Menggantikan Data ESS per Responden - v2.32.0 (2026-10-19)
+
+**Regression suite: 209/209 lulus, 0 gagal, di SQL Server** (angka dari laporan developer; penulis dokumen ini tidak menjalankan ulang suite) dengan `TEST_SKIP_MEDIA=1`: modul media 27, 32, 38, 41, 42, 43 **dilewati**, tidak lulus. Ukuran suite penuh di SQL = 288 = 278 (v2.31.0) + 10 (Modul 45); 288 - 209 = 79 tes tidak dijalankan, cocok dengan jumlah tes keenam modul media menurut catatan versi sebelumnya (6 + 3 + 15 + 34 + 15 + 6; dihitung penulis, bukan dari output). Jumlah persis yang dicetak sebagai SKIPPED di output tidak dilihat penulis (menurut kode: hanya tes Modul 27 dan 32 yang dihitung SKIPPED, blok 38/41/42/43 tidak dihitung). Hitungan statis `await runTest(` kini 275 (265 + 10) vs ukuran suite 288 (selisih 13, sama dengan v2.31.0). **Suite JSON penuh tidak dijalankan**; developer menjalankan cek in-process terarah pada backend JSON: cleanup 2.511 baris ESS per responden, 143 baris seed, metrik 9 = 92 / 7756 (Bankwide) dan 91 / 449 (Business Banking), unggah ulang mengganti periode, file invalid tidak menyimpan apa pun, kaskade hapus metrik, pengingat. Modul media tidak dijalankan ulang untuk rilis ini.
+
+**Modul 45 = 10 tes** (dihitung dari kode: 10 pemanggilan `runTest`; tes 10 khusus SQL). Memakai file nyata `docs/ESS 2025 Result_Role Clarity & DS Support.xlsx` (file harus ada) dan workbook buatan tes (`essXlsx()` memakai `buildXlsx` aplikasi; helper `ESS_HEAD()`, `postEssFile()` di bagian atas `tests/regressionTest.js`). Membersihkan sendiri: user/metrik sementara dihapus, hasil seed 2025-11 metrik Role Clarity dipulihkan.
+
+| # | Jenis | Yang diuji (Modul 45) |
+| :-: | :---: | :--- |
+| 1 | Positif | Template ESS benar-benar `.xlsx`: `Directorate, Level, Year, Month, Participation, <nama index>`, satu kolom per pertanyaan terkonfigurasi, baris Bankwide + satu baris per direktorat master; template SYSTEM tetap CSV; master CSV tanpa metrik ESS |
+| 2 | Positif | Seed / cleanup boot: tidak ada metrik ESS dengan baris per responden; setiap metrik ESS punya ringkasan 2025-11 (Bankwide + 12 direktorat) |
+| 3 | Positif | File nyata user ke Role Clarity: 13 baris, periode 2025-11, Bankwide 92,00, mengganti hasil seed 2025-11, tercatat di riwayat dan audit log |
+| 4 | Positif | Carry-forward & level org: ALL YTD tahun ini = Bankwide 92 / 7756 dari 2025-11; Business Banking 91 / 449; divisi Human Resources membaca Human Resources (92,33 / 129, ditandai); YTD 2025 s.d. Oktober = tanpa data (fallback statis); 2025 penuh dan MTD 2025-11 = hasil itu |
+| 5 | Positif | Detail metrik ESS: partisipasi, periode "November 2025", % favorable per pertanyaan dari file (neutral/unfavorable `null`), hasil per direktorat (Bankwide dulu untuk Admin), upload periode itu |
+| 6 | Positif | User dengan cakupan dua direktorat (satu dengan subset divisi) mendapat rata-rata berbobot partisipasi kedua baris direktorat, tidak pernah baris Bankwide |
+| 7 | Positif | Unggah ulang metrik + periode yang sama mengganti barisnya (tetap 13), kedua upload ada di riwayat; evidence CSV memuat baris ringkasan tersimpan beserta upload-nya |
+| 8 | Negatif | File invalid ditolak utuh (400 + semua error per baris) dan tidak menyimpan apa pun: direktorat tak dikenal, bulan campur, skor di luar rentang, kolom hilang, direktorat ganda, sheet kosong, formula tanpa nilai tersimpan, bytes bukan xlsx bernama `.xlsx`; CSV ke metrik ESS -> 415/400; `.xlsx` ke metrik SYSTEM -> 400 |
+| 9 | Positif / Negatif | Akses: PIC metrik ESS mengunggah ringkasannya (evidence tanpa Bankwide, jawaban tanpa kalkulasi bankwide) dan mengunduh file aslinya; User non-PIC 403 untuk upload, evidence dan file asli; Admin mengunduh bytes yang persis sama; upload tak dikenal / seed -> 404 |
+| 10 | Positif (SQL) | Pengingat melihat ringkasan ESS sebagai data tahunnya (`hasSurveyDataInPeriod`), dan `px_ess_results` menegakkan satu baris per unit org per periode |
+
+**Modul lama disesuaikan** (jumlah tes tidak berubah):
+
+| Modul | Perubahan |
+| :--- | :--- |
+| 4 | Template master: jumlah baris = header + jumlah metrik SURVEY non-ESS (sebelumnya >= 21 baris) |
+| 11 | 11 metrik ESS dibaca dari ringkasan: `is_ess_summary`, `ess_period` 2025-11, `total_respondents` 7756, `responses` kosong, neutral/unfavorable `null` |
+| 12 | Uji normalisasi tanggal CSV pindah ke metrik 8 (SYSTEM); CSV yang sama ke metrik 9 -> 400; tanggal metrik ESS berformat `YYYY-MM` |
+| 39 | CSV ke metrik ESS -> 400 dan tidak menyimpan apa pun; unggahan Admin/PIC ke metrik ESS memakai `.xlsx`; kolom `metric_id` CSV yang menunjuk metrik ESS ditolak per baris |
+
+**Perbaikan flake Modul 36**: file sementara upload kini dihapus sinkron sebelum respons (lihat `CHANGELOG.md` [2.32.0]).
+
+**Tidak diuji / tidak terverifikasi**: suite JSON penuh; modul media 27/32/38/41/42/43 (dilewati); tampilan UI dan mobile (tidak ada tes render); metrik ESS tanpa hasil sama sekali di detail metrik (masih jalur placeholder lama); baris dengan Level `Bankwide` tetapi nama direktorat di kolom A tidak punya tes.

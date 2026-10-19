@@ -8,3 +8,5 @@ server/exports/
 server/data/backups/
 server/data/auth.json
 server/tmp-transcribe/
+# original ESS summary uploads (audit trail, v2.32.0) - kept on the server, never committed
+server/data/ess-uploads/

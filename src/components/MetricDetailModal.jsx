@@ -33,7 +33,7 @@ import {
 } from 'lucide-react';
 import { formatMetricValue } from '../utils/formatMetricValue';
 import { monthName } from '../utils/months';
-import { surveySourceLabel, surveySourceBadgeClass } from '../utils/surveySource';
+import { surveySourceLabel, surveySourceBadgeClass, surveyTemplateFileName } from '../utils/surveySource';
 
 function normalizeDateString(dateVal) {
   if (!dateVal) return null;
@@ -150,6 +150,10 @@ export default function MetricDetailModal({
   const isOutcome = !isSurvey;
   // ESS-ness is decided by the server from the metric's Survey Source (Parameter Admin), not by the source text.
   const isEss = !!detailData?.is_ess;
+  // ESS metric read from its uploaded ESS summary (v2.32.0): directorate-level aggregates, no respondent rows,
+  // and only % favorable per question (neutral / unfavorable are not part of the summary -> null).
+  const isEssSummary = isEss && !!detailData?.is_ess_summary;
+  const pct = v => (v === null || v === undefined ? '—' : v);
 
   const isCampus = detailData?.metric_id === 2 || detailData?.target_audience === 'CAMPUS_STUDENTS';
   const isCandidate = detailData?.metric_id === 5 || detailData?.target_audience === 'JOB_APPLICANTS';
@@ -293,14 +297,17 @@ export default function MetricDetailModal({
                   <>
                     {/* Survey: Total Respondents */}
                     <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-xl">
-                      <div className="text-[11px] font-bold text-gray-500 uppercase">Total Respondents</div>
+                      <div className="text-[11px] font-bold text-gray-500 uppercase">{isEssSummary ? 'Participation' : 'Total Respondents'}</div>
                       <div className="text-2xl font-black text-gray-900 mt-1">
-                        {detailData.total_respondents ?? 0} <span className="text-xs font-normal text-gray-500">respondents</span>
+                        {detailData.total_respondents ?? 0} <span className="text-xs font-normal text-gray-500">{isEssSummary ? 'participants' : 'respondents'}</span>
                       </div>
                       <div className="text-[10px] text-gray-500 mt-0.5 flex items-center space-x-1">
                         <Calendar className="w-3 h-3 text-[#ED1C24]" />
-                        <span>Latest Survey Date: <strong>{normalizeDateString(detailData.last_survey_date) || todayDateString()}</strong></span>
+                        <span>{isEssSummary ? 'ESS Result Period' : 'Latest Survey Date'}: <strong>{isEssSummary ? detailData.ess_period_label : (normalizeDateString(detailData.last_survey_date) || todayDateString())}</strong></span>
                       </div>
+                      {isEssSummary && detailData.ess_division_filtered && (
+                        <div className="text-[10px] text-indigo-700 mt-0.5">ESS is reported at directorate level</div>
+                      )}
                     </div>
 
                     {/* Survey: Quick Actions (template / evidence / upload = Admin or the PIC of this metric; can_upload comes from the server) */}
@@ -311,13 +318,24 @@ export default function MetricDetailModal({
                       <div className="mt-2 flex flex-wrap items-center gap-1.5">
                         <a
                           href={`/api/surveys/template?metric_id=${detailData.metric_id}`}
-                          download={`Template_Survey_Metric_${detailData.metric_id}.csv`}
+                          download={surveyTemplateFileName(detailData.metric_id, isEss)}
                           className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
-                          title="Download CSV Template with standard question format"
+                          title={isEss ? 'Download the ESS summary template (.xlsx)' : 'Download CSV Template with standard question format'}
                         >
                           <Download className="w-3 h-3 text-slate-500 shrink-0" />
-                          <span>Template</span>
+                          <span>{isEss ? 'Template (.xlsx)' : 'Template'}</span>
                         </a>
+                        {isEssSummary && detailData.ess_upload?.has_original_file && (
+                          <a
+                            href={`/api/surveys/ess-file/${encodeURIComponent(detailData.ess_upload.upload_id)}`}
+                            download={detailData.ess_upload.file_name}
+                            className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
+                            title={`Download the original uploaded ESS file: ${detailData.ess_upload.file_name} (${detailData.ess_upload.uploaded_by})`}
+                          >
+                            <FileSpreadsheet className="w-3 h-3 text-slate-500 shrink-0" />
+                            <span>Original File</span>
+                          </a>
+                        )}
                         <a
                           href={`/api/surveys/evidence?metric_id=${detailData.metric_id}&period=${period || 'YTD'}`}
                           download={`Evidence_Survey_Metric_${detailData.metric_id}_${period || 'YTD'}.csv`}
@@ -333,7 +351,7 @@ export default function MetricDetailModal({
                             if (onOpenSurveyUpload) onOpenSurveyUpload(detailData.metric_id);
                           }}
                           className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
-                          title="Upload new CSV survey responses"
+                          title={isEss ? 'Upload the ESS summary (.xlsx)' : 'Upload new CSV survey responses'}
                         >
                           <FileSpreadsheet className="w-3 h-3 text-slate-500 shrink-0" />
                           <span>Upload</span>
@@ -405,6 +423,9 @@ export default function MetricDetailModal({
                           <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />
                           <span>{detailData.ess_summary.percent_favorable}% Favorable</span>
                         </span>
+                        {isEssSummary ? (
+                          <span className="text-gray-300">{detailData.ess_summary.participation} participants · {detailData.ess_summary.period_label}</span>
+                        ) : (<>
                         <span className="text-amber-300 flex items-center space-x-1">
                           <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
                           <span>{detailData.ess_summary.percent_neutral}% Neutral</span>
@@ -413,6 +434,7 @@ export default function MetricDetailModal({
                           <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" />
                           <span>{detailData.ess_summary.percent_unfavorable}% Unfavorable</span>
                         </span>
+                        </>)}
                       </div>
                     </div>
                   </div>
@@ -425,21 +447,21 @@ export default function MetricDetailModal({
                         className="bg-emerald-500 h-full transition-all duration-500"
                         title={`Favorable: ${detailData.ess_summary.percent_favorable}%`}
                       />
-                      <div 
-                        style={{ width: `${detailData.ess_summary.percent_neutral}%` }} 
+                      <div
+                        style={{ width: `${detailData.ess_summary.percent_neutral || 0}%` }}
                         className="bg-amber-400 h-full transition-all duration-500"
                         title={`Neutral: ${detailData.ess_summary.percent_neutral}%`}
                       />
-                      <div 
-                        style={{ width: `${detailData.ess_summary.percent_unfavorable}%` }} 
+                      <div
+                        style={{ width: `${detailData.ess_summary.percent_unfavorable || 0}%` }}
                         className="bg-rose-500 h-full transition-all duration-500"
                         title={`Unfavorable: ${detailData.ess_summary.percent_unfavorable}%`}
                       />
                     </div>
                     <div className="flex justify-between text-[10px] text-gray-300 font-medium">
                       <span>✓ Favorable (Satisfied / Positive): {detailData.ess_summary.percent_favorable}%</span>
-                      <span>— Neutral: {detailData.ess_summary.percent_neutral}%</span>
-                      <span>✕ Unfavorable (Dissatisfied): {detailData.ess_summary.percent_unfavorable}%</span>
+                      {!isEssSummary && <span>— Neutral: {detailData.ess_summary.percent_neutral}%</span>}
+                      {!isEssSummary && <span>✕ Unfavorable (Dissatisfied): {detailData.ess_summary.percent_unfavorable}%</span>}
                     </div>
                   </div>
                   <p className="text-[11px] text-gray-400 italic pt-1 border-t border-white/10">
@@ -472,7 +494,9 @@ export default function MetricDetailModal({
                       }`}
                     >
                       <Users className="w-4 h-4" />
-                      <span>Respondent Records & Answers ({detailData.responses?.length || 0})</span>
+                      <span>{isEssSummary
+                        ? `ESS Results by Directorate (${detailData.ess_results_by_directorate?.length || 0})`
+                        : `Respondent Records & Answers (${detailData.responses?.length || 0})`}</span>
                     </button>
                   </>
                 ) : (
@@ -603,8 +627,8 @@ export default function MetricDetailModal({
                                 const qs = essMap[dimName];
                                 const scorable = qs.filter(q => q.type !== 'FREE_TEXT');
                                 const totalFav = Math.round(scorable.reduce((s, q) => s + (q.percent_favorable ?? q.normalized_score ?? 88), 0) / (scorable.length || 1));
-                                const totalNeut = Math.round(scorable.reduce((s, q) => s + (q.percent_neutral ?? 10), 0) / (scorable.length || 1));
-                                const totalUnfav = Math.round(scorable.reduce((s, q) => s + (q.percent_unfavorable ?? 2), 0) / (scorable.length || 1));
+                                const totalNeut = isEssSummary ? null : Math.round(scorable.reduce((s, q) => s + (q.percent_neutral ?? 10), 0) / (scorable.length || 1));
+                                const totalUnfav = isEssSummary ? null : Math.round(scorable.reduce((s, q) => s + (q.percent_unfavorable ?? 2), 0) / (scorable.length || 1));
 
                                 return (
                                   <React.Fragment key={gIdx}>
@@ -617,10 +641,10 @@ export default function MetricDetailModal({
                                         {totalFav}
                                       </td>
                                       <td className="py-2 px-2 text-center font-black text-amber-800 bg-amber-50/70 border-r border-gray-200">
-                                        {totalNeut}
+                                        {pct(totalNeut)}
                                       </td>
                                       <td className="py-2 px-2 text-center font-black text-rose-800 bg-rose-50/70">
-                                        {totalUnfav}
+                                        {pct(totalUnfav)}
                                       </td>
                                     </tr>
 
@@ -646,10 +670,10 @@ export default function MetricDetailModal({
                                           {q.percent_favorable !== null && q.percent_favorable !== undefined ? q.percent_favorable : q.normalized_score}
                                         </td>
                                         <td className="py-2.5 px-2 text-center font-medium text-amber-600 align-top border-r border-gray-200/60">
-                                          {q.percent_neutral !== null && q.percent_neutral !== undefined ? q.percent_neutral : 8}
+                                          {q.percent_neutral !== null && q.percent_neutral !== undefined ? q.percent_neutral : (isEssSummary ? '—' : 8)}
                                         </td>
                                         <td className="py-2.5 px-2 text-center font-medium text-rose-600 align-top">
-                                          {q.percent_unfavorable !== null && q.percent_unfavorable !== undefined ? q.percent_unfavorable : 1}
+                                          {q.percent_unfavorable !== null && q.percent_unfavorable !== undefined ? q.percent_unfavorable : (isEssSummary ? '—' : 1)}
                                         </td>
                                       </tr>
                                     ))}
@@ -788,6 +812,7 @@ export default function MetricDetailModal({
 
                         // Numeric Scale: SCALE_1_5 or SCALE_1_10
                         const isScale10 = qType === 'SCALE_1_10';
+                        const isEssPercent = qType === 'ESS_PERCENT';
                         const maxScore = isScale10 ? 10.0 : 5.0;
                         const scoreFormatted = `${(q.avg_score || 0).toFixed(2)} / ${maxScore.toFixed(1)}`;
                         const isHigh = q.normalized_score >= 80;
@@ -809,7 +834,7 @@ export default function MetricDetailModal({
                                       {q.label}
                                     </h4>
                                     <span className="text-[10px] font-bold px-2 py-0.5 bg-gray-200 text-gray-800 rounded-full">
-                                      {isScale10 ? 'Scale 1 - 10' : 'Scale 1 - 5'}
+                                      {isEssPercent ? 'ESS % Favorable' : (isScale10 ? 'Scale 1 - 10' : 'Scale 1 - 5')}
                                     </span>
                                     {q.dimension && (
                                       <span className="text-[10px] font-semibold px-2 py-0.5 bg-red-50 text-[#ED1C24] border border-red-200 rounded-full">
@@ -825,7 +850,7 @@ export default function MetricDetailModal({
 
                               <div className="text-right shrink-0">
                                 <div className="text-base font-black text-gray-900">
-                                  {hasEssBreakdown ? `${q.percent_favorable}% Favorable` : scoreFormatted}
+                                  {hasEssBreakdown ? `${q.percent_favorable}% Favorable` : (isEssPercent ? 'No score in the file' : scoreFormatted)}
                                 </div>
                                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                                   isHigh ? 'bg-emerald-100 text-emerald-800' :
@@ -847,21 +872,21 @@ export default function MetricDetailModal({
                                     className="bg-emerald-500 h-full transition-all duration-500"
                                     title={`Favorable: ${q.percent_favorable}%`}
                                   />
-                                  <div 
-                                    style={{ width: `${q.percent_neutral}%` }} 
+                                  <div
+                                    style={{ width: `${q.percent_neutral || 0}%` }}  
                                     className="bg-amber-400 h-full transition-all duration-500"
                                     title={`Neutral: ${q.percent_neutral}%`}
                                   />
-                                  <div 
-                                    style={{ width: `${q.percent_unfavorable}%` }} 
+                                  <div
+                                    style={{ width: `${q.percent_unfavorable || 0}%` }}  
                                     className="bg-rose-500 h-full transition-all duration-500"
                                     title={`Unfavorable: ${q.percent_unfavorable}%`}
                                   />
                                 </div>
                                 <div className="flex justify-between text-[10px] font-medium">
                                   <span className="text-emerald-700">● {q.percent_favorable}% Favorable</span>
-                                  <span className="text-amber-700">● {q.percent_neutral}% Neutral</span>
-                                  <span className="text-rose-700">● {q.percent_unfavorable}% Unfavorable</span>
+                                  {q.percent_neutral !== null && q.percent_neutral !== undefined && <span className="text-amber-700">● {q.percent_neutral}% Neutral</span>}
+                                  {q.percent_unfavorable !== null && q.percent_unfavorable !== undefined && <span className="text-rose-700">● {q.percent_unfavorable}% Unfavorable</span>}
                                 </div>
                               </div>
                             ) : (
@@ -893,8 +918,57 @@ export default function MetricDetailModal({
                 </div>
               )}
 
+              {/* TAB 2 FOR AN ESS SUMMARY: RESULTS BY DIRECTORATE (v2.32.0) */}
+              {isSurvey && isEssSummary && activeTab === 'secondary' && (() => {
+                const rows = detailData.ess_results_by_directorate || [];
+                const labels = [];
+                rows.forEach(r => (r.questions || []).forEach(q => { if (!labels.includes(q.label)) labels.push(q.label); }));
+                return (
+                  <div className="space-y-3">
+                    <div className="text-xs text-gray-500">
+                      ESS result {detailData.ess_period_label}: index and question scores are % favorable per org unit.
+                      {detailData.ess_division_filtered && <strong className="text-indigo-700"> ESS is reported at directorate level - the division filter shows its directorate.</strong>}
+                    </div>
+                    <div className="border border-gray-200 rounded-xl overflow-x-auto shadow-2xs">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-gray-100 text-gray-700 font-bold uppercase tracking-wider border-b border-gray-200">
+                          <tr>
+                            <th className="py-3 px-3.5">Directorate</th>
+                            <th className="py-3 px-3.5 text-right whitespace-nowrap">Participation</th>
+                            <th className="py-3 px-3.5 text-right whitespace-nowrap">Index %</th>
+                            {labels.map((l, i) => (
+                              <th key={i} className="py-3 px-3.5 text-right whitespace-nowrap" title={l}>Q{i + 1} %</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 bg-white">
+                          {rows.length === 0 ? (
+                            <tr><td colSpan={3 + labels.length} className="text-center py-10 text-gray-400 font-medium">No ESS rows in your data scope for this period.</td></tr>
+                          ) : rows.map((r, idx) => (
+                            <tr key={idx} className={r.is_selected ? 'bg-red-50/60 font-bold' : (r.org_level === 'BANKWIDE' ? 'bg-gray-50 font-semibold' : '')}>
+                              <td className="py-2.5 px-3.5 text-gray-900">{r.directorate}</td>
+                              <td className="py-2.5 px-3.5 text-right text-gray-700">{r.participation}</td>
+                              <td className="py-2.5 px-3.5 text-right text-[#ED1C24] font-black">{r.index_score}</td>
+                              {labels.map((l, i) => {
+                                const q = (r.questions || []).find(x => x.label === l);
+                                return <td key={i} className="py-2.5 px-3.5 text-right text-gray-700">{pct(q ? q.score : null)}</td>;
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {labels.length > 0 && (
+                      <ol className="text-[10.5px] text-gray-500 space-y-0.5 list-decimal pl-5">
+                        {labels.map((l, i) => <li key={i}>{l}</li>)}
+                      </ol>
+                    )}
+                  </div>
+                );
+              })()}
+
               {/* TAB 2 FOR SURVEY: LIST OF RESPONDENTS & SURVEY ANSWERS */}
-              {isSurvey && activeTab === 'secondary' && (
+              {isSurvey && !isEssSummary && activeTab === 'secondary' && (
                 <div className="space-y-4">
                   {/* Search, Filter & Download Evidence Toolbar */}
                   <div className="flex flex-col md:flex-row items-center justify-between gap-3 bg-gray-50 p-3 rounded-xl border border-gray-200">

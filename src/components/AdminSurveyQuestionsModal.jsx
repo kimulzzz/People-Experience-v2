@@ -255,10 +255,10 @@ export default function AdminSurveyQuestionsModal({
               href={`/api/surveys/template?metric_id=${selectedMetricId}`}
               download
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 border border-emerald-400 transition-colors shadow-sm"
-              title="Download CSV Template with active questions"
+              title={currentMetric?.survey_source === 'ESS' ? 'Download the ESS summary template (.xlsx): one column per active question' : 'Download CSV Template with active questions'}
             >
               <Download className="w-3.5 h-3.5" />
-              Download CSV Template
+              {currentMetric?.survey_source === 'ESS' ? 'Download ESS Template (.xlsx)' : 'Download CSV Template'}
             </a>
             <button
               onClick={() => setShowPreview(!showPreview)}

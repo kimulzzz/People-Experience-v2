@@ -357,6 +357,29 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_px_resp_upload' AND o
   CREATE INDEX IX_px_resp_upload ON dbo.px_survey_uploaded_responses(upload_id);
 GO
 
+-- ESS result summaries (v2.32.0): an ESS metric's data is the uploaded ESS summary .xlsx, one row per org unit
+-- (the Bankwide row has directorate NULL) per metric and period. A re-upload of the same metric + period replaces
+-- the rows; the upload itself stays in px_survey_uploads (history) and its original file in server/data/ess-uploads.
+-- Scores are percentages 0-100. questions_json = [{ "label": <question text from the file>, "score": <0-100 | null> }].
+IF OBJECT_ID(N'dbo.px_ess_results', N'U') IS NULL
+CREATE TABLE dbo.px_ess_results (
+  ess_result_id   INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_px_ess_results PRIMARY KEY,
+  upload_id       NVARCHAR(64)   NOT NULL,
+  metric_id       INT            NOT NULL,
+  survey_year     SMALLINT       NOT NULL,
+  survey_month    TINYINT        NOT NULL CONSTRAINT CK_px_ess_month CHECK (survey_month BETWEEN 1 AND 12),
+  org_level       VARCHAR(12)    NOT NULL CONSTRAINT CK_px_ess_level CHECK (org_level IN ('BANKWIDE', 'DIRECTORATE')),
+  directorate     NVARCHAR(200)  NULL,
+  participation   INT            NOT NULL CONSTRAINT CK_px_ess_part CHECK (participation >= 0),
+  index_score     DECIMAL(7,4)   NOT NULL CONSTRAINT CK_px_ess_index CHECK (index_score BETWEEN 0 AND 100),
+  questions_json  NVARCHAR(MAX)  NOT NULL CONSTRAINT DF_px_ess_q DEFAULT (N'[]'),
+  created_at      DATETIME2(3)   NOT NULL CONSTRAINT DF_px_ess_ts DEFAULT (SYSUTCDATETIME()),
+  CONSTRAINT CK_px_ess_dir CHECK ((org_level = 'BANKWIDE' AND directorate IS NULL) OR (org_level = 'DIRECTORATE' AND directorate IS NOT NULL)),
+  -- one Bankwide row (directorate NULL: SQL Server allows a single NULL per key) and one row per directorate per period
+  CONSTRAINT UQ_px_ess_results UNIQUE (metric_id, survey_year, survey_month, org_level, directorate)
+);
+GO
+
 IF OBJECT_ID(N'dbo.px_acknowledged_alerts', N'U') IS NULL
 CREATE TABLE dbo.px_acknowledged_alerts (
   metric_id        INT           NOT NULL CONSTRAINT PK_px_ack_alerts PRIMARY KEY,

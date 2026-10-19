@@ -121,7 +121,9 @@ Metrik #7 memiliki susunan pertanyaan baku gabungan antara skala likert dan veri
 
 ### 4.2 Spesifikasi 11 Metrik Survei Bersumber dari ESS (Employee Sentiment Survey)
 
-Untuk metrik yang bersumber dari ESS, data disajikan dalam format **Spreadsheet Skor Pertanyaan (% Favorable, % Neutral, % Unfavorable)**:
+Untuk metrik yang bersumber dari ESS, data disajikan dalam format **Spreadsheet Skor Pertanyaan (% Favorable, % Neutral, % Unfavorable)**.
+
+> **Sejak v2.32.0** data metrik ESS adalah **ringkasan hasil ESS yang diunggah (.xlsx)**, bukan jawaban per responden (lihat §5.3). Ringkasan hanya memuat % favorable per pertanyaan; % Neutral / % Unfavorable tidak tersedia (`null`). Kolom % Neut / % Unfav di tabel di bawah adalah angka referensi lama. Nilai seed saat ini: periode November 2025, index Bankwide metrik 9 = 92,00 (nilai file user), metrik lain = `raw_value` seed metrik (dummy).
 
 | ID | Nama Metrik ESS | Dimensi ESS | Jml Soal | % Fav Total | % Neut Total | % Unfav Total |
 | :-: | :--- | :--- | :---: | :---: | :---: | :---: |
@@ -165,3 +167,20 @@ nip,employee_name,cimb_email,directorate,division,metric_id,metric_name,q1_...,q
 ### 5.2 Berkas Ekspor Audit Evidence (`/api/surveys/evidence`)
 Menghasilkan berkas CSV berstandar UTF-8 BOM yang memuat kolom audit:
 `Tanggal_Survei_Dilakukan, NIP, Nama_Karyawan, Email_CIMB, Direktorat, Divisi, ID_Metrik, Nama_Metrik, [Kolom Pertanyaan Q1..QN], Rata_Rata_Skor, Indeks_Normalisasi_Persen, Komentar_Verbatim_Feedback, Sumber_Data`
+
+Untuk metrik ESS (sejak v2.32.0) evidence berisi baris ringkasan tersimpan semua periode (`Evidence_ESS_Summary_Metric_<id>.csv`, parameter `period` diabaikan):
+`Directorate, Level, Year, Month, Participation, Index_%, [<teks pertanyaan> (%) ...], Metric_ID, Metric_Name, Upload_ID, File_Name, Uploaded_By, Uploaded_At`. PIC hanya mendapat baris direktorat dalam cakupannya (tanpa baris Bankwide).
+
+### 5.3 Berkas Ringkasan ESS (.xlsx) dan Tabel `px_ess_results` (sejak v2.32.0)
+
+Satu file = satu metrik ESS dan satu periode; aturan lengkap ada di `docs/SURVEY_IMPORT_GUIDE.md`.
+
+| Kolom file | Field tersimpan | Tipe | Keterangan |
+| :---: | :--- | :--- | :--- |
+| A Directorate | `org_level`, `directorate` | `BANKWIDE` / `DIRECTORATE`, nama direktorat | Baris "PT Bank CIMB Niaga ..." atau Level `Bankwide` -> `BANKWIDE` dengan `directorate` NULL; selain itu nama direktorat master. |
+| B Level | (validasi saja) | teks | `Bankwide` / `Directorate` / kosong. |
+| C Year, D Month | `survey_year`, `survey_month` | integer | Sama untuk semua baris. |
+| E Participation | `participation` | integer >= 0 | Dipakai sebagai `sample_size` / `total_respondents`. |
+| F <nama index> | `index_score` | desimal 0-100 | Skor metrik; pecahan 0-1 dikali 100. |
+| G.. <pertanyaan> | `questions` (`questions_json`) | JSON `[{label, score}]` | `label` = teks header file, `score` 0-100 atau `null`. |
+| - | `upload_id`, `metric_id`, `created_at` | - | `upload_id` = batch di `px_survey_uploads` (riwayat). |

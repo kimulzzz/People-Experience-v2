@@ -40,7 +40,7 @@ Script `scripts/sqlserver/Setup-SqlServer.ps1` (idempoten, log di `scripts/sqlse
 
 ---
 
-## 3. Skema (`server/db/schema.sql` — 29 tabel, prefix `px_`)
+## 3. Skema (`server/db/schema.sql` — 30 tabel sejak v2.32.0, prefix `px_`)
 
 | Kelompok | Tabel | Catatan |
 | :--- | :--- | :--- |
@@ -52,6 +52,7 @@ Script `scripts/sqlserver/Setup-SqlServer.ps1` (idempoten, log di `scripts/sqlse
 | Pengaturan | `px_app_settings` | Nilai yang ditampilkan di UI dan dikelola admin (JSON): `px_index_target` (garis target chart), `event_program_categories`, `event_types`, serta katalog pilihan `metric_types`, `scale_types`, `target_audiences`, `update_frequencies`, `question_types` (hanya label yang boleh diubah). API: `GET /api/settings`, `PUT /api/admin/settings/:key`. |
 | Signature Event | `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` | `UNIQUE(event_id, nip)` pada absensi & feedback (NIP tetap kunci utama responden). FK `ON DELETE CASCADE` ke `px_events`. **`px_media.file_path`** = path file di disk (mis. `/uploads/media-….mp4`) + `caption`, `ai_generated_description`, `transcript`, `transcript_segments` (JSON), `transcript_status`, `duration_seconds`, serta (v2.28.0) 8 kolom AI Summary `summary_*` (lihat §13). |
 | Survei | `px_survey_uploads`, `px_survey_uploaded_responses`, `px_acknowledged_alerts` | Responden **dinormalisasi** (lihat bawah). Index `(metric_id, survey_date)` dan `(org_unit_1, org_unit_2)`. |
+| Ringkasan ESS (v2.32.0) | `px_ess_results` | Data metrik ESS: satu baris per unit org (Bankwide / direktorat) per metrik dan periode, dari file ringkasan `.xlsx` yang diunggah. Batch upload-nya tetap di `px_survey_uploads`. Lihat §17. |
 | Login (v2.26.0) | `px_users`, `px_sessions`, `px_audit_log` | `px_users`: `username` UNIQUE (NIP/nama login), `password_hash` (scrypt, tidak pernah dikembalikan API), `role` CHECK `ADMIN`/`USER`, `directorate`/`division` (nama, NULL untuk Admin), `is_active`, `must_change_password`, `failed_attempts`, `locked_until`, `last_login_at`. `px_sessions`: PK `token_hash` (**SHA-256 token cookie**, bukan token-nya), `expires_at`, FK ke user `ON DELETE CASCADE`. `px_audit_log`: waktu, user, `action`, `target`, `ip` — tanpa secret. Dibuat idempoten saat boot/`applySchema()`. |
 | Cakupan User (v2.27.0) | `px_user_scopes` | `user_id` FK ke `px_users` `ON DELETE CASCADE`, `directorate`, `division` (**NULL = semua divisi** direktorat itu), `UNIQUE(user_id, directorate, division)`. Kolom `px_users.directorate`/`division` (v2.26.0) **legacy: tidak ditulis/dipakai lagi**. Dibuat idempoten saat boot. |
 | Drilldown OUTCOME | `px_recruitment_sla_by_unit`, `px_approval_stage_compliance`, `px_hiring_channel_mix`, `px_recognition_categories`, `px_attrition_by_tenure` | Menggantikan objek `operationalRecords` (5 bentuk kolom berbeda dalam satu objek). |
@@ -193,3 +194,49 @@ Tidak ada perubahan skema (jumlah tabel tetap 29, tidak ada kolom baru). Yang be
 - **Tidak ada migrasi balik**: kembali ke nama demo lama hanya lewat restore backup `.bak` dari sebelum v2.31.0.
 - Contoh pemeriksaan: `SELECT directorate_name FROM dbo.px_directorates ORDER BY directorate_id;` dan `SELECT org_unit_1, COUNT(*) AS n FROM dbo.px_survey_uploaded_responses WHERE respondent_type = 'EMPLOYEE' GROUP BY org_unit_1 ORDER BY org_unit_1;`
 - Diverifikasi oleh Modul 44 (`docs/07` §27).
+
+---
+
+## 17. Pembaruan v2.32.0 - Tabel `px_ess_results` (Ringkasan ESS) & Pembersihan Data ESS per Responden
+
+Metrik SURVEY ber-`survey_source = 'ESS'` kini diisi dari ringkasan hasil ESS `.xlsx` (format: `docs/SURVEY_IMPORT_GUIDE.md`; API: `docs/04` "Catatan v2.32.0"). Jumlah tabel 29 -> **30**.
+
+| Kolom | Tipe | Aturan |
+| :--- | :--- | :--- |
+| `ess_result_id` | `INT IDENTITY` | PK `PK_px_ess_results` |
+| `upload_id` | `NVARCHAR(64) NOT NULL` | batch di `px_survey_uploads` (`ess-<ts>-<acak>` untuk upload, `seed-ess-<metric>-2025-11` untuk seed); tanpa FK |
+| `metric_id` | `INT NOT NULL` | tanpa FK (sama seperti tabel survei lain) |
+| `survey_year`, `survey_month` | `SMALLINT`, `TINYINT` | `CK_px_ess_month`: bulan 1-12 |
+| `org_level` | `VARCHAR(12)` | `CK_px_ess_level`: `BANKWIDE` / `DIRECTORATE` |
+| `directorate` | `NVARCHAR(200) NULL` | `CK_px_ess_dir`: NULL untuk `BANKWIDE`, wajib untuk `DIRECTORATE` |
+| `participation` | `INT` | `CK_px_ess_part`: >= 0 |
+| `index_score` | `DECIMAL(7,4)` | `CK_px_ess_index`: 0-100 |
+| `questions_json` | `NVARCHAR(MAX)` | default `[]`; `[{ "label": <teks pertanyaan di file>, "score": <0-100 atau null> }]` |
+| `created_at` | `DATETIME2(3)` | default `SYSUTCDATETIME()` |
+
+`UQ_px_ess_results (metric_id, survey_year, survey_month, org_level, directorate)`: satu baris Bankwide (SQL Server mengizinkan satu NULL per kunci) dan satu baris per direktorat per periode. Unggah ulang metrik + periode yang sama menghapus baris lama dan menulis yang baru dalam **satu transaksi** bersama record `px_survey_uploads` baru (`saveEssResultUpload`); record upload lama tetap. Hapus metrik ikut menghapus `px_ess_results`-nya. JSON: array `essResults` dengan field yang sama (`questions` alih-alih `questions_json`).
+
+**File asli**: `server/data/ess-uploads/<upload_id>.xlsx` (bukan di database, tidak disajikan `/uploads`, di `.gitignore`). Hanya ditulis setelah validasi lolos; dihapus bila penyimpanan DB gagal dan saat metriknya dihapus.
+
+**Pembersihan sekali (upgrade)**
+
+| Backend | Kapan | Yang dihapus |
+| :--- | :--- | :--- |
+| SQL | Boot yang **membuat** `px_ess_results` (dicek sebelum `applySchema()`), setelah `enforceEssManualUpload()` | `cleanupEssRespondentRows()`: semua baris `px_survey_uploaded_responses` milik metrik ESS (dibaca dari `px_metrics`), lalu batch `px_survey_uploads` yang menjadi kosong. Log: `ESS now uses uploaded summaries: deleted <n> per-respondent ESS rows and <m> upload batches left empty.` |
+| SQL (`migrate.js` / import `store.json`) | `store.json` tanpa `essResults` | pembersihan yang sama di dalam transaksi import |
+| JSON | `store.json` dimuat tanpa `essResults` | `cleanupStoreEssRespondentRows()`, lalu `essResults = []` dan disimpan |
+
+Data SYSTEM tidak disentuh. Hasil database utama (laporan developer): **2.568** baris dan **60** batch kosong dihapus; `seed-batch-2026` tetap (masih berisi baris SYSTEM). JSON (cek developer pada salinan): 2.511 baris. Metrik yang **belakangan** diubah SYSTEM -> ESS tidak dibersihkan lagi: baris per respondennya tetap ada tetapi diabaikan perhitungan.
+
+**Seed demo**: setiap boot (bila `SEED_DEMO_DATA` bukan `false`) `topUpEssSeed()` / `topUpStoreEssSeed()` menambahkan ringkasan 2025-11 (13 baris) + satu record `px_survey_uploads` (`uploaded_by` "Seed (dummy)") **hanya** untuk metrik ESS yang belum punya hasil sama sekali, sehingga upload asli tidak pernah ditimpa. Total seed: 13 x 11 = 143 baris. Seed per responden tidak lagi dibuat untuk metrik ESS.
+
+**Ekspor / rollback**: `npm run db:export` membawa `essResults`; `server/db/migrate.js` mengimpornya (`ess_results` di hitungan verifikasi). `server/data/store.json` di repo saat ini belum punya `essResults`, jadi rollback ke JSON atau `migrate --reset` menjalankan pembersihan di atas lalu seed demo; hasil ESS asli yang belum diekspor tidak ikut. `dropAllTables()` (`--reset`) kini juga menghapus `px_ess_results`. Tidak ada migrasi balik ke data per responden.
+
+Pemeriksaan:
+
+```sql
+SELECT metric_id, survey_year, survey_month, COUNT(*) AS rows_, SUM(CASE WHEN org_level = 'BANKWIDE' THEN 1 ELSE 0 END) AS bankwide
+FROM dbo.px_ess_results GROUP BY metric_id, survey_year, survey_month ORDER BY metric_id, survey_year, survey_month;
+```
+
+Diverifikasi oleh Modul 45 (`docs/07` §28).

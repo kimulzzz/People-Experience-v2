@@ -11,6 +11,8 @@ const {
   sampleAttendances,
   sampleFeedbackResponses,
   initialSurveyUploadedResponses,
+  initialEssResults,
+  initialEssUploads,
   initialOperationalRecords,
   initialAppSettings,
   initialEmailSettings,
@@ -20,7 +22,7 @@ const {
 const { parseFilterOptions, normalizeDateString, todayDateString } = require('./filterUtils');
 const { normalizeScopes, rowInScopes, legacyUserScopes } = require('./scopeUtils');
 const { defaultUnitForScale, parseUnit } = require('./metricUnit');
-const { inferSurveySource, resolveSurveySource, resolveRequiresManualUpload } = require('./surveySource');
+const { inferSurveySource, isEssMetric, resolveSurveySource, resolveRequiresManualUpload } = require('./surveySource');
 const { buildInitialStore: loadInitialStore } = require('./initialStore');
 const { planDirectory, renamedDirectorate, migrateScopes, migrateDirectorateOptions, DIRECTORATE_SETTING_KEYS } = require('./directorateMigration');
 
@@ -88,6 +90,36 @@ function migrateAuthDirectorates(a) {
   if (counts.user_scopes + counts.users) console.log(`[jsonStorage] Directorate names migrated in login accounts: user_scopes=${counts.user_scopes}, users=${counts.users}.`);
   return counts;
 }
+
+// ESS result summaries (v2.32.0). The first load of a store.json without `essResults` is the upgrade: ESS metrics no
+// longer have per-respondent rows, so those (seed + old CSV test uploads) are deleted together with the upload
+// batches that are empty afterwards. SYSTEM survey data is never touched. Same rule as sqlStorage.cleanupEssRespondentRows.
+function cleanupStoreEssRespondentRows(s) {
+  const essIds = new Set((s.metrics || []).filter(m => m.metric_type === 'SURVEY' && isEssMetric(m)).map(m => m.metric_id));
+  const before = (s.surveyUploadedResponses || []).length;
+  const touched = new Set((s.surveyUploadedResponses || []).filter(r => essIds.has(r.metric_id)).map(r => r.upload_id));
+  s.surveyUploadedResponses = (s.surveyUploadedResponses || []).filter(r => !essIds.has(r.metric_id));
+  const stillUsed = new Set(s.surveyUploadedResponses.map(r => r.upload_id));
+  const uploadsBefore = (s.surveyUploads || []).length;
+  s.surveyUploads = (s.surveyUploads || []).filter(u => !touched.has(u.upload_id) || stillUsed.has(u.upload_id));
+  return { responses: before - s.surveyUploadedResponses.length, uploads: uploadsBefore - s.surveyUploads.length };
+}
+
+// Demo ESS summaries: only for an ESS metric that has no ESS result at all (an upload is never overwritten).
+function topUpStoreEssSeed(s) {
+  const essIds = new Set((s.metrics || []).filter(m => m.metric_type === 'SURVEY' && isEssMetric(m)).map(m => m.metric_id));
+  const have = new Set((s.essResults || []).map(r => r.metric_id));
+  const todo = [...new Set(initialEssResults.map(r => r.metric_id))].filter(id => essIds.has(id) && !have.has(id));
+  todo.forEach(id => {
+    const up = initialEssUploads.find(u => u.metric_id === id);
+    if (up && !(s.surveyUploads || []).some(u => u.upload_id === up.upload_id)) s.surveyUploads.push(JSON.parse(JSON.stringify(up)));
+    initialEssResults.filter(r => r.metric_id === id).forEach(r => {
+      s.essResults.push({ ess_result_id: nextEssResultId(s), ...JSON.parse(JSON.stringify(r)), created_at: up ? up.uploaded_at : new Date().toISOString() });
+    });
+  });
+  return todo;
+}
+const nextEssResultId = s => (s.essResults || []).reduce((mx, r) => Math.max(mx, r.ess_result_id || 0), 0) + 1;
 
 function getStore() {
   if (!store) {
@@ -192,6 +224,15 @@ function getStore() {
             }
           });
         }
+        if (!Array.isArray(store.essResults)) {
+          const cleaned = cleanupStoreEssRespondentRows(store);
+          store.essResults = [];
+          console.log(`[jsonStorage] ESS now uses uploaded summaries: deleted ${cleaned.responses} per-respondent ESS rows and ${cleaned.uploads} upload batches left empty.`);
+        }
+        if (String(process.env.SEED_DEMO_DATA || 'true').toLowerCase() !== 'false') {
+          const seededEss = topUpStoreEssSeed(store);
+          if (seededEss.length) console.log(`[jsonStorage] Seeded the demo ESS summary (2025-11) of metric(s) ${seededEss.join(', ')}.`);
+        }
         saveStore();
       } catch (err) {
         console.error('Error loading store.json, falling back to seed data:', err);
@@ -279,7 +320,13 @@ const storage = {
   // Is there ANY survey response for this metric dated in [startDate, endDate)? (YYYY-MM-DD strings)
   hasSurveyDataInPeriod(metric_id, startDate, endDate) {
     const id = parseInt(metric_id);
-    return (getStore().surveyUploadedResponses || []).some(r => {
+    // an ESS summary (v2.32.0) is dated on the 1st of its month
+    const essHit = (getStore().essResults || []).some(r => {
+      if (r.metric_id !== id) return false;
+      const d = `${r.survey_year}-${String(r.survey_month).padStart(2, '0')}-01`;
+      return d >= startDate && d < endDate;
+    });
+    return essHit || (getStore().surveyUploadedResponses || []).some(r => {
       if (r.metric_id !== id) return false;
       const d = normalizeDateString(r.survey_date || r.created_at) || '';
       return d >= startDate && d < endDate;
@@ -692,6 +739,7 @@ const storage = {
     // A metric's survey data goes with it: orphaned responses would otherwise attach themselves to
     // whichever new metric later receives the same id (ids are max+1).
     s.surveyUploadedResponses = (s.surveyUploadedResponses || []).filter(r => r.metric_id !== id);
+    s.essResults = (s.essResults || []).filter(r => r.metric_id !== id);
     s.surveyUploads = (s.surveyUploads || []).filter(u => u.metric_id !== id);
     
     // Remove from weights and targets
@@ -1091,6 +1139,70 @@ const storage = {
     return uploadRecord;
   },
 
+  // --- ESS RESULT SUMMARIES (v2.32.0) --- same contract as sqlStorage
+  getEssResults(metric_id, { year, month } = {}) {
+    const id = metric_id === null || metric_id === undefined ? null : parseInt(metric_id);
+    return (getStore().essResults || [])
+      .filter(r => (id === null || r.metric_id === id) && (!year || r.survey_year === parseInt(year)) && (!month || r.survey_month === parseInt(month)))
+      .sort((a, b) => a.metric_id - b.metric_id || a.survey_year - b.survey_year || a.survey_month - b.survey_month || a.ess_result_id - b.ess_result_id)
+      .map(r => JSON.parse(JSON.stringify(r)));
+  },
+  getLatestEssPeriod(metric_id, endYear, endMonth) {
+    const id = parseInt(metric_id);
+    const endKey = parseInt(endYear) * 100 + parseInt(endMonth || 12);
+    const keys = (getStore().essResults || []).filter(r => r.metric_id === id).map(r => r.survey_year * 100 + r.survey_month).filter(k => k <= endKey);
+    if (!keys.length) return null;
+    const k = Math.max(...keys);
+    return { year: Math.floor(k / 100), month: k % 100 };
+  },
+  saveEssResultUpload(meta, rows) {
+    const s = getStore();
+    s.surveyUploads = s.surveyUploads || [];
+    s.essResults = s.essResults || [];
+    const record = {
+      upload_id: meta.upload_id || `ess-${Date.now()}`,
+      metric_id: parseInt(meta.metric_id),
+      file_name: meta.file_name,
+      total_rows: meta.total_rows,
+      valid_rows: meta.valid_rows,
+      invalid_rows: meta.invalid_rows || 0,
+      calculated_avg_score: meta.calculated_avg_score,
+      uploaded_by: meta.uploaded_by || 'HR Admin',
+      uploaded_at: new Date().toISOString()
+    };
+    const y = parseInt(meta.survey_year);
+    const m = parseInt(meta.survey_month);
+    const before = s.essResults.length;
+    s.essResults = s.essResults.filter(r => !(r.metric_id === record.metric_id && r.survey_year === y && r.survey_month === m));
+    const replaced = before - s.essResults.length;
+    s.surveyUploads.unshift(record);
+    rows.forEach(r => {
+      s.essResults.push({
+        ess_result_id: nextEssResultId(s),
+        upload_id: record.upload_id,
+        metric_id: record.metric_id,
+        survey_year: y,
+        survey_month: m,
+        org_level: r.org_level,
+        directorate: r.org_level === 'BANKWIDE' ? null : r.directorate,
+        participation: parseInt(r.participation) || 0,
+        index_score: Number(r.index_score),
+        questions: r.questions || [],
+        created_at: record.uploaded_at
+      });
+    });
+    saveStore();
+    return { record, replaced_rows: replaced };
+  },
+  deleteEssResultsForMetric(metric_id) {
+    const s = getStore();
+    const id = parseInt(metric_id);
+    const before = (s.essResults || []).length;
+    s.essResults = (s.essResults || []).filter(r => r.metric_id !== id);
+    saveStore();
+    return before - s.essResults.length;
+  },
+
   // --- TARGET & THRESHOLD ADMIN SETTINGS ---
   getMetricTargets() {
     const s = getStore();
@@ -1226,6 +1338,7 @@ const storage = {
       const d = normalizeDateString(r.survey_date || r.created_at);
       if (d && /^\d{4}/.test(d)) years.add(d.slice(0, 4));
     });
+    (s.essResults || []).forEach(r => years.add(String(r.survey_year)));
     years.add(String(new Date().getFullYear())); // always include the real current year
     return Array.from(years).sort();
   },

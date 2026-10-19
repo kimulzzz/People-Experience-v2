@@ -51,9 +51,10 @@ Backend dibangun menggunakan **Node.js dan Express.js** sebagai REST API Server 
 ### 2.3 Modul Manajemen Survei (Template, Upload & Evidence)
 | Method | Endpoint | Deskripsi | Parameter / Payload |
 | :---: | :--- | :--- | :--- |
-| `GET` | `/api/surveys/template` | Mengunduh berkas template CSV survei spesifik (karyawan / non-karyawan) atau master all-surveys | `metric_id=2` (Campus), `metric_id=5` (Candidate), atau `metric_id=ALL` |
-| `POST` | `/api/surveys/upload` | Mengunggah dan memproses berkas CSV respon survei | Body: `{ csvText, fileName, metric_id }` |
-| `GET` | `/api/surveys/evidence` | Mengunduh berkas CSV audit trail data respon koresponden | `metric_id=2`, `metric_id=5`, `metric_id=ALL`, `period=YTD` |
+| `GET` | `/api/surveys/template` | Mengunduh berkas template CSV survei spesifik (karyawan / non-karyawan) atau master all-surveys. Metrik ESS (v2.32.0): `Template_ESS_Metric_<id>.xlsx`; master `ALL` hanya metrik SYSTEM | `metric_id=2` (Campus), `metric_id=5` (Candidate), atau `metric_id=ALL` |
+| `POST` | `/api/surveys/upload` | Mengunggah dan memproses berkas CSV respon survei; metrik ESS hanya ringkasan `.xlsx` (v2.32.0) | Body: `{ csvText, fileName, metric_id }` atau multipart field `file` / `csvFile` + `metric_id` |
+| `GET` | `/api/surveys/evidence` | Mengunduh berkas CSV audit trail data respon koresponden; metrik ESS = baris ringkasan tersimpan (v2.32.0) | `metric_id=2`, `metric_id=5`, `metric_id=ALL`, `period=YTD` |
+| `GET` | `/api/surveys/ess-file/:upload_id` | Mengunduh file ringkasan ESS asli satu upload (v2.32.0; Admin atau PIC metrik itu) | Path: `upload_id` |
 
 ---
 
@@ -494,3 +495,51 @@ Perubahan terkait: `updateMedia` (`sqlStorage.js`, `jsonStorage.js`) kini meneri
 **Ekspor modul**: ditambah `summarizeWithAi`, `tooManyNovelWords`, `NOVEL_LIMITS`. Tidak ada endpoint, setting, tabel, atau env baru; `/api/health` `version` = `2.30.3`.
 
 **Batasan**: distorsi makna halus (penafian, nuansa) tetap bisa lolos; sinonim non-imbuhan (perlahan vs pelan) tidak dicocokkan; Gemma 4B masih bisa mengarang pada teks sangat pendek (hasil: `RULE`). Pengujian: `docs/07` §26 (Modul 43).
+
+---
+
+## Catatan v2.32.0 - Ringkasan ESS (.xlsx) Menggantikan Data ESS per Responden
+
+**Ringkasan**: metrik SURVEY dengan `survey_source = 'ESS'` (cek `isEssMetric`, `server/db/surveySource.js`) tidak lagi memakai baris per responden. Datanya adalah ringkasan hasil ESS yang diunggah sebagai `.xlsx` (satu baris per unit org per periode), disimpan di `px_ess_results` / `essResults`. Format file dan validasi: `docs/SURVEY_IMPORT_GUIDE.md`; kamus kolom: `docs/02` §5.3; tabel: `docs/08` §17. Detail: `CHANGELOG.md` [2.32.0].
+
+**Endpoint**
+
+| Endpoint | Perilaku untuk metrik ESS | Akses |
+| :--- | :--- | :--- |
+| `POST /api/surveys/upload` | Field file `file` atau `csvFile` (multer `upload.fields`; file di field lain langsung dihapus). Hanya `.xlsx`: tanpa file (mis. `csvText`) -> **400**; `.csv`/`.xls`/ekstensi lain -> **415**; workbook tidak valid atau satu baris salah -> **400** `{ error, errors: [{ row_number, column, reason }] }`, tidak ada yang disimpan. Sukses -> 200 `{ is_ess_summary: true, upload_id, period, period_label, index_label, question_labels, rows_imported, has_bankwide_row, bankwide_index, replaced_previous, replaced_rows, ... }` tanpa field `calculation`. `.xlsx` ke metrik SYSTEM atau tanpa metrik -> **400**. File (jenis apa pun) ke `metric_id` numerik yang tidak ada -> **404** (jalur `csvText` tetap menolak per baris). Audit `SURVEY_UPLOAD` dengan target `ESS summary metric <id>; period <YYYY-MM>; <n> rows[ (replaced)]; batch <upload_id>`; `uploaded_by` = `Nama (username)`. | Admin, PIC metrik (aturan v2.27.1/v2.29.0) |
+| `GET /api/surveys/template?metric_id=<ESS>` | `Template_ESS_Metric_<id>.xlsx`: header `Directorate, Level, Year, Month, Participation, <nama metrik tanpa " (ESS)">, <teks pertanyaan aktif non-FREE_TEXT>`, baris `PT Bank CIMB Niaga Tbk / Bankwide`, satu baris per direktorat master, nilai kosong. Template master `ALL` (CSV) tidak lagi memuat metrik ESS. | sama dengan template CSV |
+| `GET /api/surveys/evidence?metric_id=<ESS>` | `Evidence_ESS_Summary_Metric_<id>.csv` (`generateEssEvidenceCsv`): semua periode, `period` diabaikan, kolom upload (file, pengunggah, waktu), formula-escape seperti evidence CSV. PIC: hanya baris direktorat dalam `respondentScopeFor`, tanpa Bankwide. | Admin, PIC |
+| `GET /api/surveys/ess-file/:upload_id` (baru) | Mengirim file asli `server/data/ess-uploads/<upload_id>.xlsx` dengan nama file upload. Upload tidak dikenal atau tanpa `metric_id` -> 404; upload seed / file tidak ada di disk -> 404; id dibatasi `[A-Za-z0-9._-]{1,64}`. | Admin, PIC metrik upload itu; lainnya 403 |
+| `DELETE /api/admin/metrics/:id` | Kaskade juga menghapus `px_ess_results` metrik itu; route menghapus file asli setiap upload metrik itu. | Admin |
+
+`processSurveyCsv` (CSV) menolak per baris setiap baris yang `metric_id`-nya metrik ESS ("upload its ESS summary Excel file (.xlsx) instead of CSV rows"); baris lain dalam CSV yang sama tetap diproses.
+
+**Perbaikan**: file sementara multer kini dibaca sekali lalu dihapus **sinkron** sebelum respons apa pun (sebelumnya di `finally`, bisa masih ada saat respons diterima - flake Modul 36).
+
+**`essSummaryService.js` (baru)**
+
+| Fungsi | Fungsi |
+| :--- | :--- |
+| `readFirstSheet(buffer)` | Membaca sheet pertama `.xlsx` lewat `jszip` (shared strings, inline string, angka, boolean, error); formula tidak dievaluasi, dipakai nilai cache; formula tanpa nilai ditandai. |
+| `validateEssSheet(rows, directorates)` | Validasi layout + master direktorat; mengembalikan `{ errors, rows, period, index_label, question_labels }`. |
+| `parseScore(cell)` | 0-1 -> x100; > 1 s.d. 100 -> persen; teks berakhiran `%` -> persen; lainnya error. |
+| `importEssSummary(buffer, fileName, metric, { uploadedBy })` | Validasi -> simpan file asli -> `storage.saveEssResultUpload` (file dihapus lagi bila simpan gagal). `calculated_avg_score` = index Bankwide (atau gabungan baris direktorat). |
+| `selectEssResult(results, metricId, period, org)` | Aturan periode dan level org (di bawah). |
+| `essOrgFor({ directorate, scopes, bankwide })` | Filter engine -> `{ directorates: null | [nama] }`. |
+| `poolRows(rows)` | Rata-rata berbobot partisipasi (rata-rata biasa bila total partisipasi 0); skor pertanyaan digabung per label. |
+| `generateEssTemplateXlsx`, `buildXlsx`, `generateEssEvidenceCsv`, `essOriginalFilePath` | Template, penulis `.xlsx` minimal, evidence, path file asli. |
+
+**Aturan skor di `calculationEngine.js`**
+
+| Aspek | Aturan |
+| :--- | :--- |
+| Periode (*carry-forward*) | Batas akhir: YTD tahun Y = Y-12 (atau `endMonth` bila ada, mis. titik tren YTD); MTD Y-M = Y-M. Dipakai hasil dengan (tahun, bulan) terbesar yang <= batas itu, dari tahun mana pun. |
+| Level org | Tanpa filter direktorat: baris `BANKWIDE` (bila tidak ada: gabungan baris direktorat). Filter direktorat: baris direktorat itu. Filter divisi tanpa direktorat: baris direktorat induk divisi (`essDirectorateFor`; divisi tak dikenal -> tanpa data). Akun USER dengan `scopes`: gabungan berbobot partisipasi baris direktorat dalam cakupan (tiap direktorat sekali), tidak pernah baris Bankwide. |
+| Nilai metrik | `raw_value` = `index`, `sample_size` = `participation`, `last_survey_date` = `YYYY-MM`; tambahan `ess_period`, `ess_period_label`, `ess_level`. Normalisasi/status seperti metrik `PERCENTAGE` lain. |
+| Tanpa hasil | `raw_value` statis metrik, `sample_size` 0, `last_survey_date` = `last_survey_date` metrik atau hari ini. |
+| Tren | `response_count` per titik ikut menjumlah partisipasi ESS (lewat `sample_size`), jadi bulan setelah hasil ESS terakhir memakai nilai yang sama (carry-forward). |
+| Detail (`getMetricDetail` -> `buildEssDetail`) | `is_ess_summary: true`, `ess_summary` (`summary_score` = index, `percent_neutral`/`percent_unfavorable` = `null`, `participation`, `period_label`), `questions_breakdown` bertipe `ESS_PERCENT` (`percent_favorable` = skor file), `ess_results_by_directorate` (Admin/tanpa scope: semua baris, Bankwide dulu; USER: hanya direktorat dalam cakupan; `is_selected`), `ess_upload`, `ess_division_filtered`, `total_respondents` = partisipasi, `responses: []`. Pertanyaan file dicocokkan ke pertanyaan terkonfigurasi lewat teks yang dinormalisasi (huruf kecil, non-alfanumerik jadi spasi); tidak cocok -> `key` `ess_q<N>`, label "Question N". Bila metrik ESS tidak punya hasil, detail jatuh ke jalur survei lama (placeholder `ess_summary`). |
+
+**Storage (kedua backend, kontrak sama)**: `getEssResults(metric_id|null, { year, month })`, `getLatestEssPeriod(metric_id, endYear, endMonth)`, `saveEssResultUpload(meta, rows)` (insert ke `px_survey_uploads` + hapus baris metrik/periode yang sama + insert baris baru, satu transaksi; mengembalikan `{ record, replaced_rows }`), `deleteEssResultsForMetric(metric_id)`. `getLatestEssPeriod` dan `deleteEssResultsForMetric` belum dipanggil kode lain. `hasSurveyDataInPeriod` kini juga benar bila ada hasil ESS bertanggal tanggal 1 bulannya dalam rentang (pengingat e-mail), `getAvailableSurveyYears` ikut memuat `survey_year` ESS.
+
+**Tidak berubah**: tidak ada env aplikasi atau setting baru; `/api/health` `version` = `2.32.0`. Pengujian: `docs/07` §28 (Modul 45).

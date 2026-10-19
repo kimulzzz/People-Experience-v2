@@ -1119,6 +1119,8 @@ function generateInitialSurveyResponses() {
   surveyMetricIds.forEach(metricId => {
     const metricObj = initialMetrics.find(m => m.metric_id === metricId);
     if (!metricObj) return;
+    // ESS metrics have no per-respondent rows (v2.32.0): their data is the uploaded ESS summary (initialEssResults).
+    if (metricObj.survey_source === 'ESS') return;
 
     const questions = DEFAULT_METRIC_QUESTIONS[metricId] || [];
     const isScale5 = metricObj.scale_type === 'RATING_5';
@@ -1319,6 +1321,102 @@ function generateInitialSurveyResponses() {
 
 const initialSurveyUploadedResponses = generateInitialSurveyResponses();
 
+// ESS result summaries (v2.32.0) - the ESS data of every ESS metric is the uploaded summary file (one row per
+// org unit), not per-respondent rows. Period November 2025 for every ESS metric. The metric "Role Clarity & DS
+// Support Score Index" carries the EXACT values of the real file "ESS 2025 Result_Role Clarity & DS Support.xlsx"
+// (fractions x 100); the other ESS metrics get deterministic DUMMY rows with the same participation numbers, the
+// bankwide index equal to the metric's seed raw_value and each directorate within about 4 points of it.
+// Inserted once per metric by the storage boot top-up (only when the metric has no ESS result at all).
+const ESS_SEED_PERIOD = { year: 2025, month: 11 };
+const ESS_SEED_PARTICIPATION = [
+  ['Business Banking', 449],
+  ['Compliance, Corporate Affairs & Legal', 95],
+  ['Consumer & EBB', 1816],
+  ['Corporate Assurance', 108],
+  ['Human Resources', 129],
+  ['Network & Digital Banking', 2579],
+  ['Operations, Technology, Analytics & AI', 1494],
+  ['Risk Management', 192],
+  ['Sharia Banking', 365],
+  ['Special Asset', 39],
+  ['Strategy, Finance & SPAPM', 274],
+  ['Treasury & Capital Market', 88]
+];
+const ESS_SEED_BANKWIDE_PARTICIPATION = 7756;
+// Real file, metric Role Clarity & DS Support: [index, q1, q2, q3] per row (Bankwide first, then the 12 directorates above).
+const ESS_ROLE_CLARITY_QUESTIONS = [
+  'I understand how my current job role contributes to a positive impact on customers and society.',
+  'Employees clearly understand what is expected of them.',
+  'My immediate manager gives me feedback that helps me improve my performance.'
+];
+const ESS_ROLE_CLARITY_ROWS = [
+  [92, 96, 90, 90],
+  [91, 95, 88, 90],
+  [93.6667, 99, 89, 93],
+  [93.6667, 96, 93, 92],
+  [90.6667, 96, 92, 84],
+  [92.3333, 98, 84, 95],
+  [93.6667, 97, 93, 91],
+  [87.3333, 93, 84, 85],
+  [92.3333, 94, 90, 93],
+  [93, 96, 93, 90],
+  [98, 97, 97, 100],
+  [89.3333, 92, 88, 88],
+  [90.3333, 95, 88, 88]
+];
+
+function generateInitialEssResults() {
+  const { DEFAULT_METRIC_QUESTIONS } = require('../services/metricQuestionService');
+  const results = [];
+  const uploads = [];
+  const clamp = v => Math.min(100, Math.max(0, v));
+  const r2 = v => Math.round(v * 100) / 100;
+  initialMetrics.filter(m => m.survey_source === 'ESS').forEach(m => {
+    const uploadId = `seed-ess-${m.metric_id}-2025-11`;
+    const isRoleClarity = /role clarity/i.test(m.metric_name);
+    const labels = isRoleClarity
+      ? ESS_ROLE_CLARITY_QUESTIONS
+      : (DEFAULT_METRIC_QUESTIONS[m.metric_id] || []).filter(q => (q.type || 'SCALE_1_5') !== 'FREE_TEXT').map(q => q.text || q.label);
+    const orgRows = [[null, ESS_SEED_BANKWIDE_PARTICIPATION], ...ESS_SEED_PARTICIPATION];
+    orgRows.forEach(([directorate, participation], i) => {
+      let index;
+      let scores;
+      if (isRoleClarity) {
+        [index, ...scores] = ESS_ROLE_CLARITY_ROWS[i];
+      } else {
+        const base = parseFloat(m.raw_value) || 85;
+        index = r2(clamp(i === 0 ? base : base + (((m.metric_id * 7 + i * 13) % 17) - 8) / 2));
+        scores = labels.map((_, q) => Math.round(clamp(index + (((q * 5 + i * 3 + m.metric_id) % 7) - 3))));
+      }
+      results.push({
+        upload_id: uploadId,
+        metric_id: m.metric_id,
+        survey_year: ESS_SEED_PERIOD.year,
+        survey_month: ESS_SEED_PERIOD.month,
+        org_level: directorate ? 'DIRECTORATE' : 'BANKWIDE',
+        directorate,
+        participation,
+        index_score: index,
+        questions: labels.map((label, q) => ({ label, score: scores[q] === undefined ? null : scores[q] }))
+      });
+    });
+    uploads.push({
+      upload_id: uploadId,
+      metric_id: m.metric_id,
+      file_name: isRoleClarity ? 'ESS 2025 Result_Role Clarity & DS Support.xlsx' : `ESS 2025 Result_${m.metric_name.replace(/\s*\(ESS\)\s*$/i, '')} (dummy).xlsx`,
+      total_rows: orgRows.length,
+      valid_rows: orgRows.length,
+      invalid_rows: 0,
+      calculated_avg_score: results.find(r => r.upload_id === uploadId && r.org_level === 'BANKWIDE').index_score,
+      uploaded_by: 'Seed (dummy)',
+      uploaded_at: '2025-11-30T10:00:00.000Z'
+    });
+  });
+  return { results, uploads };
+}
+
+const { results: initialEssResults, uploads: initialEssUploads } = generateInitialEssResults();
+
 // Per-metric operational drilldown records for OUTCOME metrics whose "raw data" is an internal
 // HR operational breakdown table (not individual survey responses) — e.g. recruitment SLA by
 // unit, approval-stage compliance, hiring channel mix, recognition categories, attrition by
@@ -1498,6 +1596,8 @@ module.exports = {
   sampleAttendances,
   sampleFeedbackResponses,
   initialSurveyUploadedResponses,
+  initialEssResults,
+  initialEssUploads,
   initialOperationalRecords
 };
 

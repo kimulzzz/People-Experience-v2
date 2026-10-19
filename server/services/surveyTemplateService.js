@@ -1,5 +1,6 @@
 // server/services/surveyTemplateService.js
 const storage = require('../db/storage');
+const { isEssMetric } = require('../db/surveySource');
 
 /**
  * Generates CSV template string for a specific survey metric with question-level columns
@@ -269,7 +270,8 @@ async function generateSurveyCsvTemplate(metric_id = 'ALL') {
     const rows = [];
     rows.push(headers.join(','));
 
-    metrics.forEach((m, idx) => {
+    // ESS metrics are not in the master CSV: they take their own ESS summary .xlsx (v2.32.0)
+    metrics.filter(m => !isEssMetric(m)).forEach((m, idx) => {
       const isNonEmployee = m.is_employee_metric === false;
       const sampleId = m.metric_id === 2 ? `PESERTA-2026-${100 + idx}` : (m.metric_id === 5 ? `CAND-2026-${100 + idx}` : `880${1000 + idx}`);
       const sampleName = m.metric_id === 2 ? `Mahasiswa UI ${idx + 1}` : (m.metric_id === 5 ? `Kandidat Pelamar ${idx + 1}` : `Karyawan CIMB ${idx + 1}`);

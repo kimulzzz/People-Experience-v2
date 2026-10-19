@@ -15,6 +15,7 @@ import {
   FileText
 } from 'lucide-react';
 import { useAuth } from '../utils/AuthContext';
+import { isEssSurveyMetric, surveyTemplateFileName } from '../utils/surveySource';
 
 export default function SurveyImportModal({ 
   isOpen, 
@@ -69,11 +70,15 @@ export default function SurveyImportModal({
 
   if (!isOpen) return null;
 
+  const selectedMetricObj = surveyMetrics.find(m => m.metric_id === parseInt(selectedMetricId));
+  // ESS metric (v2.32.0): the ESS summary .xlsx (one row per org unit) instead of per-respondent CSV rows
+  const isEss = isEssSurveyMetric(selectedMetricObj);
+
   const handleDownloadTemplate = () => {
     const url = `/api/surveys/template?metric_id=${selectedMetricId}`;
     const filename = selectedMetricId === 'ALL'
       ? 'Template_Survey_Master_All_Metrics.csv'
-      : `Template_Survey_Metric_${selectedMetricId}.csv`;
+      : surveyTemplateFileName(selectedMetricId, isEss);
 
     const a = document.createElement('a');
     a.href = url;
@@ -89,6 +94,9 @@ export default function SurveyImportModal({
       setFile(selected);
       setUploadResult(null);
       setErrorMessage('');
+      setCsvTextPreview('');
+      // an .xlsx is binary: never read it as text (the file itself is sent)
+      if (/\.xlsx$/i.test(selected.name)) return;
 
       const reader = new FileReader();
       reader.onload = (event) => {
@@ -100,7 +108,11 @@ export default function SurveyImportModal({
 
   const handleUploadSubmit = async () => {
     if (!file && !csvTextPreview) {
-      setErrorMessage('Please select a CSV file first.');
+      setErrorMessage(isEss ? 'Please select the ESS summary Excel file (.xlsx) first.' : 'Please select a CSV file first.');
+      return;
+    }
+    if (isEss && (!file || !/\.xlsx$/i.test(file.name))) {
+      setErrorMessage('ESS metrics accept only the ESS summary Excel file (.xlsx).');
       return;
     }
 
@@ -126,7 +138,11 @@ export default function SurveyImportModal({
         body: formData
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to process CSV file');
+      if (!res.ok) {
+        // an ESS file is refused as a whole: show every error with its row
+        if (Array.isArray(data.errors) && data.errors.length) setUploadResult({ ...data, refused: true });
+        throw new Error(data.error || 'Failed to process the file');
+      }
       
       setUploadResult(data);
       if (onImportSuccess) {
@@ -138,8 +154,6 @@ export default function SurveyImportModal({
       setIsProcessing(false);
     }
   };
-
-  const selectedMetricObj = surveyMetrics.find(m => m.metric_id === parseInt(selectedMetricId));
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
@@ -233,6 +247,42 @@ export default function SurveyImportModal({
             </div>
 
             {/* Field Specifications */}
+            {isEss ? (
+              <div className="border border-indigo-200 rounded-xl p-4 bg-white space-y-2">
+                <span className="font-bold text-gray-800 block text-xs">
+                  ESS Summary Template (.xlsx) Column Specifications:
+                </span>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
+                  <div className="bg-gray-50 p-2 rounded border border-gray-100">
+                    <strong className="text-[#ED1C24]">A. Directorate</strong> (Required)
+                    <span className="text-gray-500 block">"PT Bank CIMB Niaga Tbk" = Bankwide row; other rows = a directorate of the master</span>
+                  </div>
+                  <div className="bg-gray-50 p-2 rounded border border-gray-100">
+                    <strong className="text-gray-700">B. Level</strong>
+                    <span className="text-gray-500 block">Bankwide or Directorate</span>
+                  </div>
+                  <div className="bg-gray-50 p-2 rounded border border-gray-100">
+                    <strong className="text-[#ED1C24]">C. Year / D. Month</strong> (Required)
+                    <span className="text-gray-500 block">Same period on every row (e.g. 2025 / November)</span>
+                  </div>
+                  <div className="bg-gray-50 p-2 rounded border border-gray-100">
+                    <strong className="text-[#ED1C24]">E. Participation</strong> (Required)
+                    <span className="text-gray-500 block">Number of participants (whole number)</span>
+                  </div>
+                  <div className="bg-gray-50 p-2 rounded border border-gray-100">
+                    <strong className="text-[#ED1C24]">F. Index score</strong> (Required)
+                    <span className="text-gray-500 block">The metric score: fraction 0-1 (0.92) or percentage (92)</span>
+                  </div>
+                  <div className="bg-gray-50 p-2 rounded border border-gray-100">
+                    <strong className="text-gray-700">G.. Questions</strong> (Optional)
+                    <span className="text-gray-500 block">One column per question (header = question text), same score format</span>
+                  </div>
+                </div>
+                <p className="text-[10px] text-gray-500">
+                  One file = one period. Uploading the same period again replaces it. Any invalid row rejects the whole file.
+                </p>
+              </div>
+            ) : (
             <div className="border border-gray-200 rounded-xl p-4 bg-white space-y-2">
               <span className="font-bold text-gray-800 block text-xs">
                 CSV Template Column Specifications:
@@ -263,7 +313,11 @@ export default function SurveyImportModal({
                   <span className="text-gray-500 block">Comments / Feedback</span>
                 </div>
               </div>
+              {selectedMetricId === 'ALL' && (
+                <p className="text-[10px] text-gray-500">ESS metrics are not part of the master CSV: each ESS metric takes its own ESS summary Excel (.xlsx) template.</p>
+              )}
             </div>
+            )}
 
             <div className="flex justify-end pt-2">
               <button
@@ -271,7 +325,7 @@ export default function SurveyImportModal({
                 className="px-5 py-2.5 bg-[#ED1C24] hover:bg-[#D91B23] text-white rounded-xl text-xs font-bold transition flex items-center space-x-2 shadow-sm"
               >
                 <Download className="w-4 h-4" />
-                <span>Download CSV Template ({selectedMetricId === 'ALL' ? 'Master Template' : `Metric ${selectedMetricId}`})</span>
+                <span>Download {isEss ? 'ESS Template (.xlsx)' : 'CSV Template'} ({selectedMetricId === 'ALL' ? 'Master Template' : `Metric ${selectedMetricId}`})</span>
               </button>
             </div>
           </div>
@@ -305,18 +359,21 @@ export default function SurveyImportModal({
               <Upload className="w-8 h-8 text-gray-400 mx-auto" />
               <div>
                 <label className="text-xs font-bold text-[#ED1C24] hover:underline cursor-pointer">
-                  <span>Click to select CSV file</span>
+                  <span>{isEss ? 'Click to select the ESS summary file (.xlsx)' : 'Click to select CSV file'}</span>
                   <input
+                    key={isEss ? 'xlsx' : 'csv'}
                     type="file"
-                    accept=".csv,text/csv"
+                    accept={isEss ? '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : '.csv,text/csv'}
                     onChange={handleFileChange}
                     className="hidden"
                   />
                 </label>
-                <span className="text-gray-500"> or drag and drop CSV here</span>
+                {!isEss && <span className="text-gray-500"> or drag and drop CSV here</span>}
               </div>
               <p className="text-[10px] text-gray-400">
-                Supported format: Standard UTF-8 CSV (comma or semicolon). Max 50MB.
+                {isEss
+                  ? 'ESS metrics take only the ESS summary Excel workbook (.xlsx): first sheet, row 1 = header, a Bankwide row and one row per directorate. Max 50MB.'
+                  : 'Supported format: Standard UTF-8 CSV (comma or semicolon). Max 50MB.'}
               </p>
               {file && (
                 <div className="inline-flex items-center space-x-2 px-3 py-1 bg-white border border-emerald-300 text-emerald-800 rounded-full text-xs font-bold shadow-2xs">
@@ -333,8 +390,52 @@ export default function SurveyImportModal({
               </div>
             )}
 
+            {/* ESS summary: refused file (every error with its row) */}
+            {uploadResult && uploadResult.refused && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-2">
+                <span className="text-[11px] font-bold text-red-800 block">Errors ({uploadResult.errors.length}) - nothing was stored:</span>
+                <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
+                  {uploadResult.errors.map((er, i) => (
+                    <div key={i} className="bg-white p-2 rounded border border-red-100 text-[11px] text-gray-700">
+                      {er.row_number ? <strong className="text-red-700">Row {er.row_number}{er.column ? `, column ${er.column}` : ''}: </strong> : null}
+                      {er.reason}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ESS summary: success report */}
+            {uploadResult && uploadResult.is_ess_summary && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-3">
+                <div className="flex items-center space-x-2 text-emerald-900 font-extrabold text-sm">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                  <span>ESS summary imported: {uploadResult.period_label}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div className="bg-white p-2 rounded-lg border border-emerald-100 text-center">
+                    <span className="text-[10px] text-gray-400 block font-bold">Period</span>
+                    <strong className="text-gray-800 text-sm">{uploadResult.period_label}</strong>
+                  </div>
+                  <div className="bg-white p-2 rounded-lg border border-emerald-100 text-center">
+                    <span className="text-[10px] text-emerald-600 block font-bold">Rows Imported</span>
+                    <strong className="text-emerald-700 text-sm">{uploadResult.rows_imported}</strong>
+                  </div>
+                  <div className="bg-white p-2 rounded-lg border border-emerald-100 text-center">
+                    <span className="text-[10px] text-gray-400 block font-bold">Bankwide Index</span>
+                    <strong className="text-[#ED1C24] text-sm">{uploadResult.bankwide_index}%</strong>
+                  </div>
+                </div>
+                {uploadResult.replaced_previous && (
+                  <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                    The previous upload of {uploadResult.period_label} was replaced (it stays in the upload history).
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Upload Success Report */}
-            {uploadResult && (
+            {uploadResult && !uploadResult.refused && !uploadResult.is_ess_summary && (
               <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-3">
                 <div className="flex items-center space-x-2 text-emerald-900 font-extrabold text-sm">
                   <CheckCircle2 className="w-5 h-5 text-emerald-600" />
@@ -397,7 +498,7 @@ export default function SurveyImportModal({
                 className="px-5 py-2.5 bg-[#ED1C24] hover:bg-[#D91B23] text-white rounded-xl font-bold text-xs shadow-sm flex items-center space-x-2 disabled:opacity-50"
               >
                 <Sparkles className="w-4 h-4" />
-                <span>{isProcessing ? 'Validating & Recalculating...' : 'Process CSV & Recalculate PX Index'}</span>
+                <span>{isProcessing ? 'Validating & Recalculating...' : (isEss ? 'Process ESS Summary & Recalculate PX Index' : 'Process CSV & Recalculate PX Index')}</span>
               </button>
             </div>
 
@@ -426,7 +527,7 @@ export default function SurveyImportModal({
 
                   <div className="text-right">
                     <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded font-bold text-[10px]">
-                      {h.valid_rows} Valid Responses
+                      {h.valid_rows} {/^(ess|seed-ess)-/.test(h.upload_id || '') ? 'Summary Rows' : 'Valid Responses'}
                     </span>
                     <span className="text-[10px] text-gray-400 block mt-0.5">
                       Average Score: {h.calculated_avg_score}

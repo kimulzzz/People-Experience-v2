@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(278-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(288-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,9 +75,9 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (278 cases on SQL; JSON 204 at QC before the Module 41 fixes, not re-run since) |
-| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (29 `px_*` tables), JSON→SQL migration, rollback |
-| `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (288 cases on SQL; v2.32.0 run 209/209 with media modules skipped; full JSON suite not re-run since v2.30.1) |
+| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (30 `px_*` tables), JSON→SQL migration, rollback |
+| `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
 ## Compliance constraints (do not violate)
 
@@ -601,6 +601,15 @@ domain model, not just descriptive:
   Gotchas: `store.json` keeps old names until `npm run db:export -- --replace`; directorate names may contain commas -> quote them in CSV (`csvCell()` in tests). Tests: Module 44 (6, 2 SQL-only) ->
   SQL 278/278, 0 skip; JSON full suite NOT run (in-process jsonStorage check 11/11); no separate QC yet (with slice B).
 
+- **v2.32.0** (2026-10-19, see `CHANGELOG.md` [2.32.0], `docs/04` "Catatan v2.32.0", `docs/07` §28, `docs/08` §17, `SQLServerDB.md` §16, `docs/SURVEY_IMPORT_GUIDE.md`): user wants ESS metrics fed by
+  the uploaded ESS result SUMMARY only (`docs/ESS 2025 Result_Role Clarity & DS Support.xlsx`: A Directorate | B Level | C Year | D Month | E Participation | F index | G.. questions; "PT Bank
+  CIMB Niaga" row = Bankwide). New `essSummaryService.js` (own .xlsx reader/writer on `jszip`, atomic validation), table `px_ess_results`/`essResults`, `GET /api/surveys/ess-file/:upload_id`
+  (originals in `server/data/ess-uploads/`, gitignored, NOT in the .bak). ESS = `.xlsx` only (CSV text 400, .csv/.xls 415); re-upload of a period replaces it; score = latest result <= period end
+  (any earlier year); division filter -> parent directorate; USER scope -> participation-weighted mean. One-time cleanup on the boot that creates the table: 2,568 per-respondent ESS rows + 60 empty
+  batches deleted (main DB); seed 143 rows 2025-11 (metric 9 = real file, others dummy). Gotchas: `getLatestEssPeriod`/`deleteEssResultsForMetric` unused; a Level "Bankwide" row is Bankwide whatever
+  column A says; ESS metric with no result still uses the old placeholder detail; ESS reminders fire after 25 Nov 2026 without a 2026 upload. Tests: Module 45 (10, 1 SQL-only), Modules 4/11/12/39
+  adjusted, `TEST_SKIP_MODULES`/`TEST_SKIP_MEDIA=1` -> SQL 209/209 with media modules 27/32/38/41/42/43 skipped (suite size 288); JSON only targeted in-process checks.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan
@@ -612,6 +621,10 @@ langkah-langkah ini sebelum melaporkan pekerjaan selesai — jangan tunggu dimin
    PASS (tes yang di-skip dilaporkan sebagai skip, bukan lulus). Kalau ada yang gagal karena perubahanmu, perbaiki dulu.
    Developer tidak mengulang suite penuh berkali-kali; QC hanya menguji area yang berubah (bukan "dari awal") kecuali
    perubahan besar. (Fitur `--only=<modul>` untuk tes cepat belum ada — rencana setelah PR fitur AI.)
+   **Modul tes video dilewati bila tidak tersentuh** (permintaan user 2026-10-19): kalau perubahan TIDAK menyentuh
+   kode transkrip/ringkasan AI/media (`mediaFileService`, `transcribeService`, `mediaSummaryService`, `aiQueue`,
+   `localAiService`, route media), modul 27, 32, 38, 41, 42, 43 di-skip pada run suite penuh (developer maupun QC)
+   dan dilaporkan sebagai SKIP, bukan lulus. Jalankan modul media hanya bila diff memang menyentuh area itu.
 2. **Versioning**: naikkan angka versi di `server/server.js` (field `version` pada endpoint
    `/api/health`), dan tambahkan entri baru di `CHANGELOG.md` (format `## [x.y.z] - YYYY-MM-DD`
    yang sudah konsisten dipakai di file ini) menjelaskan apa yang berubah dan mengapa.

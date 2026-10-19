@@ -17,3 +17,7 @@ export function surveySourceBadgeClass(value) {
     ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
     : 'bg-slate-100 text-slate-600 border border-slate-200';
 }
+
+// ESS metrics (v2.32.0) take the ESS summary Excel (.xlsx) instead of per-respondent CSV rows.
+export const isEssSurveyMetric = (m) => !!m && (m.metric_type === undefined || m.metric_type === 'SURVEY') && m.survey_source === 'ESS';
+export const surveyTemplateFileName = (metricId, isEss) => (isEss ? `Template_ESS_Metric_${metricId}.xlsx` : `Template_Survey_Metric_${metricId}.csv`);

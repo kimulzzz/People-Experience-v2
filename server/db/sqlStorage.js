@@ -10,7 +10,7 @@ const path = require('path');
 const sql = require('mssql');
 const seed = require('./seedData');
 const { defaultUnitForScale, parseUnit } = require('./metricUnit');
-const { inferSurveySource, resolveSurveySource, resolveRequiresManualUpload } = require('./surveySource');
+const { inferSurveySource, isEssMetric, resolveSurveySource, resolveRequiresManualUpload } = require('./surveySource');
 const { buildInitialStore } = require('./initialStore');
 const { parseFilterOptions, normalizeDateString, CURRENT_YEAR } = require('./filterUtils');
 const { normalizeScopes } = require('./scopeUtils');
@@ -953,6 +953,17 @@ async function importStore(store, log = () => {}) {
     await bulkInsertResponses(tx, null, responseRows);
     counts.survey_responses = responseRows.length;
 
+    // ESS result summaries (v2.32.0)
+    for (const r of store.essResults || []) await insertEssResult(tx, r.upload_id, r);
+    counts.ess_results = (store.essResults || []).length;
+    // a store.json from before v2.32.0 still holds per-respondent ESS rows: same one-time cleanup as the upgrade boot
+    if (!Array.isArray(store.essResults)) {
+      const cleaned = await cleanupEssRespondentRows(tx);
+      counts.survey_responses -= cleaned.responses;
+      counts.survey_uploads -= cleaned.uploads;
+      log(`  ESS now uses uploaded summaries: ${cleaned.responses} per-respondent ESS rows and ${cleaned.uploads} empty upload batches were not kept.`);
+    }
+
     // Admin-customised sets from the JSON store are kept as customised; every other SURVEY metric
     // gets the default set (seedSurveyQuestions).
     for (const [metric_id, questions] of Object.entries(store.customSurveyQuestions || {})) {
@@ -1035,6 +1046,80 @@ async function topUpSeedResponses() {
   console.log(`[sqlStorage] Added ${missing.length} newly generated seed survey responses.`);
 }
 
+// ------------------------------------------------------------------ ESS result summaries (px_ess_results, v2.32.0)
+const rowToEssResult = r => ({
+  ess_result_id: r.ess_result_id,
+  upload_id: r.upload_id,
+  metric_id: r.metric_id,
+  survey_year: r.survey_year,
+  survey_month: r.survey_month,
+  org_level: r.org_level,
+  directorate: r.directorate,
+  participation: r.participation,
+  index_score: Number(r.index_score),
+  questions: parseJson(r.questions_json, []),
+  created_at: iso(r.created_at)
+});
+
+async function insertEssResult(tx, uploadId, r) {
+  await run(`INSERT INTO dbo.px_ess_results (upload_id, metric_id, survey_year, survey_month, org_level, directorate, participation, index_score, questions_json${r.created_at ? ', created_at' : ''})
+             VALUES (@upload_id, @metric_id, @y, @m, @lvl, @dir, @part, @idx, @q${r.created_at ? ', @created_at' : ''})`, {
+    upload_id: uploadId, metric_id: parseInt(r.metric_id, 10), y: parseInt(r.survey_year, 10), m: parseInt(r.survey_month, 10),
+    lvl: r.org_level, dir: r.org_level === 'BANKWIDE' ? null : r.directorate, part: parseInt(r.participation, 10) || 0,
+    idx: Number(r.index_score), q: T.max(JSON.stringify(r.questions || [])), ...(r.created_at ? { created_at: toDateObj(r.created_at) } : {})
+  }, tx);
+}
+
+async function essMetricIds(tx) {
+  return (await run('SELECT metric_id, metric_type, survey_source, source_of_data FROM dbo.px_metrics', {}, tx))
+    .filter(m => m.metric_type === 'SURVEY' && isEssMetric(m)).map(m => m.metric_id);
+}
+
+// One-time upgrade step (the boot that creates px_ess_results): ESS metrics no longer have per-respondent rows, so
+// the old ones (seed + old CSV test uploads) are deleted, together with the upload batches that are empty afterwards.
+// SYSTEM survey data is never touched. Returns the counts (logged).
+async function cleanupEssRespondentRows(outerTx) {
+  const work = async tx => {
+    const ids = (await essMetricIds(tx)).map(id => parseInt(id, 10)).filter(Number.isInteger);
+    if (!ids.length) return { responses: 0, uploads: 0 };
+    const rows = await run(`SELECT DISTINCT upload_id INTO #ess_up FROM dbo.px_survey_uploaded_responses WHERE metric_id IN (${ids.join(', ')});
+      DELETE FROM dbo.px_survey_uploaded_responses WHERE metric_id IN (${ids.join(', ')});
+      DECLARE @r INT = @@ROWCOUNT;
+      DELETE u FROM dbo.px_survey_uploads u WHERE u.upload_id IN (SELECT upload_id FROM #ess_up)
+        AND NOT EXISTS (SELECT 1 FROM dbo.px_survey_uploaded_responses x WHERE x.upload_id = u.upload_id);
+      DECLARE @u INT = @@ROWCOUNT;
+      DROP TABLE #ess_up;
+      SELECT @r AS responses, @u AS uploads;`, {}, tx);
+    return rows[0] || { responses: 0, uploads: 0 };
+  };
+  return outerTx ? work(outerTx) : inTransaction(work);
+}
+
+// Demo ESS summaries (seed): only for an ESS metric that has no ESS result at all, so an upload is never overwritten.
+async function topUpEssSeed() {
+  const seedRows = seed.initialEssResults || [];
+  if (!seedRows.length) return [];
+  const ess = new Set(await essMetricIds());
+  const have = new Set((await run('SELECT DISTINCT metric_id FROM dbo.px_ess_results')).map(r => r.metric_id));
+  const todo = [...new Set(seedRows.map(r => r.metric_id))].filter(id => ess.has(id) && !have.has(id));
+  if (!todo.length) return [];
+  await inTransaction(async tx => {
+    for (const id of todo) {
+      const up = (seed.initialEssUploads || []).find(u => u.metric_id === id);
+      if (up) {
+        await run(`IF NOT EXISTS (SELECT 1 FROM dbo.px_survey_uploads WHERE upload_id = @upload_id)
+                     INSERT INTO dbo.px_survey_uploads (upload_id, metric_id, file_name, total_rows, valid_rows, invalid_rows, calculated_avg_score, uploaded_by, uploaded_at)
+                     VALUES (@upload_id, @metric_id, @file_name, @total_rows, @valid_rows, @invalid_rows, @avg, @uploaded_by, @uploaded_at)`, {
+          upload_id: up.upload_id, metric_id: id, file_name: up.file_name, total_rows: up.total_rows, valid_rows: up.valid_rows,
+          invalid_rows: up.invalid_rows, avg: up.calculated_avg_score, uploaded_by: up.uploaded_by, uploaded_at: toDateObj(up.uploaded_at)
+        }, tx);
+      }
+      for (const r of seedRows.filter(x => x.metric_id === id)) await insertEssResult(tx, r.upload_id, r);
+    }
+  });
+  return todo;
+}
+
 // ------------------------------------------------------------------ response filter -> SQL
 function nextMonthStart(year, monthNum) {
   return monthNum === 12 ? `${year + 1}-01-01` : `${year}-${String(monthNum + 1).padStart(2, '0')}-01`;
@@ -1091,6 +1176,8 @@ const storage = {
   // ---- lifecycle / health
   async init() {
     await getPool();
+    // v2.32.0: the boot that creates px_ess_results is the upgrade boot (one-time ESS per-respondent cleanup below)
+    const essUpgrade = !(await run("SELECT OBJECT_ID(N'dbo.px_ess_results', N'U') AS id"))[0].id;
     await applySchema();
     await seedIfEmpty();
     await migrateDirectorates();     // v2.31.0: old demo directorate names -> the 12 real ones (before any top-up)
@@ -1100,10 +1187,18 @@ const storage = {
     await topUpMetricUnits();
     await topUpSurveySource();
     await enforceEssManualUpload();
+    if (essUpgrade) {
+      const cleaned = await cleanupEssRespondentRows();
+      console.log(`[sqlStorage] ESS now uses uploaded summaries: deleted ${cleaned.responses} per-respondent ESS rows and ${cleaned.uploads} upload batches left empty.`);
+    }
     await migrateLegacyUserScopes();
     // Demo survey responses for newly elapsed months. Set SEED_DEMO_DATA=false on a real
     // production database so no synthetic responses are ever generated.
-    if (String(process.env.SEED_DEMO_DATA || 'true').toLowerCase() !== 'false') await topUpSeedResponses();
+    if (String(process.env.SEED_DEMO_DATA || 'true').toLowerCase() !== 'false') {
+      await topUpSeedResponses();
+      const seededEss = await topUpEssSeed();
+      if (seededEss.length) console.log(`[sqlStorage] Seeded the demo ESS summary (2025-11) of metric(s) ${seededEss.join(', ')}.`);
+    }
     const info = await this.health();
     console.log(`[sqlStorage] Connected to ${info.server} / ${info.database} (${info.edition})`);
   },
@@ -1131,7 +1226,7 @@ const storage = {
   // Drops every px_* table (children first). Used only by migrate.js --reset.
   async dropAllTables() {
     const tables = ['px_recruitment_sla_by_unit', 'px_approval_stage_compliance', 'px_hiring_channel_mix',
-      'px_recognition_categories', 'px_attrition_by_tenure', 'px_acknowledged_alerts', 'px_survey_uploaded_responses',
+      'px_recognition_categories', 'px_attrition_by_tenure', 'px_acknowledged_alerts', 'px_ess_results', 'px_survey_uploaded_responses',
       'px_survey_uploads', 'px_media', 'px_feedback_responses', 'px_attendances', 'px_event_questions', 'px_events',
       'px_reminder_log', 'px_email_settings', 'px_app_settings', 'px_survey_questions', 'px_custom_survey_questions', 'px_master_survey_questions', 'px_divisions', 'px_directorates', 'px_action_library',
       'px_metric_targets', 'px_metrics', 'px_checkpoints', 'px_journeys'];
@@ -1142,7 +1237,11 @@ const storage = {
   // Is there ANY survey response for this metric dated in [startDate, endDate)? (YYYY-MM-DD strings)
   async hasSurveyDataInPeriod(metric_id, startDate, endDate) {
     const rows = await run(`SELECT TOP 1 1 AS x FROM dbo.px_survey_uploaded_responses
-                            WHERE metric_id = @metric_id AND survey_date >= @start AND survey_date < @end`,
+                            WHERE metric_id = @metric_id AND survey_date >= @start AND survey_date < @end
+                            UNION ALL
+                            SELECT TOP 1 1 FROM dbo.px_ess_results   -- an ESS summary (v2.32.0) is dated on the 1st of its month
+                            WHERE metric_id = @metric_id AND DATEFROMPARTS(survey_year, survey_month, 1) >= @start
+                              AND DATEFROMPARTS(survey_year, survey_month, 1) < @end`,
       { metric_id: parseInt(metric_id, 10), start: T.date(startDate), end: T.date(endDate) });
     return rows.length > 0;
   },
@@ -1507,6 +1606,7 @@ const storage = {
     await inTransaction(async tx => {
       await run(`DELETE FROM dbo.px_metric_targets WHERE metric_id = @id; DELETE FROM dbo.px_survey_questions WHERE metric_id = @id; DELETE FROM dbo.px_reminder_log WHERE metric_id = @id;
         DELETE FROM dbo.px_survey_uploaded_responses WHERE metric_id = @id;
+        DELETE FROM dbo.px_ess_results WHERE metric_id = @id;
         DELETE FROM dbo.px_survey_uploads WHERE metric_id = @id;
         DELETE FROM dbo.px_metrics WHERE metric_id = @id;`, { id }, tx);
     });
@@ -1832,6 +1932,54 @@ const storage = {
     return record;
   },
 
+  // ---- ESS result summaries (v2.32.0)
+  // Every ESS result row of one metric (or of all metrics when metric_id is null/undefined), optionally one period.
+  async getEssResults(metric_id, { year, month } = {}) {
+    const where = [];
+    const params = {};
+    if (metric_id !== null && metric_id !== undefined) { where.push('metric_id = @metric_id'); params.metric_id = parseInt(metric_id, 10); }
+    if (year) { where.push('survey_year = @y'); params.y = parseInt(year, 10); }
+    if (month) { where.push('survey_month = @m'); params.m = parseInt(month, 10); }
+    const rows = await run(`SELECT * FROM dbo.px_ess_results ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY metric_id, survey_year, survey_month, ess_result_id`, params);
+    return rows.map(rowToEssResult);
+  },
+  // Latest (year, month) with an ESS result of this metric on or before endYear-endMonth; null when there is none.
+  async getLatestEssPeriod(metric_id, endYear, endMonth) {
+    const rows = await run(`SELECT TOP 1 survey_year, survey_month FROM dbo.px_ess_results
+                            WHERE metric_id = @id AND survey_year * 100 + survey_month <= @k ORDER BY survey_year DESC, survey_month DESC`,
+      { id: parseInt(metric_id, 10), k: parseInt(endYear, 10) * 100 + parseInt(endMonth || 12, 10) });
+    return rows[0] ? { year: rows[0].survey_year, month: rows[0].survey_month } : null;
+  },
+  // Stores one ESS summary upload: the upload record (history) + its rows, REPLACING the rows of the same metric and
+  // period, all in one transaction. Returns { record, replaced_rows }.
+  async saveEssResultUpload(meta, rows) {
+    const record = {
+      upload_id: meta.upload_id || `ess-${Date.now()}`,
+      metric_id: parseInt(meta.metric_id, 10),
+      file_name: meta.file_name,
+      total_rows: meta.total_rows,
+      valid_rows: meta.valid_rows,
+      invalid_rows: meta.invalid_rows || 0,
+      calculated_avg_score: meta.calculated_avg_score,
+      uploaded_by: meta.uploaded_by || 'HR Admin',
+      uploaded_at: new Date().toISOString()
+    };
+    const replaced = await inTransaction(async tx => {
+      await run(`INSERT INTO dbo.px_survey_uploads (upload_id, metric_id, file_name, total_rows, valid_rows, invalid_rows, calculated_avg_score, uploaded_by, uploaded_at)
+                 VALUES (@upload_id, @metric_id, @file_name, @total_rows, @valid_rows, @invalid_rows, @calculated_avg_score, @uploaded_by, @uploaded_at)`,
+        { ...record, uploaded_at: new Date(record.uploaded_at) }, tx);
+      const del = await run(`DELETE FROM dbo.px_ess_results WHERE metric_id = @id AND survey_year = @y AND survey_month = @m; SELECT @@ROWCOUNT AS n;`,
+        { id: record.metric_id, y: parseInt(meta.survey_year, 10), m: parseInt(meta.survey_month, 10) }, tx);
+      for (const r of rows) await insertEssResult(tx, record.upload_id, { ...r, metric_id: record.metric_id, survey_year: meta.survey_year, survey_month: meta.survey_month });
+      return del[0] ? del[0].n : 0;
+    });
+    return { record, replaced_rows: replaced };
+  },
+  async deleteEssResultsForMetric(metric_id) {
+    const rows = await run('DELETE FROM dbo.px_ess_results WHERE metric_id = @id; SELECT @@ROWCOUNT AS n;', { id: parseInt(metric_id, 10) });
+    return rows[0] ? rows[0].n : 0;
+  },
+
   // ---- target & threshold admin settings
   async getMetricTargets() {
     const rows = await run('SELECT metric_id, target_value, target_display, min_threshold FROM dbo.px_metric_targets ORDER BY metric_id');
@@ -1913,7 +2061,7 @@ const storage = {
 
   // Distinct years that actually have survey response data (always including the current year).
   async getAvailableSurveyYears() {
-    const rows = await run('SELECT DISTINCT YEAR(survey_date) AS y FROM dbo.px_survey_uploaded_responses');
+    const rows = await run('SELECT DISTINCT YEAR(survey_date) AS y FROM dbo.px_survey_uploaded_responses UNION SELECT DISTINCT survey_year FROM dbo.px_ess_results');
     const years = new Set(rows.map(r => String(r.y)));
     years.add(CURRENT_YEAR);
     return Array.from(years).sort();

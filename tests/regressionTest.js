@@ -8,11 +8,53 @@ const TRANSCRIBE_PORT = parseInt(process.env.TEST_TRANSCRIBE_PORT || '8000', 10)
 let totalTests = 0;
 let passedTests = 0;
 let failedTests = 0;
+let skippedTests = 0;
+
+// Optional module skip (e.g. a change that does not touch media / transcript / AI summary code):
+//   TEST_SKIP_MODULES=27,32,38,41,42,43   or   TEST_SKIP_MEDIA=1 (= exactly those six modules)
+// A skipped test is counted and reported as SKIPPED - never as passed. The current module is taken from the
+// "📦 MODULE <n>:" header line each module prints.
+const SKIP_MODULES = new Set(String(process.env.TEST_SKIP_MODULES || (process.env.TEST_SKIP_MEDIA === '1' ? '27,32,38,41,42,43' : ''))
+  .split(',').map(x => x.trim()).filter(Boolean));
+let currentModule = null;
+if (SKIP_MODULES.size) {
+  const origLog = console.log;
+  console.log = (...args) => {
+    const m = typeof args[0] === 'string' && args[0].match(/📦 MODULE (\d+[a-z]?):/);
+    if (m) currentModule = m[1];
+    origLog(...args);
+  };
+}
+// Guard for modules whose setup (second backends, fake services) lives outside runTest: true = skip the whole block.
+function skipModuleBlock(n) {
+  if (!SKIP_MODULES.has(String(n))) return false;
+  console.log(`  ⏭️  SKIPPED: Module ${n} (TEST_SKIP_MODULES / TEST_SKIP_MEDIA) - none of its tests ran`);
+  return true;
+}
 
 // One CSV cell: quoted when it holds a comma / quote (real directorate names such as "Strategy, Finance & SPAPM" do).
 const csvCell = v => (/[",\r\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
 
+// ESS summary workbook (v2.32.0) built in-test: rows = arrays of cell values (row 1 = header). Uses the app's own minimal
+// .xlsx writer (required lazily, after the suite has loaded .env); parsing in the tests goes through jszip directly.
+const essXlsx = rows => require('../server/services/essSummaryService').buildXlsx(rows);
+const ESS_HEAD = (index = 'Test Index', questions = ['Question one']) => ['Directorate', 'Level', 'Year', 'Month', 'Participation', index, ...questions];
+// multipart upload of an ESS file; cookie = another user's session (otherwise the suite admin)
+async function postEssFile(metricId, buf, fileName = 'ess_summary.xlsx', cookie = null) {
+  const fd = new FormData();
+  if (metricId !== null && metricId !== undefined) fd.append('metric_id', String(metricId));
+  fd.append('file', new Blob([buf]), fileName);
+  return cookie
+    ? realFetch(`${BASE_URL}/api/surveys/upload`, { method: 'POST', body: fd, headers: { Cookie: cookie } })
+    : fetch(`${BASE_URL}/api/surveys/upload`, { method: 'POST', body: fd });
+}
+
 function runTest(name, fn) {
+  if (currentModule && SKIP_MODULES.has(currentModule)) {
+    skippedTests++;
+    console.log(`  ⏭️  SKIP: ${name}`);
+    return Promise.resolve();
+  }
   totalTests++;
   return fn()
     .then(() => {
@@ -187,12 +229,14 @@ async function runRegressionSuite() {
     assert(csv.includes('8801245'), 'CSV should have sample respondent');
   });
 
-  await runTest('Download Master All-Surveys Template (20 survey metrics)', async () => {
+  await runTest('Download Master All-Surveys Template (every SYSTEM survey metric; ESS metrics take their own .xlsx since v2.32.0)', async () => {
     const res = await fetch(`${BASE_URL}/api/surveys/template?metric_id=ALL`);
     assert.strictEqual(res.status, 200);
     const csv = await res.text();
     const lines = csv.trim().split('\n');
-    assert(lines.length >= 21, `Expected header + at least 20 metric rows, got ${lines.length}`);
+    const params = (await (await fetch(`${BASE_URL}/api/admin/parameters`)).json()).metrics;
+    const systemCount = params.filter(m => m.metric_type === 'SURVEY' && m.survey_source !== 'ESS').length;
+    assert.strictEqual(lines.length, 1 + systemCount, `Expected header + ${systemCount} SYSTEM metric rows, got ${lines.length}`);
   });
 
   // --- 5. QUESTION-BASED BULK CSV IMPORT & LIVE RECALCULATION ---
@@ -501,11 +545,16 @@ async function runRegressionSuite() {
       assert(data.ess_summary.summary_score >= item.minScore, `Metric #${item.id} summary score (${data.ess_summary.summary_score}) should be >= ${item.minScore}`);
       assert.strictEqual(data.questions_breakdown.length, item.qCount, `Metric #${item.id} should have ${item.qCount} questions`);
       
-      // Verify first question properties
+      // v2.32.0: an ESS metric reads its uploaded ESS summary (seed: 2025-11, carried forward into the current year)
+      assert.strictEqual(data.is_ess_summary, true, `Metric #${item.id} must be read from its ESS summary`);
+      assert.strictEqual(data.ess_period, '2025-11', `Metric #${item.id} uses the latest ESS result on or before the period`);
+      assert.strictEqual(data.total_respondents, 7756, 'total respondents = participation of the Bankwide row');
+      assert.strictEqual(data.responses.length, 0, 'an ESS summary has no respondent rows');
+      // Verify first question properties (the summary holds % favorable only)
       const q1 = data.questions_breakdown[0];
       assert(q1.percent_favorable !== null && q1.percent_favorable !== undefined, `Q1 must have percent_favorable`);
-      assert(q1.percent_neutral !== null && q1.percent_neutral !== undefined, `Q1 must have percent_neutral`);
-      assert(q1.percent_unfavorable !== null && q1.percent_unfavorable !== undefined, `Q1 must have percent_unfavorable`);
+      assert.strictEqual(q1.percent_neutral, null, 'neutral is not part of the ESS summary');
+      assert.strictEqual(q1.percent_unfavorable, null, 'unfavorable is not part of the ESS summary');
       assert.strictEqual(q1.visible_based_on, 'Always', `Q1 visible_based_on must be 'Always'`);
       assert.strictEqual(q1.required_based_on, 'Always', `Q1 required_based_on must be 'Always'`);
     });
@@ -521,7 +570,9 @@ async function runRegressionSuite() {
     const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
     data.metrics.forEach(m => {
       if (m.last_survey_date) {
-        assert(isoDateRegex.test(m.last_survey_date), `Metric #${m.metric_id} date "${m.last_survey_date}" must follow YYYY-MM-DD`);
+        // an ESS metric with an ESS result reports that result's period (YYYY-MM, v2.32.0)
+        const re = m.survey_source === 'ESS' && m.ess_period ? /^\d{4}-\d{2}$/ : isoDateRegex;
+        assert(re.test(m.last_survey_date), `Metric #${m.metric_id} date "${m.last_survey_date}" must follow ${m.ess_period ? 'YYYY-MM' : 'YYYY-MM-DD'}`);
       }
     });
   });
@@ -539,19 +590,28 @@ async function runRegressionSuite() {
       body: JSON.stringify({
         csvText: customCsv,
         fileName: 'test_date_norm.csv',
-        metric_id: 9
+        metric_id: 8 // a SYSTEM survey metric (ESS metric 9 takes only its .xlsx summary since v2.32.0)
       })
     });
     assert.strictEqual(res.status, 200);
     const result = await res.json();
     assert.strictEqual(result.success, true);
 
-    // Verify detail endpoint returns normalized YYYY-MM-DD date
-    const detailRes = await fetch(`${BASE_URL}/api/metrics/9/detail?period=YTD`);
+    // Verify detail endpoint returns normalized YYYY-MM-DD date (MTD March: the row is within the 100 newest)
+    const detailRes = await fetch(`${BASE_URL}/api/metrics/8/detail?period=2026-03`);
     const detailData = await detailRes.json();
     const resp = detailData.responses.find(r => r.nip === '8899011');
     assert(resp !== undefined, 'Uploaded response must be found in responses');
     assert.strictEqual(resp.survey_date, '2026-03-31', 'Uploaded date "3/31/2026" must be normalized to "2026-03-31"');
+
+    // the same CSV sent to an ESS metric is refused as a whole (v2.32.0)
+    const essRes = await fetch(`${BASE_URL}/api/surveys/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ csvText: customCsv, fileName: 'test_date_norm.csv', metric_id: 9 })
+    });
+    assert.strictEqual(essRes.status, 400);
+    assert.match((await essRes.json()).error, /ESS/);
   });
 
   // --- 13. NON-EMPLOYEE CORRESPONDENTS (METRIC #2 & METRIC #5) ---
@@ -3379,14 +3439,17 @@ async function runRegressionSuite() {
         // editing the text does not flip it
         assert.strictEqual((await put39(a.body.metric_id, { source_of_data: 'Something else' })).status, 200);
         assert.strictEqual((await aj(`/api/metrics/${a.body.metric_id}/detail?period=YTD`)).is_ess, true);
-        // with real responses the score is the same whichever source the metric has
+        // v2.32.0: the column also decides the upload format - CSV rows to an ESS metric are refused (400, nothing stored)
         const day39 = new Date().toISOString().slice(0, 10);
-        const up = await adminJson('POST', '/api/surveys/upload', { csvText: csv36([`9300001,Skor Sama,s@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day39},4`, `9300002,Skor Sama 2,s2@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day39},5`]), fileName: 'rt39.csv', metric_id: a.body.metric_id });
-        assert.strictEqual((await up.json()).valid_rows_count, 2);
-        const scoreOf = async () => { const m = (await aj('/api/metrics/calculate?period=YTD')).metrics.find(x => x.metric_id === a.body.metric_id); return [m.raw_value, m.normalized_score, m.status]; };
-        const asEss = await scoreOf();
+        const csvRows = csv36([`9300001,Skor Sama,s@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day39},4`, `9300002,Skor Sama 2,s2@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day39},5`]);
+        const refused = await adminJson('POST', '/api/surveys/upload', { csvText: csvRows, fileName: 'rt39.csv', metric_id: a.body.metric_id });
+        assert.strictEqual(refused.status, 400);
+        assert.match((await refused.json()).error, /ESS/);
+        assert.strictEqual((await aj(`/api/surveys/responses/${a.body.metric_id}`)).length, 0, 'nothing stored');
+        // the same metric switched to SYSTEM takes the CSV
         assert.strictEqual((await put39(a.body.metric_id, { survey_source: 'SYSTEM' })).status, 200);
-        assert.deepStrictEqual(await scoreOf(), asEss, 'switching the source does not move the score');
+        const up = await adminJson('POST', '/api/surveys/upload', { csvText: csvRows, fileName: 'rt39.csv', metric_id: a.body.metric_id });
+        assert.strictEqual((await up.json()).valid_rows_count, 2);
       });
 
       await runTest('[POSITIVE] Boot top-up (SQL Server): NULL survey_source of a SURVEY metric is filled (text with ESS -> ESS, otherwise SYSTEM), an admin\'s value is never overwritten, OUTCOME stays NULL, ESS with the reminder flag off is switched on, and running it twice changes nothing', async () => {
@@ -3433,11 +3496,15 @@ async function runRegressionSuite() {
         for (const m of [sysOff, sysOn, essM]) {
           const id = m.body.metric_id;
           assert.ok(list.some(x => x.metric_id === id), `metric ${id} is offered in the upload list`);
-          const up = await adminJson('POST', '/api/surveys/upload', { csvText: csv36([`93100${id}1,Unggah ${id},u${id}@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day39},4`]), fileName: 'rt39.csv', metric_id: id });
+          const isEss39 = m === essM;
+          // ESS (v2.32.0): the ESS summary .xlsx with one Bankwide row of participation 1; SYSTEM: one CSV row
+          const up = isEss39
+            ? await postEssFile(id, await essXlsx([ESS_HEAD(), ['PT Bank CIMB Niaga Tbk', 'Bankwide', new Date().getFullYear(), 'January', 1, 0.8, 0.8]]))
+            : await adminJson('POST', '/api/surveys/upload', { csvText: csv36([`93100${id}1,Unggah ${id},u${id}@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day39},4`]), fileName: 'rt39.csv', metric_id: id });
           assert.strictEqual(up.status, 200);
           const body = await up.json();
           assert.strictEqual(body.success, true, `upload to ${id}`); assert.strictEqual(body.valid_rows_count, 1);
-          assert.strictEqual((await aj(`/api/surveys/responses/${id}`)).length, 1, 'the row is stored in that metric');
+          assert.strictEqual((await aj(`/api/surveys/responses/${id}`)).length, isEss39 ? 0 : 1, 'the row is stored in that metric (ESS: as a summary row, no respondent rows)');
           assert.strictEqual((await adminJson('GET', `/api/surveys/template?metric_id=${id}`)).status, 200);
           assert.strictEqual((await adminJson('GET', `/api/surveys/evidence?metric_id=${id}&period=YTD`)).status, 200);
           const d = await aj(`/api/metrics/${id}/detail?period=YTD`);
@@ -3465,7 +3532,9 @@ async function runRegressionSuite() {
           const calc = await uj(picUser, '/api/metrics/calculate?period=YTD');
           assert.strictEqual(calc.metrics.find(x => x.metric_id === id).can_upload, true, `PIC sees the upload buttons for ${id}`);
           assert.strictEqual((await csvFor(picUser, id)).status, 200);
-          const up = await post36(picUser, { csvText: csv36([`93200${id}1,Pic Unggah ${id},pu${id}@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day39},5`]), metric_id: String(id), fileName: 'pic39.csv' });
+          const up = m === essM
+            ? await postEssFile(id, await essXlsx([ESS_HEAD(), [A, 'Directorate', new Date().getFullYear(), 1, 1, 0.9, '']]), 'pic39.xlsx', picUser.cookie)
+            : await post36(picUser, { csvText: csv36([`93200${id}1,Pic Unggah ${id},pu${id}@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day39},5`]), metric_id: String(id), fileName: 'pic39.csv' });
           assert.strictEqual(up.status, 200, `PIC upload to ${id}`);
           const body = await up.json();
           assert.strictEqual(body.valid_rows_count, 1); assert.strictEqual(body.calculation, undefined, 'no bankwide calculation for a PIC');
@@ -3494,7 +3563,8 @@ async function runRegressionSuite() {
       await runTest('[NEGATIVE] Upload keeps rejecting a target that is not a SURVEY metric: an OUTCOME or unknown metric id (form field) and a CSV metric_id column that names an OUTCOME or unknown metric store nothing; the form metric still wins over a mismatching CSV column', async () => {
         const day39 = new Date().toISOString().slice(0, 10);
         const t1 = await mkSurvey39('REGRESSION UP Target 1', { survey_source: 'SYSTEM' });
-        const t2 = await mkSurvey39('REGRESSION UP Target 2', { survey_source: 'ESS' });
+        const t2 = await mkSurvey39('REGRESSION UP Target 2', { survey_source: 'SYSTEM' });
+        const t3 = await mkSurvey39('REGRESSION UP Target 3 ESS', { survey_source: 'ESS' });
         const row = (nip, extra) => `${nip},Salah Sasaran,s@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day39},4${extra === undefined ? '' : ',' + extra}`;
         const withCol = rows => ['nip,employee_name,cimb_email,directorate,division,survey_date,q1_overall,metric_id', ...rows].join('\r\n');
         const total = async () => (await aj(`/api/surveys/responses/${t1.body.metric_id}`)).length + (await aj(`/api/surveys/responses/${t2.body.metric_id}`)).length;
@@ -3503,7 +3573,8 @@ async function runRegressionSuite() {
           ['form OUTCOME', { csvText: csv36([row('9350001')]), metric_id: 1 }],
           ['form unknown', { csvText: csv36([row('9350002')]), metric_id: 99999 }],
           ['column OUTCOME', { csvText: withCol([row('9350003', 1)]) }],
-          ['column unknown', { csvText: withCol([row('9350004', 99999)]) }]
+          ['column unknown', { csvText: withCol([row('9350004', 99999)]) }],
+          ['column ESS', { csvText: withCol([row('9350006', t3.body.metric_id)]) }]
         ]) {
           const res = await adminJson('POST', '/api/surveys/upload', { fileName: 'rt39.csv', ...payload });
           assert.strictEqual(res.status, 200, label);
@@ -3664,7 +3735,7 @@ async function runRegressionSuite() {
   // The suite never talks to the real Gemma: a throw-away second backend is started with OLLAMA_HOST and
   // TRANSCRIBE_API_URL pointing at in-process fakes, over the same SQL database. SQL backend only.
   console.log('\n📦 MODULE 38: Video AI Summary - Gemma only for a new video, validator, fallback, zero stray calls (Positive & Negative Testing)');
-  {
+  if (!skipModuleBlock(38)) {
     const storage38 = require('../server/db/storage');
     // Validator: numbers written as words are facts too (offline, no Ollama).
     const summarySvc = require('../server/services/mediaSummaryService');
@@ -4150,7 +4221,7 @@ async function runRegressionSuite() {
   // px_media.file_path follows. Uses real files in server/uploads (every test file carries a unique stamp and is removed),
   // never the real Gemma / Video Extractor (a second backend with in-process fakes). SQL backend only for the in-process part.
   console.log('\n📦 MODULE 41: Video file renamed to its original upload name after the pipeline (Positive & Negative Testing)');
-  {
+  if (!skipModuleBlock(41)) {
     const fs41 = require('fs');
     const path41 = require('path');
     const st41 = require('../server/db/storage');
@@ -4748,7 +4819,7 @@ async function runRegressionSuite() {
   // removes the link when the call is over. Fallback: the stored (random) path. One retry with it on a fast "unreadable file" error.
   // A second backend with fake Ollama + a fake Video Extractor that RECORDS the `source` it receives (never the real ones).
   console.log('\n📦 MODULE 42: Video Extractor gets a named hard link (Positive & Negative Testing)');
-  {
+  if (!skipModuleBlock(42)) {
     const fs42 = require('fs');
     const os42 = require('os');
     const path42 = require('path');
@@ -5109,7 +5180,7 @@ async function runRegressionSuite() {
   // words are ignored and the limits are 5 words AND over 30%, or 12 words in any case (long transcript: over 35% / 18).
   // Numbers, number words, capitalised names, wrong language, meta phrases and markup are rejected exactly as before.
   console.log('\n📦 MODULE 43: AI summary validator - paraphrase tolerance with stemming, invented facts still rejected (Positive & Negative Testing)');
-  {
+  if (!skipModuleBlock(43)) {
     const sm43 = require('../server/services/mediaSummaryService');
     const sets43 = require('./helpers/summaryValidatorCases');
     const answerOf = c => c.answer || sm43.parseModelAnswer(c.raw);
@@ -5316,9 +5387,314 @@ async function runRegressionSuite() {
     }
   }
 
+  // --- MODULE 45 (v2.32.0): ESS METRICS TAKE THE ESS SUMMARY .XLSX (ONE ROW PER ORG UNIT) INSTEAD OF RESPONDENT ROWS ---
+  // Template, the user's real ESS result file, carry-forward period rule, bankwide / directorate / division / scope
+  // selection, atomic validation (negative cases store nothing), re-upload replaces the period, evidence, original-file
+  // download and access rules. Cleans up after itself: temp users / metrics are deleted, the seed 2025-11 result of the
+  // Role Clarity metric is restored (SQL: exactly - rows re-pointed to the seed upload, test uploads removed).
+  console.log('\n📦 MODULE 45: ESS summary upload (.xlsx) - template, real file, period carry-forward, org level, validation, access (Positive & Negative Testing)');
+  {
+    const fs45 = require('fs');
+    const path45 = require('path');
+    const ess45 = require('../server/services/essSummaryService');
+    const aj45 = async q => (await adminJson('GET', q)).json();
+    const params45 = (await aj45('/api/admin/parameters')).metrics;
+    const m9 = params45.find(m => m.metric_type === 'SURVEY' && m.survey_source === 'ESS' && /role clarity/i.test(m.metric_name));
+    const RC = m9 ? m9.metric_id : 9;
+    const REAL_FILE = path45.join(__dirname, '..', 'docs', 'ESS 2025 Result_Role Clarity & DS Support.xlsx');
+    const DIRS45 = ['Business Banking', 'Compliance, Corporate Affairs & Legal', 'Consumer & EBB', 'Corporate Assurance', 'Human Resources',
+      'Network & Digital Banking', 'Operations, Technology, Analytics & AI', 'Risk Management', 'Sharia Banking', 'Special Asset',
+      'Strategy, Finance & SPAPM', 'Treasury & Capital Market'];
+    const PART45 = [449, 95, 1816, 108, 129, 2579, 1494, 192, 365, 39, 274, 88];
+    const QS45 = ['I understand how my current job role contributes to a positive impact on customers and society.',
+      'Employees clearly understand what is expected of them.', 'My immediate manager gives me feedback that helps me improve my performance.'];
+    // the real file's values (fractions), used when the file itself is not on this machine
+    const VALS45 = [[0.92, 0.96, 0.9, 0.9], [0.91, 0.95, 0.88, 0.9], [0.93666666666666665, 0.99, 0.89, 0.93], [0.93666666666666665, 0.96, 0.93, 0.92],
+      [0.90666666666666662, 0.96, 0.92, 0.84], [0.92333333333333323, 0.98, 0.84, 0.95], [0.93666666666666665, 0.97, 0.93, 0.91], [0.87333333333333341, 0.93, 0.84, 0.85],
+      [0.92333333333333334, 0.94, 0.9, 0.93], [0.93, 0.96, 0.93, 0.9], [0.98, 0.97, 0.97, 1], [0.89333333333333342, 0.92, 0.88, 0.88], [0.90333333333333332, 0.95, 0.88, 0.88]];
+    const realRows45 = () => [ESS_HEAD('Role Clarity & DS Support Index', QS45),
+      ['PT Bank CIMB Niaga Tbk', 'Bankwide', 2025, 'November', 7756, ...VALS45[0]],
+      ...DIRS45.map((d, i) => [d, 'Directorate', 2025, 'November', PART45[i], ...VALS45[i + 1]])];
+    const realFile45 = async () => (fs45.existsSync(REAL_FILE) ? fs45.readFileSync(REAL_FILE) : essXlsx(realRows45()));
+    const uploads45 = [];   // upload ids made by this module (original files to remove)
+    const users45 = [];
+    const metrics45 = [];
+    const history45 = async () => (await aj45('/api/surveys/history')).length;
+    const m9calc = async q => (await aj45(`/api/metrics/calculate?${q}`)).metrics.find(m => m.metric_id === RC);
+    const mkUser45 = async (suffix, scopes) => {
+      const username = `rt45${suffix}${stamp}`;
+      const res = await adminJson('POST', '/api/admin/users', { username, full_name: `Regression 45 ${suffix}`, email: `${username}@example.test`, role: 'USER', scopes });
+      assert.strictEqual(res.status, 201);
+      const body = await res.json();
+      users45.push(body.user.user_id);
+      const { cookie } = await loginAs(username, body.temporary_password);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/auth/change-password`, jsonBody('POST', { current_password: body.temporary_password, new_password: STRONG }, cookie))).status, 200);
+      return { username, email: `${username}@example.test`, cookie };
+    };
+    const asUj45 = async (u, q) => (await rawFetch(`${BASE_URL}${q}`, asUser(u.cookie))).json();
+    const storageBackendIsSql45 = () => require('../server/db/storage').backend === 'sql';
+    let rcTouched = false; // an upload to the real Role Clarity metric happened (restore its seed result afterwards)
+
+    try {
+      await runTest('[POSITIVE] The ESS template is a real .xlsx: Directorate | Level | Year | Month | Participation | <index name> | one column per configured question, a Bankwide row and one row per master directorate; SYSTEM templates stay CSV and the master CSV has no ESS metric', async () => {
+        const res = await fetch(`${BASE_URL}/api/surveys/template?metric_id=${RC}`);
+        assert.strictEqual(res.status, 200);
+        assert.match(res.headers.get('content-type'), /spreadsheetml\.sheet/);
+        assert.match(res.headers.get('content-disposition'), new RegExp(`Template_ESS_Metric_${RC}\\.xlsx`));
+        const rows = await ess45.readFirstSheet(Buffer.from(await res.arrayBuffer()));
+        const text = r => r.cells.map(c => (c && c.value !== null ? String(c.value) : ''));
+        const questions = (await aj45(`/api/admin/survey-questions/${RC}`)).questions.filter(q => q.type !== 'FREE_TEXT').map(q => q.text || q.label);
+        assert.deepStrictEqual(text(rows[0]), ['Directorate', 'Level', 'Year', 'Month', 'Participation', m9.metric_name.replace(/\s*\(ESS\)\s*$/, ''), ...questions]);
+        assert.deepStrictEqual(text(rows[1]).slice(0, 2), ['PT Bank CIMB Niaga Tbk', 'Bankwide']);
+        const directory = (await aj45('/api/directorates')).map(d => d.name || d.directorate_name);
+        assert.deepStrictEqual(rows.slice(2).map(r => text(r)[0]), directory);
+        assert.ok(rows.slice(2).every(r => text(r)[1] === 'Directorate'));
+        assert.strictEqual(rows.length, 2 + directory.length);
+        const sys = await fetch(`${BASE_URL}/api/surveys/template?metric_id=8`);
+        assert.match(sys.headers.get('content-type'), /text\/csv/);
+        const master = (await (await fetch(`${BASE_URL}/api/surveys/template?metric_id=ALL`)).text()).split(/\r?\n/).slice(1).map(l => l.split(',')[5]);
+        const essIds = params45.filter(m => m.survey_source === 'ESS').map(m => String(m.metric_id));
+        assert.ok(master.length > 0 && master.every(id => !essIds.includes(id)), 'no ESS metric in the master CSV');
+      });
+
+      await runTest('[POSITIVE] Seed / boot cleanup: no ESS metric has per-respondent rows any more, and every ESS metric has its 2025-11 summary (Bankwide + 12 directorates)', async () => {
+        for (const m of params45.filter(x => x.metric_type === 'SURVEY' && x.survey_source === 'ESS' && x.metric_id <= 27)) {
+          assert.strictEqual((await aj45(`/api/surveys/responses/${m.metric_id}`)).length, 0, `metric ${m.metric_id} respondent rows`);
+          const d = await aj45(`/api/metrics/${m.metric_id}/detail?mode=YTD&year=2025`);
+          assert.strictEqual(d.ess_period, '2025-11', `metric ${m.metric_id}`);
+          assert.strictEqual(d.ess_results_by_directorate.length, 13, `metric ${m.metric_id} rows`);
+          assert.strictEqual(d.total_respondents, 7756);
+        }
+      });
+
+      await runTest('[POSITIVE] The user\'s real ESS file uploads to Role Clarity: 13 rows, period 2025-11, bankwide 92.00, it replaces the seeded 2025-11 result, is in the history and the audit log', async () => {
+        const before = await history45();
+        rcTouched = true;
+        const res = await postEssFile(RC, await realFile45(), 'ESS 2025 Result_Role Clarity & DS Support.xlsx');
+        const body = await res.json();
+        assert.strictEqual(res.status, 200, JSON.stringify(body).slice(0, 300));
+        uploads45.push(body.upload_id);
+        assert.strictEqual(body.success, true);
+        assert.strictEqual(body.metric_id, RC);
+        assert.strictEqual(body.period, '2025-11');
+        assert.strictEqual(body.rows_imported, 13);
+        assert.strictEqual(body.bankwide_index, 92);
+        assert.strictEqual(body.replaced_previous, true, 'the seeded 2025-11 rows were replaced');
+        assert.deepStrictEqual(body.errors, []);
+        assert.strictEqual(await history45(), before + 1);
+        const log = await aj45('/api/admin/audit-log?limit=50');
+        assert.ok(log.some(e => e.action === 'SURVEY_UPLOAD' && e.target.includes(`ESS summary metric ${RC};`) && e.target.includes(body.upload_id)), 'audited');
+      });
+
+      await runTest('[POSITIVE] Period carry-forward and org level: ALL YTD (this year) = Bankwide 92 / 7756 from 2025-11; Business Banking 91 / 449; a Human Resources division reads Human Resources (92.33 / 129, flagged); YTD 2025 to October = no data (static fallback), full 2025 and MTD 2025-11 = the result', async () => {
+        const year = new Date().getFullYear();
+        const all = await m9calc(`mode=YTD&year=${year}`);
+        assert.strictEqual(all.normalized_score, 92); assert.strictEqual(all.sample_size, 7756);
+        assert.strictEqual(all.last_survey_date, '2025-11'); assert.strictEqual(all.ess_level, 'BANKWIDE');
+        const bb = await m9calc(`mode=YTD&year=${year}&directorate=${encodeURIComponent('Business Banking')}`);
+        assert.strictEqual(bb.normalized_score, 91); assert.strictEqual(bb.sample_size, 449);
+        const hrDiv = (await aj45('/api/directorates')).find(d => (d.name || d.directorate_name) === 'Human Resources').divisions[0];
+        const hr = await m9calc(`mode=YTD&year=${year}&directorate=${encodeURIComponent('Human Resources')}&sub_directorate=${encodeURIComponent(hrDiv)}`);
+        assert.strictEqual(hr.normalized_score, 92.33); assert.strictEqual(hr.sample_size, 129); assert.strictEqual(hr.ess_level, 'DIRECTORATE');
+        const hrDetail = await aj45(`/api/metrics/${RC}/detail?mode=YTD&year=${year}&directorate=${encodeURIComponent('Human Resources')}&sub_directorate=${encodeURIComponent(hrDiv)}`);
+        assert.strictEqual(hrDetail.ess_division_filtered, true);
+        assert.strictEqual(hrDetail.normalized_score, 92.33);
+        const early = await m9calc('mode=YTD&year=2025&endMonth=10');
+        assert.strictEqual(early.sample_size, 0, 'no ESS result on or before October 2025');
+        assert.strictEqual(early.normalized_score, parseFloat(m9.raw_value), 'falls back to the static raw_value like any survey metric without data');
+        assert.strictEqual(early.ess_period, null);
+        const full = await m9calc('mode=YTD&year=2025');
+        assert.strictEqual(full.normalized_score, 92); assert.strictEqual(full.sample_size, 7756);
+        assert.strictEqual((await m9calc('mode=MTD&year=2025&month=11')).normalized_score, 92);
+        assert.strictEqual((await m9calc('mode=MTD&year=2025&month=10')).sample_size, 0);
+      });
+
+      await runTest('[POSITIVE] Detail of an ESS metric: participation, period "November 2025", per-question % favorable from the file (neutral/unfavorable null), results by directorate (Bankwide first for the Admin) and the upload of the period', async () => {
+        const d = await aj45(`/api/metrics/${RC}/detail?mode=YTD&year=${new Date().getFullYear()}`);
+        assert.strictEqual(d.is_ess_summary, true);
+        assert.strictEqual(d.total_respondents, 7756);
+        assert.strictEqual(d.ess_period_label, 'November 2025');
+        assert.strictEqual(d.latest_survey_period, '2025-11');
+        assert.deepStrictEqual(d.questions_breakdown.map(q => q.percent_favorable), [96, 90, 90]);
+        assert.deepStrictEqual(d.questions_breakdown.map(q => q.text), QS45);
+        assert.ok(d.questions_breakdown.every(q => q.percent_neutral === null && q.percent_unfavorable === null));
+        assert.strictEqual(d.ess_results_by_directorate.length, 13);
+        assert.strictEqual(d.ess_results_by_directorate[0].org_level, 'BANKWIDE');
+        assert.strictEqual(d.ess_results_by_directorate[0].is_selected, true);
+        assert.strictEqual(d.ess_upload.upload_id, uploads45[0]);
+        assert.strictEqual(d.responses.length, 0);
+      });
+
+      await runTest('[POSITIVE] A User scoped to two directorates (one with a division subset) gets the participation-weighted mean of both directorate rows, never the Bankwide row', async () => {
+        const u = await mkUser45('s', [{ directorate: 'Business Banking', divisions: null }, { directorate: 'Special Asset', divisions: null }]);
+        const calc = await asUj45(u, '/api/metrics/calculate?period=YTD');
+        const m = calc.metrics.find(x => x.metric_id === RC);
+        assert.strictEqual(m.sample_size, 449 + 39);
+        assert.strictEqual(m.normalized_score, parseFloat(((91 * 449 + 98 * 39) / 488).toFixed(2)));
+        const d = await asUj45(u, `/api/metrics/${RC}/detail?period=YTD`);
+        assert.deepStrictEqual(d.ess_results_by_directorate.map(r => r.directorate).sort(), ['Business Banking', 'Special Asset']);
+        assert.ok(d.ess_results_by_directorate.every(r => r.org_level === 'DIRECTORATE'), 'no Bankwide row for a User');
+        const one = await asUj45(u, `/api/metrics/calculate?period=YTD&directorate=${encodeURIComponent('Special Asset')}`);
+        assert.strictEqual(one.metrics.find(x => x.metric_id === RC).normalized_score, 98);
+        // an employee directorate row the user may not see stays a 403
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/metrics/${RC}/detail?period=YTD&directorate=${encodeURIComponent('Human Resources')}`, asUser(u.cookie))).status, 403);
+      });
+
+      await runTest('[POSITIVE] Re-uploading the same metric + period replaces its rows (still 13), keeps both uploads in the history; evidence CSV lists the stored summary rows with the upload', async () => {
+        const before = await history45();
+        const res = await postEssFile(RC, await realFile45(), 'ESS 2025 Result_Role Clarity & DS Support (again).xlsx');
+        const body = await res.json();
+        assert.strictEqual(res.status, 200);
+        uploads45.push(body.upload_id);
+        assert.strictEqual(body.replaced_previous, true);
+        assert.strictEqual(body.replaced_rows, 13);
+        assert.strictEqual(await history45(), before + 1, 'history keeps both upload records');
+        const d = await aj45(`/api/metrics/${RC}/detail?period=YTD`);
+        assert.strictEqual(d.ess_results_by_directorate.length, 13);
+        assert.strictEqual(d.ess_upload.upload_id, body.upload_id);
+        const evRes = await fetch(`${BASE_URL}/api/surveys/evidence?metric_id=${RC}&period=YTD`);
+        assert.strictEqual(evRes.status, 200);
+        const lines = (await evRes.text()).replace(/^﻿/, '').split(/\r\n/);
+        assert.match(lines[0], /^Directorate,Level,Year,Month,Participation,Index_%,/);
+        assert.ok(lines[0].includes('Upload_ID') && lines[0].includes('Uploaded_By'));
+        const nov = lines.filter(l => l.includes(',2025,November,'));
+        assert.strictEqual(nov.length, 13);
+        assert.ok(nov.every(l => l.includes(body.upload_id)), 'every row names its upload');
+        assert.ok(nov[0].startsWith('PT Bank CIMB Niaga Tbk,Bankwide,2025,November,7756,92,96,90,90,'));
+      });
+
+      await runTest('[NEGATIVE] Invalid ESS files are refused as a whole (400 + every error with its row) and store nothing: unknown directorate, mixed months, score out of range, missing column, duplicate directorate, empty sheet, formula without a saved value, non-xlsx bytes named .xlsx; CSV to an ESS metric -> 415/400; .xlsx to a SYSTEM metric -> 400', async () => {
+        const head = ESS_HEAD();
+        const bank = ['PT Bank CIMB Niaga Tbk', 'Bankwide', 2025, 'November', 100, 0.8, 0.8];
+        const formulaFile = async () => {
+          const JSZip = require('jszip');
+          const zip = await JSZip.loadAsync(await essXlsx([head, bank]));
+          const sheet = await zip.file('xl/worksheets/sheet1.xml').async('string');
+          zip.file('xl/worksheets/sheet1.xml', sheet.replace('<c r="F2"><v>0.8</v></c>', '<c r="F2"><f>AVERAGE(G2:G2)</f></c>'));
+          return zip.generateAsync({ type: 'nodebuffer' });
+        };
+        const cases = [
+          ['unknown directorate', await essXlsx([head, bank, ['Direktorat Fiktif', 'Directorate', 2025, 'November', 5, 0.8, 0.8]]), 3],
+          ['mixed months', await essXlsx([head, bank, ['Business Banking', 'Directorate', 2025, 'December', 5, 0.8, 0.8]]), 3],
+          ['score out of range', await essXlsx([head, ['PT Bank CIMB Niaga Tbk', 'Bankwide', 2025, 'November', 100, 150, 0.8]]), 2],
+          ['question out of range', await essXlsx([head, ['PT Bank CIMB Niaga Tbk', 'Bankwide', 2025, 'November', 100, 0.8, -1]]), 2],
+          ['bad participation', await essXlsx([head, ['PT Bank CIMB Niaga Tbk', 'Bankwide', 2025, 'November', 12.5, 0.8, 0.8]]), 2],
+          ['missing column', await essXlsx([['Directorate', 'Level', 'Year', 'Month', 'Index'], ['PT Bank CIMB Niaga Tbk', 'Bankwide', 2025, 'November', 0.8]]), 1],
+          ['duplicate directorate', await essXlsx([head, bank, ['Business Banking', 'Directorate', 2025, 'November', 5, 0.8, 0.8], ['business banking', 'Directorate', 2025, 'November', 6, 0.7, 0.7]]), 4],
+          ['empty sheet', await essXlsx([head]), null],
+          ['formula without a saved value', await formulaFile(), 2],
+          ['not an xlsx', Buffer.from('nip,score\n1,2\n'), null]
+        ];
+        const before = await history45();
+        const calcBefore = await m9calc('period=YTD');
+        for (const [label, buf, row] of cases) {
+          const res = await postEssFile(RC, buf, `bad_${label.replace(/\W+/g, '_')}.xlsx`);
+          const body = await res.json();
+          assert.strictEqual(res.status, 400, `${label}: ${res.status}`);
+          assert.strictEqual(body.success, false, label);
+          assert.ok(Array.isArray(body.errors) && body.errors.length > 0, `${label}: errors listed`);
+          if (row !== null) assert.ok(body.errors.some(e => e.row_number === row), `${label}: row ${row} named (${JSON.stringify(body.errors)})`);
+          assert.ok(body.errors.every(e => typeof e.reason === 'string' && e.reason.length > 5), label);
+        }
+        const csvFile = await postEssFile(RC, Buffer.from('nip,rating_score\n1,4\n'), 'ess.csv');
+        assert.strictEqual(csvFile.status, 415);
+        assert.match((await csvFile.json()).error, /\.xlsx/);
+        const xls = await postEssFile(RC, Buffer.from('x'), 'ess.xls');
+        assert.strictEqual(xls.status, 415);
+        const csvText = await adminJson('POST', '/api/surveys/upload', { csvText: 'nip,rating_score\n1,4', fileName: 'x.csv', metric_id: RC });
+        assert.strictEqual(csvText.status, 400);
+        const toSystem = await postEssFile(8, await essXlsx([head, bank]), 'sys.xlsx');
+        assert.strictEqual(toSystem.status, 400);
+        assert.strictEqual(await history45(), before, 'nothing was recorded');
+        const calcAfter = await m9calc('period=YTD');
+        assert.deepStrictEqual([calcAfter.normalized_score, calcAfter.sample_size], [calcBefore.normalized_score, calcBefore.sample_size], 'the stored result is unchanged');
+      });
+
+      await runTest('[POSITIVE/NEGATIVE] Access: the PIC of an ESS metric uploads its summary (no Bankwide in their evidence, no bankwide calculation in the answer) and downloads its original file; a non-PIC User gets 403 on upload, evidence and the original file; the Admin downloads the exact uploaded bytes; unknown / seed uploads -> 404', async () => {
+        const pic = await mkUser45('p', [{ directorate: 'Business Banking', divisions: null }]);
+        const other = await mkUser45('o', [{ directorate: 'Business Banking', divisions: null }]);
+        const created = await adminJson('POST', '/api/admin/metrics', { metric_name: 'REGRESSION ESS45 PIC Metric', metric_type: 'SURVEY', scale_type: 'PERCENTAGE', survey_source: 'ESS', journey_id: 2, checkpoint_id: 5, target_value: 85, min_threshold: 80, pic_email: pic.email });
+        assert.strictEqual(created.status, 201);
+        const mid = (await created.json()).metric.metric_id;
+        metrics45.push(mid);
+        const file = await essXlsx([ESS_HEAD('PIC Index', ['Q A', 'Q B']), ['PT Bank CIMB Niaga Tbk', 'Bankwide', 2026, 2, 50, 0.81, 0.8, 0.82], ['Business Banking', 'Directorate', 2026, 'Feb', 20, 82, 80, ''], ['Human Resources', 'Directorate', 2026, 'Februari', 30, '79%', 0.79, 0.79]]);
+        const res = await postEssFile(mid, file, 'pic45.xlsx', pic.cookie);
+        const body = await res.json();
+        assert.strictEqual(res.status, 200, JSON.stringify(body).slice(0, 300));
+        uploads45.push(body.upload_id);
+        assert.strictEqual(body.period, '2026-02'); assert.strictEqual(body.rows_imported, 3); assert.strictEqual(body.bankwide_index, 81);
+        assert.strictEqual(body.calculation, undefined);
+        // PIC: evidence only for their scope (Business Banking), no Bankwide / other directorate rows
+        const ev = await rawFetch(`${BASE_URL}/api/surveys/evidence?metric_id=${mid}&period=YTD`, asUser(pic.cookie));
+        assert.strictEqual(ev.status, 200);
+        const evRows = (await ev.text()).replace(/^﻿/, '').split(/\r\n/).slice(1);
+        assert.deepStrictEqual(evRows.map(l => l.split(',')[0].replace(/"/g, '')), ['Business Banking']);
+        const own = await rawFetch(`${BASE_URL}/api/surveys/ess-file/${body.upload_id}`, asUser(pic.cookie));
+        assert.strictEqual(own.status, 200);
+        // non-PIC user: 403 on upload, evidence and the original file
+        assert.strictEqual((await postEssFile(mid, file, 'x.xlsx', other.cookie)).status, 403);
+        assert.strictEqual((await postEssFile(RC, await realFile45(), 'x.xlsx', other.cookie)).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/surveys/evidence?metric_id=${mid}&period=YTD`, asUser(other.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/surveys/ess-file/${body.upload_id}`, asUser(other.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/surveys/ess-file/${uploads45[0]}`, asUser(pic.cookie))).status, 403, 'the PIC of another metric');
+        // Admin: exact bytes back; unknown / seed upload -> 404
+        const adm = await fetch(`${BASE_URL}/api/surveys/ess-file/${body.upload_id}`);
+        assert.strictEqual(adm.status, 200);
+        assert.ok(Buffer.from(await adm.arrayBuffer()).equals(Buffer.from(file)), 'the stored original file is byte-identical');
+        assert.strictEqual((await fetch(`${BASE_URL}/api/surveys/ess-file/nope-123`)).status, 404);
+        assert.strictEqual((await fetch(`${BASE_URL}/api/surveys/ess-file/seed-ess-${RC}-2025-11`)).status, 404, 'seed data has no original file');
+        // the uploaded values drive the metric (Bankwide 81 for the Admin; Business Banking 82 for the scoped PIC)
+        assert.strictEqual((await aj45(`/api/metrics/calculate?mode=YTD&year=2026`)).metrics.find(m => m.metric_id === mid).normalized_score, 81);
+        assert.strictEqual((await asUj45(pic, '/api/metrics/calculate?mode=YTD&year=2026')).metrics.find(m => m.metric_id === mid).normalized_score, 82);
+        // deleting the metric deletes its ESS results and uploads (documented cascade)
+        assert.strictEqual((await adminJson('DELETE', `/api/admin/metrics/${mid}`)).status, 200);
+        metrics45.splice(metrics45.indexOf(mid), 1);
+        assert.ok(!(await aj45('/api/surveys/history')).some(h => h.upload_id === body.upload_id), 'upload record removed with the metric');
+      });
+
+      if (storageBackendIsSql45()) {
+        await runTest('[POSITIVE] (SQL Server) Reminders see an ESS summary as the data of its year (hasSurveyDataInPeriod), and px_ess_results enforces one row per org unit and period', async () => {
+          const st = require('../server/db/storage');
+          assert.strictEqual(await st.hasSurveyDataInPeriod(RC, '2025-01-01', '2026-01-01'), true);
+          assert.strictEqual(await st.hasSurveyDataInPeriod(RC, '2025-11-01', '2025-12-01'), true);
+          assert.strictEqual(await st.hasSurveyDataInPeriod(RC, '2025-12-01', '2026-01-01'), false);
+          const rows = await st.getEssResults(RC, { year: 2025, month: 11 });
+          assert.strictEqual(rows.length, 13);
+          assert.strictEqual(rows.filter(r => r.org_level === 'BANKWIDE').length, 1);
+        });
+      }
+    } finally {
+      // restore the seed 2025-11 result of Role Clarity: the real file carries exactly the seed values
+      if (rcTouched) {
+        const r = await postEssFile(RC, await realFile45(), 'ESS 2025 Result_Role Clarity & DS Support.xlsx');
+        const rb = await r.json();
+        if (rb.upload_id) uploads45.push(rb.upload_id); else console.error('     cleanup: Role Clarity seed result could not be restored', JSON.stringify(rb).slice(0, 200));
+        if (storageBackendIsSql45()) {
+          // SQL: exact restore - the rows go back on the seed upload, the test uploads leave the history
+          const sql = require('mssql');
+          const pool = await new sql.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
+            user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
+          try {
+            await pool.request().input('m', sql.Int, RC).input('u', sql.NVarChar, `seed-ess-${RC}-2025-11`)
+              .query('UPDATE dbo.px_ess_results SET upload_id = @u WHERE metric_id = @m AND survey_year = 2025 AND survey_month = 11');
+            for (const id of uploads45.filter(Boolean)) await pool.request().input('u', sql.NVarChar, id).query('DELETE FROM dbo.px_survey_uploads WHERE upload_id = @u');
+          } finally {
+            await pool.close();
+          }
+        }
+      }
+      for (const id of uploads45.filter(Boolean)) {
+        const f = path45.join(ess45.ESS_UPLOAD_DIR, `${id}.xlsx`);
+        if (fs45.existsSync(f)) fs45.unlinkSync(f);
+      }
+      for (const id of metrics45) await adminJson('DELETE', `/api/admin/metrics/${id}`);
+      for (const id of users45) await adminJson('DELETE', `/api/admin/users/${id}`);
+    }
+  }
+
   // --- SUMMARY ---
   console.log('\n================================================================');
-  console.log(`📊 REGRESSION TEST SUMMARY: ${passedTests}/${totalTests} Tests Passed (${failedTests} Failed)`);
+  console.log(`📊 REGRESSION TEST SUMMARY: ${passedTests}/${totalTests} Tests Passed (${failedTests} Failed)${SKIP_MODULES.size ? `, ${skippedTests} test(s) SKIPPED + whole module block(s) skipped: modules ${[...SKIP_MODULES].join(', ')}` : ''}`);
   console.log('================================================================\n');
 
   await teardownSuiteLogin();

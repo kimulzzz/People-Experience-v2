@@ -2,6 +2,7 @@
 const storage = require('../db/storage');
 const { getQuestionsForMetric } = require('./metricQuestionService');
 const { isEssMetric } = require('../db/surveySource');
+const { selectEssResult, essOrgFor, essOriginalFilePath } = require('./essSummaryService');
 
 // Default year for YTD/unparseable period requests, derived from the real server clock
 // instead of a hardcoded literal — this dataset happens to be seeded for 2026 (today's real
@@ -323,6 +324,17 @@ async function computeMonthlyTrends(filterOptions = {}) {
  * - Directorate / Sub-Directorate: When selected, non-employee metrics (#1-#5) are disabled
  *   and excluded from journey & bankwide PX calculations.
  */
+/**
+ * The directorate whose ESS row applies to a filter: the filter's directorate, or - for a division filter without a
+ * directorate - the division's parent directorate ('__NONE__' when the division is unknown, i.e. no ESS data).
+ * Scopes (USER) are handled by essOrgFor itself.
+ */
+async function essDirectorateFor(directorate, subDirectorate, scopes) {
+  if (scopes || (directorate && directorate !== 'ALL') || !subDirectorate || subDirectorate === 'ALL') return directorate;
+  const parent = (await storage.getDirectorates()).find(d => (d.divisions || []).includes(subDirectorate));
+  return parent ? parent.directorate_name : '__NONE__';
+}
+
 async function calculatePEIndex(filterInput = 'YTD', options = {}) {
   // The per-month inner calls from computeMonthlyTrends() skip this (it syncs once up front).
   if (!options.skipTrends) await syncLiveEventMetrics();
@@ -373,12 +385,15 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
   const isDirectorateFiltered = (directorate && directorate !== 'ALL') || !!scopes;
   const queryFilter = { mode, year, month, directorate, sub_directorate: subDirectorate, period: periodString, endMonth, scopes };
 
-  const [metrics, journeys, checkpoints, targets] = await Promise.all([
+  const [metrics, journeys, checkpoints, targets, essResults] = await Promise.all([
     storage.getMetrics(),
     storage.getJourneys(),
     storage.getCheckpoints(),
-    storage.getMetricTargets()
+    storage.getMetricTargets(),
+    storage.getEssResults(null) // ESS summaries (v2.32.0): small table, read once per calculation
   ]);
+  // ESS is reported per directorate: a division filter reads its parent directorate's row.
+  const essDirectorate = await essDirectorateFor(directorate, subDirectorate, scopes);
 
   // 1. Enrich each metric with normalized score, status, and period/directorate data
   const enrichedMetrics = await Promise.all(metrics.map(async m => {
@@ -401,8 +416,24 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
     let rawVal = parseFloat(m.raw_value || 0);
     let sampleSize = null;
     let lastSurveyDate = null;
+    const isEss = m.metric_type === 'SURVEY' && isEssMetric(m);
+    let essResult = null;
 
-    if (m.metric_type === 'SURVEY') {
+    if (isEss) {
+      // ESS metric (v2.32.0): the uploaded ESS summary, not per-respondent rows. The latest result on or before the
+      // period's end is carried forward; sample size = participation. No result -> the static raw_value, like any
+      // survey metric without data.
+      essResult = selectEssResult(essResults, m.metric_id, { mode, year, month, endMonth },
+        essOrgFor({ directorate: essDirectorate, scopes, bankwide: bankwideReadOnly }));
+      if (essResult) {
+        rawVal = essResult.index;
+        sampleSize = essResult.participation;
+        lastSurveyDate = essResult.period;
+      } else {
+        sampleSize = 0;
+        lastSurveyDate = normalizeDateString(m.last_survey_date) || todayDateString();
+      }
+    } else if (m.metric_type === 'SURVEY') {
       const responses = await storage.getResponsesByMetricAndPeriod(m.metric_id, bankwideReadOnly ? { ...queryFilter, directorate: 'ALL', sub_directorate: 'ALL', scopes: null } : queryFilter);
       sampleSize = responses.length;
 
@@ -462,7 +493,12 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       target_audience: m.target_audience || (isEmployeeMetric ? 'EMPLOYEE' : 'EXTERNAL_MARKET'),
       is_disabled: isDisabled,
       excluded_from_index: bankwideReadOnly,
-      disabled_reason: disabledReason
+      disabled_reason: disabledReason,
+      ...(isEss ? {
+        ess_period: essResult ? essResult.period : null,
+        ess_period_label: essResult ? essResult.period_label : null,
+        ess_level: essResult ? essResult.level : null
+      } : {})
     };
   }));
 
@@ -617,6 +653,7 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
   let subDirectorate = 'ALL';
   let scopes = null; // union data scope of a USER (see calculatePEIndex)
   let periodString = 'YTD';
+  let endMonth = null;
 
   if (typeof filterInput === 'string') {
     periodString = filterInput.trim();
@@ -643,6 +680,7 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
     subDirectorate = filterInput.sub_directorate || filterInput.subDirectorate || 'ALL';
     periodString = filterInput.period || (mode === 'MTD' ? `${year}-${month}` : `${year}`);
     if (Array.isArray(filterInput.scopes)) scopes = filterInput.scopes;
+    if (filterInput.endMonth) endMonth = String(filterInput.endMonth).padStart(2, '0');
   }
 
   const isDirectorateFiltered = (directorate && directorate !== 'ALL') || !!scopes;
@@ -750,6 +788,17 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
       responses: [],
       operational_records: operationalRecords
     };
+  }
+
+  // ESS metric with an uploaded ESS summary for this period (v2.32.0)
+  if (isEss) {
+    const essDirectorate = await essDirectorateFor(directorate, subDirectorate, scopes);
+    const essResult = selectEssResult(await storage.getEssResults(id), id, { mode, year, month, endMonth },
+      essOrgFor({ directorate: essDirectorate, scopes }));
+    if (essResult) {
+      return buildEssDetail({ id, metric, targetConfig, journey, checkpoint, isEmployeeMetric, isDisabled, disabledReason,
+        periodString, queryFilter, essResult, scopes, subDirectorate, essDirectorate });
+    }
   }
 
   // Survey metric logic
@@ -993,6 +1042,115 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
     responses: [...responses]
       .sort((a, b) => (b.survey_date || b.created_at || '').localeCompare(a.survey_date || a.created_at || ''))
       .slice(0, 100)
+  };
+}
+
+const normalizeQuestionText = t => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/**
+ * Metric detail of an ESS metric from its uploaded ESS summary: the index, participation and per-question % come
+ * from the file (neutral / unfavorable are not part of the ESS summary -> null). ess_results_by_directorate lists
+ * the rows of that period the viewer may see: everything for an unscoped viewer (Bankwide first), only the scoped
+ * directorates for a USER.
+ */
+async function buildEssDetail({ id, metric, targetConfig, journey, checkpoint, isEmployeeMetric, isDisabled, disabledReason,
+  periodString, queryFilter, essResult, scopes, subDirectorate, essDirectorate }) {
+  const configured = (await storage.getSurveyQuestions(id)).filter(q => (q.type || 'SCALE_1_5') !== 'FREE_TEXT');
+  const breakdown = (essResult.questions || []).map((fq, i) => {
+    // the file's header text is the question; a configured question with the same text lends its key/label/dimension
+    const match = configured.find(q => normalizeQuestionText(q.text || q.label) === normalizeQuestionText(fq.label));
+    const score = fq.score === null || fq.score === undefined ? null : parseFloat(Number(fq.score).toFixed(2));
+    return {
+      key: match ? match.key : `ess_q${i + 1}`,
+      label: match ? match.label : `Question ${i + 1}`,
+      text: fq.label,
+      type: 'ESS_PERCENT',
+      dimension: match ? (match.dimension || null) : null,
+      visible_based_on: (match && match.visible_based_on) || 'Always',
+      required_based_on: (match && match.required_based_on) || (match && match.mandatory === false ? 'Optional' : 'Always'),
+      avg_score: score,
+      normalized_score: score,
+      response_count: essResult.participation,
+      percent_favorable: score,
+      percent_neutral: null,
+      percent_unfavorable: null
+    };
+  });
+  const index = parseFloat(Number(essResult.index).toFixed(2));
+  const normalizedTarget = normalizeTarget(metric, targetConfig);
+  const normalized = normalizeScore({ ...metric, ...targetConfig }, essResult.index);
+  const dimName = configured.find(q => q.dimension)?.dimension || metric.metric_name.replace(/\s*\(ESS\)\s*$/i, '');
+  const scopedDirs = scopes ? scopes.map(s => s.directorate) : null;
+  const byDirectorate = essResult.rows
+    .filter(r => (scopedDirs ? r.org_level === 'DIRECTORATE' && scopedDirs.includes(r.directorate) : true))
+    .sort((a, b) => (a.org_level === b.org_level ? String(a.directorate).localeCompare(String(b.directorate)) : (a.org_level === 'BANKWIDE' ? -1 : 1)))
+    .map(r => ({
+      org_level: r.org_level,
+      directorate: r.org_level === 'BANKWIDE' ? 'PT Bank CIMB Niaga Tbk (Bankwide)' : r.directorate,
+      participation: r.participation,
+      index_score: parseFloat(Number(r.index_score).toFixed(2)),
+      questions: (r.questions || []).map(q => ({ label: q.label, score: q.score === null || q.score === undefined ? null : parseFloat(Number(q.score).toFixed(2)) })),
+      is_selected: essResult.level === 'BANKWIDE' ? r.org_level === 'BANKWIDE' : (r.org_level === 'DIRECTORATE' && (scopedDirs ? scopedDirs.includes(r.directorate) : r.directorate === essDirectorate))
+    }));
+  const uploadId = (essResult.rows[0] || {}).upload_id || null;
+  const upload = uploadId ? (await storage.getSurveyUploads()).find(u => u.upload_id === uploadId) : null;
+  const meta = {
+    metric_id: id,
+    metric_name: metric.metric_name,
+    metric_type: 'SURVEY',
+    scale_type: metric.scale_type,
+    experience_owner: metric.experience_owner,
+    source_of_data: metric.source_of_data,
+    survey_source: metric.survey_source || null,
+    journey_name: journey?.journey_name || '',
+    checkpoint_name: checkpoint?.checkpoint_name || '',
+    target_value: targetConfig.target_value,
+    target_value_normalized: parseFloat(normalizedTarget.toFixed(2)),
+    target_display: targetConfig.target_display,
+    unit: metric.unit,
+    min_threshold: targetConfig.min_threshold,
+    is_employee_metric: isEmployeeMetric,
+    target_audience: metric.target_audience || (isEmployeeMetric ? 'EMPLOYEE' : 'EXTERNAL_MARKET')
+  };
+  return {
+    metric: meta,
+    ...meta,
+    is_survey: true,
+    is_outcome: false,
+    is_ess: true,
+    is_ess_summary: true,
+    ess_period: essResult.period,
+    ess_period_label: essResult.period_label,
+    latest_survey_period: essResult.period,
+    last_survey_date: essResult.period,
+    ess_level: essResult.level,
+    ess_division_filtered: !!subDirectorate && subDirectorate !== 'ALL',
+    ess_summary: {
+      dimension_name: dimName,
+      summary_score: index,
+      percent_favorable: index,
+      percent_neutral: null,
+      percent_unfavorable: null,
+      questions_count: breakdown.length,
+      participation: essResult.participation,
+      period: essResult.period,
+      period_label: essResult.period_label,
+      description: `ESS result ${essResult.period_label} (uploaded ESS summary): index and question scores are % favorable${essResult.level === 'DIRECTORATE' ? ', at directorate level' : ', bankwide'}.`
+    },
+    ess_results_by_directorate: byDirectorate,
+    ess_upload: upload ? { upload_id: upload.upload_id, file_name: upload.file_name, uploaded_by: upload.uploaded_by, uploaded_at: upload.uploaded_at, has_original_file: !!essOriginalFilePath(upload.upload_id) } : null,
+    is_disabled: isDisabled,
+    disabled_reason: disabledReason,
+    journey_color: journey?.color || '#ED1C24',
+    current_raw_value: index,
+    normalized_score: parseFloat(normalized.toFixed(2)),
+    status: normalized < targetConfig.min_threshold ? 'CRITICAL' : (normalized < normalizedTarget ? 'WARNING' : 'HEALTHY'),
+    period: periodString,
+    filter_options: queryFilter,
+    total_respondents: essResult.participation,
+    questions: breakdown,
+    questions_breakdown: breakdown,
+    responses: []
   };
 }
 

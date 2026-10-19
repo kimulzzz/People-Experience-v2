@@ -141,6 +141,7 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 | Daftar pilihan Admin Parameters & Survey Questions (tipe metrik, skala, responden, frekuensi, tipe pertanyaan) | `px_app_settings` | `PUT /api/admin/settings/:key` (hanya label) |
 | Satuan nilai aktual tiap metrik (`px_metrics.unit`) | `px_metrics` | Admin Parameters → field "Actual Value Unit" |
 | Sumber survei tiap metrik SURVEY (`px_metrics.survey_source`: `SYSTEM` / `ESS`) | `px_metrics` | Admin Parameters → dropdown "Survey Source" |
+| Hasil ESS per metrik, periode dan unit org (v2.32.0) | `px_ess_results` (+ batch di `px_survey_uploads`) | Upload ringkasan `.xlsx` di Explore Metrics / detail metrik (Admin atau PIC); file asli di `server/data/ess-uploads/` |
 | Parameter journey/checkpoint/metric/target/bobot | `px_journeys`, `px_checkpoints`, `px_metrics`, `px_metric_targets` | menu Admin Parameters |
 
 > **Perhatian:** `node server/db/migrate.js --reset` menghapus semua tabel `px_*` termasuk `px_email_settings` — pengaturan email harus diisi ulang setelahnya.
@@ -191,3 +192,13 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 - `node server/db/migrate.js --reset` memuat `store.json` (masih bernama lama) lalu langsung menjalankan rename yang sama. Agar `store.json` ikut bernama baru: `npm run db:export -- --replace` (server dihentikan dulu).
 - Tidak ada migrasi balik; nama lama hanya kembali lewat restore backup `.bak` dari sebelum v2.31.0.
 - Pemeriksaan: `SELECT directorate_name FROM dbo.px_directorates ORDER BY directorate_id;`
+
+## 16. Ringkasan ESS (v2.32.0)
+
+- Tabel baru `px_ess_results` (dibuat otomatis saat server start, `schema.sql`): satu baris per unit org (Bankwide `directorate` NULL, atau direktorat) per metrik ESS dan periode; `index_score` dan skor pertanyaan dalam persen 0-100. Kunci unik `UQ_px_ess_results (metric_id, survey_year, survey_month, org_level, directorate)`. Rincian kolom: `docs/08` §17. Jumlah tabel kini 30.
+- **Pembersihan sekali**: pada start pertama yang membuat tabel ini, semua baris ESS per responden di `px_survey_uploaded_responses` dan batch upload yang menjadi kosong dihapus (database utama: 2.568 baris, 60 batch; laporan developer). Log: `ESS now uses uploaded summaries: deleted ...`. Tidak berjalan lagi pada start berikutnya.
+- **Seed demo**: ringkasan November 2025 (143 baris, `uploaded_by` "Seed (dummy)") ditambahkan saat start hanya untuk metrik ESS yang belum punya hasil; dimatikan dengan `SEED_DEMO_DATA=false`.
+- **Backup**: file asli unggahan ada di `server/data/ess-uploads/` (bukan di database). Backup `.bak` **tidak** memuatnya - salin folder ini bersama backup database bila file asli perlu disimpan untuk audit.
+- `node server/db/migrate.js --reset` memuat ulang dari `store.json` yang belum berisi hasil ESS: hasil ESS yang diunggah hilang (diganti seed demo), sementara file aslinya tetap tertinggal di `server/data/ess-uploads/`. Ekspor dulu (`npm run db:export`) bila perlu.
+- Rollback ke JSON tidak memerlukan langkah khusus (JSON menjalankan pembersihan dan seed yang sama saat `store.json` dimuat).
+- Pemeriksaan: `SELECT metric_id, survey_year, survey_month, COUNT(*) AS n FROM dbo.px_ess_results GROUP BY metric_id, survey_year, survey_month ORDER BY 1, 2, 3;`

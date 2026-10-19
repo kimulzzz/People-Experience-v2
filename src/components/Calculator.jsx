@@ -1,7 +1,7 @@
 // src/components/Calculator.jsx
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../utils/AuthContext';
-import { surveySourceLabel, surveySourceBadgeClass } from '../utils/surveySource';
+import { surveySourceLabel, surveySourceBadgeClass, surveyTemplateFileName } from '../utils/surveySource';
 import { 
   Layers, 
   Search, 
@@ -281,7 +281,7 @@ export default function Calculator({
           </div>
           <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-white/90 text-slate-700 font-semibold text-[10.5px]">
             <Download className="w-3 h-3 text-slate-500 shrink-0" />
-            <span><strong>Template:</strong> CSV Format</span>
+            <span><strong>Template:</strong> CSV Format (ESS: .xlsx summary)</span>
           </div>
           <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-white/90 text-slate-700 font-semibold text-[10.5px]">
             <FileText className="w-3 h-3 text-slate-500 shrink-0" />
@@ -289,7 +289,7 @@ export default function Calculator({
           </div>
           <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-white/90 text-slate-700 font-semibold text-[10.5px]">
             <FileSpreadsheet className="w-3 h-3 text-slate-500 shrink-0" />
-            <span><strong>Upload:</strong> Import CSV</span>
+            <span><strong>Upload:</strong> Import CSV (ESS: .xlsx summary)</span>
           </div>
           <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-white/90 text-slate-700 font-semibold text-[10.5px]">
             <Eye className="w-3 h-3 text-slate-500 shrink-0" />
@@ -409,7 +409,9 @@ export default function Calculator({
                   const j = journeys.find(jn => jn.journey_id === m.journey_id);
                   const isSurvey = m.metric_type === 'SURVEY';
                   const rawDate = m.last_survey_date || todayDateString();
-                  const displayDate = normalizeDateString(rawDate) || rawDate;
+                  // ESS metrics (v2.32.0) show the period of the uploaded ESS summary, e.g. "November 2025"
+                  const isEssRow = isSurvey && m.survey_source === 'ESS';
+                  const displayDate = (isEssRow && m.ess_period_label) || normalizeDateString(rawDate) || rawDate;
 
                   const isDisabled = m.is_disabled === true;
 
@@ -492,7 +494,7 @@ export default function Calculator({
                             <div className="font-black text-gray-900 text-xs">
                               {m.sample_size || 0}
                             </div>
-                            <span className="text-[9.5px] text-gray-500 block leading-tight">respondents</span>
+                            <span className="text-[9.5px] text-gray-500 block leading-tight">{isEssRow ? 'participants' : 'respondents'}</span>
                           </>
                         ) : (
                           <div className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-bold text-[9.5px] border border-blue-100">
@@ -584,13 +586,13 @@ export default function Calculator({
                               {/* 1. Download Template (Admin, or the PIC of this metric - m.can_upload comes from the server) */}
                               <a
                                 href={`/api/surveys/template?metric_id=${m.metric_id}`}
-                                download={`Template_Survey_Metric_${m.metric_id}.csv`}
+                                download={surveyTemplateFileName(m.metric_id, isEssRow)}
                                 onClick={(e) => e.stopPropagation()}
                                 className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
-                                title={`Download CSV Template format with standard questions for ${m.metric_name}`}
+                                title={isEssRow ? `Download the ESS summary template (.xlsx) for ${m.metric_name}` : `Download CSV Template format with standard questions for ${m.metric_name}`}
                               >
                                 <Download className="w-3 h-3 text-slate-500 shrink-0" />
-                                <span>Template</span>
+                                <span>{isEssRow ? 'Template (.xlsx)' : 'Template'}</span>
                               </a>
 
                               {/* 2. Download Evidence */}
@@ -612,7 +614,7 @@ export default function Calculator({
                                   if (onOpenSurveyImport) onOpenSurveyImport(m.metric_id);
                                 }}
                                 className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
-                                title={`Import New CSV Survey Responses for ${m.metric_name}`}
+                                title={isEssRow ? `Upload the ESS summary (.xlsx) for ${m.metric_name}` : `Import New CSV Survey Responses for ${m.metric_name}`}
                               >
                                 <FileSpreadsheet className="w-3 h-3 text-slate-500 shrink-0" />
                                 <span>Upload</span>

@@ -355,3 +355,18 @@ Tidak diuji otomatis: seluruh tampilan di atas (diperiksa QC di Browser pane); t
 `App.jsx` memakai `getPublicCodes()` sebagai **initializer `useState`** untuk `publicCheckinCode` / `publicSurveyCode` dan `isPublicRoute()` di `App()`, sehingga render pertama sudah tahu halaman ini publik dan `AuthGate` / `Header` tidak dirender. Sebelumnya kode diisi lewat `useEffect` (render pertama masih memuat `Header` dengan `user === null`) dan form publik crash dengan `Cannot read properties of null (reading 'scopes')` - bug sejak v2.27.0, form publik tidak bisa dipakai karyawan selama v2.27.0 s.d. v2.29.0. Pertahanan kedua: `Header.jsx` memakai `user?.scopes` dan semua pembacaan `user.*` ada di dalam blok `{user && (...)}`; `App.jsx` memakai `user?.user_id`. Hanya dua rute publik yang ada. **Diketahui**: `?survey=` dengan kode event yang masih pre-event menampilkan form feedback tanpa pertanyaan (severity rendah, belum diperbaiki).
 
 **Tidak diuji otomatis**: tampilan visual (diperiksa QC di Browser pane); mobile hanya sebatas aturan CSS di atas, tidak diuji di perangkat. Modul 40 menguji logika `publicRoute.js`, initializer di `App.jsx` dan pembacaan `user.*` di `Header.jsx` lewat pemeriksaan kode sumber, bukan render browser.
+
+---
+
+## Catatan v2.32.0 - Upload & Tampilan Ringkasan ESS (.xlsx)
+
+Metrik ESS kini diisi dari ringkasan hasil ESS `.xlsx` (lihat `docs/04` "Catatan v2.32.0"). Helper baru di `src/utils/surveySource.js`: `isEssSurveyMetric(m)` (SURVEY + `survey_source === 'ESS'`) dan `surveyTemplateFileName(metricId, isEss)` (`Template_ESS_Metric_<id>.xlsx` / `Template_Survey_Metric_<id>.csv`).
+
+| Komponen | Perubahan |
+| :--- | :--- |
+| `SurveyImportModal.jsx` | Untuk metrik ESS: file picker hanya `.xlsx` (teks "or drag and drop CSV here" disembunyikan; tanpa pratinjau isi, `.xlsx` tidak dibaca sebagai teks; pemeriksaan ekstensi di klien sebelum kirim), panduan kolom "ESS Summary Template (.xlsx) Column Specifications" (A Directorate, B Level, C Year / D Month, E Participation, F Index score, G.. Questions), tombol "Download ESS Template (.xlsx)" dan "Process ESS Summary & Recalculate PX Index". Panel hasil sukses: periode, "Rows Imported", "Bankwide Index", dan pemberitahuan bila upload periode yang sama diganti. File ditolak: daftar "Errors (n) - nothing was stored" per baris/kolom. Pilihan `ALL` menampilkan keterangan bahwa metrik ESS tidak ada di template master. Riwayat upload ESS (`upload_id` berawalan `ess-`/`seed-ess-`) menampilkan "Summary Rows" alih-alih "Valid Responses". |
+| `MetricDetailModal.jsx` (§3.5) | Bila server mengirim `is_ess_summary`: kartu **Participation** ("participants"), "**ESS Result Period**: November 2025" (bukan Latest Survey Date), catatan "ESS is reported at directorate level" saat filter divisi aktif; tombol **Template (.xlsx)** dan **Original File** (`/api/surveys/ess-file/<upload_id>`, hanya bila ada `ess_upload`); neutral/unfavorable tampil "—" (bukan angka default); tipe pertanyaan "ESS % Favorable". Tab kedua menjadi **ESS Results by Directorate** (kolom Directorate, Participation, Index %, Q1..Qn %, baris terpilih disorot, daftar teks pertanyaan di bawah tabel) menggantikan daftar responden. |
+| `Calculator.jsx` (§3.4, Explore Metrics) | Baris ESS: "participants" (bukan "respondents"), kolom tanggal menampilkan periode ESS (`ess_period_label`, mis. "November 2025"), tombol "Template (.xlsx)" dan tooltip Upload ".xlsx"; badge info atas: "Template: CSV Format (ESS: .xlsx summary)", "Upload: Import CSV (ESS: .xlsx summary)". |
+| `AdminSurveyQuestionsModal.jsx` (§3.6) | Untuk metrik ESS tombol bernama "Download ESS Template (.xlsx)". |
+
+Tidak diuji otomatis: tampilan di atas (pengujian Modul 45 lewat API); tampilan mobile.
