@@ -617,6 +617,10 @@ domain model, not just descriptive:
   Cleanup after the suite also deleted 80 OLD leftover regression CSV batches (140 rows) -> Dashboard YTD 2026 Survey 88.62 -> 88.43, PX
   84.56 -> 84.43 (test data only). Open QC notes from v2.32.0 still apply.
 
+- **v2.34.0** (2026-10-19, see `CHANGELOG.md` [2.34.0], `docs/05` "Catatan v2.34.0"): ESS metric detail has ONE tab only (Question
+  Breakdown); the "ESS Results by Directorate" tab is gone - per-directorate values come from the Header Directorate filter. The
+  Spreadsheet View's top row reads "Overall" (column F). API still sends `ess_results_by_directorate` (unused by the UI).
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan

@@ -379,3 +379,7 @@ Template ESS terbaru hanya berisi index (kolom F) dan skor per pertanyaan, jadi 
 - **Card View**: badge "ESS score", skor "96%", satu bar; tanpa ringkasan "—" tanpa bar.
 - Tab **ESS Results by Directorate**: header "Index" dan "Q1..Qn", nilai bersatuan "%".
 Field API `percent_*` tetap dikirim server (kompatibilitas) tetapi tidak dipakai UI. Catatan v2.32.0 di atas yang menyebut "neutral/unfavorable tampil —" dan "ESS % Favorable" sudah tidak berlaku.
+
+## Catatan v2.34.0 - Detail ESS satu tab, baris "Overall"
+
+`MetricDetailModal.jsx`: metrik ESS hanya menampilkan tab **Question Breakdown & Average Scores**; tab "ESS Results by Directorate" (v2.32.0) dihapus - nilai per direktorat dilihat lewat filter Directorate di Header. Baris teratas Spreadsheet View bertuliskan **Overall** (nilai kolom F). Field API `ess_results_by_directorate` tetap ada, tidak dipakai UI.

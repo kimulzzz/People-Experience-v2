@@ -4,6 +4,15 @@ Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Managemen
 
 ---
 
+## [2.34.0] - 2026-10-19
+
+- **Permintaan user**: tab "ESS Results by Directorate" di detail metrik ESS tidak perlu (tampilan per direktorat cukup lewat filter Header), dan baris rata-rata di tabel pertanyaan cukup bertuliskan "Overall".
+- **UI (`MetricDetailModal.jsx`)**: metrik ESS kini hanya punya satu tab ("Question Breakdown & Average Scores"); tab kedua disembunyikan untuk semua metrik ESS (juga "Respondent Records & Answers" pada metrik ESS tanpa ringkasan, karena ESS tidak lagi punya baris responden). Blok tabel per direktorat dihapus. Baris teratas Spreadsheet View: "Overall" (dulu "<nama dimensi> (Index)"). Catatan "ESS is reported at directorate level" saat filter divisi tetap tampil di kartu Participation. Metrik SYSTEM tidak berubah.
+- **Backend**: tidak ada perubahan perilaku; field `ess_results_by_directorate` tetap dikirim API (Modul 45) tetapi tidak dipakai UI. Versi 2.34.0.
+- **Tes**: tidak ada tes baru (perubahan tampilan). Suite penuh SQL di backend kedua dengan `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`: **202/202 lulus, 0 gagal, 16 dilewati**. `vite build` OK. Pembersihan setelah suite hanya menghapus 5 batch upload milik run ini (filter waktu mulai run); jumlah data kembali ke 172 upload / 2.788 baris.
+
+---
+
 ## [2.33.0] - 2026-10-19
 
 - **Permintaan user**: template ESS terbaru tidak lagi berisi favorable, neutral dan unfavorable, jadi komponen itu dihapus dari tampilan; yang ditampilkan cukup penilaian sesuai template (index kolom F + skor tiap pertanyaan).

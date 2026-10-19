@@ -464,6 +464,7 @@ export default function MetricDetailModal({
                       <HelpCircle className="w-4 h-4" />
                       <span>Question Breakdown & Average Scores ({detailData.questions_breakdown?.length || 0})</span>
                     </button>
+                    {!isEss && (
                     <button
                       onClick={() => setActiveTab('secondary')}
                       className={`pb-2.5 px-4 text-xs font-bold transition flex items-center space-x-2 border-b-2 ${
@@ -473,10 +474,9 @@ export default function MetricDetailModal({
                       }`}
                     >
                       <Users className="w-4 h-4" />
-                      <span>{isEssSummary
-                        ? `ESS Results by Directorate (${detailData.ess_results_by_directorate?.length || 0})`
-                        : `Respondent Records & Answers (${detailData.responses?.length || 0})`}</span>
+                      <span>{`Respondent Records & Answers (${detailData.responses?.length || 0})`}</span>
                     </button>
+                    )}
                   </>
                 ) : (
                   <>
@@ -574,7 +574,7 @@ export default function MetricDetailModal({
                           <tbody className="divide-y divide-gray-200 bg-white">
                             <tr className="bg-gray-100/95 font-black text-gray-900 border-t-2 border-gray-300">
                               <td className="py-2 px-3 font-black text-gray-900 border-r border-gray-200">
-                                {detailData.ess_summary?.dimension_name || detailData.metric_name} (Index)
+                                Overall
                               </td>
                               <td className="py-2 px-2 text-center font-black text-gray-900">
                                 {isEssSummary ? pct(detailData.ess_summary?.summary_score) : '—'}
@@ -805,57 +805,8 @@ export default function MetricDetailModal({
                 </div>
               )}
 
-              {/* TAB 2 FOR AN ESS SUMMARY: RESULTS BY DIRECTORATE (v2.32.0) */}
-              {isSurvey && isEssSummary && activeTab === 'secondary' && (() => {
-                const rows = detailData.ess_results_by_directorate || [];
-                const labels = [];
-                rows.forEach(r => (r.questions || []).forEach(q => { if (!labels.includes(q.label)) labels.push(q.label); }));
-                return (
-                  <div className="space-y-3">
-                    <div className="text-xs text-gray-500">
-                      ESS result {detailData.ess_period_label}: index (column F) and question scores per org unit, as stated in the uploaded file.
-                      {detailData.ess_division_filtered && <strong className="text-indigo-700"> ESS is reported at directorate level - the division filter shows its directorate.</strong>}
-                    </div>
-                    <div className="border border-gray-200 rounded-xl overflow-x-auto shadow-2xs">
-                      <table className="w-full text-left text-xs">
-                        <thead className="bg-gray-100 text-gray-700 font-bold uppercase tracking-wider border-b border-gray-200">
-                          <tr>
-                            <th className="py-3 px-3.5">Directorate</th>
-                            <th className="py-3 px-3.5 text-right whitespace-nowrap">Participation</th>
-                            <th className="py-3 px-3.5 text-right whitespace-nowrap">Index</th>
-                            {labels.map((l, i) => (
-                              <th key={i} className="py-3 px-3.5 text-right whitespace-nowrap" title={l}>Q{i + 1}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100 bg-white">
-                          {rows.length === 0 ? (
-                            <tr><td colSpan={3 + labels.length} className="text-center py-10 text-gray-400 font-medium">No ESS rows in your data scope for this period.</td></tr>
-                          ) : rows.map((r, idx) => (
-                            <tr key={idx} className={r.is_selected ? 'bg-red-50/60 font-bold' : (r.org_level === 'BANKWIDE' ? 'bg-gray-50 font-semibold' : '')}>
-                              <td className="py-2.5 px-3.5 text-gray-900">{r.directorate}</td>
-                              <td className="py-2.5 px-3.5 text-right text-gray-700">{r.participation}</td>
-                              <td className="py-2.5 px-3.5 text-right text-[#ED1C24] font-black">{pct(r.index_score)}</td>
-                              {labels.map((l, i) => {
-                                const q = (r.questions || []).find(x => x.label === l);
-                                return <td key={i} className="py-2.5 px-3.5 text-right text-gray-700">{pct(q ? q.score : null)}</td>;
-                              })}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    {labels.length > 0 && (
-                      <ol className="text-[10.5px] text-gray-500 space-y-0.5 list-decimal pl-5">
-                        {labels.map((l, i) => <li key={i}>{l}</li>)}
-                      </ol>
-                    )}
-                  </div>
-                );
-              })()}
-
               {/* TAB 2 FOR SURVEY: LIST OF RESPONDENTS & SURVEY ANSWERS */}
-              {isSurvey && !isEssSummary && activeTab === 'secondary' && (
+              {isSurvey && !isEss && activeTab === 'secondary' && (
                 <div className="space-y-4">
                   {/* Search, Filter & Download Evidence Toolbar */}
                   <div className="flex flex-col md:flex-row items-center justify-between gap-3 bg-gray-50 p-3 rounded-xl border border-gray-200">
