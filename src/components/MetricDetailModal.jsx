@@ -97,11 +97,21 @@ export default function MetricDetailModal({
   isOpen, 
   onClose, 
   metricId, 
-  period = 'YTD',
+  period: periodProp = 'YTD',
   filterOptions = null,
   onOpenSurveyUpload,
   onOpenSurveyQuestionSettings
 }) {
+  // The dashboard filter (YTD / MTD + year + month) decides the period; the `period` prop is only a fallback when no
+  // filter is passed (App.jsx passes filterOptions only, so the badge used to read Year-to-Date even in MTD mode).
+  const period = filterOptions
+    ? (filterOptions.mode === 'MTD' && filterOptions.year && filterOptions.month
+      ? `${filterOptions.year}-${String(filterOptions.month).padStart(2, '0')}`
+      : (filterOptions.year ? String(filterOptions.year) : 'YTD'))
+    : periodProp;
+  const periodLabel = /^\d{4}-\d{2}$/.test(period)
+    ? `${monthName(period.slice(5))} ${period.slice(0, 4)}`
+    : `YTD ${/^\d{4}$/.test(period) ? period : ''}`.trim();
   const { isAdmin } = useAuth();
   const [detailData, setDetailData] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -225,7 +235,7 @@ export default function MetricDetailModal({
                   </span>
                 )}
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 border border-gray-200">
-                  Period: {period === 'YTD' ? `Year-to-Date ${detailData?.filter_options?.year || ''}` : (/^\d{4}-\d{2}$/.test(String(period)) ? `${monthName(String(period).slice(5))} ${String(period).slice(0, 4)}` : period)}
+                  Period: {periodLabel}
                 </span>
               </div>
               <h2 className="text-xl font-black text-gray-900 mt-1">

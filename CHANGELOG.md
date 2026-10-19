@@ -4,6 +4,15 @@ Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Managemen
 
 ---
 
+## [2.35.0] - 2026-10-19
+
+- **Laporan user**: badge "Period" di detail metrik selalu "Year-to-Date", juga saat filter Dashboard diubah ke MTD. Diminta: "YTD 2026" untuk filter YTD, nama bulan + tahun untuk filter MTD.
+- **Penyebab**: `App.jsx` hanya mengirim `filterOptions` ke `MetricDetailModal`, bukan prop `period`, sehingga `period` selalu jatuh ke default `'YTD'`. Data detail sudah benar (fetch memakai `filterOptions`), hanya label dan tautan Evidence yang memakai `period` basi.
+- **Perbaikan (`MetricDetailModal.jsx`)**: periode diturunkan dari `filterOptions` (prop `period` hanya cadangan bila tidak ada filter). Label: YTD -> "YTD 2026" (tahun dari filter), MTD -> "September 2026". Tautan Evidence kini mengikuti filter: `period=2026` (YTD tahun terpilih, dulu selalu `YTD` = tahun berjalan) atau `period=2026-09` (MTD, dulu tetap `YTD`); nama file evidence ikut periode itu.
+- **Tes**: tidak ada tes baru (perubahan tampilan). Suite penuh SQL di backend kedua, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`: **202/202 lulus, 0 gagal, 16 dilewati**. `vite build` OK. Dicek di browser (admin sementara, sudah dihapus): MTD September -> "Period: September 2026" + evidence `period=2026-09`; YTD -> "Period: YTD 2026" + `period=2026`. Data tes run ini (5 batch) dibersihkan; jumlah data kembali 172 upload / 2.788 baris.
+
+---
+
 ## [2.34.0] - 2026-10-19
 
 - **Permintaan user**: tab "ESS Results by Directorate" di detail metrik ESS tidak perlu (tampilan per direktorat cukup lewat filter Header), dan baris rata-rata di tabel pertanyaan cukup bertuliskan "Overall".

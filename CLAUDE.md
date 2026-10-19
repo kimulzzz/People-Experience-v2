@@ -621,6 +621,10 @@ domain model, not just descriptive:
   Breakdown); the "ESS Results by Directorate" tab is gone - per-directorate values come from the Header Directorate filter. The
   Spreadsheet View's top row reads "Overall" (column F). API still sends `ess_results_by_directorate` (unused by the UI).
 
+- **v2.35.0** (2026-10-19, see `CHANGELOG.md` [2.35.0]): metric detail "Period" badge now follows the Dashboard filter ("YTD 2026" /
+  "September 2026"); it was stuck on Year-to-Date because `App.jsx` passes only `filterOptions`, never `period`. The Evidence link
+  follows the same period (`period=2026` / `2026-09`). Suite SQL 202/202, 16 skipped (event + media).
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan

@@ -383,3 +383,7 @@ Field API `percent_*` tetap dikirim server (kompatibilitas) tetapi tidak dipakai
 ## Catatan v2.34.0 - Detail ESS satu tab, baris "Overall"
 
 `MetricDetailModal.jsx`: metrik ESS hanya menampilkan tab **Question Breakdown & Average Scores**; tab "ESS Results by Directorate" (v2.32.0) dihapus - nilai per direktorat dilihat lewat filter Directorate di Header. Baris teratas Spreadsheet View bertuliskan **Overall** (nilai kolom F). Field API `ess_results_by_directorate` tetap ada, tidak dipakai UI.
+
+## Catatan v2.35.0 - Label Period di detail metrik mengikuti filter YTD/MTD
+
+`MetricDetailModal.jsx` menurunkan periode dari `filterOptions` Dashboard (bukan prop `period`, yang tidak dikirim `App.jsx`): badge "Period: YTD 2026" untuk YTD dan "Period: September 2026" untuk MTD; tautan Evidence memakai `period=<tahun>` atau `period=<tahun-bulan>` yang sama.
