@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    47 MODUL PENGUJIAN    │     316 AUTOMATED TESTS     │       100% PASS RATE          │
+│    48 MODUL PENGUJIAN    │     323 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -1037,3 +1037,7 @@ Modul 11, 35 dan 45 tidak berubah. **Risiko tes**: tes 3d menulis langsung ke `p
 ## 33. v2.39.0 - Headline slide 1 Exit Interview
 
 Modul 47 + 2 tes: aturan murni `buildOverviewHeadline` (dominate/lead, seri 0 pp, selisih 6 pp tanpa runner-up, verba tunggal, alasan tak dikenal, pull hanya "Other", input kosong/null) dan headline dari data (fixture 2030-01 dan 2030-03 bankwide, direktorat A, direktorat B tanpa mover, USER direktorat A, Februari 2030 kosong -> kalimat netral; headline slide 2 tidak berubah). **Suite penuh SQL: 230/230 lulus, 0 gagal, 16 dilewati** (`TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; developer, backend kedua). Ukuran suite penuh SQL kini 316 (314 + 2). Tidak ada QC agent terpisah; tampilan dicek main session di browser.
+
+## 34. v2.43.0 - Penandaan entri tes di Audit Trail
+
+Semua `storage.createUser` di suite memakai `is_test_account: true`; 9 pembacaan audit untuk aktivitas tes memakai `include_test=1`. **Modul 48** (7 tes): aturan nama data lama; via API (akun buatan admin tes = akun tes, tersembunyi default, terlihat dengan `include_test=1`, flag tidak bisa diubah klien termasuk body/header/query palsu, audit butuh sesi, limit setelah filter); SQL-only app sementara (aksi admin asli tetap tampil, reset password akun tes oleh admin asli ditandai, login gagal username tak dikenal tidak ditandai, penandaan ulang = 0). **Suite penuh SQL: 237/237 lulus, 0 gagal, 16 dilewati** (`TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; developer). Di JSON suite login dengan `TEST_ADMIN_USER` asli sehingga aktivitasnya tetap tampil dan Modul 48 bagian A melewati dirinya. Ukuran suite penuh SQL kini 323 (316 + 7).

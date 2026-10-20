@@ -23,6 +23,7 @@ const {
 } = require('./seedData');
 const { parseFilterOptions, normalizeDateString, todayDateString } = require('./filterUtils');
 const { normalizeScopes, rowInScopes, legacyUserScopes } = require('./scopeUtils');
+const { isHistoricalTestRow } = require('./testAccounts');
 const { defaultUnitForScale, parseUnit } = require('./metricUnit');
 const { inferSurveySource, isEssMetric, resolveSurveySource, resolveRequiresManualUpload } = require('./surveySource');
 const { buildInitialStore: loadInitialStore } = require('./initialStore');
@@ -330,9 +331,25 @@ function getAuth() {
       migrated = true;
     });
     const renamed = migrateAuthDirectorates(authStore);
-    if (migrated || renamed.user_scopes + renamed.users) saveAuth();
+    // v2.43.0: audit rows written before is_test existed are classified ONCE (rules in testAccounts.js); later rows
+    // always carry is_test from addAuditLog, so this only ever touches the pre-upgrade rows.
+    const unclassified = authStore.audit.filter(e => e.is_test === undefined);
+    if (unclassified.length) {
+      const marked = markAuditRows(authStore, unclassified);
+      unclassified.forEach(e => { if (e.is_test === undefined) e.is_test = false; });
+      console.log(`[jsonStorage] Audit trail: marked ${marked} test-run row(s) of old test accounts as is_test (nothing deleted).`);
+    }
+    if (migrated || unclassified.length || renamed.user_scopes + renamed.users) saveAuth();
   }
   return authStore;
+}
+
+// Sets is_test on the given audit rows that belong to (old) test-run accounts; returns how many were marked.
+function markAuditRows(a, rows) {
+  const accounts = new Map(a.users.map(u => [String(u.username).toLowerCase(), u.is_test_account === true]));
+  let marked = 0;
+  rows.forEach(e => { if (isHistoricalTestRow(e, accounts)) { e.is_test = true; marked++; } });
+  return marked;
 }
 
 function saveAuth() {
@@ -340,7 +357,7 @@ function saveAuth() {
   catch (err) { console.error('Failed to save auth.json:', err); }
 }
 
-const copyUser = u => (u ? { ...u, scopes: normalizeScopes(u.scopes) } : null);
+const copyUser = u => (u ? { ...u, scopes: normalizeScopes(u.scopes), is_test_account: u.is_test_account === true } : null);
 
 const storage = {
   // v2.31.0 directorate rename (runs by itself when the store / auth file is loaded; calling it again
@@ -422,6 +439,10 @@ const storage = {
     const key = String(username).toLowerCase();
     return copyUser(getAuth().users.find(u => u.username.toLowerCase() === key));
   },
+  // is_test_account (v2.43.0) is server-side only: the regression suite and any verification/QC script that creates a
+  // temporary account must pass `is_test_account: true` so its audit rows are hidden from the Audit Trail by default:
+  //   await storage.createUser({ username: 'verify-<stamp>', ..., role: 'ADMIN', is_test_account: true });
+  // POST /api/admin/users never reads it from the body; it only inherits the flag of the (test) admin creating the account.
   createUser(u) {
     const a = getAuth();
     if (a.users.some(x => x.username.toLowerCase() === String(u.username).toLowerCase())) {
@@ -442,7 +463,8 @@ const storage = {
       failed_attempts: 0,
       locked_until: null,
       created_at: new Date().toISOString(),
-      last_login_at: null
+      last_login_at: null,
+      is_test_account: u.is_test_account === true
     };
     a.users.push(record);
     saveAuth();
@@ -505,14 +527,24 @@ const storage = {
       username: e.username || null,
       action: String(e.action).slice(0, 50),
       target: e.target ? String(e.target).slice(0, 200) : null,
-      ip: e.ip ? String(e.ip).slice(0, 64) : null
+      ip: e.ip ? String(e.ip).slice(0, 64) : null,
+      is_test: e.is_test === true
     });
     if (a.audit.length > 20000) a.audit = a.audit.slice(-20000);
     saveAuth();
   },
-  getAuditLog(limit = 200) {
+  // Test-run rows (is_test) are left out unless includeTest; the limit applies after that filter.
+  getAuditLog(limit = 200, { includeTest = false } = {}) {
     const n = Math.max(1, Math.min(parseInt(limit, 10) || 200, 1000));
-    return [...getAuth().audit].reverse().slice(0, n);
+    return getAuth().audit.filter(e => includeTest || e.is_test !== true).reverse().slice(0, n).map(e => ({ ...e, is_test: e.is_test === true }));
+  },
+  // Same rules as sqlStorage.markHistoricalTestAudit (also runs by itself when auth.json is loaded); a second call marks 0.
+  markHistoricalTestAudit() {
+    const a = getAuth();
+    const open = a.audit.filter(e => e.is_test !== true);
+    const marked = markAuditRows(a, open);
+    if (marked) saveAuth();
+    return { marked, visible: open.length - marked };
   },
 
   // --- REMINDER E-MAIL SENDER SETTINGS (password is stored encrypted — see secretBox.js) ---

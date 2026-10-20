@@ -385,3 +385,8 @@ Setelah mengubah `.env`, restart backend. Bila batas ringkasan habis, kartu vide
 - Salinan file setiap upload/impor disimpan di `server/data/exit-uploads/` (di `.gitignore`, tidak bisa dibuka lewat browser).
 - **Jangan commit ekspor yang berisi baris asli**: `npm run db:export` (apalagi `-- --replace`, yang menulis ke `server/data/store.json`) ikut membawa semua baris exit interview, termasuk hasil impor template. File CSV hasil **Export CSV** juga jangan dimasukkan ke repo.
 - Setelah `node server/db/migrate.js --reset` (memuat `store.json` tanpa data exit) data asli hilang dan server mengisi dummy lagi saat start; jalankan ulang skrip impor bila perlu.
+
+
+### Audit Trail tanpa entri tes (v2.43.0)
+
+Admin Parameters -> Manage Users -> **Audit Trail** default tidak menampilkan aktivitas akun regression test / verifikasi (akun bertanda `is_test_account`). Centang **Show test-run entries** untuk melihatnya (badge abu-abu TEST). Data tidak dihapus. Login gagal dengan username yang tidak terdaftar selalu tampil. Skrip yang membuat admin sementara harus memakai `is_test_account: true`.

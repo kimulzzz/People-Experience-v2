@@ -102,7 +102,7 @@ async function setupSuiteLogin() {
     const { hashPassword, generateTempPassword } = require('../server/services/authService');
     username = `rt-suite-${Date.now().toString(36)}`;
     password = generateTempPassword();
-    const created = await storage.createUser({ username, full_name: 'Regression Suite Admin', email: '', role: 'ADMIN', password_hash: await hashPassword(password), must_change_password: false });
+    const created = await storage.createUser({ is_test_account: true, username, full_name: 'Regression Suite Admin', email: '', role: 'ADMIN', password_hash: await hashPassword(password), must_change_password: false });
     tempAdmin = { storage, user_id: created.user_id };
   }
   let { cookie, body } = await login(username, password);
@@ -2569,7 +2569,7 @@ async function runRegressionSuite() {
     await runTest('[POSITIVE] Audit trail records logins (ok / failed / locked), logout and user management, and never contains a password; secrets never appear in any response', async () => {
       const u = await readyUser('j', 'USER', itDir);
       await loginAs(u.username, 'Wrong-Audit-Pass-1');
-      const log = await (await adminJson('GET', '/api/admin/audit-log?limit=500')).json();
+      const log = await (await adminJson('GET', '/api/admin/audit-log?limit=500&include_test=1')).json();
       const text = JSON.stringify(log);
       allBodies.push(text);
       const mine = log.filter(e => e.username === u.username).map(e => e.action);
@@ -2648,7 +2648,7 @@ async function runRegressionSuite() {
       [pre.event, post.event].forEach(e => assert.ok(!e.pre_event_code && !e.post_event_code));
       const typo = `Typo-Pass-${stamp}-9`;
       assert.strictEqual((await loginAs(typo, 'whatever')).res.status, 401);
-      const log = JSON.stringify(await (await adminJson('GET', '/api/admin/audit-log?limit=50')).json());
+      const log = JSON.stringify(await (await adminJson('GET', '/api/admin/audit-log?limit=50&include_test=1')).json());
       assert.ok(!log.includes(typo), 'raw text typed into the username field must not be stored');
       assert.ok(log.includes('LOGIN_FAILED'));
     });
@@ -2951,7 +2951,7 @@ async function runRegressionSuite() {
       assert.strictEqual((await uget(u, `/api/metrics/calculate?period=YTD&${dq(A)}`)).status, 403, 'old scope gone immediately');
       assert.strictEqual((await uget(u, `/api/metrics/calculate?period=YTD&${dq(B, dirB.divisions[0])}`)).status, 200, 'new scope works immediately');
       if (dirB.divisions.length > 1) assert.strictEqual((await uget(u, `/api/metrics/calculate?period=YTD&${dq(B, dirB.divisions[1])}`)).status, 403, 'other division of B is outside the new scope');
-      const log = await (await adminJson('GET', '/api/admin/audit-log?limit=100')).json();
+      const log = await (await adminJson('GET', '/api/admin/audit-log?limit=100&include_test=1')).json();
       const entry = log.find(e => e.action === 'USER_SCOPE_CHANGE' && e.target && e.target.startsWith(u.username));
       assert.ok(entry, 'USER_SCOPE_CHANGE recorded');
       assert.ok(entry.target.includes(A) && entry.target.includes(B));
@@ -3009,7 +3009,7 @@ async function runRegressionSuite() {
       const made = [];
       try {
         for (const [suffix, role, dir, div] of [['g1', 'USER', A, divX], ['g2', 'USER', B, null], ['g3', 'ADMIN', A, divX]]) {
-          const created = await storage.createUser({ username: `rt${suffix}${stamp}`, full_name: 'Legacy', email: '', role, password_hash: 'x', scopes: [] });
+          const created = await storage.createUser({ is_test_account: true, username: `rt${suffix}${stamp}`, full_name: 'Legacy', email: '', role, password_hash: 'x', scopes: [] });
           made.push(created.user_id);
           await pool.request().input('id', sql.Int, created.user_id).input('d', sql.NVarChar, dir).input('v', sql.NVarChar, div)
             .query('DELETE FROM dbo.px_user_scopes WHERE user_id = @id; UPDATE dbo.px_users SET directorate = @d, division = @v WHERE user_id = @id');
@@ -3130,7 +3130,7 @@ async function runRegressionSuite() {
         const hist = await aj('/api/surveys/history');
         const mine = hist.filter(h => h.metric_id === P && h.uploaded_by.includes(picUser.username));
         assert.ok(mine.length >= 2, 'uploaded_by records the login account');
-        const log = await aj('/api/admin/audit-log?limit=100');
+        const log = await aj('/api/admin/audit-log?limit=100&include_test=1');
         const entry = log.find(e => e.action === 'SURVEY_UPLOAD' && e.username === picUser.username && e.target.includes(`metric ${P};`));
         assert.ok(entry, 'SURVEY_UPLOAD audited');
         assert.ok(/1 valid rows/.test(entry.target));
@@ -3173,7 +3173,7 @@ async function runRegressionSuite() {
         assert.strictEqual((await uget(plainUser, '/api/surveys/history')).status, 403);
         assert.strictEqual((await post36(plainUser, {})).status, 403);
         assert.strictEqual((await aj(`/api/surveys/responses/${Q}`)).length, qBefore, 'nothing was written into the other metric');
-        const log = await aj('/api/admin/audit-log?limit=100');
+        const log = await aj('/api/admin/audit-log?limit=100&include_test=1');
         assert.ok(!log.some(e => e.action === 'SURVEY_UPLOAD' && (e.username === plainUser.username)), 'refused uploads are not audited as uploads');
       });
 
@@ -3540,7 +3540,7 @@ async function runRegressionSuite() {
           assert.strictEqual(up.status, 200, `PIC upload to ${id}`);
           const body = await up.json();
           assert.strictEqual(body.valid_rows_count, 1); assert.strictEqual(body.calculation, undefined, 'no bankwide calculation for a PIC');
-          const log = await aj('/api/admin/audit-log?limit=100');
+          const log = await aj('/api/admin/audit-log?limit=100&include_test=1');
           assert.ok(log.some(e => e.action === 'SURVEY_UPLOAD' && e.username === picUser.username && e.target.includes(`metric ${id};`)), 'audited');
           assert.strictEqual((await uget(picUser, `/api/surveys/evidence?metric_id=${id}&period=YTD`)).status, 200);
           // a non-PIC User: 403 everywhere
@@ -3641,7 +3641,7 @@ async function runRegressionSuite() {
       const post = (p, body, cookie) => realFetch(`${B}${p}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) }, body: JSON.stringify(body || {}) });
       const ck = r => (r.headers.getSetCookie() || []).map(c => c.split(';')[0]).find(c => c.startsWith('px_session=')) || null;
       const adminPw = crypto37.randomBytes(9).toString('hex') + 'Aa1';
-      const admin = await storage37.createUser({ username: `rt37admin${stamp37}`, full_name: 'Regression 37 Admin', email: '', role: 'ADMIN', password_hash: await auth37.hashPassword(adminPw), must_change_password: false });
+      const admin = await storage37.createUser({ is_test_account: true, username: `rt37admin${stamp37}`, full_name: 'Regression 37 Admin', email: '', role: 'ADMIN', password_hash: await auth37.hashPassword(adminPw), must_change_password: false });
       ids37.push(admin.user_id);
       try {
         const adminLogin = await post('/api/auth/login', { username: admin.username, password: adminPw });
@@ -3704,7 +3704,7 @@ async function runRegressionSuite() {
         });
 
         await runTest('[NEGATIVE] The standard initial password is never in the audit log or the user list', async () => {
-          const log = JSON.stringify(await storage37.getAuditLog(500));
+          const log = JSON.stringify(await storage37.getAuditLog(500, { includeTest: true }));
           assert.ok(log.includes(`rt37a${stamp37}`) || log.includes('USER_CREATE'), 'audit log has the events');
           assert.strictEqual(log.includes(DEFAULT_PW), false, 'audit log must not contain the password');
           const list = await realFetch(`${B}/api/admin/users`, { headers: { Cookie: adminCookie } });
@@ -3865,7 +3865,7 @@ async function runRegressionSuite() {
       try {
         const mk = async (suffix, role) => {
           const pw = pw38[role === 'ADMIN' ? 'admin' : 'user'];
-          const u = await storage38.createUser({ username: `rt38${suffix}${stamp38}`, full_name: `Regression 38 ${suffix}`, email: '', role, password_hash: await auth38.hashPassword(pw), must_change_password: false });
+          const u = await storage38.createUser({ is_test_account: true, username: `rt38${suffix}${stamp38}`, full_name: `Regression 38 ${suffix}`, email: '', role, password_hash: await auth38.hashPassword(pw), must_change_password: false });
           userIds.push(u.user_id);
           return { username: u.username, password: pw };
         };
@@ -4592,7 +4592,7 @@ async function runRegressionSuite() {
         // An "old" video: finished long ago, still under its random name.
         const oldVideo = await mkVideo(`rt41-${stamp41} old video.mp4`, { transcript_status: 'DONE', transcript: TEXT_ID, transcript_language: 'id', summary_status: 'DONE', summary_source: 'AI', summary: 'x'.repeat(50), summary_points: ['a', 'b'] });
         try {
-          const u = await st41.createUser({ username: `rt41a${stamp41}`, full_name: 'Regression 41', email: '', role: 'ADMIN', password_hash: await auth41.hashPassword(pw), must_change_password: false });
+          const u = await st41.createUser({ is_test_account: true, username: `rt41a${stamp41}`, full_name: 'Regression 41', email: '', role: 'ADMIN', password_hash: await auth41.hashPassword(pw), must_change_password: false });
           userIds.push(u.user_id);
           child = spawn(process.execPath, [path41.join(__dirname, '..', 'server', 'server.js')], {
             cwd: path41.join(__dirname, '..'),
@@ -4953,7 +4953,7 @@ async function runRegressionSuite() {
         fs42.writeFileSync(leftovers.stray, 'stray');
         keepDirs.push(leftovers.done, leftovers.unknown, leftovers.proc, leftovers.stray);
 
-        const u = await st42.createUser({ username: `rt42a${stamp42}`, full_name: 'Regression 42', email: '', role: 'ADMIN', password_hash: await auth42.hashPassword(pw), must_change_password: false });
+        const u = await st42.createUser({ is_test_account: true, username: `rt42a${stamp42}`, full_name: 'Regression 42', email: '', role: 'ADMIN', password_hash: await auth42.hashPassword(pw), must_change_password: false });
         userIds.push(u.user_id);
         child = spawn(process.execPath, ['--require', path42.join(__dirname, 'helpers', 'failLinkPreload.js'), path42.join(__dirname, '..', 'server', 'server.js')], {
           cwd: path42.join(__dirname, '..'),
@@ -5361,7 +5361,7 @@ async function runRegressionSuite() {
             await ins('EMPLOYEE', 'Finance & Operations', 'Treasury Operations');
             await ins('EMPLOYEE', ' consumer banking', 'Wealth Management');
             await ins('CAMPUS_STUDENT', 'Information Technology', 'Teknik Informatika');
-            const user = await storage44.createUser({ username: tag44, full_name: 'Module 44', email: '', role: 'USER', password_hash: 'x', scopes: [] });
+            const user = await storage44.createUser({ is_test_account: true, username: tag44, full_name: 'Module 44', email: '', role: 'USER', password_hash: 'x', scopes: [] });
             userId = user.user_id;
             await pool44.request().input('id', sql44.Int, userId).query(`INSERT INTO dbo.px_user_scopes (user_id, directorate, division) VALUES (@id, N'Finance & Operations', NULL)`);
 
@@ -5484,7 +5484,7 @@ async function runRegressionSuite() {
         assert.strictEqual(body.replaced_previous, true, 'the seeded 2025-11 rows were replaced');
         assert.deepStrictEqual(body.errors, []);
         assert.strictEqual(await history45(), before + 1);
-        const log = await aj45('/api/admin/audit-log?limit=50');
+        const log = await aj45('/api/admin/audit-log?limit=50&include_test=1');
         assert.ok(log.some(e => e.action === 'SURVEY_UPLOAD' && e.target.includes(`ESS summary metric ${RC};`) && e.target.includes(body.upload_id)), 'audited');
       });
 
@@ -6030,7 +6030,7 @@ async function runRegressionSuite() {
         assert.deepStrictEqual([body.rows_imported, body.inserted_rows, body.updated_rows, body.removed_dummy_rows], [10, 10, 0, 0]);
         assert.deepStrictEqual(body.months, ['2019-03', '2019-11', '2030-01']);
         assert.ok(fs47.existsSync(require('path').join(exitSvc.EXIT_UPLOAD_DIR, `${body.upload_id}.xlsx`)), 'original file kept (non-public folder)');
-        const audit = await require('../server/db/storage').getAuditLog(30);
+        const audit = await require('../server/db/storage').getAuditLog(30, { includeTest: true });
         assert.ok(audit.some(a => a.action === 'EXIT_INTERVIEW_UPLOAD' && String(a.target).includes(body.upload_id)), 'EXIT_INTERVIEW_UPLOAD audit entry');
         const hist = await (await fetch(`${BASE_URL}/api/exit-interview/uploads`)).json();
         assert.ok(hist.some(u => u.upload_id === body.upload_id && u.source === 'UPLOAD' && /Regression Suite Admin|\(/.test(u.uploaded_by)));
@@ -6272,6 +6272,158 @@ async function runRegressionSuite() {
       }
       for (const id of userIds47) await adminJson('DELETE', `/api/admin/users/${id}`);
     }
+  }
+
+  // --- MODULE 48 (v2.43.0): TEST-RUN ENTRIES IN THE AUDIT TRAIL ---
+  // Accounts made by the suite / QC scripts are marked server-side (px_users.is_test_account) and their audit rows
+  // get is_test, which the Audit Trail hides unless ?include_test=1. Nothing is deleted from the trail - except the
+  // rows part B itself writes as a NON-test admin, removed by their made-up client IP at the end (test fixtures).
+  console.log('\n📦 MODULE 48: Test-run entries hidden from the Audit Trail (Positive & Negative Testing)');
+  {
+    const stamp48 = Date.now().toString(36);
+    const users48 = [];
+    const auditLog48 = async (query) => (await adminJson('GET', `/api/admin/audit-log?limit=1000${query || ''}`)).json();
+    const me48 = (await (await adminJson('GET', '/api/auth/me')).json()).user || {};
+    const about = (e, username) => e.username === username || String(e.target || '').startsWith(username);
+
+    await runTest('[POSITIVE/NEGATIVE] Name rules for audit rows written before v2.43.0 (pure function): deleted test accounts are marked, admin / real accounts / unknown-username failures are not', async () => {
+      const { isHistoricalTestRow, isTestUsernamePattern } = require('../server/db/testAccounts');
+      const accounts = new Map([['admin', false], ['qc-real', false], ['rt-suite-keep', true]]);
+      const row = (username, target) => ({ username, target });
+      assert.strictEqual(isHistoricalTestRow(row('rt37adminmvg452zw', null), accounts), true, 'deleted Module 37 admin');
+      assert.strictEqual(isHistoricalTestRow(row('rt-suite-mvf0j0y4', 'rt45amvf0j0y4 (USER) scope: X'), accounts), true);
+      assert.strictEqual(isHistoricalTestRow(row('qc-tmp-mveyktw0', null), accounts), true);
+      assert.strictEqual(isHistoricalTestRow(row('verify-abc', null), accounts), true);
+      assert.strictEqual(isHistoricalTestRow(row(null, 'rt44-mvf0j0y4: email'), accounts), true, 'actor unknown, subject a deleted test account');
+      assert.strictEqual(isHistoricalTestRow(row('rt-suite-keep', null), accounts), true, 'existing account: its flag decides');
+      assert.strictEqual(isHistoricalTestRow(row('admin', 'rt37amvg452zw (ADMIN) scope: -'), accounts), false, 'rows of admin are never marked');
+      assert.strictEqual(isHistoricalTestRow(row('qc-real', null), accounts), false, 'an existing non-test account wins over the name pattern');
+      assert.strictEqual(isHistoricalTestRow(row(null, '(unknown username)'), accounts), false, 'failed login of an unknown username stays visible');
+      assert.strictEqual(isTestUsernamePattern('rtanaka'), false);
+      assert.strictEqual(isTestUsernamePattern('rtzzzzzzzzzz'), false, 'rt + 8 chars that are no plausible timestamp');
+      assert.strictEqual(isTestUsernamePattern('12345678'), false);
+    });
+
+    if (me48.is_test_account !== true) {
+      console.log('  ⏭️  SKIP: Module 48 part A needs a test-run suite admin (TEST_ADMIN_USER is a real account)');
+    } else {
+      await runTest('[POSITIVE] An account created through the API by a test admin is a test account; its login and failures are written with is_test, hidden by default and shown with include_test=1', async () => {
+        const username = `rt48u${stamp48}`;
+        const res = await adminJson('POST', '/api/admin/users', { username, full_name: 'Regression 48 User', role: 'ADMIN', scopes: [] });
+        assert.strictEqual(res.status, 201);
+        const body = await res.json();
+        users48.push(body.user.user_id);
+        assert.strictEqual(body.user.is_test_account, true, 'inherited from the test admin');
+        assert.strictEqual((await loginAs(username, 'Wrong-Pass-48x')).res.status, 401);
+        assert.strictEqual((await loginAs(username, body.temporary_password)).res.status, 200);
+        const mine = (await auditLog48('&include_test=1')).filter(e => about(e, username));
+        ['USER_CREATE', 'LOGIN_FAILED', 'LOGIN_SUCCESS'].forEach(a => assert.ok(mine.some(e => e.action === a), `include_test has ${a}`));
+        assert.ok(mine.every(e => e.is_test === true), 'all of them marked is_test');
+        const visible = await auditLog48();
+        assert.ok(visible.every(e => e.is_test === false), 'default list has no test rows');
+        assert.ok(!visible.some(e => about(e, username)), 'nothing of the test account is visible');
+        assert.ok(!visible.some(e => e.username === me48.username), 'the suite admin itself is hidden');
+      });
+
+      await runTest('[NEGATIVE] The client cannot set or clear is_test_account (POST body and PUT ignored); the audit log needs a session', async () => {
+        const username = `rt48n${stamp48}`;
+        const res = await adminJson('POST', '/api/admin/users', { username, full_name: 'Regression 48 N', role: 'ADMIN', scopes: [], is_test_account: false });
+        assert.strictEqual(res.status, 201);
+        const created = (await res.json()).user;
+        users48.push(created.user_id);
+        assert.strictEqual(created.is_test_account, true, 'body is_test_account:false is ignored');
+        const put = await adminJson('PUT', `/api/admin/users/${created.user_id}`, { full_name: 'Regression 48 N2', is_test_account: false });
+        assert.strictEqual(put.status, 200);
+        assert.strictEqual((await put.json()).user.is_test_account, true, 'PUT cannot clear the flag');
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/admin/audit-log?include_test=1`)).status, 401, 'no session -> no audit log');
+      });
+
+      await runTest('[POSITIVE] The limit applies after the filter: limit=5 gives only visible rows by default, and 5 rows (newest = test rows) with include_test=1', async () => {
+        const visible = await (await adminJson('GET', '/api/admin/audit-log?limit=5')).json();
+        assert.ok(visible.length <= 5 && visible.every(e => e.is_test === false));
+        const all = await (await adminJson('GET', '/api/admin/audit-log?limit=5&include_test=1')).json();
+        assert.strictEqual(all.length, 5);
+        assert.ok(all.some(e => e.is_test === true), 'the newest rows are this run\'s test rows');
+        assert.ok(all[0].audit_id >= (visible[0] ? visible[0].audit_id : 0), 'still newest first');
+      });
+    }
+
+    const storage48 = require('../server/db/storage');
+    if (storage48.backend !== 'sql') {
+      console.log('  ⏭️  SKIP: Module 48 part B needs the SQL backend (in-process auth routes over the same database)');
+    } else {
+      const express = require('express');
+      const auth48 = require('../server/services/authService');
+      const crypto48 = require('crypto');
+      const sql48 = require('mssql');
+      const app48 = express();
+      app48.set('trust proxy', true); // a made-up client IP per run identifies this part's own rows for the cleanup
+      app48.use(express.json());
+      auth48.registerAuthRoutes(app48);
+      const server48 = await new Promise(resolve => { const s = app48.listen(0, '127.0.0.1', () => resolve(s)); });
+      const B48 = `http://127.0.0.1:${server48.address().port}`;
+      const ip48 = `10.248.${crypto48.randomInt(1, 254)}.${crypto48.randomInt(1, 254)}`;
+      const call = (method, p, body, cookie, extra = {}) => realFetch(`${B48}${p}`, { method, headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': ip48, ...(cookie ? { Cookie: cookie } : {}), ...extra }, body: body === undefined ? undefined : JSON.stringify(body) });
+      const ck48 = r => (r.headers.getSetCookie() || []).map(c => c.split(';')[0]).find(c => c.startsWith('px_session=')) || null;
+      const ids48 = [];
+      const realPw = crypto48.randomBytes(9).toString('hex') + 'Aa1';
+      // deliberately NOT a test account (is_test_account: false) - its rows are removed by IP in the finally block
+      const real = await storage48.createUser({ is_test_account: false, username: `rt48real${stamp48}`, full_name: 'Regression 48 non-test admin (temporary)', email: '', role: 'ADMIN', password_hash: await auth48.hashPassword(realPw), must_change_password: false });
+      ids48.push(real.user_id);
+      const flagged = await storage48.createUser({ is_test_account: true, username: `rt48t${stamp48}`, full_name: 'Regression 48 test', email: '', role: 'USER', password_hash: 'x', scopes: [] });
+      ids48.push(flagged.user_id);
+      try {
+        const login = await call('POST', '/api/auth/login', { username: real.username, password: realPw });
+        assert.strictEqual(login.status, 200);
+        const cookie = ck48(login);
+        const own = async () => (await (await call('GET', '/api/admin/audit-log?limit=1000&include_test=1', undefined, cookie)).json()).filter(e => e.ip === ip48);
+
+        await runTest('[POSITIVE/NEGATIVE] A non-test admin\'s actions stay visible; an account it creates is NOT a test account (is_test_account in the body, spoofed headers/query and PUT are ignored)', async () => {
+          const r = await call('POST', '/api/admin/users?is_test=1&include_test=1', { username: `rt48c${stamp48}`, full_name: 'Regression 48 C', role: 'ADMIN', scopes: [], is_test_account: true, is_test: true }, cookie, { 'X-Test-Run': '1', 'X-Is-Test': 'true' });
+          assert.strictEqual(r.status, 201);
+          const created = (await r.json()).user;
+          ids48.push(created.user_id);
+          assert.strictEqual(created.is_test_account, false, 'client cannot make an account a test account');
+          assert.strictEqual((await call('PUT', `/api/admin/users/${created.user_id}`, { is_test_account: true }, cookie)).status, 200);
+          assert.strictEqual((await storage48.getUserById(created.user_id)).is_test_account, false, 'PUT cannot set the flag');
+          const rows = await own();
+          ['LOGIN_SUCCESS', 'USER_CREATE', 'USER_UPDATE'].forEach(a => assert.ok(rows.some(e => e.action === a && e.is_test === false), `${a} visible (is_test false)`));
+          const visible = await (await call('GET', '/api/admin/audit-log?limit=1000', undefined, cookie)).json();
+          assert.ok(visible.some(e => e.ip === ip48 && e.action === 'USER_CREATE'), 'shown in the default Audit Trail');
+        });
+
+        await runTest('[POSITIVE/NEGATIVE] A real admin acting on a test account writes is_test (subject rule); a failed login of an unknown username stays visible', async () => {
+          assert.strictEqual((await call('POST', `/api/admin/users/${flagged.user_id}/reset-password`, {}, cookie)).status, 200);
+          assert.strictEqual((await call('POST', '/api/auth/login', { username: `nobody48${stamp48}`, password: 'Whatever-48' })).status, 401);
+          const rows = await own();
+          const reset = rows.find(e => e.action === 'PASSWORD_RESET' && e.target === flagged.username);
+          assert.ok(reset && reset.is_test === true && reset.username === real.username, 'PASSWORD_RESET of a test account is marked');
+          const unknown = rows.find(e => e.action === 'LOGIN_FAILED' && e.username === null);
+          assert.ok(unknown && unknown.is_test === false, 'unknown-username failure is not marked');
+        });
+
+        await runTest('[POSITIVE] Historical marking is idempotent (a second run marks 0 rows) and never marks rows of an existing non-test account', async () => {
+          await storage48.markHistoricalTestAudit();
+          const again = await storage48.markHistoricalTestAudit();
+          assert.strictEqual(again.marked, 0);
+          const rows = await own();
+          assert.ok(rows.some(e => e.username === real.username && e.is_test === false), 'the non-test admin\'s rows are still unmarked');
+        });
+      } finally {
+        await new Promise(resolve => server48.close(resolve));
+        for (const id of ids48) { try { await storage48.deleteUser(id); } catch (_) { /* ignore */ } }
+        // part B's fixture rows (this run's made-up IP only): written by a non-test admin, so they would stay visible
+        const pool48 = await new sql48.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
+          user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
+        try {
+          const del = await pool48.request().input('ip', sql48.NVarChar, ip48).query('DELETE FROM dbo.px_audit_log WHERE ip = @ip');
+          if (!del.rowsAffected[0]) console.error('     cleanup: no Module 48 audit fixture rows found');
+        } finally {
+          await pool48.close();
+        }
+      }
+    }
+    for (const id of users48) await adminJson('DELETE', `/api/admin/users/${id}`);
   }
 
   // --- SUMMARY ---

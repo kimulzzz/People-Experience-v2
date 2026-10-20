@@ -288,3 +288,7 @@ FROM dbo.px_exit_interviews GROUP BY FORMAT(effective_date, 'yyyy-MM'), source O
 ```
 
 Diverifikasi oleh Modul 47 (`docs/07` §32).
+
+## 19. Pembaruan v2.43.0 - Penandaan entri tes audit
+
+Kolom baru `px_users.is_test_account BIT NOT NULL DEFAULT 0` dan `px_audit_log.is_test BIT NOT NULL DEFAULT 0` (ALTER idempoten saat boot). `markHistoricalTestAudit()` berjalan sekali pada boot yang menambah kolom: di DB utama 9.525 baris ditandai, 266 tetap tampil. Tidak ada baris yang dihapus. Cek: `SELECT is_test, COUNT(*) FROM dbo.px_audit_log GROUP BY is_test;`

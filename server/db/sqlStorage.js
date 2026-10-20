@@ -14,6 +14,7 @@ const { inferSurveySource, isEssMetric, resolveSurveySource, resolveRequiresManu
 const { buildInitialStore } = require('./initialStore');
 const { parseFilterOptions, normalizeDateString, CURRENT_YEAR } = require('./filterUtils');
 const { normalizeScopes } = require('./scopeUtils');
+const { isHistoricalTestRow } = require('./testAccounts');
 const { planDirectory, renamedDirectorate, migrateScopes, migrateDirectorateOptions, DIRECTORATE_SETTING_KEYS } = require('./directorateMigration');
 
 // ------------------------------------------------------------------ connection
@@ -499,7 +500,8 @@ const rowToUser = r => ({
   failed_attempts: r.failed_attempts,
   locked_until: iso(r.locked_until),
   created_at: iso(r.created_at),
-  last_login_at: iso(r.last_login_at)
+  last_login_at: iso(r.last_login_at),
+  is_test_account: !!r.is_test_account
 });
 
 // Scopes live in px_user_scopes (division NULL = every division of the directorate).
@@ -524,6 +526,18 @@ async function writeUserScopes(tx, user_id, scopes) {
         { id: user_id, directorate: s.directorate, division }, tx);
     }
   }
+}
+
+// v2.43.0: marks the audit rows written by/about old test-run accounts (rules in testAccounts.js). Only rows still
+// at is_test = 0 are looked at and a row is only ever set to 1, so running it again marks 0 rows. Nothing is deleted.
+async function markHistoricalTestAudit() {
+  const accounts = new Map((await run('SELECT username, is_test_account FROM dbo.px_users')).map(u => [u.username.toLowerCase(), !!u.is_test_account]));
+  const rows = await run('SELECT audit_id, username, target FROM dbo.px_audit_log WHERE is_test = 0');
+  const ids = rows.filter(r => isHistoricalTestRow(r, accounts)).map(r => Number(r.audit_id));
+  for (let i = 0; i < ids.length; i += 500) {
+    await run(`UPDATE dbo.px_audit_log SET is_test = 1 WHERE is_test = 0 AND audit_id IN (${ids.slice(i, i + 500).join(',')})`);
+  }
+  return { marked: ids.length, visible: rows.length - ids.length };
 }
 
 // v2.26.0 accounts had ONE directorate + ONE division in px_users. Turn them into scope rows (division
@@ -1300,6 +1314,8 @@ const storage = {
     await getPool();
     // v2.32.0: the boot that creates px_ess_results is the upgrade boot (one-time ESS per-respondent cleanup below)
     const essUpgrade = !(await run("SELECT OBJECT_ID(N'dbo.px_ess_results', N'U') AS id"))[0].id;
+    // v2.43.0: the boot that adds px_audit_log.is_test marks the audit rows of old test-run accounts (once)
+    const auditTestUpgrade = (await run("SELECT COL_LENGTH(N'dbo.px_audit_log', N'is_test') AS c"))[0].c === null;
     await applySchema();
     await seedIfEmpty();
     await migrateDirectorates();     // v2.31.0: old demo directorate names -> the 12 real ones (before any top-up)
@@ -1314,6 +1330,10 @@ const storage = {
       console.log(`[sqlStorage] ESS now uses uploaded summaries: deleted ${cleaned.responses} per-respondent ESS rows and ${cleaned.uploads} upload batches left empty.`);
     }
     await migrateLegacyUserScopes();
+    if (auditTestUpgrade) {
+      const marked = await markHistoricalTestAudit();
+      console.log(`[sqlStorage] Audit trail: marked ${marked.marked} test-run row(s) of old test accounts as is_test (${marked.visible} row(s) stay visible; nothing deleted).`);
+    }
     // Demo survey responses for newly elapsed months. Set SEED_DEMO_DATA=false on a real
     // production database so no synthetic responses are ever generated.
     if (String(process.env.SEED_DEMO_DATA || 'true').toLowerCase() !== 'false') {
@@ -1428,13 +1448,18 @@ const storage = {
     const rows = await run('SELECT * FROM dbo.px_users WHERE username = @username', { username: String(username) });
     return rows[0] ? (await withScopes([rowToUser(rows[0])]))[0] : null;
   },
+  // is_test_account (v2.43.0) is server-side only: the regression suite and any verification/QC script that creates a
+  // temporary account must pass `is_test_account: true` so its audit rows are hidden from the Audit Trail by default:
+  //   await storage.createUser({ username: 'verify-<stamp>', ..., role: 'ADMIN', is_test_account: true });
+  // POST /api/admin/users never reads it from the body; it only inherits the flag of the (test) admin creating the account.
   async createUser(u) {
     try {
       return await inTransaction(async tx => {
-        const rows = await run(`INSERT INTO dbo.px_users (username, full_name, email, password_hash, role, is_active, must_change_password)
-                                OUTPUT INSERTED.* VALUES (@username, @full_name, @email, @password_hash, @role, @is_active, @mcp)`, {
+        const rows = await run(`INSERT INTO dbo.px_users (username, full_name, email, password_hash, role, is_active, must_change_password, is_test_account)
+                                OUTPUT INSERTED.* VALUES (@username, @full_name, @email, @password_hash, @role, @is_active, @mcp, @is_test)`, {
           username: u.username, full_name: u.full_name, email: u.email || '', password_hash: u.password_hash, role: u.role,
-          is_active: u.is_active === undefined ? true : !!u.is_active, mcp: u.must_change_password === undefined ? true : !!u.must_change_password
+          is_active: u.is_active === undefined ? true : !!u.is_active, mcp: u.must_change_password === undefined ? true : !!u.must_change_password,
+          is_test: u.is_test_account === true
         }, tx);
         await writeUserScopes(tx, rows[0].user_id, u.scopes);
         return (await withScopes([rowToUser(rows[0])], tx))[0];
@@ -1495,15 +1520,17 @@ const storage = {
     await run('DELETE FROM dbo.px_sessions WHERE expires_at < SYSUTCDATETIME()');
   },
   async addAuditLog(e) {
-    await run('INSERT INTO dbo.px_audit_log (user_id, username, action, target, ip) VALUES (@user_id, @username, @action, @target, @ip)', {
+    await run('INSERT INTO dbo.px_audit_log (user_id, username, action, target, ip, is_test) VALUES (@user_id, @username, @action, @target, @ip, @is_test)', {
       user_id: e.user_id === undefined ? null : e.user_id, username: e.username || null, action: String(e.action).slice(0, 50),
-      target: e.target ? String(e.target).slice(0, 200) : null, ip: e.ip ? String(e.ip).slice(0, 64) : null
+      target: e.target ? String(e.target).slice(0, 200) : null, ip: e.ip ? String(e.ip).slice(0, 64) : null, is_test: e.is_test === true
     });
   },
-  async getAuditLog(limit = 200) {
-    const rows = await run('SELECT TOP (@limit) * FROM dbo.px_audit_log ORDER BY audit_id DESC', { limit: Math.max(1, Math.min(parseInt(limit, 10) || 200, 1000)) });
-    return rows.map(r => ({ audit_id: Number(r.audit_id), occurred_at: iso(r.occurred_at), user_id: r.user_id, username: r.username, action: r.action, target: r.target, ip: r.ip }));
+  // Test-run rows (is_test) are left out unless includeTest; the limit applies after that filter.
+  async getAuditLog(limit = 200, { includeTest = false } = {}) {
+    const rows = await run(`SELECT TOP (@limit) * FROM dbo.px_audit_log ${includeTest ? '' : 'WHERE is_test = 0 '}ORDER BY audit_id DESC`, { limit: Math.max(1, Math.min(parseInt(limit, 10) || 200, 1000)) });
+    return rows.map(r => ({ audit_id: Number(r.audit_id), occurred_at: iso(r.occurred_at), user_id: r.user_id, username: r.username, action: r.action, target: r.target, ip: r.ip, is_test: !!r.is_test }));
   },
+  markHistoricalTestAudit: () => markHistoricalTestAudit(),
 
   // ---- journeys
   async getJourneys() {

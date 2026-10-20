@@ -517,8 +517,14 @@ CREATE TABLE dbo.px_users (
   failed_attempts       INT            NOT NULL CONSTRAINT DF_px_users_failed DEFAULT (0),
   locked_until          DATETIME2(3)   NULL,
   created_at            DATETIME2(3)   NOT NULL CONSTRAINT DF_px_users_created DEFAULT (SYSUTCDATETIME()),
-  last_login_at         DATETIME2(3)   NULL
+  last_login_at         DATETIME2(3)   NULL,
+  is_test_account       BIT            NOT NULL CONSTRAINT DF_px_users_is_test DEFAULT (0)  -- v2.43.0: temporary test-run account (server-side only)
 );
+GO
+-- Databases created before v2.43.0: test-run accounts are marked server-side (regression suite / QC scripts via
+-- storage.createUser, or inherited from a test admin) - never through the API.
+IF COL_LENGTH(N'dbo.px_users', N'is_test_account') IS NULL
+ALTER TABLE dbo.px_users ADD is_test_account BIT NOT NULL CONSTRAINT DF_px_users_is_test DEFAULT (0);
 GO
 -- Data scope of a USER (v2.27.0): any number of directorates; division NULL = every division of that
 -- directorate, otherwise one row per allowed division. UNIQUE treats the single NULL as a value, so
@@ -549,6 +555,11 @@ CREATE TABLE dbo.px_audit_log (                    -- login / user-management tr
   username     NVARCHAR(100) NULL,
   action       NVARCHAR(50)  NOT NULL,
   target       NVARCHAR(200) NULL,
-  ip           NVARCHAR(64)  NULL
+  ip           NVARCHAR(64)  NULL,
+  is_test      BIT           NOT NULL CONSTRAINT DF_px_audit_is_test DEFAULT (0)  -- v2.43.0: written by/about a test-run account (hidden by default, never deleted)
 );
+GO
+-- Databases created before v2.43.0: the column is added with 0 and init() marks the old test-run rows once.
+IF COL_LENGTH(N'dbo.px_audit_log', N'is_test') IS NULL
+ALTER TABLE dbo.px_audit_log ADD is_test BIT NOT NULL CONSTRAINT DF_px_audit_is_test DEFAULT (0);
 GO

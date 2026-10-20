@@ -600,6 +600,10 @@ Pengujian: `docs/07` §31 (Modul 46).
 
 ---
 
+## Catatan v2.43.0 - Penandaan entri tes di Audit Trail
+
+`px_users.is_test_account` (hanya bisa diisi kode server lewat `storage.createUser({..., is_test_account: true})`; akun buatan API mewarisi flag admin pembuatnya; tidak bisa diubah lewat API) dan `px_audit_log.is_test` (diisi `authService.audit()` bila akun pelaku atau akun yang dikenai aksi - opsi `subject` - adalah akun tes; tidak pernah dari input request; login gagal username tak dikenal tidak ditandai). `GET /api/admin/audit-log` default mengecualikan `is_test`, `?include_test=1` menyertakannya, setiap baris membawa `is_test`, limit setelah filter. `markHistoricalTestAudit()` (sekali saat upgrade, idempoten; aturan nama `server/db/testAccounts.js`).
+
 ## Catatan v2.39.0 - Headline slide 1 Exit Interview
 
 `GET /api/exit-interview/summary` kini juga mengirim `overview_headline` (string) dari `exitInterviewService.buildOverviewHeadline(reasons, pullFactors)`: alasan teratas kartu 1 ("dominate(s) exits" bila >= 40% record voluntary, selain itu "lead(s) exits"; alasan kedua disebut bila selisih <= 5 pp) + faktor teratas kartu 4 tanpa "Other" (>= 40% -> "is the main attraction", selain itu "is the most cited attraction"; tanpa faktor -> klausa dihilangkan); tanpa data -> "No voluntary exit records in this period". Konstanta di service (`REASON_PHRASES`, `PULL_PHRASES`, `HEADLINE_DOMINANT_PCT`, `HEADLINE_RUNNER_UP_PP`). Headline slide 2 (`headline`) kini dari `buildThemesHeadline` (keluaran sama). Tidak ada endpoint/setting/tabel baru.

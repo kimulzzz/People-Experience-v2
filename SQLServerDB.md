@@ -216,3 +216,7 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 - **Ekspor JSON**: `npm run db:export` (dan `-- --replace`) ikut menulis semua baris exit, termasuk data asli, ke `store.from-sql.json` / `store.json` - **jangan commit** file hasil ekspor seperti itu.
 - `node server/db/migrate.js --reset` menghapus kedua tabel; `store.json` di repo tidak berisi data exit, jadi data asli hilang dan diganti dummy saat start berikutnya. Impor ulang: `npm run exit:import-template -- "docs/Template Report Exit Interview.xlsx"`.
 - Pemeriksaan: `SELECT FORMAT(effective_date, 'yyyy-MM') AS ym, source, COUNT(*) AS n FROM dbo.px_exit_interviews GROUP BY FORMAT(effective_date, 'yyyy-MM'), source ORDER BY ym, source;`
+
+## 18. Audit Trail: entri tes (v2.43.0)
+
+`px_users.is_test_account` dan `px_audit_log.is_test` (BIT, default 0). Baris audit akun tes disembunyikan dari Audit Trail (default API/UI), tidak dihapus. Admin sementara yang dibuat skrip verifikasi harus `is_test_account: true`.

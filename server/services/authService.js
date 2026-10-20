@@ -260,10 +260,13 @@ const sha256 = text => crypto.createHash('sha256').update(text).digest('hex');
 const clientIp = req => String(req.ip || (req.socket && req.socket.remoteAddress) || '').replace(/^::ffff:/, '');
 const cleanForLog = (text, max = 60) => String(text === undefined || text === null ? '' : text).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max);
 
-async function audit(req, action, { user, target } = {}) {
+// is_test (v2.43.0): the row is written by, or about (`subject` = the account acted on), a test-run account. Both come
+// from database records (req.user is reloaded on every request) - never from a header, query or body field.
+async function audit(req, action, { user, target, subject } = {}) {
   try {
     const actor = user || req.user || null;
-    await storage.addAuditLog({ user_id: actor ? actor.user_id : null, username: actor ? actor.username : null, action, target: target ? cleanForLog(target, 190) : null, ip: clientIp(req) });
+    const isTest = !!((actor && actor.is_test_account === true) || (subject && subject.is_test_account === true));
+    await storage.addAuditLog({ user_id: actor ? actor.user_id : null, username: actor ? actor.username : null, action, target: target ? cleanForLog(target, 190) : null, ip: clientIp(req), is_test: isTest });
   } catch (err) {
     console.error('[auth] audit log failed:', err.message);
   }
@@ -567,15 +570,17 @@ function registerAuthRoutes(app) {
       const { password: temporaryPassword, isDefault } = makeInitialPassword();
       let created;
       try {
+        // An account created by a test-run admin is a test-run account too (b.is_test_account is never read).
         created = await storage.createUser({
           username, full_name: fullName, email, role: b.role, scopes: assign.scopes,
-          password_hash: await hashPassword(temporaryPassword), is_active: true, must_change_password: true
+          password_hash: await hashPassword(temporaryPassword), is_active: true, must_change_password: true,
+          is_test_account: req.user.is_test_account === true
         });
       } catch (err) {
         if (err.code === 'DUPLICATE_USER') return res.status(409).json({ error: err.message });
         throw err;
       }
-      await audit(req, 'USER_CREATE', { target: `${created.username} (${created.role}) scope: ${describeScopes(created.scopes)}` });
+      await audit(req, 'USER_CREATE', { subject: created, target: `${created.username} (${created.role}) scope: ${describeScopes(created.scopes)}` });
       res.status(201).json({ user: toPublicUser(created), temporary_password: temporaryPassword, is_default_password: isDefault });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -627,8 +632,8 @@ function registerAuthRoutes(app) {
       if (patch.is_active === false || (patch.role && patch.role !== target.role)) await storage.deleteSessionsForUser(target.user_id);
       // A scope change takes effect on the very next request of an open session: every request reloads the
       // account (and its scopes) from the database, so no re-login and no session revocation is needed.
-      await audit(req, 'USER_UPDATE', { target: `${target.username}: ${Object.keys(patch).filter(k => k !== 'scopes').join(',')}` });
-      if (scopeChanged) await audit(req, 'USER_SCOPE_CHANGE', { target: `${target.username}: ${describeScopes(target.scopes)} -> ${describeScopes(updated.scopes)}` });
+      await audit(req, 'USER_UPDATE', { subject: target, target: `${target.username}: ${Object.keys(patch).filter(k => k !== 'scopes').join(',')}` });
+      if (scopeChanged) await audit(req, 'USER_SCOPE_CHANGE', { subject: target, target: `${target.username}: ${describeScopes(target.scopes)} -> ${describeScopes(updated.scopes)}` });
       res.json({ user: toPublicUser(updated) });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -645,7 +650,7 @@ function registerAuthRoutes(app) {
         password_hash: await hashPassword(temporaryPassword), must_change_password: true, failed_attempts: 0, locked_until: null
       });
       await storage.deleteSessionsForUser(target.user_id);
-      await audit(req, 'PASSWORD_RESET', { target: target.username });
+      await audit(req, 'PASSWORD_RESET', { subject: target, target: target.username });
       res.json({ user: toPublicUser(updated), temporary_password: temporaryPassword, is_default_password: isDefault });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -661,7 +666,7 @@ function registerAuthRoutes(app) {
         return res.status(400).json({ error: 'The last active Admin cannot be deleted.' });
       }
       await storage.deleteUser(target.user_id);
-      await audit(req, 'USER_DELETE', { target: target.username });
+      await audit(req, 'USER_DELETE', { subject: target, target: target.username });
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -670,7 +675,9 @@ function registerAuthRoutes(app) {
 
   app.get('/api/admin/audit-log', async (req, res) => {
     try {
-      res.json(await storage.getAuditLog(req.query.limit));
+      // test-run rows only on request (?include_test=1); each row carries is_test
+      const includeTest = req.query.include_test === '1' || req.query.include_test === 'true';
+      res.json(await storage.getAuditLog(req.query.limit, { includeTest }));
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

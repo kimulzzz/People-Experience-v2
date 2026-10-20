@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(316-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(323-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (316 cases on SQL; v2.39.0 run 230/230, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (323 cases on SQL; v2.43.0 run 237/237, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (32 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
@@ -659,6 +659,11 @@ domain model, not just descriptive:
 
 - **v2.42.0** (2026-10-20, see `CHANGELOG.md` [2.42.0], `docs/05` "Catatan v2.42.0"): the Email Settings / Manage Users tabs of Admin
   Parameters now show their content in place (components got an `embedded` prop) instead of opening a separate pop-up. Frontend only.
+
+- **v2.43.0** (2026-10-20, see `CHANGELOG.md` [2.43.0], `docs/04` "Catatan v2.43.0", `docs/07` §34, `docs/08` §19): test accounts are flagged
+  server-side (`px_users.is_test_account`, only via `storage.createUser({..., is_test_account: true})`, API-created accounts inherit the creator's
+  flag) and their audit rows get `px_audit_log.is_test`; Audit Trail hides them by default ("Show test-run entries" + TEST badge; `?include_test=1`).
+  Nothing deleted; 9,525 old rows marked, 266 visible. Verification/QC temp admins MUST use `is_test_account: true`. Suite SQL 237/237, 16 skipped.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Users, Plus, Save, KeyRound, Loader2, AlertCircle, CheckCircle2, Copy, Lock, History, Trash2 } from 'lucide-react';
 
 // "Manage Users" (Admin only): accounts that may log in. Directorate / division choices come from the
@@ -38,12 +38,16 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId, em
   const [message, setMessage] = useState(null); // { type, text }
   const [tempPassword, setTempPassword] = useState(null); // { username, password }
   const [showAudit, setShowAudit] = useState(false);
+  // v2.43.0: entries of test-run accounts (regression suite / QC) are hidden unless asked for; a ref so load() keeps the choice
+  const [includeTestAudit, setIncludeTestAudit] = useState(false);
+  const includeTestRef = useRef(false);
+  const auditUrl = () => `/api/admin/audit-log?limit=100${includeTestRef.current ? '&include_test=1' : ''}`;
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [uRes, dRes, aRes] = await Promise.all([
-        fetch('/api/admin/users'), fetch('/api/directorates'), fetch('/api/admin/audit-log?limit=100')
+        fetch('/api/admin/users'), fetch('/api/directorates'), fetch(auditUrl())
       ]);
       if (uRes.ok) setUsers(await uRes.json());
       if (dRes.ok) setDirectory(await dRes.json());
@@ -62,6 +66,17 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId, em
     setShowForm(false);
     load();
   }, [isOpen, load]);
+
+  const toggleTestAudit = async () => {
+    includeTestRef.current = !includeTestRef.current;
+    setIncludeTestAudit(includeTestRef.current);
+    try {
+      const res = await fetch(auditUrl());
+      if (res.ok) setAudit(await res.json());
+    } catch (err) {
+      setMessage({ type: 'error', text: 'Failed to load the audit trail.' });
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -301,6 +316,12 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId, em
         )}
 
         {showAudit && (
+          <label className="flex items-center space-x-1.5 text-[11px] text-gray-600 w-fit cursor-pointer">
+            <input type="checkbox" checked={includeTestAudit} onChange={toggleTestAudit} className="accent-[var(--theme-base)]" />
+            <span>Show test-run entries</span>
+          </label>
+        )}
+        {showAudit && (
           <div className="border border-gray-200 rounded-xl overflow-x-auto max-h-64 overflow-y-auto">
             <table className="w-full text-[11px]">
               <thead className="bg-gray-50 text-gray-500 uppercase text-[10px] sticky top-0"><tr>
@@ -308,7 +329,7 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId, em
               </tr></thead>
               <tbody className="divide-y divide-gray-100">
                 {audit.map(a => (
-                  <tr key={a.audit_id}><td className="px-3 py-1 font-mono">{fmtDate(a.occurred_at)}</td><td className="px-3 py-1">{a.username || '-'}</td><td className="px-3 py-1 font-bold">{a.action}</td><td className="px-3 py-1 text-gray-600">{a.target || ''}</td><td className="px-3 py-1 font-mono text-gray-500">{a.ip}</td></tr>
+                  <tr key={a.audit_id}><td className="px-3 py-1 font-mono">{fmtDate(a.occurred_at)}</td><td className="px-3 py-1">{a.username || '-'}{a.is_test && <span className="ml-1.5 px-1 py-px text-[9px] font-bold text-gray-500 bg-gray-100 border border-gray-200 rounded">TEST</span>}</td><td className="px-3 py-1 font-bold">{a.action}</td><td className="px-3 py-1 text-gray-600">{a.target || ''}</td><td className="px-3 py-1 font-mono text-gray-500">{a.ip}</td></tr>
                 ))}
                 {audit.length === 0 && <tr><td colSpan="5" className="text-center py-4 text-gray-400">No records yet.</td></tr>}
               </tbody>
