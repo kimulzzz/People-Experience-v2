@@ -23,6 +23,7 @@ const {
 } = require('./seedData');
 const { parseFilterOptions, normalizeDateString, todayDateString } = require('./filterUtils');
 const { normalizeScopes, rowInScopes, legacyUserScopes } = require('./scopeUtils');
+const { DEFAULT_USER_MENU_ACCESS, coversEventManagerDirectorate } = require('./menuAccess');
 const { isHistoricalTestRow } = require('./testAccounts');
 const { defaultUnitForScale, parseUnit } = require('./metricUnit');
 const { inferSurveySource, isEssMetric, resolveSurveySource, resolveRequiresManualUpload } = require('./surveySource');
@@ -331,6 +332,20 @@ function getAuth() {
       migrated = true;
     });
     const renamed = migrateAuthDirectorates(authStore);
+    // v2.49.0: accounts written before menu_access existed (no such property) are classified ONCE: a USER whose scope
+    // covered an event_manager_directorates directorate (the old "event manager") keeps Signature Program Events,
+    // everybody else gets null (= the defaults, events off). Same rule as sqlStorage.migrateEventManagerMenuAccess.
+    const preMenu = authStore.users.filter(u => u.menu_access === undefined);
+    if (preMenu.length) {
+      const managerDirs = ((getStore().appSettings || {}).event_manager_directorates || {}).value || [];
+      let moved = 0;
+      preMenu.forEach(u => {
+        const keep = u.role === 'USER' && coversEventManagerDirectorate(u.scopes, managerDirs);
+        u.menu_access = keep ? { ...DEFAULT_USER_MENU_ACCESS, events: true } : null;
+        if (keep) moved++;
+      });
+      console.log(`[jsonStorage] Menu access: ${moved} User account(s) whose scope covered an event_manager_directorates directorate keep Signature Program Events.`);
+    }
     // v2.43.0: audit rows written before is_test existed are classified ONCE (rules in testAccounts.js); later rows
     // always carry is_test from addAuditLog, so this only ever touches the pre-upgrade rows.
     const unclassified = authStore.audit.filter(e => e.is_test === undefined);
@@ -339,7 +354,7 @@ function getAuth() {
       unclassified.forEach(e => { if (e.is_test === undefined) e.is_test = false; });
       console.log(`[jsonStorage] Audit trail: marked ${marked} test-run row(s) of old test accounts as is_test (nothing deleted).`);
     }
-    if (migrated || unclassified.length || renamed.user_scopes + renamed.users) saveAuth();
+    if (migrated || unclassified.length || preMenu.length || renamed.user_scopes + renamed.users) saveAuth();
   }
   return authStore;
 }
@@ -357,7 +372,8 @@ function saveAuth() {
   catch (err) { console.error('Failed to save auth.json:', err); }
 }
 
-const copyUser = u => (u ? { ...u, scopes: normalizeScopes(u.scopes), is_test_account: u.is_test_account === true } : null);
+const copyUser = u => (u ? { ...u, scopes: normalizeScopes(u.scopes), is_test_account: u.is_test_account === true,
+  menu_access: u.menu_access && typeof u.menu_access === 'object' ? { ...u.menu_access } : null } : null);
 
 const storage = {
   // v2.31.0 directorate rename (runs by itself when the store / auth file is loaded; calling it again
@@ -369,6 +385,18 @@ const storage = {
     if (counts.directorates_removed + counts.divisions_moved + counts.survey_responses + counts.attendances + counts.app_settings + counts.operational_records) saveStore();
     if (counts.user_scopes + counts.users) saveAuth();
     return counts;
+  },
+
+  // v2.49.0 upgrade step (runs by itself once when auth.json is loaded); same contract as the SQL backend: Users still at
+  // null whose scope covers an event_manager_directorates directorate get events = true. Returns the accounts changed.
+  async migrateEventManagerMenuAccess({ onlyUserIds } = {}) {
+    const a = getAuth();
+    const managerDirs = ((getStore().appSettings || {}).event_manager_directorates || {}).value || [];
+    const targets = a.users.filter(u => u.role === 'USER' && !u.menu_access && (!onlyUserIds || onlyUserIds.includes(u.user_id))
+      && coversEventManagerDirectorate(u.scopes, managerDirs));
+    targets.forEach(u => { u.menu_access = { ...DEFAULT_USER_MENU_ACCESS, events: true }; });
+    if (targets.length) saveAuth();
+    return targets.length;
   },
 
   // --- APP SETTINGS (admin-managed UI values: PX target line, event dropdown options) ---
@@ -464,7 +492,8 @@ const storage = {
       locked_until: null,
       created_at: new Date().toISOString(),
       last_login_at: null,
-      is_test_account: u.is_test_account === true
+      is_test_account: u.is_test_account === true,
+      menu_access: u.menu_access && typeof u.menu_access === 'object' ? { ...u.menu_access } : null // v2.49.0: null = defaults
     };
     a.users.push(record);
     saveAuth();
@@ -479,6 +508,7 @@ const storage = {
       if (patch[f] !== undefined) u[f] = (f === 'locked_until' || f === 'last_login_at') && patch[f] ? new Date(patch[f]).toISOString() : patch[f];
     });
     if (patch.scopes !== undefined) u.scopes = normalizeScopes(patch.scopes);
+    if (patch.menu_access !== undefined) u.menu_access = patch.menu_access && typeof patch.menu_access === 'object' ? { ...patch.menu_access } : null;
     saveAuth();
     return copyUser(u);
   },

@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Users, Plus, Save, KeyRound, Loader2, AlertCircle, CheckCircle2, Copy, Lock, History, Trash2, Clock } from 'lucide-react';
 import { IDLE_TIMEOUT_CHANGED_EVENT } from './IdleSessionGuard';
+import { MENU_TABS, DEFAULT_USER_MENU_ACCESS } from '../utils/menuAccess';
 
 // "Manage Users" (Admin only): accounts that may log in. Directorate / division choices come from the
 // directory in SQL Server (/api/directorates). Passwords are never shown except the one-time
 // temporary password after creating an account or resetting a password.
 // A USER's data scope = any number of directorates; for each one "all divisions" or a ticked subset
 // (form shape { directorate, all, divisions[] } <-> API shape { directorate, divisions: null | [..] }).
-const EMPTY_FORM = { username: '', full_name: '', email: '', role: 'USER', scopes: [] };
+// menu_access (v2.49.0): the menus a USER may open; an Admin always has all of them.
+const EMPTY_FORM = { username: '', full_name: '', email: '', role: 'USER', scopes: [], menu_access: { ...DEFAULT_USER_MENU_ACCESS } };
 
 const scopesToForm = (scopes) => (scopes || []).map(s => ({ directorate: s.directorate, all: s.divisions === null, divisions: s.divisions || [] }));
 const scopesToApi = (rows) => rows.map(r => ({ directorate: r.directorate, divisions: r.all ? null : r.divisions }));
@@ -23,6 +25,14 @@ const ScopeSummary = ({ scopes }) => (
     ))}
   </div>
 );
+
+// Compact menu-access summary for the user table: the menus a USER may NOT open (all on = "All menus").
+const MenuSummary = ({ access }) => {
+  const off = MENU_TABS.filter(m => !(access || DEFAULT_USER_MENU_ACCESS)[m.key]);
+  if (off.length === 0) return <div className="text-[10px] text-gray-500">Menus: all</div>;
+  if (off.length === MENU_TABS.length) return <div className="text-[10px] text-red-700 font-semibold">Menus: none</div>;
+  return <div className="text-[10px] text-gray-500" title={off.map(m => m.label).join(', ')}>Menus: all except {off.map(m => m.label).join(', ')}</div>;
+};
 
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString('en-US') : '-');
 
@@ -102,7 +112,7 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId, em
   const openCreate = () => { setEditingId(null); setForm(EMPTY_FORM); setShowForm(true); setMessage(null); };
   const openEdit = (u) => {
     setEditingId(u.user_id);
-    setForm({ username: u.username, full_name: u.full_name, email: u.email || '', role: u.role, scopes: scopesToForm(u.scopes) });
+    setForm({ username: u.username, full_name: u.full_name, email: u.email || '', role: u.role, scopes: scopesToForm(u.scopes), menu_access: { ...DEFAULT_USER_MENU_ACCESS, ...(u.role === 'USER' ? u.menu_access : {}) } });
     setShowForm(true);
     setMessage(null);
   };
@@ -125,6 +135,7 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId, em
         const empty = form.scopes.find(r => !r.all && r.divisions.length === 0);
         if (empty) throw new Error(`Select at least one division for ${empty.directorate}, or choose "All divisions".`);
         payload.scopes = scopesToApi(form.scopes);
+        payload.menu_access = form.menu_access;
       } else {
         payload.scopes = [];
       }
@@ -314,6 +325,22 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId, em
                 </>
               )}
             </div>
+            <div className="md:col-span-3 space-y-2">
+              <div className="font-bold text-gray-600">Menu Access {form.role !== 'USER' && <span className="font-normal text-gray-400">(Admin always has every menu)</span>}</div>
+              {form.role === 'USER' && (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1 p-3 bg-white border border-gray-200 rounded-lg">
+                    {MENU_TABS.map(m => (
+                      <label key={m.key} className="flex items-center space-x-1.5 cursor-pointer">
+                        <input type="checkbox" checked={!!form.menu_access[m.key]} onChange={() => setForm({ ...form, menu_access: { ...form.menu_access, [m.key]: !form.menu_access[m.key] } })} />
+                        <span>{m.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-[10.5px] text-gray-500">Signature Program Events gives full event rights (view, create, edit, media, PPT) - tick it only for HR Strategy users.</p>
+                </>
+              )}
+            </div>
             <div className="md:col-span-3 flex items-center justify-end space-x-2">
               <button type="button" onClick={() => setShowForm(false)} className="px-3 py-1.5 font-bold text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
               <button type="submit" disabled={saving} className="px-4 py-1.5 font-bold text-white bg-[var(--theme-base)] hover:bg-[var(--theme-hover)] rounded-lg flex items-center space-x-1.5 disabled:opacity-60">
@@ -349,7 +376,7 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId, em
                       )}
                     </td>
                     <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${u.role === 'ADMIN' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-700'}`}>{u.role}</span></td>
-                    <td className="px-3 py-2">{u.role === 'ADMIN' ? <span className="text-gray-400 italic">All (unrestricted)</span> : <ScopeSummary scopes={u.scopes} />}</td>
+                    <td className="px-3 py-2">{u.role === 'ADMIN' ? <span className="text-gray-400 italic">All (unrestricted)</span> : <><ScopeSummary scopes={u.scopes} /><MenuSummary access={u.menu_access} /></>}</td>
                     <td className="px-3 py-2 space-y-0.5">
                       <div className={u.is_active ? 'text-emerald-700 font-bold' : 'text-gray-400 font-bold'}>{u.is_active ? 'Active' : 'Inactive'}</div>
                       {isLocked(u) && <div className="text-amber-700 font-bold flex items-center space-x-1"><Lock className="w-3 h-3" /><span>Locked until {fmtDate(u.locked_until)}</span></div>}

@@ -157,7 +157,7 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 | :--- | :--- |
 | Tabel | `px_users` (akun; `password_hash` = scrypt), `px_sessions` (hanya **hash SHA-256** token cookie), `px_audit_log` (jejak login & kelola user, tanpa secret) |
 | Cakupan User (v2.27.0) | `px_user_scopes` (cakupan data per User: `directorate`, `division` NULL = semua divisi; FK `ON DELETE CASCADE` ke `px_users`). Kolom `px_users.directorate`/`division` legacy, tidak dipakai lagi; dimigrasikan otomatis saat boot (`migrateLegacyUserScopes`, idempoten). Ikut dibackup bersama akun; tidak dihapus oleh `migrate --reset` |
-| Setting (`px_app_settings`) | `session_hours` (8), `login_max_attempts` (5), `login_lockout_minutes` (15), `login_rate_limit_per_minute` (20), `event_manager_directorates` (Human Resources) |
+| Setting (`px_app_settings`) | `session_hours` (8), `login_max_attempts` (5), `login_lockout_minutes` (15), `login_rate_limit_per_minute` (20), `event_manager_directorates` (Human Resources; sejak v2.49.0 tidak memberi hak, diganti `px_users.menu_access`, lihat §21) |
 | `node server/db/migrate.js --reset` | **Tidak menghapus** tiga tabel di atas — akun bertahan |
 | `npm run db:export` / import | **Tidak memuat** akun |
 | Backend JSON | akun di `server/data/auth.json` (git-ignored), terpisah dari akun di SQL |
@@ -228,3 +228,7 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 ## 20. Bobot PX Index (v2.48.0)
 
 Setting `px_index_weights` di `px_app_settings` (default `{"survey":70,"outcome":30}`; bilangan bulat 0-100, jumlah 100). Diubah Admin di Admin Parameters -> Journey Parameters -> PX Index Weights; perubahan tercatat `SETTINGS_CHANGE` di `px_audit_log`. Ikut `.bak` bersama tabel lain. Cek: `SELECT setting_value FROM dbo.px_app_settings WHERE setting_key = 'px_index_weights';`
+
+## 21. Akses Menu per User (v2.49.0)
+
+Kolom `px_users.menu_access` (`NVARCHAR(400) NULL`, JSON berisi 6 menu `true`/`false`; NULL = default: semua menu kecuali Signature Program Events; Admin selalu semua menu). Ditambahkan otomatis saat server start. Upgrade sekali pada start yang menambah kolom: User lama yang cakupannya memuat direktorat di `event_manager_directorates` mendapat menu `events` (database utama: 0 akun). Setting `event_manager_directorates` tetap ada tetapi tidak memberi hak lagi. Tetap 32 tabel; ikut `.bak`; tidak dihapus oleh `migrate --reset` (akun bertahan). Diubah Admin di Admin Parameters -> Manage Users -> Menu Access, tercatat `USER_MENU_ACCESS_CHANGE` di `px_audit_log`. Cek: `SELECT username, role, menu_access FROM dbo.px_users;`

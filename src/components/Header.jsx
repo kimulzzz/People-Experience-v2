@@ -21,14 +21,26 @@ import CimbLogo from './CimbLogo';
 import { THEME_PRESETS, applyTheme, getSavedThemeId } from '../utils/theme';
 import { useAuth } from '../utils/AuthContext';
 import { MONTH_NAMES } from '../utils/months';
+import { MENU_TABS } from '../utils/menuAccess';
 
 // Derived from the real browser clock (not a frozen literal) — only used as a last-resort
 // fallback when App.jsx hasn't passed filterOptions/availableYears yet.
 const CURRENT_YEAR = String(new Date().getFullYear());
 
+// Navigation tabs (v2.49.0 order = MENU_TABS): label + icon per tab id. Only the tabs in `allowedTabs` are shown.
+const TAB_LOOK = {
+  dashboard: { label: 'Dashboard & Trends', Icon: BarChart3 },
+  calculator: { label: 'Explore Metrics (PX Metrics)', Icon: Layers },
+  'exit-interview': { label: 'Exit Interview', Icon: DoorOpen },
+  alerts: { label: 'Action Library & AI Alerts', Icon: Sparkles },
+  events: { label: 'Signature Program Events', Icon: Calendar },
+  glossary: { label: 'About', Icon: BookMarked }
+};
+
 export default function Header({
   activeTab, 
   setActiveTab, 
+  allowedTabs = MENU_TABS.map(m => m.tab),
   alertCount, 
   filterOptions = { mode: 'YTD', year: CURRENT_YEAR, month: '01', directorate: 'ALL', sub_directorate: 'ALL' },
   onFilterChange,
@@ -301,7 +313,7 @@ export default function Header({
 
             </>)}
 
-            {alertCount > 0 && (
+            {alertCount > 0 && allowedTabs.includes('alerts') && (
               <button
                 onClick={() => setActiveTab('alerts')}
                 className="px-2.5 py-1 text-xs font-bold bg-red-50 text-[#ED1C24] border border-red-200 hover:bg-red-100 rounded-lg flex items-center space-x-1.5 transition animate-pulse-subtle shadow-2xs"
@@ -354,83 +366,24 @@ export default function Header({
 
         {/* Navigation Tabs */}
         <div className="flex space-x-1 overflow-x-auto py-1 px-1 my-1 rounded-lg bg-gradient-to-r from-[var(--theme-tint-50)] via-[var(--theme-tint-100)] to-[var(--theme-tint-50)] border border-[var(--theme-tint-100)]">
-          <button
-            onClick={() => setActiveTab('dashboard')}
-            className={`px-4 py-2 text-xs font-semibold rounded-md flex items-center space-x-2 transition ${
-              activeTab === 'dashboard'
-                ? 'bg-white font-bold shadow-sm'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
-            }`}
-            style={activeTab === 'dashboard' ? { color: 'var(--theme-base)' } : undefined}
-          >
-            <BarChart3 className="w-4 h-4" />
-            <span>Dashboard & Trends</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('calculator')}
-            className={`px-4 py-2 text-xs font-semibold rounded-md flex items-center space-x-2 transition ${
-              activeTab === 'calculator'
-                ? 'bg-white font-bold shadow-sm'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
-            }`}
-            style={activeTab === 'calculator' ? { color: 'var(--theme-base)' } : undefined}
-          >
-            <Layers className="w-4 h-4" />
-            <span>Explore Metrics (PX Metrics)</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('events')}
-            className={`px-4 py-2 text-xs font-semibold rounded-md flex items-center space-x-2 transition ${
-              activeTab === 'events'
-                ? 'bg-white font-bold shadow-sm'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
-            }`}
-            style={activeTab === 'events' ? { color: 'var(--theme-base)' } : undefined}
-          >
-            <Calendar className="w-4 h-4" />
-            <span>Signature Program Events</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('alerts')}
-            className={`px-4 py-2 text-xs font-semibold rounded-md flex items-center space-x-2 transition ${
-              activeTab === 'alerts'
-                ? 'bg-white font-bold shadow-sm'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
-            }`}
-            style={activeTab === 'alerts' ? { color: 'var(--theme-base)' } : undefined}
-          >
-            <Sparkles className="w-4 h-4" />
-            <span>Action Library & AI Alerts</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('exit-interview')}
-            className={`px-4 py-2 text-xs font-semibold rounded-md flex items-center space-x-2 transition ${
-              activeTab === 'exit-interview'
-                ? 'bg-white font-bold shadow-sm'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
-            }`}
-            style={activeTab === 'exit-interview' ? { color: 'var(--theme-base)' } : undefined}
-          >
-            <DoorOpen className="w-4 h-4" />
-            <span>Exit Interview</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('glossary')}
-            className={`px-4 py-2 text-xs font-semibold rounded-md flex items-center space-x-2 transition ${
-              activeTab === 'glossary'
-                ? 'bg-white font-bold shadow-sm'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
-            }`}
-            style={activeTab === 'glossary' ? { color: 'var(--theme-base)' } : undefined}
-          >
-            <BookMarked className="w-4 h-4" />
-            <span>About</span>
-          </button>
+          {MENU_TABS.filter(m => allowedTabs.includes(m.tab)).map(({ tab }) => {
+            const { label, Icon } = TAB_LOOK[tab];
+            return (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`px-4 py-2 text-xs font-semibold rounded-md flex items-center space-x-2 transition ${
+                  activeTab === tab
+                    ? 'bg-white font-bold shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'
+                }`}
+                style={activeTab === tab ? { color: 'var(--theme-base)' } : undefined}
+              >
+                <Icon className="w-4 h-4" />
+                <span>{label}</span>
+              </button>
+            );
+          })}
         </div>
 
       </div>

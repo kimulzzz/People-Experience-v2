@@ -22,6 +22,7 @@ import { AuthContext, useAuth } from './utils/AuthContext';
 import { UNAUTHORIZED_EVENT } from './utils/apiClient';
 import { fetchWithRetry } from './utils/fetchWithRetry';
 import { getPublicCodes, isPublicRoute } from './utils/publicRoute';
+import { allowedTabs, effectiveMenuAccess } from './utils/menuAccess';
 // Loaded on first use (it brings Recharts) so the main bundle does not grow (v2.38.0).
 const ExitInterviewDashboard = React.lazy(() => import('./components/ExitInterviewDashboard'));
 
@@ -109,7 +110,7 @@ function AuthGate({ children }) {
   return (
     <AuthContext.Provider
       key={user.user_id}
-      value={{ user, isAdmin: !!permissions.is_admin, canManageEvents: !!permissions.can_manage_events, logout }}
+      value={{ user, isAdmin: !!permissions.is_admin, canManageEvents: !!permissions.can_manage_events, menuAccess: user.menu_access || null, logout }}
     >
       {idleGuard}
       {children}
@@ -124,8 +125,14 @@ export default function App() {
 }
 
 function AppContent() {
-  const { user, isAdmin, logout } = useAuth();
+  const { user, isAdmin, menuAccess, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('dashboard');
+  // Menu access (v2.49.0): only the menus this account may open are shown, and a tab that is not allowed is never
+  // rendered - not even when set programmatically (a button, a stale state); the first allowed menu is shown instead.
+  const access = effectiveMenuAccess(isAdmin, menuAccess);
+  const tabs = allowedTabs(isAdmin, menuAccess);
+  const shownTab = tabs.includes(activeTab) ? activeTab : (tabs[0] || null);
+  const openTab = (tab) => { if (tabs.includes(tab)) setActiveTab(tab); };
   const [calculationData, setCalculationData] = useState(null);
   const [alertsData, setAlertsData] = useState(null);
   const [eventsData, setEventsData] = useState([]);
@@ -179,6 +186,10 @@ function AppContent() {
     if (user) fetchAllData(filterOptions); // public forms (no login) have no dashboard data to load
   }, [filterOptions]);
 
+  useEffect(() => {
+    if (shownTab && shownTab !== activeTab) setActiveTab(shownTab);
+  }, [shownTab, activeTab]);
+
   const fetchAllData = async (filters = filterOptions) => {
     try {
       const { mode, year, month, directorate, sub_directorate } = filters;
@@ -194,16 +205,17 @@ function AppContent() {
         fetchWithRetry(`/api/metrics/calculate?${queryParams}`),
         // A User's alerts follow the same data scope / filter as the scorecard (the server limits them anyway)
         fetchWithRetry(isAdmin ? '/api/alerts' : `/api/alerts?${new URLSearchParams({ directorate: directorate || 'ALL', sub_directorate: sub_directorate || 'ALL' })}`),
-        fetchWithRetry('/api/events'),
+        // menus this account may not open are not fetched at all (the server would answer 403)
+        access.events ? fetchWithRetry('/api/events') : null,
         fetchWithRetry('/api/health'),
-        fetchWithRetry('/api/action-library')
+        access.action_library ? fetchWithRetry('/api/action-library') : null
       ]);
 
       if (calcRes.ok) setCalculationData(await calcRes.json());
       if (alertsRes.ok) setAlertsData(await alertsRes.json());
-      if (eventsRes.ok) setEventsData(await eventsRes.json());
+      if (eventsRes && eventsRes.ok) setEventsData(await eventsRes.json());
       if (healthRes.ok) setHealthStatus(await healthRes.json());
-      if (actionRes.ok) setActionLibrary(await actionRes.json());
+      if (actionRes && actionRes.ok) setActionLibrary(await actionRes.json());
     } catch (err) {
       console.error('Error loading dashboard data:', err);
     }
@@ -241,7 +253,7 @@ function AppContent() {
       });
       if (res.ok) {
         fetchAllData(filterOptions);
-        setActiveTab('events');
+        openTab('events');
       }
     } catch (err) {
       alert('Failed to create event: ' + err.message);
@@ -305,8 +317,9 @@ function AppContent() {
       
       {/* Top Header */}
       <Header
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        activeTab={shownTab}
+        setActiveTab={openTab}
+        allowedTabs={tabs}
         alertCount={alertsData?.total_alerts || 0}
         healthStatus={healthStatus}
         filterOptions={filterOptions}
@@ -329,7 +342,13 @@ function AppContent() {
       {/* Main App Body */}
       <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         
-        {activeTab === 'dashboard' && (
+        {!shownTab && (
+          <div className="bg-white border border-gray-200 rounded-xl p-8 text-center text-sm text-gray-600">
+            Your account has no menu access yet. Contact an Admin.
+          </div>
+        )}
+
+        {shownTab === 'dashboard' && (
           <Dashboard
             calculationData={calculationData}
             alertsData={alertsData}
@@ -348,18 +367,18 @@ function AppContent() {
               setFilterOptions(prev => ({ ...prev, directorate: name, sub_directorate: 'ALL' }));
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
-            onSelectJourney={(journeyId) => {
+            onSelectJourney={access.explore ? (journeyId) => {
               setSelectedJourneyFilter(journeyId.toString());
-              setActiveTab('calculator');
-            }}
+              openTab('calculator');
+            } : undefined}
             onSelectMetric={handleOpenMetricDetail}
             onAcknowledgeAlert={isAdmin ? handleAcknowledgeAlert : undefined}
-            onNavigateToSimulator={() => setActiveTab('calculator')}
-            onNavigateToEvents={() => setActiveTab('events')}
+            onNavigateToSimulator={access.explore ? () => openTab('calculator') : undefined}
+            onNavigateToEvents={access.events ? () => openTab('events') : undefined}
           />
         )}
 
-        {activeTab === 'calculator' && (
+        {shownTab === 'calculator' && (
           <Calculator
             calculationData={calculationData}
             selectedJourneyFilter={selectedJourneyFilter}
@@ -372,7 +391,7 @@ function AppContent() {
           />
         )}
 
-        {activeTab === 'events' && (
+        {shownTab === 'events' && (
           <EventManager
             events={eventsData}
             onRefreshEvents={() => fetchAllData(filterOptions)}
@@ -383,7 +402,7 @@ function AppContent() {
           />
         )}
 
-        {activeTab === 'alerts' && (
+        {shownTab === 'alerts' && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
@@ -394,12 +413,14 @@ function AppContent() {
                   Framework Slide 10 • Automatically triggers intervention recommendations when metrics fall below thresholds
                 </p>
               </div>
-              <button
-                onClick={() => setActiveTab('dashboard')}
-                className="text-xs font-bold text-[var(--theme-base)] hover:underline"
-              >
-                &larr; Back to Dashboard
-              </button>
+              {access.dashboard && (
+                <button
+                  onClick={() => openTab('dashboard')}
+                  className="text-xs font-bold text-[var(--theme-base)] hover:underline"
+                >
+                  &larr; Back to Dashboard
+                </button>
+              )}
             </div>
 
             <div className="grid grid-cols-1 gap-4">
@@ -452,13 +473,13 @@ function AppContent() {
           </div>
         )}
 
-        {activeTab === 'exit-interview' && (
+        {shownTab === 'exit-interview' && (
           <React.Suspense fallback={<div className="flex items-center justify-center min-h-[300px]"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#ED1C24]" /></div>}>
             <ExitInterviewDashboard filterOptions={filterOptions} />
           </React.Suspense>
         )}
 
-        {activeTab === 'glossary' && <GlossaryView />}
+        {shownTab === 'glossary' && <GlossaryView />}
 
       </main>
 
@@ -473,10 +494,10 @@ function AppContent() {
           setPreSelectedSurveyMetricId(metricId);
           setIsSurveyImportOpen(true);
         }}
-        onOpenExitInterview={() => {
+        onOpenExitInterview={access.exit_interview ? () => {
           setSelectedMetricDetailId(null);
-          setActiveTab('exit-interview');
-        }}
+          openTab('exit-interview');
+        } : undefined}
         onOpenSurveyQuestionSettings={isAdmin ? (metricId) => {
           setSelectedMetricDetailId(null);
           setPreSelectedQuestionMetricId(metricId);

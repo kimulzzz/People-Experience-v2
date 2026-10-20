@@ -76,7 +76,7 @@ graph TD
 ### 3.1 Root Orchestrator ([`src/App.jsx`](file:///d:/Mul/Project/Anti%20Gravity/People%20Experience/src/App.jsx))
 - **State Management**:
   - `selectedPeriod`: Menyimpan filter periode aktif (`'YTD'`, `'2026-01'`, `'2026-02'`, dst.).
-  - `activeTab`: Navigasi antar tampilan utama (*Dashboard, PX Index Calculator, Signature Programs, Action Library, About*).
+  - `activeTab`: Navigasi antar tampilan utama (sejak v2.49.0 urutan *Dashboard & Trends, Explore Metrics, Exit Interview, Action Library & AI Alerts, Signature Program Events, About*, hanya menu yang diizinkan `menu_access`; lihat "Catatan v2.49.0").
   - `selectedMetric`: Mengontrol metrik yang sedang dibuka pada *MetricDetailModal*.
   - `isSurveyQuestionsModalOpen`, `isSettingsModalOpen`, `isWeightsModalOpen`, `isImportModalOpen`: Mengontrol visibilitas modal admin dan impor data.
 - **Data Fetching Reactive Hook**: Otomatis memicu pemanggilan ulang `/api/metrics/calculate?period=...` setiap kali filter periode berubah atau data baru berhasil diunggah.
@@ -263,7 +263,7 @@ Tombol **Setting Email** di Header (sebelah Survey Templates) membuka modal: tog
 | :--- | :--- |
 | `src/components/AuthScreens.jsx` | `LoginPage` (form username/password, pesan galat generik, notifikasi "Sesi Anda berakhir") dan `ChangePasswordScreen` (wajib saat memakai password sementara) |
 | `src/components/UserManagementModal.jsx` | Menu **Manage Users** (dulu Kelola User; Admin): daftar akun, tambah/ubah (role + **editor cakupan data**, lihat v2.27.0; direktorat & divisi dari `/api/directorates`), aktif/nonaktif, reset password (password sementara tampil sekali dengan tombol salin), riwayat audit login. **Belum ada tombol hapus** |
-| `src/utils/AuthContext.jsx` | `AuthContext` / `useAuth()` → `{ user, isAdmin, canManageEvents, logout }` |
+| `src/utils/AuthContext.jsx` | `AuthContext` / `useAuth()` → `{ user, isAdmin, canManageEvents, menuAccess, logout }` (`menuAccess` sejak v2.49.0) |
 | `src/utils/apiClient.js` | Membungkus `window.fetch` untuk `/api`, `/uploads`, `/exports`: `credentials: 'same-origin'`; respons 401 (selain login) memicu event `px:unauthorized` |
 | `src/App.jsx` | `AuthGate` memeriksa `/api/auth/me`; anon → `LoginPage`; `must_change_password` → `ChangePasswordScreen`; selain itu aplikasi. URL `?checkin=` / `?survey=` melewati `AuthGate` (form publik tanpa login) |
 
@@ -275,7 +275,7 @@ Menu per role (penegakan sebenarnya di server, lihat `docs/04`):
 | Filter direktorat Header | bebas | terkunci ke direktoratnya (label "User - <direktorat>") |
 | Tombol upload/pengaturan survei di Explore Metrics & MetricDetailModal, acknowledge alert | tampil | disembunyikan |
 | Detail metrik: data per responden | tampil | disembunyikan (`respondent_data_hidden`) |
-| Signature Events: buat/hapus event, unggah media, transkrip, PPT | tampil | hanya bila `canManageEvents` (direktorat di `event_manager_directorates`) |
+| Signature Events: buat/hapus event, unggah media, transkrip, PPT | tampil | hanya bila `canManageEvents` (direktorat di `event_manager_directorates`; **digantikan v2.49.0**: menu `events`, tanpa menu tab tidak tampil sama sekali) |
 | Sign out (Header, pojok kanan atas sejak v2.30.0) | tampil | tampil |
 
 ## 🎯 Catatan v2.27.0 — Cakupan Data User
@@ -402,6 +402,19 @@ API kini bisa mengirim indeks dan skor `null` serta status `NO_DATA` (lihat `doc
 | `MetricDetailModal.jsx` | Nilai "—", "No survey data in this period - left out of the index", badge abu-abu "No Data", pertanyaan berlabel "No Data" tanpa skor. Catatan "Annual metric: shows the result of Jan–Sep 2026" untuk metrik tahunan pada filter MTD **dihapus di v2.37.0** (MTD kini selalu satu bulan, `period_window.basis = 'MONTH'`). |
 | `TrendChart.jsx` | Titik `null` menjadi celah (garis dipotong per segmen), tooltip "—". |
 
+## Catatan v2.49.0 - Akses Menu per User & Urutan Menu
+
+| Komponen | Perubahan |
+| :--- | :--- |
+| `src/utils/menuAccess.js` (baru) | `MENU_TABS` = 6 menu dalam urutan navigasi (`key` = key `menu_access` server, `tab` = id `activeTab`): `dashboard`/`dashboard`, `explore`/`calculator`, `exit_interview`/`exit-interview`, `action_library`/`alerts`, `events`/`events`, `about`/`glossary`. Juga `DEFAULT_USER_MENU_ACCESS` (semua kecuali `events`), `effectiveMenuAccess(isAdmin, menuAccess)` dan `allowedTabs(isAdmin, menuAccess)`. |
+| `AuthContext.jsx` | Konteks menambah `menuAccess` (= `user.menu_access`); `canManageEvents` kini = menu `events` (`permissions.can_manage_events`). |
+| `Header.jsx` | Tab nav dirender dari `MENU_TABS` (prop baru `allowedTabs`), hanya yang diizinkan, urutan: Dashboard & Trends, Explore Metrics (PX Metrics), Exit Interview, Action Library & AI Alerts, Signature Program Events, About (dulu: Dashboard, Explore, Signature Program Events, Action Library, Exit Interview, About). Tombol "N Deficits" hanya bila tab `alerts` diizinkan. |
+| `App.jsx` | `shownTab` = `activeTab` bila diizinkan, selain itu menu pertama yang diizinkan (juga bila tab diset lewat tombol/state lama; `openTab()` mengabaikan tab yang tidak diizinkan). Tanpa menu sama sekali: kotak "Your account has no menu access yet. Contact an Admin.". `fetchAllData()` tidak memanggil `/api/events` tanpa menu `events` dan `/api/action-library` tanpa `action_library`. Tombol "Back to Dashboard" di tab Action Library hanya bila menu `dashboard`; `onOpenExitInterview` ke `MetricDetailModal` hanya bila `exit_interview` (tombol "Open Exit Interview Dashboard" hilang). |
+| `Dashboard.jsx` | "Simulate & Edit Metrics" hanya bila `explore`, "Manage Signature Programs" hanya bila `events` (prop `onNavigateToSimulator` / `onNavigateToEvents` `undefined` -> tombol tidak dirender); klik kartu journey ke Explore Metrics hanya bila `explore` (`onSelectJourney` opsional). |
+| `UserManagementModal.jsx` (Admin Parameters -> Manage Users) | Form tambah/ubah: blok **Menu Access** dengan 6 checkbox (label dari `MENU_TABS`) hanya untuk role User, default = `DEFAULT_USER_MENU_ACCESS`; untuk Admin hanya teks "(Admin always has every menu)". Catatan: "Signature Program Events gives full event rights (view, create, edit, media, PPT) - tick it only for HR Strategy users." Payload User selalu mengirim map lengkap `menu_access`. Daftar user: di bawah ringkasan cakupan tampil `MenuSummary` - "Menus: all", "Menus: all except <menu>, ..." (tooltip daftar menu) atau "Menus: none" (merah). |
+
+Penegakan sebenarnya ada di server untuk `events`, `exit_interview`, `action_library` (`docs/04` "Catatan v2.49.0"); `dashboard`, `explore`, `about` hanya disembunyikan. Tidak diuji otomatis: tampilan Header, fallback tab, pesan tanpa menu dan form Manage Users.
+
 ## Catatan v2.48.0 - PX Index per Direktorat, Urutan Dashboard, Grafik Tren, Bobot PX Index & About
 
 | Komponen | Perubahan |
@@ -462,7 +475,7 @@ Dashboard alasan resign (API: `docs/04` "Catatan v2.38.0"; kolom file: `docs/02`
 
 | Komponen | Perubahan |
 | :--- | :--- |
-| `Header.jsx` | Tombol nav baru **Exit Interview** (ikon `DoorOpen`, `activeTab === 'exit-interview'`) di antara "Action Library & AI Alerts" dan "About"; tampil untuk semua login. |
+| `Header.jsx` | Tombol nav baru **Exit Interview** (ikon `DoorOpen`, `activeTab === 'exit-interview'`) di antara "Action Library & AI Alerts" dan "About"; tampil untuk semua login (sejak v2.49.0: hanya dengan menu `exit_interview`, posisi setelah Explore Metrics). |
 | `App.jsx` | `ExitInterviewDashboard` di-load dengan `React.lazy` + `Suspense` (spinner) agar Recharts dan komponen ini tidak menambah bundle utama (chunk sendiri ~350 KB, bundle utama 520 KB; angka build dari laporan developer). Menerima `filterOptions` Header (YTD/MTD, tahun, bulan, direktorat, sub-direktorat). Handler `onOpenExitInterview` menutup detail metrik lalu pindah ke tab ini. |
 | `ExitInterviewDashboard.jsx` (baru) | Hero "Voluntary Exits \| Exit Interview Summary" dengan `subtitle` server (mis. "January - October 2026 \| 1,082 voluntary exit records as of September 2026") dan tiga angka (Voluntary exits, Company moves, All exit records). Slide 1 = 6 kartu bernomor dengan baris "Base: ...": 1 Reasons for resignation, 2 Destination industry (pie), 3 Top 10 financial-sector destinations, 4 Attractions of the new employer (pull factors) + KPI Compensation, 5 Career satisfaction (movers) (bucket 1-6 + rata-rata), 6 Would you recommend CIMB Niaga? (pie). Slide 2: judul = `headline` server, kartu A "What the new employer offers" dan B "Internal factors by career satisfaction" (Career-dissatisfied 1-3 vs Career-satisfied 4-6). Data diambil ulang setiap filter berubah (`fetchWithRetry`). USER melihat catatan "Aggregates of your data scope only."; untuk USER kartu 3 menampilkan "Only institutions of the standard name list are shown." |
 | Toolbar Admin (di komponen yang sama) | **Download Template (.xlsx)**, **Upload (.xlsx)** (modal: file picker `accept=".xlsx"`, pesan sukses dari server, tabel error Row / Column / Problem bila ditolak), **Export CSV (current filter)**, **Upload history** (tabel Uploaded at, File, Source [Upload / Template import / Dummy (seed)], Rows, New, Updated, Dummy replaced, Period, By). Setelah upload sukses dashboard dan riwayat dimuat ulang. |

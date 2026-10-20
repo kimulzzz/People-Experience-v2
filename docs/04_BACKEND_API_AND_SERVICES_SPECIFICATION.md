@@ -84,6 +84,9 @@ Backend dibangun menggunakan **Node.js dan Express.js** sebagai REST API Server 
 ---
 
 ### 2.6 Modul Signature Program Events & PPT Export
+
+> Sejak v2.49.0 semua endpoint di tabel ini butuh login dengan menu `events` (Admin selalu boleh), kecuali `POST /api/events/:event_id/attendance`, `POST /api/events/:event_id/feedback` dan `GET /api/events/by-code/:code` yang tetap publik. Lihat "Catatan v2.49.0".
+
 | Method | Endpoint | Deskripsi | Parameter / Payload |
 | :---: | :--- | :--- | :--- |
 | `GET` | `/api/events` | Mengambil daftar seluruh event program signature | `-` |
@@ -260,7 +263,7 @@ backend boot) tanpa perlu dipicu manual — lihat `server.js` bagian `app.listen
 | `POST` | `/api/auth/change-password` | login | `{ current_password, new_password }`; aturan password di bawah; sesi lain milik user itu dimatikan |
 | `GET` | `/api/admin/users` | ADMIN | Daftar akun (tanpa `password_hash`) |
 | `POST` | `/api/admin/users` | ADMIN | `{ username, full_name, email?, role, scopes }` (v2.27.0; bentuk lama `directorate` + `division` masih diterima) → 201 `{ user, temporary_password, is_default_password }` (tampil sekali; v2.27.2: bila env `DEFAULT_INITIAL_PASSWORD` terisi, `temporary_password` = password awal standar itu dan `is_default_password: true`, selain itu acak dan `false`). Username 3-50 karakter `[A-Za-z0-9._-]`; USER wajib minimal satu cakupan, direktorat/divisi harus ada di direktori database; ADMIN tidak terikat direktorat; duplikat → 409 |
-| `PUT` | `/api/admin/users/:id` | ADMIN | Ubah `full_name`, `email`, `is_active`, `role`/`scopes` (atau bentuk lama `directorate`/`division`). Tidak bisa menonaktifkan/menurunkan diri sendiri atau Admin aktif terakhir (400); nonaktif/ganti role mematikan sesi user itu |
+| `PUT` | `/api/admin/users/:id` | ADMIN | Ubah `full_name`, `email`, `is_active`, `role`/`scopes`, `menu_access` (v2.49.0) (atau bentuk lama `directorate`/`division`). Tidak bisa menonaktifkan/menurunkan diri sendiri atau Admin aktif terakhir (400); nonaktif/ganti role mematikan sesi user itu |
 | `POST` | `/api/admin/users/:id/reset-password` | ADMIN | Password sementara baru (acak, atau password awal standar bila env `DEFAULT_INITIAL_PASSWORD` terisi; respons memuat `is_default_password`; tampil sekali), membuka kunci akun, mematikan sesi; tidak untuk akun sendiri |
 | `DELETE` | `/api/admin/users/:id` | ADMIN | Hapus akun (bukan diri sendiri / Admin aktif terakhir). Belum ada tombol di UI |
 | `GET` | `/api/admin/audit-log` | ADMIN | `?limit=` (default 200, maks 1000), terbaru dulu |
@@ -276,13 +279,13 @@ Aturan password baru: 10-128 karakter, mengandung huruf dan angka, tidak sama de
 | `GET /api/surveys/evidence`, `GET /api/surveys/responses/:metric_id` | 403, kecuali PIC metrik itu (v2.27.1, lihat tabel di bawah) | ya |
 | `GET /api/surveys/metrics`, `/template`, `/history`; `POST /api/surveys/upload` | 403, kecuali PIC (v2.27.1) | ya |
 | `POST /api/metrics/score`, `/api/metrics/weights`, `/api/alerts/acknowledge`, `/api/action-library`, `/api/questions/master` | 403 | ya |
-| `GET /api/alerts`, `/api/action-library`, `/api/questions/master`, `/api/settings`, `/api/directorates` | ya (v2.27.0: `/api/alerts` dihitung dari data dalam cakupan) | ya |
+| `GET /api/alerts`, `/api/action-library`, `/api/questions/master`, `/api/settings`, `/api/directorates` | ya (v2.27.0: `/api/alerts` dihitung dari data dalam cakupan; sejak v2.49.0 `/api/action-library` butuh menu `action_library` dan `/api/questions/master` butuh menu `events`) | ya |
 | `/api/admin/*` (parameter, journeys, metrics, targets, survey-questions, upload-reminders, email-settings, settings, users, audit-log) | 403 | ya |
-| `GET /api/events`, `/api/events/:id` | ya, tanpa kode akses; absensi/feedback per orang disamarkan | lengkap |
-| `POST/DELETE` event, hapus absensi/feedback, media, transkrip, `generate-ppt`, `GET /api/reports/download/:file`, `/exports/*` | hanya bila direktoratnya ada di setting `event_manager_directorates` (default Human Resources); selain itu 403 | ya |
-| `/uploads/*` | ya | ya |
+| `GET /api/events`, `/api/events/:id` | ya, tanpa kode akses; absensi/feedback per orang disamarkan (**tidak berlaku sejak v2.49.0**: tanpa menu `events` 403, dengan menu data lengkap) | lengkap |
+| `POST/DELETE` event, hapus absensi/feedback, media, transkrip, `generate-ppt`, `GET /api/reports/download/:file`, `/exports/*` | hanya bila direktoratnya ada di setting `event_manager_directorates` (default Human Resources); selain itu 403 (**digantikan v2.49.0**: menu `events`) | ya |
+| `/uploads/*` | ya (sejak v2.49.0: menu `events`) | ya |
 
-Setting baru (`px_app_settings`, ubah lewat `PUT /api/admin/settings/:key`; angka divalidasi rentang): `session_hours` (8; 1-72), `login_max_attempts` (5; 3-20), `login_lockout_minutes` (15; 1-1440), `login_rate_limit_per_minute` (20; 5-200), `event_manager_directorates` (daftar `{ value, label }`, default Human Resources).
+Setting baru (`px_app_settings`, ubah lewat `PUT /api/admin/settings/:key`; angka divalidasi rentang): `session_hours` (8; 1-72), `login_max_attempts` (5; 3-20), `login_lockout_minutes` (15; 1-1440), `login_rate_limit_per_minute` (20; 5-200), `event_manager_directorates` (daftar `{ value, label }`, default Human Resources; sejak v2.49.0 tidak memberi hak apa pun).
 
 Respons 403 tambahan: `PASSWORD_CHANGE_REQUIRED` (akun belum ganti password sementara) dan penolakan `Origin` lintas-host pada request tulis. Service baru: `authService.js`, `rateLimiter.js`; storage: `getUser*/createUser/updateUser/deleteUser`, `createSession/getSession/deleteSession[sForUser]/purgeExpiredSessions`, `addAuditLog/getAuditLog` di `sqlStorage.js` dan `jsonStorage.js`.
 
@@ -298,8 +301,8 @@ Respons 403 tambahan: `PASSWORD_CHANGE_REQUIRED` (akun belum ganti password seme
 | :--- | :--- |
 | `GET /api/metrics/calculate`, `/trends`, `/:id/detail` | `?directorate&sub_directorate` diselesaikan oleh `resolveScope()`; kosong/`ALL` = gabungan seluruh cakupan (di-pool, sampel = jumlah sampel); satu direktorat dari cakupan = angka sama dengan tampilan Admin untuk direktorat itu; di luar cakupan → 403. `calculate` menambah `filter_options.scopes` dan `is_directorate_filtered` |
 | `GET /api/alerts` | Menerima `?directorate&sub_directorate`; skor dan komentar verbatim dihitung dari responden dalam cakupan saja; di luar cakupan → 403. Tiap alert punya `is_bankwide_readonly` (true untuk metrik non-karyawan/OUTCOME: nilai bankwide read-only) |
-| `GET /api/events`, `/api/events/:id` | Non-pengelola hanya melihat absensi dan feedback peserta dalam cakupan; `total_attendees` di daftar mengikuti. Admin melihat semua |
-| Rute tulis event, media, transkrip, PPT | Pengelola event = Admin, atau User yang cakupannya memuat direktorat di setting `event_manager_directorates` (`permissions.can_manage_events`) |
+| `GET /api/events`, `/api/events/:id` | Non-pengelola hanya melihat absensi dan feedback peserta dalam cakupan; `total_attendees` di daftar mengikuti. Admin melihat semua (**tidak berlaku sejak v2.49.0**: tanpa menu `events` 403) |
+| Rute tulis event, media, transkrip, PPT | Pengelola event = Admin, atau User yang cakupannya memuat direktorat di setting `event_manager_directorates` (`permissions.can_manage_events`) (**digantikan v2.49.0**: menu `events`) |
 
 Catatan: User dengan "semua divisi" yang meminta `sub_directorate` tak dikenal mendapat 200 dengan data kosong (bukan 403), tanpa kebocoran. Kode: `server/db/scopeUtils.js` (`normalizeScopes`, `scopeAllows`, `rowInScopes`, `legacyUserScopes`), `authService.js` (`resolveScope`, `isInScope`, `scopeFilter`, `describeScopes`), `filterUtils.js` dan `calculationEngine.js` (filter gabungan), `alertEngine.js` (parameter `scope`), storage SQL/JSON (`createUser`/`updateUser`/`getUser*` memuat `scopes`).
 
@@ -602,6 +605,38 @@ Pengujian: `docs/07` §31 (Modul 46).
 
 ---
 
+## Catatan v2.49.0 - Akses Menu per User (`menu_access`)
+
+**Kontrak** (`server/db/menuAccess.js`, dipakai `sqlStorage.js`, `jsonStorage.js`, `authService.js`)
+
+| Aspek | Perilaku |
+| :--- | :--- |
+| Key | `dashboard`, `explore`, `exit_interview`, `action_library`, `events`, `about` (`MENU_KEYS`) |
+| Default USER | semua `true` kecuali `events` (`DEFAULT_USER_MENU_ACCESS`); berlaku juga untuk USER yang sudah ada (kolom NULL) |
+| ADMIN | selalu semua `true` (`effectiveMenuAccess()` mengabaikan nilai tersimpan) |
+| Simpan | SQL `px_users.menu_access NVARCHAR(400) NULL` berisi JSON; backend JSON field `menu_access` di `auth.json`; `null` = default. Key tak dikenal / nilai bukan boolean di data tersimpan diabaikan saat dibaca |
+| Respons | setiap objek user (`POST /api/auth/login`, `GET /api/auth/me`, `GET /api/admin/users`, respons `POST`/`PUT /api/admin/users`) memuat `menu_access` = map lengkap 6 key. `permissions.can_manage_events` = `hasMenu(user, 'events')` |
+| Input | `POST /api/admin/users` dan `PUT /api/admin/users/:id` menerima `menu_access` parsial: key yang dikirim harus salah satu key di atas dengan nilai `true`/`false`; key yang tidak dikirim tetap; `null` = kembali ke default. Bukan objek, array, key tak dikenal, nilai bukan boolean -> 400, tidak ada yang tersimpan. ADMIN: `false` apa pun -> 400; semua `true` diterima dan diabaikan. USER tidak bisa mengubah menu (`/api/admin/*` -> 403); tanpa sesi 401 |
+| Audit | `USER_CREATE` (USER: `...; menus: dashboard, explore, ...`), `USER_UPDATE` (field `menu_access` disebut) + `USER_MENU_ACCESS_CHANGE` bila ada yang berubah, target mis. `<username>: events:off->on`. Ditandai `is_test` bila akun tes terlibat |
+| Berlaku | akun dibaca ulang dari database setiap request -> perubahan berlaku pada request berikutnya, tanpa mematikan sesi |
+
+**Gerbang** `authService.requireMenu(key)`: tanpa sesi 401 `AUTH_REQUIRED`; ADMIN lolos; USER tanpa menu -> **403** `{ error: "Your account has no access to the <label menu, mis. Signature Program Events> menu. Contact an Admin.", code: "MENU_ACCESS_DENIED", menu: "<key>" }`. `requireEventManager` = `requireMenu('events')`.
+
+| Menu | Yang digate di server |
+| :--- | :--- |
+| `events` | `GET`/`POST /api/events`, `GET`/`DELETE /api/events/:id`, `POST /api/events/:id/questions`, `DELETE /api/events/:id/attendance/:nip`, `DELETE /api/events/:id/feedback/:nip`, `POST /api/events/:id/media`, `POST /api/media/:id/transcribe`, `POST /api/media/:id/summarize`, `DELETE /api/media/:id`, `POST /api/events/:id/generate-ppt`, `GET /api/reports/download/:fileName`, `GET /api/questions/master` (baru digate; `POST` tetap Admin saja), `GET /api/qrcode` (baru digate), static `/uploads/*` (baru digate; folder ini hanya berisi media event) dan `/exports/*` |
+| `exit_interview` | semua `/api/exit-interview/*` (`app.use`); `template`, `upload`, `uploads`, `export` tetap Admin saja |
+| `action_library` | `GET /api/action-library` |
+| `dashboard`, `explore`, `about` | tidak ada (UI saja): `/api/metrics/calculate`, `/trends`, `/:id/detail`, `/by-directorate` dan `/api/alerts` tetap menjawab user login dalam cakupannya. `/api/alerts` sengaja tidak digate karena dipakai Dashboard |
+
+Tetap publik (tanpa login, tanpa menu): `GET /api/events/by-code/:code`, `POST /api/events/:id/attendance`, `POST /api/events/:id/feedback` (form check-in/feedback QR), di samping `GET /api/health`, `POST /api/auth/login`, `GET /api/directorates` (`PUBLIC_ROUTES` tidak berubah).
+
+**Hak event berubah**: USER dengan `events` = pengelola event lama (lihat + kelola). `GET /api/events` dan `GET /api/events/:id` kini selalu mengirim data lengkap (`pre_event_code`/`post_event_code`, absensi/feedback semua peserta dengan identitas); helper `eventRowsForViewer` dan `hideEventCodes` dihapus. Tanpa `events` -> 403 di semua rute event, termasuk baca. `isEventManager(user)` = `hasMenu(user, 'events')`; `getAuthSettings()` tidak lagi membaca `event_manager_directorates`. Pernyataan di "Catatan v2.26.0" dan "Catatan v2.27.0" tentang tampilan event baca-saja dan pengelola event per direktorat tidak berlaku lagi.
+
+**Upgrade**: `migrateEventManagerMenuAccess({ onlyUserIds })` (SQL: sekali pada boot yang menambah kolom; JSON: logika sama saat `auth.json` dimuat, untuk akun tanpa field `menu_access`; fungsi diekspos di kedua storage untuk tes): USER dengan `menu_access` NULL yang cakupannya memuat direktorat di `event_manager_directorates` mendapat `{ ...default, events: true }`; yang lain tetap NULL. Mengembalikan jumlah akun yang diubah; idempoten; pilihan eksplisit tidak ditimpa. Log `[sqlStorage] Menu access: N User account(s) ...`. Database utama: 0 akun.
+
+`/api/health` `version` = `2.49.0`. Tidak ada endpoint, tabel, setting, atau env baru. Pengujian: `docs/07` §38 (Modul 51).
+
 ## Catatan v2.48.0 - Bobot PX Index, PX Index per Direktorat & Metrik Non-Karyawan Bernilai Bankwide
 
 **Setting `px_index_weights`** (`px_app_settings`; seed `{ "survey": 70, "outcome": 30 }`, disisipkan sekali bila key belum ada - SQL `seedAppSettings()`, JSON backfill dari `initialAppSettings` saat load; tidak pernah menimpa nilai admin)
@@ -659,7 +694,7 @@ Setting `session_idle_timeout_minutes` (1-120, default 5; `NUMERIC_SETTINGS`). `
 
 | Endpoint | Akses | Parameter / perilaku |
 | :--- | :--- | :--- |
-| `GET /api/exit-interview/summary` | semua login | `mode=YTD\|MTD` (default YTD), `year` (default tahun berjalan, harus 4 digit), `month` (1-12, wajib untuk MTD), `directorate`, `sub_directorate`. Cakupan lewat `auth.scopeFilter` (USER: direktorat di luar cakupan -> 403; tanpa filter = gabungan cakupannya). Bulan/tahun tidak valid -> 400. Respons: `period` (`label`, `from`, `to`, `last_data_month`, `last_data_label`), `scope.label`, `subtitle`, `counts` (`total_records`, `voluntary_records`, `movers`), `reasons`, `industry`, `top_financial`, `pull_factors`, `career`, `recommend`, `themes_open`, `themes_internal`, `headline`. Hanya agregat: tanpa NIK, nama, atau teks jawaban. Non-Admin: `top_financial` hanya memuat nama dari daftar alias (`unlisted_names_hidden: true`). |
+| `GET /api/exit-interview/summary` | semua login (sejak v2.49.0: dengan menu `exit_interview`) | `mode=YTD\|MTD` (default YTD), `year` (default tahun berjalan, harus 4 digit), `month` (1-12, wajib untuk MTD), `directorate`, `sub_directorate`. Cakupan lewat `auth.scopeFilter` (USER: direktorat di luar cakupan -> 403; tanpa filter = gabungan cakupannya). Bulan/tahun tidak valid -> 400. Respons: `period` (`label`, `from`, `to`, `last_data_month`, `last_data_label`), `scope.label`, `subtitle`, `counts` (`total_records`, `voluntary_records`, `movers`), `reasons`, `industry`, `top_financial`, `pull_factors`, `career`, `recommend`, `themes_open`, `themes_internal`, `headline`. Hanya agregat: tanpa NIK, nama, atau teks jawaban. Non-Admin: `top_financial` hanya memuat nama dari daftar alias (`unlisted_names_hidden: true`). |
 | `GET /api/exit-interview/template` | Admin | `Template_Exit_Interview.xlsx` (sheet "Termination Report": judul, 33 kolom standar + `Directorate`, `Division`, satu baris contoh yang lolos validator). |
 | `POST /api/exit-interview/upload` | Admin | `multipart/form-data` field `file`, multer memory storage (tidak pernah ke `/uploads`), maks 20 MB (lebih -> 413). Tanpa file -> 400; ekstensi selain `.xlsx` -> **400** (beda dengan ESS yang 415); workbook rusak atau satu baris salah -> 400 `{ error, errors: [{ row_number, column, reason }] }`, tidak ada yang tersimpan. Sukses -> 200 `{ success, upload_id, file_name, source, rows_imported, inserted_rows, updated_rows, removed_dummy_rows, period_from, period_to, months, message }`. Audit `EXIT_INTERVIEW_UPLOAD` (target: jumlah baris, bulan, batch; tanpa data karyawan). `uploaded_by` = `Nama (username)`. |
 | `GET /api/exit-interview/uploads` | Admin | Riwayat batch terbaru dulu (`upload_id`, `file_name`, `source`, `total_rows`, `inserted_rows`, `updated_rows`, `removed_dummy_rows`, `period_from`, `period_to`, `uploaded_by`, `uploaded_at`). |

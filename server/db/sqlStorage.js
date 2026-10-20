@@ -14,6 +14,7 @@ const { inferSurveySource, isEssMetric, resolveSurveySource, resolveRequiresManu
 const { buildInitialStore } = require('./initialStore');
 const { parseFilterOptions, normalizeDateString, CURRENT_YEAR } = require('./filterUtils');
 const { normalizeScopes } = require('./scopeUtils');
+const { DEFAULT_USER_MENU_ACCESS, coversEventManagerDirectorate } = require('./menuAccess');
 const { isHistoricalTestRow } = require('./testAccounts');
 const { planDirectory, renamedDirectorate, migrateScopes, migrateDirectorateOptions, DIRECTORATE_SETTING_KEYS } = require('./directorateMigration');
 
@@ -501,8 +502,11 @@ const rowToUser = r => ({
   locked_until: iso(r.locked_until),
   created_at: iso(r.created_at),
   last_login_at: iso(r.last_login_at),
-  is_test_account: !!r.is_test_account
+  is_test_account: !!r.is_test_account,
+  menu_access: parseJson(r.menu_access, null)   // v2.49.0: NULL = defaults (menuAccess.js)
 });
+// menu_access to store: an object -> JSON text, null/undefined -> NULL (= defaults)
+const menuAccessText = v => (v && typeof v === 'object' ? JSON.stringify(v) : null);
 
 // Scopes live in px_user_scopes (division NULL = every division of the directorate).
 async function withScopes(users, tx) {
@@ -548,6 +552,22 @@ async function migrateLegacyUserScopes() {
                          FROM dbo.px_users u
                          WHERE u.role = N'USER' AND u.directorate IS NOT NULL AND LTRIM(RTRIM(u.directorate)) <> N''
                            AND NOT EXISTS (SELECT 1 FROM dbo.px_user_scopes s WHERE s.user_id = u.user_id)`);
+}
+
+// v2.49.0 upgrade (only on the boot that adds px_users.menu_access): the setting event_manager_directorates stops
+// granting anything, so every USER whose scope covered one of those directorates (the old "event manager") gets
+// Signature Program Events through menu_access instead - nobody loses access. Only accounts still at NULL are touched.
+// onlyUserIds limits it to those accounts (regression suite). Returns the number of accounts changed.
+async function migrateEventManagerMenuAccess({ onlyUserIds } = {}) {
+  const setting = (await run("SELECT setting_value FROM dbo.px_app_settings WHERE setting_key = N'event_manager_directorates'"))[0];
+  const managerDirs = setting ? parseJson(setting.setting_value, []) : [];
+  const users = await withScopes((await run("SELECT * FROM dbo.px_users WHERE role = N'USER' AND menu_access IS NULL")).map(rowToUser));
+  const targets = users.filter(u => (!onlyUserIds || onlyUserIds.includes(u.user_id)) && coversEventManagerDirectorate(u.scopes, managerDirs));
+  for (const u of targets) {
+    await run('UPDATE dbo.px_users SET menu_access = @m WHERE user_id = @id AND menu_access IS NULL',
+      { id: u.user_id, m: JSON.stringify({ ...DEFAULT_USER_MENU_ACCESS, events: true }) });
+  }
+  return targets.length;
 }
 
 // v2.31.0: renames the 8 old demo directorates to the bank's 12 real ones everywhere a directorate
@@ -1316,6 +1336,8 @@ const storage = {
     const essUpgrade = !(await run("SELECT OBJECT_ID(N'dbo.px_ess_results', N'U') AS id"))[0].id;
     // v2.43.0: the boot that adds px_audit_log.is_test marks the audit rows of old test-run accounts (once)
     const auditTestUpgrade = (await run("SELECT COL_LENGTH(N'dbo.px_audit_log', N'is_test') AS c"))[0].c === null;
+    // v2.49.0: the boot that adds px_users.menu_access moves the old event managers to menu access (once)
+    const menuAccessUpgrade = (await run("SELECT COL_LENGTH(N'dbo.px_users', N'menu_access') AS c"))[0].c === null;
     await applySchema();
     await seedIfEmpty();
     await migrateDirectorates();     // v2.31.0: old demo directorate names -> the 12 real ones (before any top-up)
@@ -1330,6 +1352,10 @@ const storage = {
       console.log(`[sqlStorage] ESS now uses uploaded summaries: deleted ${cleaned.responses} per-respondent ESS rows and ${cleaned.uploads} upload batches left empty.`);
     }
     await migrateLegacyUserScopes();
+    if (menuAccessUpgrade) {
+      const moved = await migrateEventManagerMenuAccess();
+      console.log(`[sqlStorage] Menu access: ${moved} User account(s) whose scope covered an event_manager_directorates directorate keep Signature Program Events (menu_access.events = true).`);
+    }
     if (auditTestUpgrade) {
       const marked = await markHistoricalTestAudit();
       console.log(`[sqlStorage] Audit trail: marked ${marked.marked} test-run row(s) of old test accounts as is_test (${marked.visible} row(s) stay visible; nothing deleted).`);
@@ -1432,6 +1458,7 @@ const storage = {
 
   // ---- login accounts, sessions, audit trail (px_users / px_sessions / px_audit_log)
   migrateLegacyUserScopes,
+  migrateEventManagerMenuAccess, // v2.49.0 upgrade step, exposed for the regression suite
   topUpSurveySource,      // exposed for the regression suite (boot top-up of px_metrics.survey_source)
   enforceEssManualUpload, // idem (ESS => requires_manual_upload)
   async countUsers() {
@@ -1455,11 +1482,11 @@ const storage = {
   async createUser(u) {
     try {
       return await inTransaction(async tx => {
-        const rows = await run(`INSERT INTO dbo.px_users (username, full_name, email, password_hash, role, is_active, must_change_password, is_test_account)
-                                OUTPUT INSERTED.* VALUES (@username, @full_name, @email, @password_hash, @role, @is_active, @mcp, @is_test)`, {
+        const rows = await run(`INSERT INTO dbo.px_users (username, full_name, email, password_hash, role, is_active, must_change_password, is_test_account, menu_access)
+                                OUTPUT INSERTED.* VALUES (@username, @full_name, @email, @password_hash, @role, @is_active, @mcp, @is_test, @menu_access)`, {
           username: u.username, full_name: u.full_name, email: u.email || '', password_hash: u.password_hash, role: u.role,
           is_active: u.is_active === undefined ? true : !!u.is_active, mcp: u.must_change_password === undefined ? true : !!u.must_change_password,
-          is_test: u.is_test_account === true
+          is_test: u.is_test_account === true, menu_access: menuAccessText(u.menu_access)
         }, tx);
         await writeUserScopes(tx, rows[0].user_id, u.scopes);
         return (await withScopes([rowToUser(rows[0])], tx))[0];
@@ -1471,14 +1498,14 @@ const storage = {
   },
   async updateUser(user_id, patch) {
     const cols = { full_name: 'full_name', email: 'email', password_hash: 'password_hash', role: 'role',
-      is_active: 'is_active', must_change_password: 'must_change_password', failed_attempts: 'failed_attempts', locked_until: 'locked_until', last_login_at: 'last_login_at' };
+      is_active: 'is_active', must_change_password: 'must_change_password', failed_attempts: 'failed_attempts', locked_until: 'locked_until', last_login_at: 'last_login_at', menu_access: 'menu_access' };
     const sets = [];
     const params = { id: parseInt(user_id, 10) };
     for (const [field, col] of Object.entries(cols)) {
       if (patch[field] === undefined) continue;
       sets.push(`${col} = @${field}`);
       const v = patch[field];
-      params[field] = (field === 'locked_until' || field === 'last_login_at') ? (v ? new Date(v) : null) : v;
+      params[field] = (field === 'locked_until' || field === 'last_login_at') ? (v ? new Date(v) : null) : (field === 'menu_access' ? menuAccessText(v) : v);
     }
     // patch.scopes replaces the whole scope list (together with any other field, in one transaction)
     if (patch.scopes === undefined) {

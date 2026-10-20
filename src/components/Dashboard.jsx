@@ -145,20 +145,20 @@ export default function Dashboard({
             )}
 
             <div className="pt-2 flex flex-wrap gap-2">
-              <button
+              {onNavigateToSimulator && <button
                 onClick={onNavigateToSimulator}
                 className="px-4 py-2 bg-white hover:bg-[var(--theme-tint-50)] text-[var(--theme-dark)] rounded-lg text-xs font-bold transition flex items-center space-x-2 shadow-md"
               >
                 <span>Simulate & Edit Metrics</span>
                 <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-              <button
+              </button>}
+              {onNavigateToEvents && <button
                 onClick={onNavigateToEvents}
                 className="px-4 py-2 bg-black/20 hover:bg-black/30 text-white rounded-lg text-xs font-bold transition flex items-center space-x-2 border border-white/30"
               >
                 <span>Manage Signature Programs</span>
                 <ArrowUpRight className="w-3.5 h-3.5" />
-              </button>
+              </button>}
             </div>
           </div>
 
@@ -276,7 +276,7 @@ export default function Dashboard({
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <div
-                      onClick={() => onSelectJourney(j.journey_id)}
+                      onClick={() => onSelectJourney && onSelectJourney(j.journey_id)}
                       className="flex items-center space-x-2 cursor-pointer"
                     >
                       <div
@@ -387,7 +387,7 @@ export default function Dashboard({
 
                 {/* Footer Details */}
                 <div
-                  onClick={() => onSelectJourney(j.journey_id)}
+                  onClick={() => onSelectJourney && onSelectJourney(j.journey_id)}
                   className="flex items-center justify-between text-xs pt-1 text-red-100 cursor-pointer"
                 >
                   <span>{j.metrics_count} Metrics</span>

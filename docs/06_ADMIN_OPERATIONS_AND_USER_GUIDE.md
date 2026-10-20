@@ -81,6 +81,8 @@ Buka berkas CSV di Microsoft Excel atau editor teks dan isi baris data:
 
 ## 🎤 5. Panduan Manajemen Signature Events & Ekspor PPT
 
+> Sejak v2.49.0 tab **Signature Program Events** hanya tampil untuk Admin dan User yang diberi menu itu (lihat "Akses Menu per User (v2.49.0)" di akhir dokumen).
+
 ### Langkah 1: Membuat Event Baru
 1. Masuk ke tab **"Signature Programs"**.
 2. Klik tombol **"+ Buat Event Signature Baru"**.
@@ -196,14 +198,14 @@ mengubahnya; sudah diperbaiki di v2.12.0 (lihat `CHANGELOG.md`).
 - **Nonaktifkan / ganti role**: mematikan sesi user tersebut. Anda tidak bisa menonaktifkan/menurunkan akun sendiri atau Admin aktif terakhir. Tombol hapus akun belum tersedia di UI — gunakan nonaktifkan.
 - **Riwayat**: panel audit menampilkan login berhasil/gagal/terkunci, logout, dan perubahan akun (tanpa password).
 
-**Hak akses User**: melihat data direktoratnya (metrik non-karyawan tampil sebagai angka bankwide read-only), tanpa data per responden, tanpa menu admin/upload; Signature Event hanya baca kecuali User dari direktorat pengelola event (setting `event_manager_directorates`, default Human Resources — belum ada menu UI untuk mengubahnya). Cakupan data diatur seperti di bawah (sejak v2.27.0 divisi ikut menyaring data).
+**Hak akses User**: melihat data direktoratnya (metrik non-karyawan tampil sebagai angka bankwide read-only), tanpa data per responden, tanpa menu admin/upload; Signature Event hanya baca kecuali User dari direktorat pengelola event (setting `event_manager_directorates`, default Human Resources — belum ada menu UI untuk mengubahnya). **Sejak v2.49.0 tidak berlaku untuk event**: Signature Program Events hanya untuk Admin dan User yang diberi menu itu di **Menu Access**; `event_manager_directorates` tidak dipakai lagi. Cakupan data diatur seperti di bawah (sejak v2.27.0 divisi ikut menyaring data).
 
 **Mengatur cakupan data User** (v2.27.0, di form tambah/ubah user):
 1. Pilih role **User**, lalu di "Cakupan Data" pilih direktorat dari dropdown "+ Tambah direktorat ke cakupan". Ulangi untuk direktorat lain (satu User boleh banyak direktorat).
 2. Untuk tiap direktorat pilih **Semua divisi** atau **Divisi tertentu** lalu centang divisi yang boleh dilihat. Hapus direktorat dengan ikon tempat sampah.
 3. Simpan. Perubahan berlaku pada request User berikutnya — User tidak perlu login ulang. Perubahan tercatat di riwayat audit sebagai `USER_SCOPE_CHANGE`.
 
-Yang dilihat User: pilihan filter "Semua cakupan saya" menampilkan **data gabungan** seluruh cakupan (sampel digabung, bukan rata-rata dari rata-rata). Skor, trend, detail metrik, alert, dan absensi/feedback event dibatasi ke cakupan; metrik non-karyawan/OUTCOME tetap tampil sebagai angka bankwide read-only. User yang cakupannya memuat direktorat pengelola event (setting `event_manager_directorates`, default Human Resources) dapat mengelola Signature Event. Mengubah role ke Admin menghapus cakupan; menurunkan ke User wajib mengisi cakupan.
+Yang dilihat User: pilihan filter "Semua cakupan saya" menampilkan **data gabungan** seluruh cakupan (sampel digabung, bukan rata-rata dari rata-rata). Skor, trend, detail metrik dan alert dibatasi ke cakupan; metrik non-karyawan/OUTCOME tetap tampil sebagai angka bankwide read-only. Sampai v2.48.0 User yang cakupannya memuat direktorat pengelola event (setting `event_manager_directorates`, default Human Resources) dapat mengelola Signature Event; sejak v2.49.0 hak itu diberikan per user lewat **Menu Access**. Mengubah role ke Admin menghapus cakupan; menurunkan ke User wajib mengisi cakupan.
 
 **Deployment**: sebaiknya di belakang reverse proxy HTTPS on-premise dengan `TRUST_PROXY` di `.env` (cookie sesi menjadi `Secure`). Sesi berlaku 8 jam (`session_hours`).
 
@@ -362,7 +364,7 @@ Setelah mengubah `.env`, restart backend. Bila batas ringkasan habis, kartu vide
 
 ## Dashboard Exit Interview (v2.38.0)
 
-**Siapa**: semua akun bisa membuka tab **Exit Interview** di Header. Admin melihat data bankwide dan mendapat toolbar data (template, upload, export, riwayat). User hanya melihat **agregat** direktorat dalam cakupannya (direktorat lain ditolak); tidak ada NIK, nama, atau jawaban terbuka yang dikirim ke User. Dari detail metrik 26 (Exit Survey) tombol **Open Exit Interview Dashboard** membuka tab yang sama.
+**Siapa**: semua akun dengan menu **Exit Interview** (default aktif untuk User; Menu Access sejak v2.49.0) bisa membuka tab **Exit Interview** di Header. Admin melihat data bankwide dan mendapat toolbar data (template, upload, export, riwayat). User hanya melihat **agregat** direktorat dalam cakupannya (direktorat lain ditolak); tidak ada NIK, nama, atau jawaban terbuka yang dikirim ke User. Dari detail metrik 26 (Exit Survey) tombol **Open Exit Interview Dashboard** membuka tab yang sama.
 
 **Filter**: memakai filter Header. YTD = Januari s.d. bulan berjalan tahun itu, MTD = satu bulan; periode dihitung dari **Effective Resignation Date**. Filter Directorate/Sub-Directorate memakai kolom Directorate/Division di file.
 
@@ -421,3 +423,29 @@ Catatan: bobot berlaku untuk PX Index dan skor journey (default 70/30). Bila dal
 - Metrik #1-#5 (career website, Goes to Campus, rasio sukses universitas/kanal, candidate experience) tidak punya data per direktorat. Sejak v2.48.0, di filter direktorat/divisi (Admin dan User) metrik itu tampil dan **ikut dihitung** dengan nilai bankwide-nya: badge **Bankwide Value** di Explore Metrics, tag **Bankwide** di kartu journey. Dulu metrik ini dikecualikan ("EXEMPTED"), jadi PX Index direktorat berbeda dari angka v2.47.0, dan Outcome Index direktorat kini sama dengan Outcome bankwide.
 - Keterbatasan lama: bagi Admin, bagian Score Deficit Alerts di Dashboard tetap bankwide walau filter direktorat dipilih.
 - Metrik di kartu journey diurutkan Critical, Warning, On Target (skor tertinggi dulu), lalu No Data.
+
+### Akses Menu per User (v2.49.0)
+
+Setiap akun **User** punya daftar menu yang boleh dibuka; **Admin** selalu bisa membuka semua menu (tidak bisa dibatasi).
+
+| Menu (urutan di Header) | Default User (baru dan lama) | Dijaga server |
+| :--- | :---: | :--- |
+| Dashboard & Trends | aktif | tidak (hanya disembunyikan) |
+| Explore Metrics | aktif | tidak (hanya disembunyikan) |
+| Exit Interview | aktif | ya (`/api/exit-interview/*`) |
+| Action Library & AI Alerts | aktif | ya (`GET /api/action-library`) |
+| Signature Program Events | **mati** | ya (semua API event, foto/video, PPT, QR) |
+| About | aktif | tidak (hanya disembunyikan) |
+
+**Memberi akses Signature Program Events (mis. user HR Strategy)**
+1. Buka **Admin Parameters** -> tab **Manage Users**.
+2. Klik **Edit** pada user, atau **Add User** untuk akun baru. Role harus **User**.
+3. Di blok **Menu Access** centang **Signature Program Events** (hapus centang menu lain bila perlu), lalu klik **Save** / **Create Account**.
+4. Berlaku pada klik/request berikutnya user itu, tanpa login ulang. Daftar user menampilkan ringkasan "Menus: all", "Menus: all except ..." atau "Menus: none". Perubahan tercatat di Audit Trail sebagai `USER_MENU_ACCESS_CHANGE` (mis. `<username>: events:off->on`).
+
+**Yang perlu diketahui**
+- Akses Signature Program Events = hak event penuh: melihat semua event termasuk NIP/nama/e-mail peserta dan kode akses check-in/feedback, membuat/menghapus event, mengunggah media, transkrip, ringkasan AI dan PPT. Berikan hanya kepada user HR Strategy. User tanpa menu ini tidak bisa membuka event sama sekali (sebelum v2.49.0 masih bisa melihat versi baca-saja).
+- Form publik check-in/feedback lewat QR tetap bisa dipakai peserta tanpa login.
+- Setting lama `event_manager_directorates` (direktorat pengelola event, default Human Resources) tidak memberi hak apa pun lagi. Saat upgrade, User yang dulu menjadi pengelola event lewat setting itu otomatis mendapat menu Signature Program Events (database utama: 0 akun, karena hanya ada akun admin).
+- Mematikan Dashboard, Explore Metrics atau About hanya menyembunyikan menunya; angka skor tetap bisa diambil lewat API oleh user login dalam cakupannya. Jangan memakainya sebagai batas kerahasiaan data.
+- User yang semua menunya dimatikan melihat pesan "Your account has no menu access yet. Contact an Admin."

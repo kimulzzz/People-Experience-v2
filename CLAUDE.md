@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(339-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(346-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (339 cases on SQL; v2.48.0 run 253/253, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (346 cases on SQL; v2.49.0 run 267/267, 9 skipped, media modules 27/32/38/41/42/43 skipped; full JSON suite not re-run since v2.30.1) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (32 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
@@ -696,6 +696,14 @@ domain model, not just descriptive:
   count at their bankwide value (`is_bankwide_value`); `is_disabled`/`excluded_from_index` always false, `bankwideReadOnly` removed (YTD 2026 Business Banking PX 83.28 -> 84.83).
   Also: journey-card metrics sorted Critical -> Warning -> On Target (highest first), Journeys above Alerts, taller trend chart with fitted Y axis, About terms alphabetical. Module 50 (7)
   -> SQL 253/253, 16 skipped (suite 339); JSON full suite not run; Module 50 needs stored weights 70/30. Known: Admin Dashboard alerts stay bankwide. Next: v2.49.0 menu order/access.
+
+- **v2.49.0** (2026-10-20, see `CHANGELOG.md` [2.49.0], `docs/03`, `docs/04`/`05` "Catatan v2.49.0", `docs/06`, `docs/07` §38, `docs/08` §22, `SQLServerDB.md` §21): user asked for nav order Dashboard -
+  Explore - Exit Interview - Action Library - Signature Program Events - About, and Events only for Admin + "HR Strategy" users. Per-user checklist, no new role: `px_users.menu_access`
+  (JSON, NULL = defaults = all except `events`; ADMIN always all, any false -> 400), shared `server/db/menuAccess.js` / `src/utils/menuAccess.js`, edited in Manage Users. Server-gated:
+  `events` (every event/media/PPT/QR API + `/uploads` `/exports`, except public by-code/attendance/feedback), `exit_interview`, `action_library` -> 403 `MENU_ACCESS_DENIED`; dashboard/
+  explore/about are UI-only. RULE CHANGE: USER with `events` = full event manager (sees attendee identities + access codes); without it no event access at all (old redacted read view
+  removed); `event_manager_directorates` grants nothing (one-time upgrade moved old managers: 0 accounts). Audit `USER_MENU_ACCESS_CHANGE`. Module 51 (7), Modules 34/35/38/49 adjusted
+  -> SQL 267/267, 9 skipped, media modules skipped, 8/24 ran (suite 346); Module 38 run separately by the main session; JSON full suite not run.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

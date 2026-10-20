@@ -526,6 +526,11 @@ GO
 IF COL_LENGTH(N'dbo.px_users', N'is_test_account') IS NULL
 ALTER TABLE dbo.px_users ADD is_test_account BIT NOT NULL CONSTRAINT DF_px_users_is_test DEFAULT (0);
 GO
+-- Menu access of a USER (v2.49.0): JSON { dashboard, explore, exit_interview, action_library, events, about: true/false }.
+-- NULL = the defaults (all on except events). An ADMIN always has every menu (column ignored). Rules in menuAccess.js.
+IF COL_LENGTH(N'dbo.px_users', N'menu_access') IS NULL
+ALTER TABLE dbo.px_users ADD menu_access NVARCHAR(400) NULL;
+GO
 -- Data scope of a USER (v2.27.0): any number of directorates; division NULL = every division of that
 -- directorate, otherwise one row per allowed division. UNIQUE treats the single NULL as a value, so
 -- "all divisions" can appear once per directorate. px_users.directorate / division are LEGACY (v2.26.0

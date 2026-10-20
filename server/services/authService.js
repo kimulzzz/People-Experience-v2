@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const storage = require('../db/storage');
 const { createRateLimiter } = require('./rateLimiter');
 const { normalizeScopes, scopeAllows, rowInScopes } = require('../db/scopeUtils');
+const { MENU_KEYS, DEFAULT_USER_MENU_ACCESS, effectiveMenuAccess, validateMenuAccessInput, hasMenu, describeMenuChange } = require('../db/menuAccess');
 
 const COOKIE_NAME = 'px_session';
 const ROLES = ['ADMIN', 'USER'];
@@ -88,9 +89,8 @@ async function getAuthSettings() {
     sessionHours: num(s.session_hours, 8),
     maxAttempts: Math.floor(num(s.login_max_attempts, 5)),
     lockoutMinutes: num(s.login_lockout_minutes, 15),
-    rateLimitPerMinute: Math.floor(num(s.login_rate_limit_per_minute, 20)),
-    eventManagerDirectorates: (Array.isArray(s.event_manager_directorates) ? s.event_manager_directorates : [])
-      .map(o => String((o && o.value) || '').trim().toLowerCase()).filter(Boolean)
+    rateLimitPerMinute: Math.floor(num(s.login_rate_limit_per_minute, 20))
+    // event_manager_directorates is no longer read (v2.49.0): Signature Program Events access = menu_access.events
   };
 }
 
@@ -123,19 +123,16 @@ function toPublicUser(u) {
     ...rest,
     scopes,
     directorate: first ? first.directorate : null,
-    division: scopes.length === 1 && first.divisions && first.divisions.length === 1 ? first.divisions[0] : null
+    division: scopes.length === 1 && first.divisions && first.divisions.length === 1 ? first.divisions[0] : null,
+    menu_access: effectiveMenuAccess(u.menu_access, u.role) // v2.49.0: the full map (Admin: everything)
   };
 }
 
-// An event manager is an Admin, or a User whose scope COVERS at least one of the directorates in the
-// event_manager_directorates setting (any division - the scope entry only has to name the directorate).
+// Signature Program Events (v2.49.0): an Admin, or a User whose menu access includes `events` - they view AND manage
+// events (what the old "event manager" could). Without it a User gets no event API at all (403). The setting
+// event_manager_directorates no longer grants anything (kept only for compatibility).
 async function isEventManager(user) {
-  if (!user) return false;
-  if (user.role === 'ADMIN') return true;
-  const scopes = normalizeScopes(user.scopes);
-  if (!scopes.length) return false;
-  const { eventManagerDirectorates } = await getAuthSettings();
-  return scopes.some(s => eventManagerDirectorates.includes(s.directorate.toLowerCase()));
+  return hasMenu(user, 'events');
 }
 
 // ---- PIC of a metric (v2.27.1). The PIC is still assigned in Parameter Admin (pic_name / pic_email of a SURVEY
@@ -401,15 +398,15 @@ const requireRole = (...roles) => (req, res, next) => {
   next();
 };
 
-async function requireEventManager(req, res, next) {
-  try {
-    if (!req.user) return res.status(401).json({ error: 'Please sign in first.', code: 'AUTH_REQUIRED' });
-    if (!(await isEventManager(req.user))) return res.status(403).json({ error: 'Only Admins and the event-managing directorates can manage Signature Events.' });
-    next();
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-}
+// Gate of a menu's API (v2.49.0): Admin always passes; a User needs that menu in menu_access (read from the database on
+// every request, so a change by the Admin applies at once).
+const MENU_LABELS = { dashboard: 'Dashboard & Trends', explore: 'Explore Metrics', exit_interview: 'Exit Interview', action_library: 'Action Library', events: 'Signature Program Events', about: 'About' };
+const requireMenu = key => (req, res, next) => {
+  if (!req.user) return res.status(401).json({ error: 'Please sign in first.', code: 'AUTH_REQUIRED' });
+  if (!hasMenu(req.user, key)) return res.status(403).json({ error: `Your account has no access to the ${MENU_LABELS[key] || key} menu. Contact an Admin.`, code: 'MENU_ACCESS_DENIED', menu: key });
+  next();
+};
+const requireEventManager = requireMenu('events');
 
 // For the scoped read routes: returns { directorate, sub_directorate, scopes } for this request (see
 // resolveScope), or answers 403 and returns null. Reads ?directorate and ?sub_directorate / ?subDirectorate.
@@ -469,6 +466,22 @@ function scopesFromBody(b, role) {
 const describeScopes = scopes => (scopes && scopes.length
   ? scopes.map(s => `${s.directorate}${s.divisions === null ? ' (all)' : ` [${s.divisions.join(', ')}]`}`).join('; ')
   : '(no scope)');
+
+// menu_access from a request body (v2.49.0) -> { value } (undefined = not sent / nothing to store, null = the defaults,
+// object = the full map to store) or { error }. Keys not sent keep the account's current value (`current` = stored).
+function menuAccessFromBody(input, role, current) {
+  if (input === undefined) return { value: undefined };
+  if (input === null) return { value: role === 'USER' ? null : undefined };
+  const v = validateMenuAccessInput(input);
+  if (v.error) return { error: v.error };
+  if (role === 'ADMIN') {
+    if (Object.values(v.patch).some(x => x === false)) return { error: 'An Admin always has every menu; menu access can only be limited for a User.' };
+    return { value: undefined };
+  }
+  return { value: { ...effectiveMenuAccess(current, 'USER'), ...v.patch } };
+}
+// "dashboard, explore, ..." - the menus a USER may open (audit trail)
+const describeMenus = u => MENU_KEYS.filter(k => effectiveMenuAccess(u.menu_access, u.role)[k]).join(', ') || '(none)';
 
 function registerAuthRoutes(app) {
   app.use('/api', authGate);
@@ -616,13 +629,15 @@ function registerAuthRoutes(app) {
       if (fromBody.error) return res.status(400).json({ error: fromBody.error });
       const assign = await validateAssignment(b.role, fromBody.scopes);
       if (assign.error) return res.status(400).json({ error: assign.error });
+      const menu = menuAccessFromBody(b.menu_access, b.role, null);
+      if (menu.error) return res.status(400).json({ error: menu.error });
 
       const { password: temporaryPassword, isDefault } = makeInitialPassword();
       let created;
       try {
         // An account created by a test-run admin is a test-run account too (b.is_test_account is never read).
         created = await storage.createUser({
-          username, full_name: fullName, email, role: b.role, scopes: assign.scopes,
+          username, full_name: fullName, email, role: b.role, scopes: assign.scopes, menu_access: menu.value === undefined ? null : menu.value,
           password_hash: await hashPassword(temporaryPassword), is_active: true, must_change_password: true,
           is_test_account: req.user.is_test_account === true
         });
@@ -630,7 +645,7 @@ function registerAuthRoutes(app) {
         if (err.code === 'DUPLICATE_USER') return res.status(409).json({ error: err.message });
         throw err;
       }
-      await audit(req, 'USER_CREATE', { subject: created, target: `${created.username} (${created.role}) scope: ${describeScopes(created.scopes)}` });
+      await audit(req, 'USER_CREATE', { subject: created, target: `${created.username} (${created.role}) scope: ${describeScopes(created.scopes)}${created.role === 'USER' ? `; menus: ${describeMenus(created)}` : ''}` });
       res.status(201).json({ user: toPublicUser(created), temporary_password: temporaryPassword, is_default_password: isDefault });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -669,6 +684,13 @@ function registerAuthRoutes(app) {
         scopeChanged = JSON.stringify(normalizeScopes(target.scopes)) !== JSON.stringify(assign.scopes);
       }
 
+      // menu access (v2.49.0): only for a USER; an ADMIN always has every menu (sending one switched off is refused)
+      const menu = menuAccessFromBody(b.menu_access, newRole, target.menu_access);
+      if (menu.error) return res.status(400).json({ error: menu.error });
+      if (menu.value !== undefined) patch.menu_access = menu.value;
+      const menuChange = newRole === 'USER' && menu.value !== undefined
+        ? describeMenuChange(effectiveMenuAccess(target.menu_access, 'USER'), effectiveMenuAccess(menu.value, 'USER')) : '';
+
       const isSelf = target.user_id === req.user.user_id;
       const losesAdmin = target.role === 'ADMIN' && target.is_active && (patch.is_active === false || (patch.role && patch.role !== 'ADMIN'));
       if (isSelf && (patch.is_active === false || (patch.role && patch.role !== 'ADMIN'))) {
@@ -684,6 +706,8 @@ function registerAuthRoutes(app) {
       // account (and its scopes) from the database, so no re-login and no session revocation is needed.
       await audit(req, 'USER_UPDATE', { subject: target, target: `${target.username}: ${Object.keys(patch).filter(k => k !== 'scopes').join(',')}` });
       if (scopeChanged) await audit(req, 'USER_SCOPE_CHANGE', { subject: target, target: `${target.username}: ${describeScopes(target.scopes)} -> ${describeScopes(updated.scopes)}` });
+      // A menu change also applies on the very next request (every request reloads the account).
+      if (menuChange) await audit(req, 'USER_MENU_ACCESS_CHANGE', { subject: target, target: `${target.username}: ${menuChange}` });
       res.json({ user: toPublicUser(updated) });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -753,6 +777,7 @@ module.exports = {
   COOKIE_NAME, ROLES, PUBLIC_ROUTES,
   hashPassword, verifyPassword, generateTempPassword, getDefaultInitialPassword, makeInitialPassword, validateNewPassword,
   getAuthSettings, getIdleTimeoutMinutes, clearIdleTimeoutCache, toPublicUser, isEventManager, canSeeRespondentData, redactRespondent,
+  MENU_KEYS, DEFAULT_USER_MENU_ACCESS, hasMenu, requireMenu, menuAccessFromBody,
   isPicOfMetric, picMetricIds, picMetrics, getPicMetric, requirePicMetric, rowsForViewer, respondentScopeFor, audit, resolveScope, isInScope, describeScopes,
   parseCookies, requireRole, requireLogin, requireEventManager, scopeFilter, registerAuthRoutes, warnIfNoUsers
 };

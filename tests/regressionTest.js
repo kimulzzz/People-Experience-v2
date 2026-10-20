@@ -2488,62 +2488,61 @@ async function runRegressionSuite() {
       assert.strictEqual((await rawFetch(`${BASE_URL}/api/surveys/evidence?metric_id=ALL&period=YTD`, asUser(u.cookie))).status, 403);
       assert.strictEqual((await rawFetch(`${BASE_URL}/api/surveys/responses/8`, asUser(u.cookie))).status, 403);
       assert.strictEqual((await adminJson('GET', '/api/surveys/evidence?metric_id=8&period=YTD')).status, 200);
-      // attendee / feedback identity inside the event detail is also hidden for non-managers
-      const ev = await (await rawFetch(`${BASE_URL}/api/events/ev-perspektif-2024-q1`, asUser(u.cookie))).json();
-      ev.attendances.forEach(a => assert.ok(!a.nip && !a.employee_name && !a.cimb_email));
-      ev.feedbacks.forEach(f => assert.ok(!f.nip));
+      // v2.49.0: a USER without the Signature Program Events menu gets no event data at all (attendees, codes): 403
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/ev-perspektif-2024-q1`, asUser(u.cookie))).status, 403);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/events`, asUser(u.cookie))).status, 403);
       const evAdmin = await (await adminJson('GET', '/api/events/ev-perspektif-2024-q1')).json();
       assert.ok(evAdmin.attendances.every(a => a.nip));
-      // the public form access codes are not sent to non-managers either (list + detail), but are to Admin
-      const evList = await (await rawFetch(`${BASE_URL}/api/events`, asUser(u.cookie))).json();
-      evList.forEach(e => assert.ok(!e.pre_event_code && !e.post_event_code, 'codes hidden in list'));
-      assert.ok(!ev.event.pre_event_code && !ev.event.post_event_code, 'codes hidden in detail');
       assert.ok(evAdmin.event.pre_event_code && evAdmin.event.post_event_code, 'Admin still gets the codes');
     });
 
-    await runTest('[POSITIVE/NEGATIVE] Event writes: ADMIN and a USER of the HR directorate (from the database setting) may; a USER of another directorate gets 403 but can read', async () => {
+    await runTest('[POSITIVE/NEGATIVE] Signature Program Events (v2.49.0): ADMIN and a USER with menu access "events" may read and manage; a USER without it - even one of the HR directorate in event_manager_directorates - gets 403 on every event API, reads included', async () => {
       assert.ok(hrDir, `directorate "${hrName}" from event_manager_directorates must exist in the directory`);
-      const hr = await readyUser('hr', 'USER', hrDir);
-      const it = await readyUser('it', 'USER', itDir);
-      assert.strictEqual((await rawFetch(`${BASE_URL}/api/auth/me`, asUser(hr.cookie)).then(r => r.json())).permissions.can_manage_events, true);
-      assert.strictEqual((await rawFetch(`${BASE_URL}/api/auth/me`, asUser(it.cookie)).then(r => r.json())).permissions.can_manage_events, false);
+      const noMenu = await readyUser('hr', 'USER', hrDir); // HR directorate, but no events menu: the setting no longer grants anything
+      const withMenu = await readyUser('it', 'USER', itDir); // another directorate, given the events menu by the Admin
+      assert.strictEqual((await adminJson('PUT', `/api/admin/users/${withMenu.id}`, { menu_access: { events: true } })).status, 200);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/auth/me`, asUser(withMenu.cookie)).then(r => r.json())).permissions.can_manage_events, true);
+      assert.strictEqual((await rawFetch(`${BASE_URL}/api/auth/me`, asUser(noMenu.cookie)).then(r => r.json())).permissions.can_manage_events, false);
       const payload = { event_name: 'Regression Test Event (Module 34 Access)', program_category: 'Testing', event_type: 'Online', event_date: '2026-08-20', target_participants: 5 };
       const made = [];
       try {
-        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events`, jsonBody('POST', payload, it.cookie))).status, 403, 'non-HR USER cannot create');
-        const byHr = await rawFetch(`${BASE_URL}/api/events`, jsonBody('POST', payload, hr.cookie));
-        assert.strictEqual(byHr.status, 201, 'HR USER can create');
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events`, jsonBody('POST', payload, noMenu.cookie))).status, 403, 'USER without the events menu cannot create');
+        const byHr = await rawFetch(`${BASE_URL}/api/events`, jsonBody('POST', payload, withMenu.cookie));
+        assert.strictEqual(byHr.status, 201, 'USER with the events menu can create');
         made.push((await byHr.json()).event.event_id);
         const byAdmin = await adminJson('POST', '/api/events', payload);
         assert.strictEqual(byAdmin.status, 201, 'ADMIN can create');
         made.push((await byAdmin.json()).event.event_id);
         const eventId = made[0];
-        // everyone logged in can read
-        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}`, asUser(it.cookie))).status, 200);
-        assert.ok((await (await rawFetch(`${BASE_URL}/api/events`, asUser(it.cookie))).json()).some(e => e.event_id === eventId));
-        // non-HR USER: no delete, media, transcript, PPT, report download, questions, check-in clean-up
-        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}`, jsonBody('DELETE', undefined, it.cookie))).status, 403);
-        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}/generate-ppt`, jsonBody('POST', {}, it.cookie))).status, 403);
-        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}/questions`, jsonBody('POST', { questions: [] }, it.cookie))).status, 403);
-        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}/attendance/12345`, jsonBody('DELETE', undefined, it.cookie))).status, 403);
-        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}/feedback/12345`, jsonBody('DELETE', undefined, it.cookie))).status, 403);
-        assert.strictEqual((await rawFetch(`${BASE_URL}/api/media/x/transcribe`, jsonBody('POST', {}, it.cookie))).status, 403);
-        assert.strictEqual((await rawFetch(`${BASE_URL}/api/media/x`, jsonBody('DELETE', undefined, it.cookie))).status, 403);
-        assert.strictEqual((await rawFetch(`${BASE_URL}/api/reports/download/x.pptx`, asUser(it.cookie))).status, 403);
-        assert.strictEqual((await rawFetch(`${BASE_URL}/exports/x.pptx`, asUser(it.cookie))).status, 403);
+        // without the menu: not even reading (list, detail, question bank, QR, media files)
+        for (const p of [`/api/events/${eventId}`, '/api/events', '/api/questions/master', '/api/qrcode?text=x', '/uploads/sample.jpg']) {
+          assert.strictEqual((await rawFetch(`${BASE_URL}${p}`, asUser(noMenu.cookie))).status, 403, `GET ${p}`);
+        }
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}`, asUser(withMenu.cookie))).status, 200);
+        assert.ok((await (await rawFetch(`${BASE_URL}/api/events`, asUser(withMenu.cookie))).json()).some(e => e.event_id === eventId));
+        // without the menu: no delete, media, transcript, PPT, report download, questions, check-in clean-up
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}`, jsonBody('DELETE', undefined, noMenu.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}/generate-ppt`, jsonBody('POST', {}, noMenu.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}/questions`, jsonBody('POST', { questions: [] }, noMenu.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}/attendance/12345`, jsonBody('DELETE', undefined, noMenu.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}/feedback/12345`, jsonBody('DELETE', undefined, noMenu.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/media/x/transcribe`, jsonBody('POST', {}, noMenu.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/media/x`, jsonBody('DELETE', undefined, noMenu.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/reports/download/x.pptx`, asUser(noMenu.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/exports/x.pptx`, asUser(noMenu.cookie))).status, 403);
         const form = new FormData();
         form.append('mediaFile', new Blob([Buffer.from('x')], { type: 'image/png' }), 'x.png');
-        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}/media`, asUser(it.cookie, { method: 'POST', body: form }))).status, 403);
-        // HR USER: PPT generation works, and the generated file is downloadable only by managers
-        const ppt = await rawFetch(`${BASE_URL}/api/events/ev-perspektif-2024-q1/generate-ppt`, jsonBody('POST', {}, hr.cookie));
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/events/${eventId}/media`, asUser(noMenu.cookie, { method: 'POST', body: form }))).status, 403);
+        // USER with the events menu: PPT generation works, and the generated file is downloadable only with the menu
+        const ppt = await rawFetch(`${BASE_URL}/api/events/ev-perspektif-2024-q1/generate-ppt`, jsonBody('POST', {}, withMenu.cookie));
         assert.strictEqual(ppt.status, 200);
         const pptBody = await ppt.json();
-        assert.strictEqual((await rawFetch(`${BASE_URL}${pptBody.download_url}`, asUser(hr.cookie))).status, 200);
-        assert.strictEqual((await rawFetch(`${BASE_URL}${pptBody.download_url}`, asUser(it.cookie))).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}${pptBody.download_url}`, asUser(withMenu.cookie))).status, 200);
+        assert.strictEqual((await rawFetch(`${BASE_URL}${pptBody.download_url}`, asUser(noMenu.cookie))).status, 403);
         assert.strictEqual((await rawFetch(`${BASE_URL}${pptBody.download_url}`)).status, 401);
-        assert.strictEqual((await rawFetch(`${BASE_URL}/api/reports/download/..%2F..%2Fpackage.json`, asUser(hr.cookie))).status, 404, 'no path traversal');
-        const hrRead = await (await rawFetch(`${BASE_URL}/api/events/ev-perspektif-2024-q1`, asUser(hr.cookie))).json();
-        assert.ok(hrRead.attendances.every(a => a.nip), 'HR USER sees attendee data of events');
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/reports/download/..%2F..%2Fpackage.json`, asUser(withMenu.cookie))).status, 404, 'no path traversal');
+        const hrRead = await (await rawFetch(`${BASE_URL}/api/events/ev-perspektif-2024-q1`, asUser(withMenu.cookie))).json();
+        assert.ok(hrRead.attendances.every(a => a.nip), 'a USER with the events menu sees attendee data of events');
       } finally {
         for (const id of made) await adminJson('DELETE', `/api/events/${id}`);
       }
@@ -2889,23 +2888,26 @@ async function runRegressionSuite() {
       assert.ok(alerts.alerts.every(a => a.verbatim_insights.length <= 3));
     });
 
-    await runTest('[POSITIVE/NEGATIVE] Event attendance/feedback shown to a non-manager follows the scope (an Admin sees all); no respondent identity anywhere in a multi-scope user\'s payloads', async () => {
+    await runTest('[POSITIVE/NEGATIVE] Events (v2.49.0): a multi-scope user without the events menu gets 403 (no attendee data at all); with it, the full event view like an Admin; no respondent identity anywhere in the user\'s metric payloads', async () => {
       const u = await scopeUser('s6', [{ directorate: A, divisions: null }, { directorate: B, divisions: [dirB.divisions[0]] }]);
-      const ev = await uj(u, '/api/events/ev-perspektif-2024-q1');
+      assert.strictEqual((await uget(u, '/api/events/ev-perspektif-2024-q1')).status, 403);
+      assert.strictEqual((await uget(u, '/api/events')).status, 403);
       const adm = await aj('/api/events/ev-perspektif-2024-q1');
-      const ok = a => (a.directorate === A) || (a.directorate === B && a.division === dirB.divisions[0]);
-      ev.attendances.forEach(a => assert.ok(ok(a), `attendance of ${a.directorate}/${a.division} is out of scope`));
-      assert.strictEqual(ev.attendances.length, adm.attendances.filter(ok).length);
-      assert.ok(ev.feedbacks.length <= adm.feedbacks.length);
+      assert.strictEqual((await adminJson('PUT', `/api/admin/users/${u.id}`, { menu_access: { events: true } })).status, 200);
+      const ev = await uj(u, '/api/events/ev-perspektif-2024-q1');
+      assert.strictEqual(ev.attendances.length, adm.attendances.length, 'event access = the full event, not scope-filtered');
+      assert.strictEqual(ev.feedbacks.length, adm.feedbacks.length);
       const listed = (await uj(u, '/api/events')).find(e => e.event_id === 'ev-perspektif-2024-q1');
-      assert.strictEqual(listed.total_attendees, ev.attendances.length, 'list counts follow the same scope');
+      assert.strictEqual(listed.total_attendees, adm.attendances.length);
+      assert.strictEqual((await adminJson('PUT', `/api/admin/users/${u.id}`, { menu_access: { events: false } })).status, 200);
+      assert.strictEqual((await uget(u, '/api/events')).status, 403, 'switched off again: effective on the next request');
       const names = new Set();
       [...(await aj('/api/metrics/8/detail?period=YTD')).responses, ...(await aj('/api/metrics/5/detail?period=YTD')).questions.flatMap(q => q.verbatim_samples || [])]
         .forEach(r => { if (typeof r.employee_name === 'string' && r.employee_name.length >= 5 && r.employee_name !== 'Respondent') names.add(r.employee_name); });
       adm.attendances.forEach(a => { if (a.employee_name && a.employee_name.length >= 5) names.add(a.employee_name); });
       assert.ok(names.size > 3);
       const payload = [await (await uget(u, '/api/metrics/8/detail?period=YTD')).text(), await (await uget(u, '/api/metrics/5/detail?period=YTD')).text(),
-        await (await uget(u, '/api/alerts')).text(), JSON.stringify(ev), JSON.stringify(listed)].join('\n');
+        await (await uget(u, '/api/alerts')).text()].join('\n');
       for (const n of names) assert.ok(!payload.includes(JSON.stringify(n).slice(1, -1)), `name "${n}" leaked`);
     });
 
@@ -2972,7 +2974,7 @@ async function runRegressionSuite() {
       assert.strictEqual((await back.json()).user.role, 'USER');
     });
 
-    await runTest('[POSITIVE] A scope change applies at once to an open session (no re-login), is recorded in the audit trail, and an Event manager is a user whose scope covers a manager directorate', async () => {
+    await runTest('[POSITIVE] A scope change applies at once to an open session (no re-login), is recorded in the audit trail, and covering an event_manager_directorates directorate no longer grants event rights (v2.49.0: menu access does)', async () => {
       const u = await scopeUser('s7', [{ directorate: A, divisions: null }]);
       assert.strictEqual((await uget(u, `/api/metrics/calculate?period=YTD&${dq(A)}`)).status, 200);
       assert.strictEqual((await uget(u, `/api/metrics/calculate?period=YTD&${dq(B)}`)).status, 403);
@@ -2987,13 +2989,16 @@ async function runRegressionSuite() {
       assert.ok(entry, 'USER_SCOPE_CHANGE recorded');
       assert.ok(entry.target.includes(A) && entry.target.includes(B));
       assert.ok(!JSON.stringify(log).includes(STRONG), 'no password in the audit trail');
-      // event-manager rule follows the scope: covering the HR directorate (any division) is enough
+      // v2.49.0: covering the HR directorate (setting event_manager_directorates) grants nothing; the events menu does
       if (hrDir) {
         const hrDivision = hrDir.divisions[0];
         await adminJson('PUT', `/api/admin/users/${u.id}`, { scopes: [{ directorate: A, divisions: null }, { directorate: hrName, divisions: hrDivision ? [hrDivision] : null }] });
+        assert.strictEqual((await uj(u, '/api/auth/me')).permissions.can_manage_events, false, 'scope alone no longer makes an event manager');
+        assert.strictEqual((await uget(u, '/api/events')).status, 403);
+        await adminJson('PUT', `/api/admin/users/${u.id}`, { menu_access: { events: true } });
         assert.strictEqual((await uj(u, '/api/auth/me')).permissions.can_manage_events, true);
         await adminJson('PUT', `/api/admin/users/${u.id}`, { scopes: [{ directorate: A, divisions: null }] });
-        assert.strictEqual((await uj(u, '/api/auth/me')).permissions.can_manage_events, false);
+        assert.strictEqual((await uj(u, '/api/auth/me')).permissions.can_manage_events, true, 'menu access does not depend on the scope');
       }
     });
 
@@ -4069,11 +4074,18 @@ async function runRegressionSuite() {
           assert.strictEqual(oll.calls.length, 0, 'none of these may reach Ollama');
         });
 
-        await runTest('[POSITIVE] A plain User can READ the summary on the event; the summary carries no respondent identity', async () => {
-          const m = await eventMedia(oldVideo.media_id, userCookie);
-          assert.strictEqual(m.summary_status, 'DONE');
-          assert.ok(m.summary && m.summary_points.length > 0);
-          assert.ok(!/nip|email|password/i.test(JSON.stringify({ s: m.summary, p: m.summary_points })));
+        await runTest('[POSITIVE] A User with the Signature Program Events menu can READ the summary on the event (v2.49.0: a plain User without it gets 403); the summary carries no respondent identity', async () => {
+          assert.strictEqual((await api(`/api/events/${EVENT}`, {}, userCookie)).status, 403);
+          const acc = await storage38.getUserByUsername(`rt38u${stamp38}`);
+          await storage38.updateUser(acc.user_id, { menu_access: { dashboard: true, explore: true, exit_interview: true, action_library: true, events: true, about: true } });
+          try {
+            const m = await eventMedia(oldVideo.media_id, userCookie);
+            assert.strictEqual(m.summary_status, 'DONE');
+            assert.ok(m.summary && m.summary_points.length > 0);
+            assert.ok(!/nip|email|password/i.test(JSON.stringify({ s: m.summary, p: m.summary_points })));
+          } finally {
+            await storage38.updateUser(acc.user_id, { menu_access: null });
+          }
         });
 
         await runTest('[POSITIVE] The PPT is generated from stored data only (still zero Ollama calls with summaries present)', async () => {
@@ -6597,7 +6609,8 @@ async function runRegressionSuite() {
           assert.ok(Math.abs(Date.now() - login) < 60 * 1000, 'login sets last activity');
           const past = minutesAgo(4);
           await storage49.setSessionActivity(hash, past);
-          for (const p of ['/api/auth/me', '/api/settings', '/api/events', `/api/metrics/calculate`]) {
+          // (v2.49.0: /api/events -> /api/alerts - a default USER has no Signature Program Events menu any more)
+          for (const p of ['/api/auth/me', '/api/settings', '/api/alerts', `/api/metrics/calculate`]) {
             assert.strictEqual((await json49('GET', p, undefined, cookie)).status, 200, `${p} within the timeout`);
           }
           assert.strictEqual(new Date((await storage49.getSession(hash)).last_activity_at).getTime(), past.getTime(), 'GET requests left last activity untouched');
@@ -6795,6 +6808,194 @@ async function runRegressionSuite() {
       const w = await weightsSetting();
       if (!w || w.survey !== 70 || w.outcome !== 30) await putWeights({ survey: 70, outcome: 30 });
       for (const id of users50) await adminJson('DELETE', `/api/admin/users/${id}`);
+    }
+  }
+
+  // --- MODULE 51 (v2.49.0): MENU ACCESS PER USER ---
+  // Every USER has a menu access set over 6 menus (default: all on except Signature Program Events); an ADMIN always has
+  // all. `events` gates every event API except the public check-in / feedback routes, `exit_interview` gates
+  // /api/exit-interview/*, `action_library` gates GET /api/action-library; the other menus are hidden in the UI only.
+  // The setting event_manager_directorates no longer grants anything (upgrade step moves old event managers to events = true).
+  console.log('\n📦 MODULE 51: Menu access per user - defaults, events / exit interview / action library enforced server-side, validation, migration (Positive & Negative Testing)');
+  {
+    const stamp51 = Date.now().toString(36);
+    const users51 = [];
+    const events51 = [];
+    const DEFAULT51 = { dashboard: true, explore: true, exit_interview: true, action_library: true, events: false, about: true };
+    const ALL51 = { dashboard: true, explore: true, exit_interview: true, action_library: true, events: true, about: true };
+    const call51 = (method, p, body, cookie) => nativeFetch(`${BASE_URL}${p}`, jsonBody(method, body, cookie));
+    const putMenu = (id, menu_access) => adminJson('PUT', `/api/admin/users/${id}`, { menu_access });
+    const makeUser51 = async (suffix, extra = {}) => {
+      const username = `rt51${suffix}${stamp51}`;
+      const res = await adminJson('POST', '/api/admin/users', { username, full_name: `Regression 51 ${suffix}`, role: 'USER', scopes: [{ directorate: itDir.directorate_name, divisions: null }], ...extra });
+      assert.strictEqual(res.status, 201, `create ${suffix}: ${res.status}`);
+      const body = await res.json();
+      users51.push(body.user.user_id);
+      const first = await loginAs(username, body.temporary_password);
+      const password = require('crypto').randomBytes(9).toString('hex') + 'Dd4';
+      assert.strictEqual((await call51('POST', '/api/auth/change-password', { current_password: body.temporary_password, new_password: password }, first.cookie)).status, 200);
+      const { cookie } = await loginAs(username, password);
+      return { id: body.user.user_id, username, cookie, created: body.user };
+    };
+    const me51 = async cookie => (await call51('GET', '/api/auth/me', undefined, cookie)).json();
+
+    try {
+      await runTest('[POSITIVE] A new USER gets the default menu access (all on except Signature Program Events) in the create answer, /api/auth/me and the user list; the Admin has every menu', async () => {
+        const u = await makeUser51('a');
+        assert.deepStrictEqual(u.created.menu_access, DEFAULT51);
+        const me = await me51(u.cookie);
+        assert.deepStrictEqual(me.user.menu_access, DEFAULT51);
+        assert.strictEqual(me.permissions.can_manage_events, false);
+        const listed = (await (await adminJson('GET', '/api/admin/users')).json()).find(x => x.user_id === u.id);
+        assert.deepStrictEqual(listed.menu_access, DEFAULT51);
+        const admin = await (await adminJson('GET', '/api/auth/me')).json();
+        assert.deepStrictEqual(admin.user.menu_access, ALL51, 'ADMIN always has every menu');
+        assert.strictEqual(admin.permissions.can_manage_events, true);
+        // the defaults are enforced: events 403, exit interview + action library 200
+        assert.strictEqual((await call51('GET', '/api/events', undefined, u.cookie)).status, 403);
+        assert.strictEqual((await call51('GET', '/api/exit-interview/summary', undefined, u.cookie)).status, 200);
+        assert.strictEqual((await call51('GET', '/api/action-library', undefined, u.cookie)).status, 200);
+      });
+
+      await runTest('[POSITIVE] Admin ticks Signature Program Events: the USER can read and manage events at once (list, detail, question bank, QR, create, questions, delete), audited as USER_MENU_ACCESS_CHANGE; switched off -> 403 on the next request', async () => {
+        const u = await makeUser51('b');
+        const put = await putMenu(u.id, { events: true });
+        assert.strictEqual(put.status, 200);
+        assert.deepStrictEqual((await put.json()).user.menu_access, { ...DEFAULT51, events: true });
+        assert.strictEqual((await me51(u.cookie)).permissions.can_manage_events, true, 'no re-login needed');
+        for (const p of ['/api/events', '/api/events/ev-perspektif-2024-q1', '/api/questions/master', '/api/qrcode?text=x']) {
+          assert.strictEqual((await call51('GET', p, undefined, u.cookie)).status, 200, `GET ${p}`);
+        }
+        const detail = await (await call51('GET', '/api/events/ev-perspektif-2024-q1', undefined, u.cookie)).json();
+        assert.ok(detail.event.pre_event_code && detail.attendances.every(a => a.nip), 'full manager view (codes, attendee data)');
+        const created = await call51('POST', '/api/events', { event_name: 'Regression Test Event (Module 51 Menu Access)', program_category: 'Testing', event_type: 'Online', event_date: '2026-08-21', target_participants: 3 }, u.cookie);
+        assert.strictEqual(created.status, 201);
+        const eventId = (await created.json()).event.event_id;
+        events51.push(eventId);
+        assert.strictEqual((await call51('POST', `/api/events/${eventId}/questions`, { questions: [] }, u.cookie)).status, 200);
+        assert.strictEqual((await call51('DELETE', `/api/events/${eventId}`, undefined, u.cookie)).status, 200);
+        events51.splice(events51.indexOf(eventId), 1);
+        const log = await (await adminJson('GET', '/api/admin/audit-log?limit=100&include_test=1')).json();
+        const entry = log.find(e => e.action === 'USER_MENU_ACCESS_CHANGE' && e.target === `${u.username}: events:off->on`);
+        assert.ok(entry, 'USER_MENU_ACCESS_CHANGE recorded with the change');
+        assert.strictEqual(entry.is_test, true, 'test-run account -> test-marked audit row');
+        assert.strictEqual((await putMenu(u.id, { events: false })).status, 200);
+        assert.strictEqual((await call51('GET', '/api/events', undefined, u.cookie)).status, 403);
+        assert.strictEqual((await me51(u.cookie)).permissions.can_manage_events, false);
+      });
+
+      await runTest('[NEGATIVE] Events menu off: every event API answers 403 for the USER, while the public check-in / feedback routes by event code still work (with and without that login)', async () => {
+        const u = await makeUser51('c');
+        const ev = await (await adminJson('GET', '/api/events/ev-perspektif-2024-q1')).json();
+        const gets = ['/api/events', '/api/events/ev-perspektif-2024-q1', '/api/questions/master', '/api/qrcode?text=x', '/api/reports/download/x.pptx', '/uploads/sample.jpg', '/exports/x.pptx'];
+        for (const p of gets) assert.strictEqual((await call51('GET', p, undefined, u.cookie)).status, 403, `GET ${p}`);
+        const writes = [['POST', '/api/events', {}], ['DELETE', '/api/events/ev-x'], ['POST', '/api/events/ev-x/questions', { questions: [] }], ['DELETE', '/api/events/ev-x/attendance/1234'],
+          ['DELETE', '/api/events/ev-x/feedback/1234'], ['POST', '/api/events/ev-x/generate-ppt', {}], ['POST', '/api/media/x/transcribe', {}], ['POST', '/api/media/x/summarize', {}], ['DELETE', '/api/media/x']];
+        for (const [m, p, b] of writes) assert.strictEqual((await call51(m, p, b, u.cookie)).status, 403, `${m} ${p}`);
+        const denied = await (await call51('GET', '/api/events', undefined, u.cookie)).json();
+        assert.strictEqual(denied.code, 'MENU_ACCESS_DENIED');
+        assert.strictEqual(denied.menu, 'events');
+        for (const cookie of [u.cookie, undefined]) {
+          const pre = await call51('GET', `/api/events/by-code/${ev.event.pre_event_code}`, undefined, cookie);
+          assert.strictEqual(pre.status, 200, 'public by-code lookup');
+          assert.strictEqual((await pre.json()).type, 'PRE_EVENT');
+          assert.strictEqual((await call51('POST', '/api/events/ev-perspektif-2024-q1/attendance', {}, cookie)).status, 400, 'public check-in reaches validation (400), not 403');
+          assert.strictEqual((await call51('POST', '/api/events/ev-perspektif-2024-q1/feedback', {}, cookie)).status, 400, 'public feedback reaches validation (400), not 403');
+        }
+      });
+
+      await runTest('[NEGATIVE] Exit Interview menu off -> 403 on /api/exit-interview/* ; Action Library off -> 403 on GET /api/action-library; Dashboard/Explore off stay UI-only (scorecard APIs still answer within the scope)', async () => {
+        const u = await makeUser51('d', { menu_access: { exit_interview: false, action_library: false, dashboard: false, explore: false } });
+        assert.deepStrictEqual(u.created.menu_access, { ...DEFAULT51, exit_interview: false, action_library: false, dashboard: false, explore: false });
+        for (const p of ['/api/exit-interview/summary', '/api/exit-interview/summary?mode=MTD&year=2026&month=09', '/api/exit-interview/template', '/api/exit-interview/uploads', '/api/action-library']) {
+          assert.strictEqual((await call51('GET', p, undefined, u.cookie)).status, 403, `GET ${p}`);
+        }
+        assert.strictEqual((await call51('GET', '/api/metrics/calculate?mode=YTD', undefined, u.cookie)).status, 200, 'scorecard API is not gated by the dashboard menu');
+        assert.strictEqual((await call51('GET', '/api/alerts', undefined, u.cookie)).status, 200, 'alerts feed the Dashboard too');
+        assert.strictEqual((await putMenu(u.id, { exit_interview: true })).status, 200);
+        assert.strictEqual((await call51('GET', '/api/exit-interview/summary', undefined, u.cookie)).status, 200);
+        assert.strictEqual((await adminJson('GET', '/api/exit-interview/summary')).status, 200, 'Admin always');
+        assert.strictEqual((await adminJson('GET', '/api/action-library')).status, 200, 'Admin always');
+      });
+
+      await runTest('[NEGATIVE] Invalid menu_access is refused with 400 and stores nothing (unknown key, non-boolean, array, text); an ADMIN cannot be limited (any false -> 400, all true is accepted and ignored)', async () => {
+        const u = await makeUser51('e');
+        const bad = [{ reports: true }, { events: 'yes' }, { events: 1 }, { dashboard: null }, [true], 'events', 5];
+        for (const v of bad) {
+          const r = await putMenu(u.id, v);
+          assert.strictEqual(r.status, 400, `PUT ${JSON.stringify(v)}`);
+          assert.ok((await r.json()).error);
+          const c = await adminJson('POST', '/api/admin/users', { username: `rt51x${stamp51}`, full_name: 'Regression 51 X', role: 'USER', scopes: [{ directorate: itDir.directorate_name, divisions: null }], menu_access: v });
+          assert.strictEqual(c.status, 400, `POST ${JSON.stringify(v)}`);
+        }
+        assert.ok(!(await (await adminJson('GET', '/api/admin/users')).json()).some(x => x.username === `rt51x${stamp51}`), 'rejected creates store nothing');
+        assert.deepStrictEqual((await me51(u.cookie)).user.menu_access, DEFAULT51, 'rejected updates change nothing');
+        const adm = await adminJson('POST', '/api/admin/users', { username: `rt51adm${stamp51}`, full_name: 'Regression 51 Admin', role: 'ADMIN', scopes: [], menu_access: { events: false } });
+        assert.strictEqual(adm.status, 400, 'ADMIN with a menu switched off');
+        const adm2 = await adminJson('POST', '/api/admin/users', { username: `rt51adm${stamp51}`, full_name: 'Regression 51 Admin', role: 'ADMIN', scopes: [], menu_access: ALL51 });
+        assert.strictEqual(adm2.status, 201);
+        const a2 = (await adm2.json()).user;
+        users51.push(a2.user_id);
+        assert.deepStrictEqual(a2.menu_access, ALL51);
+        assert.strictEqual((await putMenu(a2.user_id, { about: false })).status, 400);
+        // null resets a USER to the defaults
+        assert.strictEqual((await putMenu(u.id, { events: true, about: false })).status, 200);
+        const reset = await putMenu(u.id, null);
+        assert.strictEqual(reset.status, 200);
+        assert.deepStrictEqual((await reset.json()).user.menu_access, DEFAULT51);
+      });
+
+      await runTest('[NEGATIVE] A USER cannot change their own (or anyone\'s) menu access: PUT /api/admin/users is 403 and nothing changes; without a session 401', async () => {
+        const u = await makeUser51('f');
+        assert.strictEqual((await call51('PUT', `/api/admin/users/${u.id}`, { menu_access: { events: true } }, u.cookie)).status, 403);
+        assert.strictEqual((await call51('PUT', `/api/admin/users/${u.id}`, { menu_access: { events: true } })).status, 401);
+        const me = await me51(u.cookie);
+        assert.strictEqual(me.user.menu_access.events, false);
+        assert.strictEqual((await call51('GET', '/api/events', undefined, u.cookie)).status, 403);
+      });
+
+      await runTest('[POSITIVE/NEGATIVE] event_manager_directorates no longer grants event rights; the upgrade step gives events = true only to a USER still at the defaults whose scope covers such a directorate (idempotent; others untouched) + menu helper units', async () => {
+        const m = require('../server/db/menuAccess');
+        assert.deepStrictEqual(m.effectiveMenuAccess(null, 'USER'), DEFAULT51);
+        assert.deepStrictEqual(m.effectiveMenuAccess('{"events":true,"x":true,"about":"no"}', 'USER'), { ...DEFAULT51, events: true }, 'unknown keys / non-booleans in stored data are ignored');
+        assert.deepStrictEqual(m.effectiveMenuAccess({ events: false, dashboard: false }, 'ADMIN'), ALL51);
+        assert.deepStrictEqual(m.effectiveMenuAccess('garbage', 'USER'), DEFAULT51);
+        assert.ok(m.validateMenuAccessInput({ nope: true }).error);
+        assert.deepStrictEqual(m.validateMenuAccessInput({ events: true }).patch, { events: true });
+        assert.strictEqual(m.hasMenu({ role: 'USER', menu_access: null }, 'events'), false);
+        assert.strictEqual(m.hasMenu({ role: 'ADMIN' }, 'events'), true);
+        assert.strictEqual(m.hasMenu(null, 'events'), false);
+        assert.strictEqual(m.coversEventManagerDirectorate([{ directorate: ' Human Resources ', divisions: ['x'] }], [{ value: 'human resources' }]), true);
+        assert.strictEqual(m.coversEventManagerDirectorate([{ directorate: 'IT', divisions: null }], [{ value: 'Human Resources' }]), false);
+        assert.strictEqual(m.describeMenuChange(DEFAULT51, { ...DEFAULT51, events: true, about: false }), 'events:off->on, about:on->off');
+        // over HTTP: a USER of the HR directorate (from the setting) is NOT an event manager any more
+        assert.ok(hrDir, 'the event_manager_directorates directorate exists');
+        const hrUser = await makeUser51('g', { scopes: [{ directorate: hrName, divisions: null }] });
+        assert.strictEqual((await me51(hrUser.cookie)).permissions.can_manage_events, false);
+        assert.strictEqual((await call51('GET', '/api/events', undefined, hrUser.cookie)).status, 403);
+        // the upgrade step itself (SQL backend: in-process storage over the same database; JSON runs it when auth.json loads)
+        require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+        const st = require('../server/db/storage');
+        if (st.backend !== 'sql') { console.log('     (upgrade-step part skipped: JSON backend - the step runs when auth.json is loaded)'); return; }
+        const mk = async (suffix, scopes, menu_access) => {
+          const c = await st.createUser({ is_test_account: true, username: `rt51m${suffix}${stamp51}`, full_name: 'Regression 51 migration', email: '', role: 'USER', password_hash: 'x', scopes, menu_access });
+          users51.push(c.user_id);
+          return c;
+        };
+        const covered = await mk('1', [{ directorate: itDir.directorate_name, divisions: null }, { directorate: hrName, divisions: hrDir.divisions.slice(0, 1) }], null);
+        const explicit = await mk('2', [{ directorate: hrName, divisions: null }], { ...DEFAULT51, about: false });
+        const other = await mk('3', [{ directorate: itDir.directorate_name, divisions: null }], null);
+        assert.strictEqual(covered.menu_access, null, 'created at the defaults (NULL)');
+        const ids = [covered.user_id, explicit.user_id, other.user_id];
+        assert.strictEqual(await st.migrateEventManagerMenuAccess({ onlyUserIds: ids }), 1);
+        assert.strictEqual(await st.migrateEventManagerMenuAccess({ onlyUserIds: ids }), 0, 'idempotent');
+        assert.deepStrictEqual((await st.getUserById(covered.user_id)).menu_access, { ...DEFAULT51, events: true });
+        assert.deepStrictEqual((await st.getUserById(explicit.user_id)).menu_access, { ...DEFAULT51, about: false }, 'an explicit choice is never overwritten');
+        assert.strictEqual((await st.getUserById(other.user_id)).menu_access, null, 'outside the setting: untouched');
+      });
+    } finally {
+      for (const id of events51) await adminJson('DELETE', `/api/events/${id}`);
+      for (const id of users51) await adminJson('DELETE', `/api/admin/users/${id}`);
     }
   }
 

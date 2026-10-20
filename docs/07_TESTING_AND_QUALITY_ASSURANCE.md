@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    50 MODUL PENGUJIAN    │     339 AUTOMATED TESTS     │       100% PASS RATE          │
+│    51 MODUL PENGUJIAN    │     346 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -1070,3 +1070,23 @@ Harness: `realFetch` mengirim `POST /api/auth/activity` maksimal tiap 60 detik p
 **Hasil** (developer, SQL, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): run 1 252/253 - satu kegagalan karena bug nyata di route detail (filter direset sebelum engine), diperbaiki; run 2 **253/253 lulus, 0 gagal, 16 dilewati**. JSON: hanya cek terarah in-process pada salinan `store.json`; suite JSON penuh tidak dijalankan. `vite build` OK. Ukuran suite penuh SQL kini 339 (332 + 7); hitungan statis `await runTest(` 326 (319 + 7), selisih 13 sama seperti sebelumnya.
 
 Tidak diuji otomatis: tampilan panel, urutan kartu journey, sumbu Y grafik, kartu PX Index Weights dan urutan About (dicek di browser oleh main session).
+
+## 38. v2.49.0 - Akses menu per user
+
+**Modul 51** (7 tes; tanpa penjaga backend, kecuali bagian upgrade step di tes 7 yang hanya jalan di SQL - di JSON dilewati dengan pesan karena langkah itu berjalan saat `auth.json` dimuat). Membuat akun User sementara (`rt51<suffix><stamp>`, plus `rt51m...` langsung lewat storage untuk tes upgrade) dan event uji "Regression Test Event (Module 51 Menu Access)"; semuanya dihapus di `finally`.
+
+| # | Jenis | Yang diuji |
+| :---: | :---: | :--- |
+| 1 | Positif | User baru mendapat default (semua kecuali `events`) di respons create, `/api/auth/me` dan daftar user; Admin semua menu |
+| 2 | Positif | Admin mencentang `events`: User langsung bisa daftar/detail event, question bank, QR, buat event, tambah pertanyaan, hapus; tercatat `USER_MENU_ACCESS_CHANGE` bertanda tes; dimatikan -> 403 pada request berikutnya |
+| 3 | Negatif | `events` mati: semua API event 403 untuk User; rute publik by-code / check-in / feedback tetap jalan (dengan dan tanpa login itu) |
+| 4 | Negatif | `exit_interview` mati -> 403 di `/api/exit-interview/*`; `action_library` mati -> 403 di `GET /api/action-library`; `dashboard`/`explore` mati tetap UI saja (API skor menjawab dalam cakupan) |
+| 5 | Negatif | `menu_access` salah (key tak dikenal, bukan boolean, array, teks) -> 400, tidak tersimpan; Admin tidak bisa dibatasi (`false` -> 400, semua `true` diterima dan diabaikan); `null` mengembalikan default |
+| 6 | Negatif | User tidak bisa mengubah menu (`PUT /api/admin/users/:id` 403, tidak berubah); tanpa sesi 401 |
+| 7 | Positif/Negatif | `event_manager_directorates` tidak memberi hak (User direktorat HR: `can_manage_events` false, `/api/events` 403); upgrade step hanya memberi `events: true` kepada User NULL yang cakupannya memuat direktorat itu, idempoten, tidak menimpa pilihan eksplisit; unit test helper `menuAccess.js` |
+
+**Modul lama disesuaikan**: Modul 34 (User tanpa menu events -> 403 pada event; tes event ditulis ulang), Modul 35 (tes event per cakupan: 403 tanpa menu, tampilan lengkap dengan menu; tes perubahan cakupan: cakupan HR saja tidak memberi hak event), Modul 49 (request "biasa" `/api/events` diganti `/api/alerts`), Modul 38 (media: User tanpa menu membaca ringkasan -> 403, menu diberikan untuk tes baca; dijalankan terpisah oleh main session, tidak termasuk run penuh di bawah). Jumlah tes modul lama tidak berubah.
+
+**Hasil** (developer, SQL, backend kedua; modul media 27, 32, 38, 41, 42, 43 di-skip; modul 8 dan 24 dijalankan karena route event berubah): run 1 266/267 - tes Modul 49 masih memakai `/api/events`, diperbaiki; run 2 **267/267 lulus, 0 gagal, 9 tes dilewati**. JSON: cek terarah pada salinan sementara 12/12; suite JSON penuh tidak dijalankan. `vite build` OK. Ukuran suite penuh SQL kini 346 (339 + 7); hitungan statis `await runTest(` 333 (326 + 7), selisih 13 sama seperti sebelumnya.
+
+Tidak diuji otomatis: tampilan Header, fallback tab, pesan tanpa menu dan form Manage Users.

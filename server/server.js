@@ -48,11 +48,11 @@ const EXPORTS_DIR = path.join(__dirname, 'exports');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 if (!fs.existsSync(EXPORTS_DIR)) fs.mkdirSync(EXPORTS_DIR, { recursive: true });
 
-// Static files need a login too: uploaded media for any logged-in user, generated PPT reports only
-// for people who may manage events. (The public check-in / feedback forms use neither.)
+// Static files need a login too, and both folders belong to Signature Program Events (v2.49.0: menu access `events`):
+// event photos/videos and generated PPT reports. (The public check-in / feedback forms use neither.)
 // Second line of defence behind the upload filter: nosniff + a sandboxing CSP on every file (script never runs even if an
 // HTML/SVG file ever lands here), and anything that is not an allowlisted photo/video type is only offered as a download.
-app.use('/uploads', auth.requireLogin, (req, res, next) => {
+app.use('/uploads', auth.requireLogin, auth.requireEventManager, (req, res, next) => {
   res.set('X-Content-Type-Options', 'nosniff');
   res.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; media-src 'self'; img-src 'self'; sandbox");
   let name = req.path;
@@ -101,6 +101,8 @@ const mediaUpload = multer({
 // services/authService.js (PUBLIC_ROUTES); everything under /api/admin is ADMIN only.
 auth.registerAuthRoutes(app);
 const ADMIN_ONLY = auth.requireRole('ADMIN');
+// Signature Program Events (v2.49.0): Admin, or a User with menu access `events` - view AND manage. Every event route
+// below carries it except the three public check-in / feedback routes (by-code, attendance, feedback).
 const EVENT_MANAGER = auth.requireEventManager;
 
 // 1. Health & Status
@@ -132,12 +134,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.48.0' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.49.0' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.48.0',
+    version: '2.49.0',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',
@@ -698,7 +700,7 @@ app.post('/api/alerts/acknowledge', ADMIN_ONLY, async (req, res) => {
   }
 });
 
-app.get('/api/action-library', async (req, res) => {
+app.get('/api/action-library', auth.requireMenu('action_library'), async (req, res) => {
   res.json(await storage.getActionLibrary());
 });
 
@@ -932,6 +934,9 @@ const exitUploadSingle = (req, res, next) => exitUpload.single('file')(req, res,
   return res.status(400).json({ error: 'The uploaded file could not be processed (send one .xlsx file in the field "file").' });
 });
 
+// v2.49.0: the whole Exit Interview API needs menu access `exit_interview` (an Admin always has it).
+app.use('/api/exit-interview', auth.requireMenu('exit_interview'));
+
 app.get('/api/exit-interview/summary', async (req, res) => {
   try {
     const scope = auth.scopeFilter(req, res);
@@ -998,27 +1003,16 @@ app.get('/api/exit-interview/export', ADMIN_ONLY, async (req, res) => {
 });
 
 // 5. Events Management (Signature Programs)
-const hideEventCodes = e => ({ ...e, pre_event_code: null, post_event_code: null });
 
-// A User who does not manage events only sees attendance / feedback rows of attendees inside their data
-// scope (feedback carries just the NIP, so it follows the attendee's directorate/division). Managers and
-// Admins see everything.
-async function eventRowsForViewer(req, eventId) {
-  let atts = await storage.getAttendancesByEvent(eventId);
-  let feedbacks = await storage.getFeedbackByEvent(eventId);
-  if (!(await auth.isEventManager(req.user))) {
-    const inScope = new Set(atts.filter(a => auth.isInScope(req.user, a.directorate, a.division)).map(a => a.nip));
-    atts = atts.filter(a => inScope.has(a.nip));
-    feedbacks = feedbacks.filter(f => inScope.has(f.nip));
-  }
-  return { atts, feedbacks };
-}
-
-app.get('/api/events', async (req, res) => {
+// Only Admins and Users with menu access `events` get here (EVENT_MANAGER), and they see every attendance /
+// feedback row and the access codes - the rights the old "event manager" had (before v2.49.0 other Users could read
+// a scope-filtered, redacted view).
+app.get('/api/events', EVENT_MANAGER, async (req, res) => {
   try {
     const events = await storage.getEvents();
     const enriched = await Promise.all(events.map(async e => {
-      const { atts, feedbacks } = await eventRowsForViewer(req, e.event_id);
+      const atts = await storage.getAttendancesByEvent(e.event_id);
+      const feedbacks = await storage.getFeedbackByEvent(e.event_id);
 
       let totalRating = 0;
       let count = 0;
@@ -1042,30 +1036,23 @@ app.get('/api/events', async (req, res) => {
         satisfaction_percentage: ((parseFloat(avgScore) / 5.0) * 100).toFixed(1)
       };
     }));
-    // The public check-in / feedback access codes are only for those who manage events.
-    res.json((await auth.isEventManager(req.user)) ? enriched : enriched.map(hideEventCodes));
+    res.json(enriched);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.get('/api/events/:id', async (req, res) => {
+app.get('/api/events/:id', EVENT_MANAGER, async (req, res) => {
   try {
     const event = await storage.getEventById(req.params.id);
     if (!event) return res.status(404).json({ error: 'Event not found' });
 
-    const questions = await storage.getEventQuestions(event.event_id);
-    const { atts: attendances, feedbacks } = await eventRowsForViewer(req, event.event_id);
-    const media = await storage.getMediaByEvent(event.event_id);
-
-    // Attendee / respondent identity (NIP, name, e-mail) is only for those who manage events.
-    const manager = await auth.isEventManager(req.user);
     res.json({
-      event: manager ? event : hideEventCodes(event),
-      questions,
-      attendances: manager ? attendances : attendances.map(auth.redactRespondent),
-      feedbacks: manager ? feedbacks : feedbacks.map(auth.redactRespondent),
-      media
+      event,
+      questions: await storage.getEventQuestions(event.event_id),
+      attendances: await storage.getAttendancesByEvent(event.event_id),
+      feedbacks: await storage.getFeedbackByEvent(event.event_id),
+      media: await storage.getMediaByEvent(event.event_id)
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1111,7 +1098,7 @@ app.get('/api/events/by-code/:code', async (req, res) => {
 });
 
 // Master & Event Questions
-app.get('/api/questions/master', async (req, res) => {
+app.get('/api/questions/master', EVENT_MANAGER, async (req, res) => { // the Create Event form's question bank
   res.json(await storage.getMasterQuestions());
 });
 
@@ -1336,8 +1323,8 @@ app.get('/api/reports/download/:fileName', EVENT_MANAGER, async (req, res) => {
   }
 });
 
-// 8. QR Code Generator Endpoint
-app.get('/api/qrcode', async (req, res) => {
+// 8. QR Code Generator Endpoint (the QR codes of the event check-in / feedback forms)
+app.get('/api/qrcode', EVENT_MANAGER, async (req, res) => {
   const { text } = req.query;
   if (!text) return res.status(400).json({ error: 'Text query param is required' });
   try {
