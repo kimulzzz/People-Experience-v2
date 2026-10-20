@@ -705,6 +705,9 @@ domain model, not just descriptive:
   removed); `event_manager_directorates` grants nothing (one-time upgrade moved old managers: 0 accounts). Audit `USER_MENU_ACCESS_CHANGE`. Module 51 (7), Modules 34/35/38/49 adjusted
   -> SQL 267/267, 9 skipped, media modules skipped, 8/24 ran (suite 346); Module 38 run separately by the main session; JSON full suite not run.
 
+- **v2.49.1** (2026-10-20, see `CHANGELOG.md` [2.49.1]): Admin Score Deficit Alerts now follow the Header directorate/sub-directorate filter
+  (`App.jsx` always sends them to `/api/alerts`; backend already supported it). Alerts stay current-year YTD.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan

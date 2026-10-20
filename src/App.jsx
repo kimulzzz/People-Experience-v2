@@ -204,7 +204,8 @@ function AppContent() {
       const [calcRes, alertsRes, eventsRes, healthRes, actionRes] = await Promise.all([
         fetchWithRetry(`/api/metrics/calculate?${queryParams}`),
         // A User's alerts follow the same data scope / filter as the scorecard (the server limits them anyway)
-        fetchWithRetry(isAdmin ? '/api/alerts' : `/api/alerts?${new URLSearchParams({ directorate: directorate || 'ALL', sub_directorate: sub_directorate || 'ALL' })}`),
+        // Admin and User alike follow the Header directorate / sub-directorate filter (v2.49.1; Admin used to get bankwide alerts always)
+        fetchWithRetry(`/api/alerts?${new URLSearchParams({ directorate: directorate || 'ALL', sub_directorate: sub_directorate || 'ALL' })}`),
         // menus this account may not open are not fetched at all (the server would answer 403)
         access.events ? fetchWithRetry('/api/events') : null,
         fetchWithRetry('/api/health'),

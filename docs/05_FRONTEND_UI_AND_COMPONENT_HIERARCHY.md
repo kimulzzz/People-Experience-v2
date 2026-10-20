@@ -402,6 +402,10 @@ API kini bisa mengirim indeks dan skor `null` serta status `NO_DATA` (lihat `doc
 | `MetricDetailModal.jsx` | Nilai "—", "No survey data in this period - left out of the index", badge abu-abu "No Data", pertanyaan berlabel "No Data" tanpa skor. Catatan "Annual metric: shows the result of Jan–Sep 2026" untuk metrik tahunan pada filter MTD **dihapus di v2.37.0** (MTD kini selalu satu bulan, `period_window.basis = 'MONTH'`). |
 | `TrendChart.jsx` | Titik `null` menjadi celah (garis dipotong per segmen), tooltip "—". |
 
+## Catatan v2.49.1 - Alert Admin mengikuti filter
+
+`App.jsx` memanggil `/api/alerts?directorate&sub_directorate` untuk Admin juga (dulu bankwide); badge Deficits dan tab Action Library ikut filter Header.
+
 ## Catatan v2.49.0 - Akses Menu per User & Urutan Menu
 
 | Komponen | Perubahan |
