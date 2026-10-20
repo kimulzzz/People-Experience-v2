@@ -371,6 +371,8 @@ Setelah mengubah `.env`, restart backend. Bila batas ringkasan habis, kartu vide
 - Menghapus metrik ESS di Admin Parameters ikut menghapus hasil ESS dan file aslinya.
 - Data ESS per responden lama dihapus sekali saat upgrade ke v2.32.0. Data saat ini (November 2025) adalah seed: metrik 9 = nilai file user, metrik ESS lain **dummy** - ganti dengan mengunggah hasil asli. Dummy kuartal 2026 (Maret/Juni/September, v2.37.0) dihapus otomatis saat start pertama v2.50.0 (hanya upload seed "Seed (dummy)"; upload Admin tidak disentuh).
 - **Perlu dicek: metrik 9 (Role Clarity & DS Support)**: pertanyaan metrik 9 di Manage Questions tidak sama urutannya dengan file asli `docs/ESS 2025 Result_Role Clarity & DS Support.xlsx` (kolom G dan H tertukar, kolom I pertanyaan lain). Karena kolom dipetakan menurut posisi, skor kolom G (96) kini tampil di bawah pertanyaan 1 "Employees clearly understand what is expected of them.". Susun ulang/ubah pertanyaan metrik 9 di Manage Questions agar urutan dan teksnya sama dengan file.
+
+> **Update 2026-10-20:** pertanyaan metrik 9 sudah disamakan dengan file Excel (Q1 contributes, Q2 expectations, Q3 feedback) - lihat CHANGELOG [2.50.0].
 - **Pengingat e-mail**: metrik ESS bersifat tahunan dengan batas 25 November; mulai 25 November 2026 PIC akan menerima pengingat bila hasil ESS 2026 belum diunggah. Hasil ESS dianggap data bulan periodenya.
 
 ---
