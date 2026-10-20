@@ -2,6 +2,14 @@
 
 Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Management & Scoring System dicatat di dalam dokumen ini mengikuti standar [Semantic Versioning](https://semver.org/).
 
+## [2.46.0] - 2026-10-20
+
+- **Permintaan user**: kartu journey di Dashboard memakai warna journey sebagai latar/header seperti di slide "People Experience Measurement".
+- **UI (`Dashboard.jsx`)**: latar tiap kartu journey kini gradasi dari warna journey yang digelapkan 28% ke warna journey itu (`shadeHex()` baru; sebelumnya gradasi merah tema `--theme-*`). Karena latarnya sudah berwarna journey, kotak ikon menjadi putih transparan (`bg-white/20`), isi progress bar menjadi putih (abu-abu bila No Data), dan teks label merah muda (`text-red-100`) di dalam kartu menjadi `text-white/80`. Warna status metrik (hijau/kuning/merah/abu-abu) tidak berubah. Kartu mengikuti warna `px_journeys.color`, jadi perubahan warna di Admin Parameters -> Journey Parameters langsung terlihat. Hero dan bagian lain Dashboard tetap memakai warna tema.
+- **Tes**: tidak ada tes baru (perubahan tampilan). Suite penuh SQL (backend kedua, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **246/246 lulus, 0 gagal, 16 dilewati**. `vite build` OK. Dicek di browser (admin sementara bertanda tes, sudah dihapus): Arrival biru, Connect merah coral, Belong teal, Contribute oranye, Depart ungu.
+
+---
+
 ## [2.45.0] - 2026-10-20
 
 - **Permintaan user**: warna journey disamakan dengan slide "People Experience Measurement" (gambar `docs/warna journey PX.PNG`).

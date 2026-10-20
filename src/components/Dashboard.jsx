@@ -38,6 +38,16 @@ const journeyIcons = {
   DEPART: LogOut
 };
 
+// Darken (amount < 0) or lighten (amount > 0) a #RRGGBB colour; used for the journey card gradient (v2.46.0).
+function shadeHex(hex, amount) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
+  if (!m) return hex || '#ED1C24';
+  const n = parseInt(m[1], 16);
+  const ch = (v) => Math.max(0, Math.min(255, Math.round(amount < 0 ? v * (1 + amount) : v + (255 - v) * amount)));
+  const r = ch((n >> 16) & 255), g = ch((n >> 8) & 255), b = ch(n & 255);
+  return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase()}`;
+}
+
 export default function Dashboard({ 
   calculationData, 
   alertsData, 
@@ -355,10 +365,13 @@ export default function Dashboard({
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {journeys.map((j) => {
             const Icon = iconComponents[j.icon] || journeyIcons[j.journey_code] || Users;
+            // v2.46.0: the card is painted in the journey's own colour (like the "People Experience Measurement" slide)
+            const cardBackground = `linear-gradient(135deg, ${shadeHex(j.color, -0.28)} 0%, ${j.color || '#ED1C24'} 100%)`;
             return (
               <div
                 key={j.journey_id}
-                className="bg-gradient-to-br from-[var(--theme-deep)] to-[var(--theme-base)] rounded-xl p-5 border border-transparent hover:shadow-lg transition flex flex-col justify-between group space-y-4"
+                className="rounded-xl p-5 border border-transparent hover:shadow-lg transition flex flex-col justify-between group space-y-4"
+                style={{ background: cardBackground }}
               >
                 {/* Header */}
                 <div className="space-y-2">
@@ -368,13 +381,12 @@ export default function Dashboard({
                       className="flex items-center space-x-2 cursor-pointer"
                     >
                       <div
-                        className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold"
-                        style={{ backgroundColor: j.color }}
+                        className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold bg-white/20 border border-white/30"
                       >
                         <Icon className="w-4 h-4" />
                       </div>
                       <div>
-                        <span className="text-[10px] font-bold text-red-100 uppercase tracking-wider">
+                        <span className="text-[10px] font-bold text-white/80 uppercase tracking-wider">
                           Journey #{j.journey_id}
                         </span>
                         <h4 className="text-base font-extrabold text-white transition">
@@ -388,12 +400,12 @@ export default function Dashboard({
                         {j.overall_score !== null && j.overall_score !== undefined ? j.overall_score.toFixed(1) : (j.no_data_count > 0 ? 'No Data' : 'Exempted')}
                       </span>
                       {j.overall_score !== null && j.overall_score !== undefined && (
-                        <span className="text-xs text-red-100 font-bold">%</span>
+                        <span className="text-xs text-white/80 font-bold">%</span>
                       )}
                     </div>
                   </div>
 
-                  <p className="text-xs text-red-100 line-clamp-2">
+                  <p className="text-xs text-white/80 line-clamp-2">
                     {j.tagline}
                   </p>
                 </div>
@@ -405,7 +417,7 @@ export default function Dashboard({
                       className="h-2 rounded-full transition-all duration-500"
                       style={{
                         width: `${Math.min(j.overall_score || 0, 100)}%`,
-                        backgroundColor: j.overall_score === null ? '#9CA3AF' : j.color
+                        backgroundColor: j.overall_score === null ? '#9CA3AF' : '#FFFFFF'
                       }}
                     />
                   </div>
@@ -414,13 +426,13 @@ export default function Dashboard({
                 {/* Sub-scores: Survey vs Outcome */}
                 <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/20 text-xs">
                   <div className="bg-white/15 rounded-lg p-2">
-                    <span className="text-[10px] text-red-100 block font-semibold">Survey ({j.survey_count})</span>
+                    <span className="text-[10px] text-white/80 block font-semibold">Survey ({j.survey_count})</span>
                     <span className="font-bold text-white">
                       {j.survey_score !== null ? `${j.survey_score}%` : 'N/A'}
                     </span>
                   </div>
                   <div className="bg-white/15 rounded-lg p-2">
-                    <span className="text-[10px] text-red-100 block font-semibold">Outcome ({j.outcome_count})</span>
+                    <span className="text-[10px] text-white/80 block font-semibold">Outcome ({j.outcome_count})</span>
                     <span className="font-bold text-white">
                       {j.outcome_score !== null ? `${j.outcome_score}%` : 'N/A'}
                     </span>
@@ -429,7 +441,7 @@ export default function Dashboard({
 
                 {/* Metrics List with Explicit Status Badge & Click-to-Drilldown */}
                 <div className="space-y-1 pt-1">
-                  <span className="text-[10px] font-bold text-red-100 uppercase">Metrics ({j.metrics?.length || 0}):</span>
+                  <span className="text-[10px] font-bold text-white/80 uppercase">Metrics ({j.metrics?.length || 0}):</span>
                   <div className="flex flex-col space-y-1 max-h-40 overflow-y-auto pr-0.5">
                     {j.metrics?.map(m => {
                       const isDisabled = m.is_disabled === true;
@@ -446,7 +458,7 @@ export default function Dashboard({
                           className={`w-full text-[10px] font-semibold pl-1.5 pr-2 py-1 rounded-md border transition flex items-center justify-between space-x-2 ${
                             isDisabled ? 'bg-black/20 text-white/50 border-white/10 opacity-70 cursor-not-allowed' :
                             isNoData ? 'bg-gray-500/60 text-white/90 border-gray-300/40 hover:bg-gray-500/70' :
-                            m.status === 'CRITICAL' ? 'bg-black/30 text-red-100 border-red-300/50 hover:bg-black/40' :
+                            m.status === 'CRITICAL' ? 'bg-black/30 text-white/80 border-red-300/50 hover:bg-black/40' :
                             m.status === 'WARNING' ? 'bg-amber-500/90 text-white border-amber-300 hover:bg-amber-500' :
                             'bg-emerald-500/90 text-white border-emerald-300 hover:bg-emerald-500'
                           }`}
@@ -473,7 +485,7 @@ export default function Dashboard({
                 {/* Footer Details */}
                 <div
                   onClick={() => onSelectJourney(j.journey_id)}
-                  className="flex items-center justify-between text-xs pt-1 text-red-100 cursor-pointer"
+                  className="flex items-center justify-between text-xs pt-1 text-white/80 cursor-pointer"
                 >
                   <span>{j.metrics_count} Metrics</span>
                   <div className="flex items-center space-x-1 font-semibold text-white group-hover:translate-x-0.5 transition">

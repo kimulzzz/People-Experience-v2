@@ -400,6 +400,10 @@ API kini bisa mengirim indeks dan skor `null` serta status `NO_DATA` (lihat `doc
 | `MetricDetailModal.jsx` | Nilai "—", "No survey data in this period - left out of the index", badge abu-abu "No Data", pertanyaan berlabel "No Data" tanpa skor. Catatan "Annual metric: shows the result of Jan–Sep 2026" untuk metrik tahunan pada filter MTD **dihapus di v2.37.0** (MTD kini selalu satu bulan, `period_window.basis = 'MONTH'`). |
 | `TrendChart.jsx` | Titik `null` menjadi celah (garis dipotong per segmen), tooltip "—". |
 
+## Catatan v2.46.0 - Kartu journey berwarna journey
+
+Kartu "5 Employee Experience Journeys" di `Dashboard.jsx` berlatar gradasi warna journey (`shadeHex(color, -0.28)` -> `color`), bukan lagi gradasi merah tema; ikon `bg-white/20`, progress bar putih, label `text-white/80`.
+
 ## Catatan v2.45.0 - Warna journey baru
 
 Warna journey kini mengikuti slide "People Experience Measurement": Arrival `#2A5BBA`, Connect `#D9534F`, Belong `#0F9CA3`, Contribute `#E08424`, Depart `#8731C8` (`px_journeys.color` + seed + `GlossaryView.jsx`). Tabel palet di §4 di bawah (Bright Orange/Amber/Royal Purple/Digital Teal/Magenta untuk Journey 1-5) sudah tidak berlaku untuk journey; Digital Teal `#16C0B7` tetap dipakai untuk Survey Index.

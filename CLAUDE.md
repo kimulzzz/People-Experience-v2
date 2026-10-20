@@ -677,6 +677,9 @@ domain model, not just descriptive:
 - **v2.45.0** (2026-10-20, see `CHANGELOG.md` [2.45.0]): journey colors follow the "People Experience Measurement" slide (`docs/warna journey PX.PNG`):
   Arrival `#2A5BBA`, Connect `#D9534F`, Belong `#0F9CA3`, Contribute `#E08424`, Depart `#8731C8` - in `px_journeys.color`, seed and `GlossaryView.jsx`.
 
+- **v2.46.0** (2026-10-20, see `CHANGELOG.md` [2.46.0]): Dashboard journey cards are painted in their own journey color (gradient `shadeHex(color,-0.28)` ->
+  color) instead of the red theme gradient; icon box white/20, progress bar white, labels white/80. Status chip colors unchanged.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan
