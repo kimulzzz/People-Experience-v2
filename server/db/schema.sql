@@ -573,3 +573,8 @@ GO
 IF COL_LENGTH(N'dbo.px_audit_log', N'is_test') IS NULL
 ALTER TABLE dbo.px_audit_log ADD is_test BIT NOT NULL CONSTRAINT DF_px_audit_is_test DEFAULT (0);
 GO
+-- v2.50.0: the question set used by an upload ({ "<metric_id>": [{ key, label, text, type, order }] }), so history and
+-- evidence keep the question texts of the moment of upload. NULL = an upload from before v2.50.0 (snapshot unknown).
+IF COL_LENGTH(N'dbo.px_survey_uploads', N'questions_snapshot_json') IS NULL
+ALTER TABLE dbo.px_survey_uploads ADD questions_snapshot_json NVARCHAR(MAX) NULL;
+GO

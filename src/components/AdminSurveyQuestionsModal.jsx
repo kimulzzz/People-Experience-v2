@@ -113,7 +113,8 @@ export default function AdminSurveyQuestionsModal({
       key: `q${nextIdx}_item`,
       label: `New Question ${nextIdx}`,
       text: 'Enter the full question prompt here...',
-      type: 'SCALE_1_5',
+      // v2.50.0: every question of an ESS metric is a percentage (the ESS summary reports %)
+      type: currentMetric?.survey_source === 'ESS' ? 'PERCENTAGE' : 'SCALE_1_5',
       mandatory: true
     };
     setQuestions([...questions, newQ]);
@@ -370,7 +371,9 @@ export default function AdminSurveyQuestionsModal({
                           <select
                             value={q.type || 'SCALE_1_5'}
                             onChange={(e) => handleQuestionChange(idx, 'type', e.target.value)}
-                            className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700 focus:bg-white focus:ring-1 focus:ring-red-500"
+                            disabled={currentMetric?.survey_source === 'ESS'}
+                            title={currentMetric?.survey_source === 'ESS' ? 'ESS questions are always Percentage (0–100%): the ESS summary reports every question as a percentage' : undefined}
+                            className="disabled:opacity-70 disabled:cursor-not-allowed bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700 focus:bg-white focus:ring-1 focus:ring-red-500"
                           >
                             {QUESTION_TYPES.map(t => (
                               <option key={t.value} value={t.value}>{t.label}</option>

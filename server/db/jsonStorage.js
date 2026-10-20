@@ -19,7 +19,10 @@ const {
   initialAppSettings,
   initialEmailSettings,
   LEGACY_OPTION_LABELS,
-  upgradeLegacyOptionLabels
+  upgradeLegacyOptionLabels,
+  ADDED_OPTION_VALUES,
+  addMissingOptions,
+  isRemovedEssDummyUpload
 } = require('./seedData');
 const { parseFilterOptions, normalizeDateString, todayDateString } = require('./filterUtils');
 const { normalizeScopes, rowInScopes, legacyUserScopes } = require('./scopeUtils');
@@ -243,6 +246,28 @@ function getStore() {
           const next = cur && upgradeLegacyOptionLabels(key, cur.value);
           if (next) store.appSettings[key] = { ...cur, value: next };
         });
+        // v2.50.0: option values added in a later version (question type PERCENTAGE), same rule as sqlStorage.topUpAddedOptions.
+        Object.keys(ADDED_OPTION_VALUES).forEach(key => {
+          const cur = store.appSettings[key];
+          const next = cur && addMissingOptions(key, cur.value);
+          if (next) store.appSettings[key] = { ...cur, value: next };
+        });
+        // v2.50.0: every question of an ESS metric is PERCENTAGE (the code defaults already are; an admin-saved set is
+        // switched here), same rule as sqlStorage.enforceEssPercentageQuestions. SYSTEM questions are never touched.
+        const essQuestionIds = (store.metrics || []).filter(m => m.metric_type === 'SURVEY' && m.survey_source === 'ESS').map(m => m.metric_id);
+        let essQuestionsSwitched = 0;
+        essQuestionIds.forEach(id => (((store.customSurveyQuestions || {})[id]) || []).forEach(q => {
+          if (q && q.type !== 'PERCENTAGE') { q.type = 'PERCENTAGE'; essQuestionsSwitched++; }
+        }));
+        if (essQuestionsSwitched) console.log(`[jsonStorage] ESS questions are percentages: ${essQuestionsSwitched} question(s) of ESS metrics switched to type PERCENTAGE.`);
+        // v2.50.0: remove the 2026 dummy ESS quarters (only seed uploads seed-ess-<metric>-2026-03|06|09 by "Seed (dummy)").
+        const removedEssUploads = new Set((store.surveyUploads || []).filter(isRemovedEssDummyUpload).map(u => u.upload_id));
+        if (removedEssUploads.size) {
+          const rowsBefore = (store.essResults || []).length;
+          store.essResults = (store.essResults || []).filter(r => !removedEssUploads.has(r.upload_id));
+          store.surveyUploads = store.surveyUploads.filter(u => !removedEssUploads.has(u.upload_id));
+          console.log(`[jsonStorage] Removed the 2026 dummy ESS quarters: ${removedEssUploads.size} seed upload(s), ${rowsBefore - store.essResults.length} ESS result row(s).`);
+        }
         if (!store.operationalRecords) {
           store.operationalRecords = JSON.parse(JSON.stringify(initialOperationalRecords));
         }
@@ -1196,7 +1221,8 @@ const storage = {
   // --- MANUAL SURVEY UPLOADS & RESPONSES ---
   getSurveyUploads() {
     const s = getStore();
-    return s.surveyUploads || [];
+    // v2.50.0: questions_snapshot is null for an upload from before v2.50.0 (same contract as sqlStorage)
+    return (s.surveyUploads || []).map(u => ({ ...u, questions_snapshot: u.questions_snapshot || null }));
   },
   getUploadedResponsesByMetric(metric_id) {
     const s = getStore();
@@ -1229,7 +1255,8 @@ const storage = {
       invalid_rows: batchData.invalid_rows,
       calculated_avg_score: batchData.calculated_avg_score,
       uploaded_by: batchData.uploaded_by || 'HR Admin',
-      uploaded_at: new Date().toISOString()
+      uploaded_at: new Date().toISOString(),
+      questions_snapshot: batchData.questions_snapshot || null // v2.50.0: the question set of the moment of upload
     };
 
     s.surveyUploads.unshift(uploadRecord);
@@ -1297,7 +1324,8 @@ const storage = {
       invalid_rows: meta.invalid_rows || 0,
       calculated_avg_score: meta.calculated_avg_score,
       uploaded_by: meta.uploaded_by || 'HR Admin',
-      uploaded_at: new Date().toISOString()
+      uploaded_at: new Date().toISOString(),
+      questions_snapshot: meta.questions_snapshot || null
     };
     const y = parseInt(meta.survey_year);
     const m = parseInt(meta.survey_month);

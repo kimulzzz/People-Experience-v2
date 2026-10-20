@@ -103,9 +103,9 @@ $$PE\ Index = 0.70 \times Index_{\text{survey}} + 0.30 \times Index_{\text{outco
 
 ---
 
-### 3.2 Normalisasi Skor Level Pertanyaan (4 Tipe Pertanyaan)
+### 3.2 Normalisasi Skor Level Pertanyaan (5 Tipe Pertanyaan)
 
-Sistem mendukung 4 tipe input pertanyaan pada kuesioner survei. Setiap tipe dinormalisasi ke skala seragam **$0.0\% - 100.0\%$**:
+Sistem mendukung 5 tipe input pertanyaan (tipe ke-5 `PERCENTAGE` sejak v2.50.0) pada kuesioner survei. Setiap tipe dinormalisasi ke skala seragam **$0.0\% - 100.0\%$**:
 
 #### 1. Skala 1 s/d 5 (`SCALE_1_5`)
 Rating likert 5 skala.
@@ -127,6 +127,9 @@ $$\% \text{Ya}_k = \left( \frac{N_{\text{Ya}}}{N_{\text{Ya}} + N_{\text{Tidak}}}
 Komentar dan saran teks bebas.
 - **Sifat Komputasi**: *Non-scorable* (dikecualikan dari penyebut nilai rerata numerik responden agar tidak mendistorsi bobot matematis).
 - **Output**: Disimpan sebagai feed verbatim kualitatif untuk analisis sentimen dan referensi AI Action Library.
+
+#### 5. Persentase (`PERCENTAGE`, sejak v2.50.0)
+Nilai 0 s/d 100 (%), dipakai apa adanya: $\text{Normalized Score}_i = V_i$. Wajib untuk semua pertanyaan metrik ESS (ringkasan ESS melaporkan setiap pertanyaan dalam persen); boleh dipakai metrik SYSTEM (jawaban CSV 0-100, akhiran `%` diterima, di luar rentang -> baris ditolak).
 
 ---
 
@@ -194,11 +197,13 @@ Dimana:
 - $\text{\% Favorable}_q + \text{\% Neutral}_q + \text{\% Unfavorable}_q = 100\%$.
 - Setiap pertanyaan memiliki metadata aturan keterlihatan (*visible based on*) dan kewajiban pengisian (*required based on*).
 
+> **Sejak v2.32.0** skor metrik ESS = skor index (kolom F) ringkasan ESS `.xlsx` yang diunggah, bukan rumus di atas. **Sejak v2.50.0** pertanyaan yang ditampilkan selalu pertanyaan di Manage Questions (tipe `PERCENTAGE`); skor per pertanyaan di file dipetakan menurut posisi kolom (G = pertanyaan 1, H = pertanyaan 2, ...). Lihat `docs/04` "Catatan v2.50.0".
+
 ---
 
 ## ⏳ 4. Model Agregasi Waktu: Period Filter (YTD vs MTD)
 
-Aturan sejak v2.36.0; periode MTD per metrik diubah di v2.37.0. Jendela periode dihitung di `server/db/filterUtils.js` (`ytdEndMonth`, `periodWindow`, `parseFilterOptions`) dan dipakai kedua backend storage (`sqlStorage.buildResponseFilter`, `jsonStorage.applyResponseFilters`), sehingga SQL Server dan JSON membaca baris yang sama.
+Aturan sejak v2.36.0; periode MTD per metrik diubah di v2.37.0; periode ESS diubah lagi di v2.50.0 (*carry-forward*, lihat butir 3). Jendela periode dihitung di `server/db/filterUtils.js` (`ytdEndMonth`, `periodWindow`, `parseFilterOptions`) dan dipakai kedua backend storage (`sqlStorage.buildResponseFilter`, `jsonStorage.applyResponseFilters`), sehingga SQL Server dan JSON membaca baris yang sama.
 
 1. **Year-to-Date (YTD) - default**:
    - Tahun berjalan (jam server): 1 Januari s.d. **akhir bulan berjalan**. Contoh: 19 Okt 2026 -> 2026-01-01 s.d. 2026-10-31. Baris bertanggal setelah bulan ini tidak ikut.
@@ -206,17 +211,19 @@ Aturan sejak v2.36.0; periode MTD per metrik diubah di v2.37.0. Jendela periode 
    - `endMonth` eksplisit (titik Performance Trend mode YTD) dipakai, tetapi tidak pernah melewati batas di atas.
 
 2. **Month-to-Date (MTD, `YYYY-MM`)**:
-   - $D_{\text{filter}} = \{d \in D \mid \text{Format}(d.\text{date}, \text{'YYYY-MM'}) = \text{SelectedMonth}\}$ - hanya bulan itu, untuk **setiap** metrik SURVEY (sejak v2.37.0 juga metrik Annual dan ESS); `period_window.basis` selalu `MONTH`.
+   - $D_{\text{filter}} = \{d \in D \mid \text{Format}(d.\text{date}, \text{'YYYY-MM'}) = \text{SelectedMonth}\}$ - hanya bulan itu, untuk setiap metrik SURVEY SYSTEM (Monthly maupun Annual); `period_window.basis` = `MONTH`. Metrik ESS memakai aturan *carry-forward* (butir 3, sejak v2.50.0).
 
 3. **Periode per metrik** (sejak v2.37.0 tidak lagi ditentukan `update_frequency`, yang kembali hanya untuk pengingat e-mail):
 
    | Jenis metrik | YTD tahun Y | MTD Y-M |
    | :--- | :--- | :--- |
    | SURVEY SYSTEM (Monthly maupun Annual) | Januari s.d. batas YTD | Hanya bulan M |
-   | ESS (ringkasan `.xlsx`, `selectEssResult`) | Hasil terbaru tahun Y yang bulannya di dalam jendela | Hanya hasil yang Year + Month template-nya = Y-M; selain itu `NO_DATA` |
+   | ESS (ringkasan `.xlsx`, `selectEssResult`, sejak v2.50.0) | Hasil **terakhir** dengan tahun-bulan <= bulan akhir YTD (dibatasi jam server), dari tahun mana pun | Hasil **terakhir** dengan tahun-bulan <= Y-M, dari tahun mana pun |
    | OUTCOME | Snapshot saat ini, tanpa filter periode | Sama |
 
-   Tidak ada *carry-forward* (aturan v2.32.0 dihapus). Aturan v2.36.0 "metrik Annual pada MTD Y-M = Januari s.d. M" (`effectiveMetricPeriod`) dihapus di v2.37.0. Contoh dengan hasil ESS 2025-11 (file asli) + dummy 2026-03/06/09 (v2.37.0): metrik 9 = 92 pada MTD 2025-11 dan YTD 2025; `NO_DATA` pada MTD 2025-10, MTD 2025-12, MTD 2026-01 dan MTD 2026-10; MTD 2026-03 / 2026-06 / 2026-09 = hasil kuartal itu (MTD 2026-06 = 91.8); YTD 2026 (per 19 Okt 2026) = hasil 2026-09 (93.7). Response menyertakan `period_window = { from, to, basis }` per metrik SURVEY (`MONTH` untuk MTD, `YEAR_TO_MONTH` untuk YTD; OUTCOME `null`).
+   **ESS = *carry-forward* (sejak v2.50.0)**: ESS hanya sekali setahun (November, batas pengingat 25 November), jadi tahun berjalan memakai hasil tahun lalu sampai hasil tahun berjalan diunggah. `NO_DATA` hanya bila tidak ada hasil pada/sebelum akhir periode, atau periodenya belum dimulai (bulan/tahun depan; `essPeriodEndKey` = `null`). `period_window` metrik ESS = jendela periode yang dipilih dengan `basis: 'LATEST_RESULT'`; `ess_period` / `ess_period_label` = periode hasil yang dipakai; `ess_carried_forward` = `true` bila hasil itu sebelum periode yang dipilih (MTD: bulan lain; YTD: tahun sebelumnya). Contoh dengan satu-satunya hasil ESS 2025-11 (metrik 9 = 92 dari file asli): 92 pada MTD 2025-11 dan YTD 2025 (tidak carried), juga pada MTD 2025-12, MTD 2026-01 s.d. 2026-10 dan YTD 2026 (carried); `NO_DATA` pada MTD 2025-10, MTD 2024-12, YTD 2024.
+
+   Riwayat aturan ESS: v2.32.0 carry-forward -> v2.36.0 hanya tahun yang sama -> v2.37.0 hanya bulan template (MTD) -> **v2.50.0 carry-forward lagi** (aturan v2.37.0 dan dummy kuartal 2026-03/06/09 dihapus). Aturan v2.36.0 "metrik Annual pada MTD Y-M = Januari s.d. M" (`effectiveMetricPeriod`) dihapus di v2.37.0. Response menyertakan `period_window = { from, to, basis }` per metrik SURVEY (`MONTH` untuk MTD, `YEAR_TO_MONTH` untuk YTD, `LATEST_RESULT` untuk ESS; OUTCOME `null`).
 
 4. **Status `NO_DATA`**: metrik SURVEY tanpa data di jendelanya -> `has_data: false`, `raw_value` / `normalized_score` / `gap` = `null`, `sample_size` = 0. Tidak ada fallback ke `raw_value` statis (juga untuk metrik 12, yang `raw_value`-nya masih ditulis sinkron feedback event). Metrik ini tidak ikut Survey Index, rollup journey/checkpoint (§3.7) dan alert (§5). Metrik OUTCOME tidak pernah `NO_DATA`.
 

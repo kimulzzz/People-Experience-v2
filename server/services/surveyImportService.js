@@ -1,7 +1,7 @@
 // server/services/surveyImportService.js
 const storage = require('../db/storage');
 const { calculatePEIndex } = require('./calculationEngine');
-const { getQuestionsForMetric } = require('./metricQuestionService');
+const { getQuestionsForMetric, snapshotQuestions } = require('./metricQuestionService');
 const { isEssMetric } = require('../db/surveySource');
 
 function normalizeDateString(dateVal) {
@@ -263,6 +263,24 @@ async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetM
           return;
         }
 
+        if (qType === 'PERCENTAGE') {
+          // v2.50.0: a percentage 0-100 (a trailing "%" is allowed), used as is
+          if (rawVal === '' && matchingQ && !matchingQ.mandatory) return;
+          const numVal = parseFloat(rawVal.replace(/%\s*$/, '').replace(/,/g, '.'));
+          if (isNaN(numVal)) {
+            scoreValidationError = `The value for question '${qCol.key}' is not valid (${rawVal})`;
+            return;
+          }
+          if (numVal < 0 || numVal > 100) {
+            scoreValidationError = `The value of question '${qCol.key}' (${numVal}) is outside the range 0 - 100%`;
+            return;
+          }
+          ratingsMap[qCol.key] = numVal;
+          scorableNormalizedSum += numVal;
+          scorableCount += 1;
+          return;
+        }
+
         if (qType === 'SCALE_1_10') {
           const numVal = parseFloat(rawVal.replace(/,/g, '.'));
           if (isNaN(numVal)) {
@@ -390,7 +408,10 @@ async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetM
     valid_rows: validRows.length,
     invalid_rows: invalidRows.length,
     calculated_avg_score: batchAvgScore,
-    uploaded_by: options.uploadedBy || 'HR Admin'
+    uploaded_by: options.uploadedBy || 'HR Admin',
+    // v2.50.0: the question set of every metric in this batch as it is now, so history / evidence keep these texts
+    questions_snapshot: Object.fromEntries([...new Set(validRows.map(r => r.metric_id))]
+      .map(id => [id, snapshotQuestions(questionsByMetric[id] || [])]))
   }, validRows);
 
   // Trigger recalculation of PE Index

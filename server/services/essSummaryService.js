@@ -6,12 +6,17 @@
 //   Business Banking       | Directorate | 2025 | November | 449 | 0.91 | ...
 // The row whose Directorate starts with "PT Bank CIMB Niaga" (or Level = Bankwide) is the bankwide result; every
 // other row must be a directorate of the master. Scores may be fractions (0-1) or percentages (0-100).
+// v2.50.0: the question columns are mapped BY POSITION to the questions configured in Manage Questions (G = question 1,
+// H = question 2, ...); the header text of the file is ignored for mapping and display (kept as file_label for audit).
+// Every stored question carries the snapshot { key, label, text, type, order } of the moment of upload.
 // The .xlsx reader/writer lives in xlsxUtils.js (shared with the Exit Interview upload). This file holds the
 // validation + import, the template, the evidence CSV and the "which ESS result applies" rules of the engine.
 const fs = require('fs');
 const path = require('path');
 const storage = require('../db/storage');
 const { ytdEndMonth } = require('../db/filterUtils');
+const { snapshotQuestions } = require('./metricQuestionService');
+const { groupByQuestionSet, buildVersionedZip } = require('./evidenceVersions');
 
 // Original uploaded files are kept for the audit trail OUTSIDE server/uploads (which is served to every login).
 const ESS_UPLOAD_DIR = path.join(__dirname, '..', 'data', 'ess-uploads');
@@ -88,18 +93,25 @@ function parseIntCell(c) {
   return /^\d+$/.test(text) ? parseInt(text, 10) : null;
 }
 
+// The scorable questions of an ESS metric as configured in Manage Questions (display order). FREE_TEXT has no score.
+async function configuredEssQuestions(metricId) {
+  return (await storage.getSurveyQuestions(metricId)).filter(q => (q.type || 'SCALE_1_5') !== 'FREE_TEXT');
+}
+
 /**
  * Validates parsed sheet rows against the ESS summary layout and the directorate master.
- * Returns { errors: [{ row_number, column, reason }], rows, period: { year, month } | null, index_label, question_labels }.
- * Nothing is stored here; any error means the whole file is refused.
+ * configuredQuestions (v2.50.0): the metric's scorable questions in Manage Questions order. The question columns that
+ * carry values (G up to the last column with a value in any data row) must be exactly that many; column G = question 1.
+ * Returns { errors: [{ row_number, column, reason }], rows, period: { year, month } | null, index_label, question_labels,
+ * file_question_labels }. Nothing is stored here; any error means the whole file is refused.
  */
-function validateEssSheet(sheetRows, directorates) {
+function validateEssSheet(sheetRows, directorates, configuredQuestions = []) {
   const errors = [];
   const err = (row_number, column, reason) => errors.push({ row_number, column, reason });
   const header = sheetRows.find(r => r.row_number === 1);
   if (!header || header.cells.every(isBlank)) {
     err(1, null, 'Row 1 must be the header: Directorate | Level | Year | Month | Participation | <Index name> | <question columns ...>.');
-    return { errors, rows: [], period: null, index_label: null, question_labels: [] };
+    return { errors, rows: [], period: null, index_label: null, question_labels: [], file_question_labels: [] };
   }
   HEADER_NAMES.forEach((names, idx) => {
     const text = cellText(cellAt(header, idx)).toLowerCase();
@@ -108,17 +120,22 @@ function validateEssSheet(sheetRows, directorates) {
   const indexLabel = cellText(cellAt(header, 5));
   if (!indexLabel) err(1, 'F', 'Column F must hold the index name (e.g. "Role Clarity & DS Support Index") and the index score in every row.');
 
-  // question columns = every header cell from G on (a data value under an empty header is an error)
-  const maxCol = sheetRows.reduce((mx, r) => Math.max(mx, r.cells.length), 0);
-  const questionCols = [];
-  for (let i = 6; i < maxCol; i++) {
-    const label = cellText(cellAt(header, i));
-    if (label) questionCols.push({ idx: i, label });
-  }
-
   const dirByKey = new Map((directorates || []).map(d => [canonicalDir(d.directorate_name), d.directorate_name]));
   const dataRows = sheetRows.filter(r => r.row_number > 1 && !r.cells.every(isBlank));
   if (!dataRows.length) err(null, null, 'The sheet has no data rows (row 2 onward must hold the Bankwide row and one row per directorate).');
+
+  // question columns = G up to the last column holding a value in any data row, mapped by position to the configured
+  // questions (the header text is not used for mapping); their number must equal the number of configured questions
+  const lastValueCol = dataRows.reduce((mx, r) => {
+    for (let i = r.cells.length - 1; i >= 6; i--) if (!isBlank(cellAt(r, i))) return Math.max(mx, i);
+    return mx;
+  }, 5);
+  const found = lastValueCol - 5;
+  const expected = configuredQuestions.length;
+  if (found !== expected) {
+    err(1, found > 0 ? `G-${colLetter(lastValueCol)}` : 'G', `The file has ${found} question column${found === 1 ? '' : 's'} with values${found > 0 ? ` (G-${colLetter(lastValueCol)})` : ''}, but ${expected} question${expected === 1 ? ' is' : 's are'} configured for this metric in Manage Questions. Column G must hold question 1, H question 2, and so on - download the current template.`);
+  }
+  const questionCols = configuredQuestions.map((q, i) => ({ idx: 6 + i, q, fileLabel: cellText(cellAt(header, 6 + i)) || null }));
 
   const out = [];
   const seen = new Map();
@@ -162,16 +179,14 @@ function validateEssSheet(sheetRows, directorates) {
       if (p.error) err(n, 'F', `The index score ${p.error}.`); else indexScore = p.value;
     }
     const questions = [];
-    questionCols.forEach(q => {
-      const c = cellAt(r, q.idx);
-      if (isBlank(c)) { questions.push({ label: q.label, score: null }); return; }
+    questionCols.forEach(({ idx, q, fileLabel }, i) => {
+      const snap = { ...snapshotQuestions([q])[0], order: i + 1, file_label: fileLabel };
+      const c = cellAt(r, idx);
+      if (isBlank(c)) { questions.push({ ...snap, score: null }); return; }
       const p = parseScore(c);
-      if (p.error) err(n, colLetter(q.idx), `The score of "${q.label.slice(0, 60)}" ${p.error}.`);
-      else questions.push({ label: q.label, score: p.value });
+      if (p.error) err(n, colLetter(idx), `The score of question ${i + 1} ("${String(q.text || q.label || '').slice(0, 60)}") ${p.error}.`);
+      else questions.push({ ...snap, score: p.value });
     });
-    for (let i = 6; i < r.cells.length; i++) {
-      if (!questionCols.some(q => q.idx === i) && !isBlank(cellAt(r, i))) err(n, colLetter(i), `Column ${colLetter(i)} has a value but no question text in row 1.`);
-    }
 
     if (orgLevel) {
       const key = orgLevel === 'BANKWIDE' ? '__BANKWIDE__' : directorate;
@@ -188,61 +203,75 @@ function validateEssSheet(sheetRows, directorates) {
     rows: errors.length ? [] : out,
     period: period ? { year: period.year, month: period.month } : null,
     index_label: indexLabel || null,
-    question_labels: questionCols.map(q => q.label)
+    question_labels: questionCols.map(c => c.q.text || c.q.label),
+    file_question_labels: questionCols.map(c => c.fileLabel)
   };
 }
 
 // ------------------------------------------------------------------ result selection (used by the engine)
-// Participation-weighted mean of rows (plain mean when nobody participated). Question scores are pooled per label.
+// Participation-weighted mean of rows (plain mean when nobody participated). Question scores are pooled per POSITION
+// (v2.50.0; the rows of one period come from one upload, so position i is the same question in every row).
 function poolRows(rows) {
   const totalPart = rows.reduce((s, r) => s + (r.participation || 0), 0);
   const weightOf = r => (totalPart > 0 ? (r.participation || 0) : 1);
   const totalWeight = rows.reduce((s, r) => s + weightOf(r), 0);
   const index = totalWeight > 0 ? rows.reduce((s, r) => s + r.index_score * weightOf(r), 0) / totalWeight : 0;
-  const labels = [];
-  rows.forEach(r => (r.questions || []).forEach(q => { if (!labels.includes(q.label)) labels.push(q.label); }));
-  const questions = labels.map(label => {
+  const count = rows.reduce((mx, r) => Math.max(mx, (r.questions || []).length), 0);
+  const questions = Array.from({ length: count }, (_, i) => {
     let sum = 0;
     let w = 0;
+    let first = null;
     rows.forEach(r => {
-      const q = (r.questions || []).find(x => x.label === label);
+      const q = (r.questions || [])[i];
+      if (q && !first) first = q;
       if (q && q.score !== null && q.score !== undefined) { sum += q.score * weightOf(r); w += weightOf(r); }
     });
-    return { label, score: w > 0 ? round4(sum / w) : null };
+    return { ...(first || {}), score: w > 0 ? round4(sum / w) : null };
   });
   return { index: round4(index), participation: totalPart, questions };
 }
 
 /**
- * Which ESS result applies to one metric for a period + org selection (v2.36.0: strict period, no carry-forward):
- * MTD Y-M -> only a result of exactly Y-M; YTD Y -> the latest result of year Y whose month lies inside the YTD
- * window (Jan .. the clock-capped end month, see filterUtils.ytdEndMonth). A result outside the window is never used.
+ * The last month (key year*100+month) an ESS result may come from for a period (v2.50.0): the period's end - MTD Y-M =
+ * Y-M, YTD Y = the clock-capped YTD end month - or null when the period has not started yet (a future month or year).
+ */
+function essPeriodEndKey(period) {
+  const y = parseInt(period.year, 10);
+  if (!/^\d{4}$/.test(String(period.year)) || !Number.isFinite(y)) return null;
+  const now = new Date();
+  const nowKey = now.getFullYear() * 100 + now.getMonth() + 1;
+  if (String(period.mode || 'YTD').toUpperCase() === 'MTD') {
+    const m = parseInt(period.month, 10);
+    if (!(m >= 1 && m <= 12)) return null;
+    return y * 100 + m > nowKey ? null : y * 100 + m;
+  }
+  const end = ytdEndMonth(String(period.year), period.endMonth);
+  return end >= 1 && end <= 12 ? y * 100 + end : null;
+}
+
+/**
+ * Which ESS result applies to one metric for a period + org selection (v2.50.0: carry-forward; replaces the exact-month
+ * rule of v2.37.0). ESS runs once a year (November), so every period - YTD or MTD - reads the LATEST result whose
+ * (year, month) is on or before the period's end, from any earlier year: 2026 reads November 2025 until a 2026 result
+ * is uploaded. No result on or before the end, or a period that has not started yet -> null (NO_DATA).
  *   results   : every ESS result row (all metrics) - fetched once per calculation
  *   period    : { mode, year, month, endMonth }
  *   org       : { directorates: null | [names] }  null = bankwide (no directorate filter)
- * Returns null (no data) or { year, month, period, index, participation, questions, level, rows }.
+ * Returns null (no data) or { year, month, period, period_label, carried_forward, index, participation, questions, level, rows }.
  */
 function selectEssResult(results, metricId, period, org) {
-  const y = parseInt(period.year, 10);
-  if (!Number.isFinite(y)) return null;
-  const mode = String(period.mode || 'YTD').toUpperCase();
-  let inWindow;
-  if (mode === 'MTD') {
-    const m = parseInt(period.month, 10);
-    if (!(m >= 1 && m <= 12)) return null;
-    inWindow = r => r.survey_year === y && r.survey_month === m;
-  } else {
-    const end = ytdEndMonth(String(period.year), period.endMonth);
-    if (!(end >= 1 && end <= 12)) return null; // a future year (or invalid year): empty window
-    inWindow = r => r.survey_year === y && r.survey_month <= end;
-  }
-  const mine = (results || []).filter(r => r.metric_id === metricId && inWindow(r));
+  const endKey = essPeriodEndKey(period);
+  if (endKey === null) return null;
+  const mine = (results || []).filter(r => r.metric_id === metricId && r.survey_year * 100 + r.survey_month <= endKey);
   if (!mine.length) return null;
   const latestKey = mine.reduce((mx, r) => Math.max(mx, r.survey_year * 100 + r.survey_month), 0);
   const rows = mine.filter(r => r.survey_year * 100 + r.survey_month === latestKey);
   const year = Math.floor(latestKey / 100);
   const month = latestKey % 100;
-  const base = { year, month, period: periodCode(year, month), period_label: periodLabel(year, month), rows };
+  // carried forward = the result lies before the selected period (MTD: another month; YTD: an earlier year)
+  const isMtd = String(period.mode || 'YTD').toUpperCase() === 'MTD';
+  const carriedForward = isMtd ? latestKey !== endKey : year !== parseInt(period.year, 10);
+  const base = { year, month, period: periodCode(year, month), period_label: periodLabel(year, month), carried_forward: carriedForward, rows };
 
   if (!org || !org.directorates) {
     const bank = rows.find(r => r.org_level === 'BANKWIDE');
@@ -280,7 +309,8 @@ async function importEssSummary(buffer, fileName, metric, { uploadedBy } = {}) {
     return { success: false, status: 400, error: e.message, errors: [{ row_number: null, column: null, reason: e.message }] };
   }
   const directorates = await storage.getDirectorates();
-  const v = validateEssSheet(sheetRows, directorates);
+  const configured = await configuredEssQuestions(metric.metric_id);
+  const v = validateEssSheet(sheetRows, directorates, configured);
   if (v.errors.length) {
     return {
       success: false,
@@ -308,7 +338,8 @@ async function importEssSummary(buffer, fileName, metric, { uploadedBy } = {}) {
       calculated_avg_score: bankwideIndex,
       uploaded_by: uploadedBy || 'HR Admin',
       survey_year: v.period.year,
-      survey_month: v.period.month
+      survey_month: v.period.month,
+      questions_snapshot: { [metric.metric_id]: snapshotQuestions(configured) }
     }, v.rows);
   } catch (e) {
     fs.unlink(filePath, () => {});
@@ -326,6 +357,7 @@ async function importEssSummary(buffer, fileName, metric, { uploadedBy } = {}) {
     period_label: periodLabel(v.period.year, v.period.month),
     index_label: v.index_label,
     question_labels: v.question_labels,
+    file_question_labels: v.file_question_labels,
     rows_imported: v.rows.length,
     // same counters as a CSV upload (history / UI)
     total_rows: v.rows.length,
@@ -351,8 +383,9 @@ function essOriginalFilePath(uploadId) {
 
 // ------------------------------------------------------------------ template (.xlsx writer)
 // The ESS summary template of one metric: same layout as the ESS result file, values left empty.
+// v2.50.0: the question columns are always the questions configured in Manage Questions (display order).
 async function generateEssTemplateXlsx(metric) {
-  const questions = (await storage.getSurveyQuestions(metric.metric_id)).filter(q => (q.type || 'SCALE_1_5') !== 'FREE_TEXT');
+  const questions = await configuredEssQuestions(metric.metric_id);
   const directorates = await storage.getDirectorates();
   const header = [...COLUMN_TITLES, indexTitle(metric), ...questions.map(q => q.text || q.label)];
   const rows = [header, [BANKWIDE_NAME, 'Bankwide']];
@@ -362,11 +395,14 @@ async function generateEssTemplateXlsx(metric) {
 
 // ------------------------------------------------------------------ evidence
 /**
- * Evidence CSV of the stored ESS summary rows of one metric (every period), with the upload that brought them.
+ * Evidence of the stored ESS summary rows of one metric (every period), with the upload that brought them.
  * options.scopes (a PIC's data scope) limits the directorate rows; the Bankwide row is only for viewers without a
  * scope limit (the Admin).
+ * v2.50.0: every row is exported with the question texts stored with it (snapshot of the upload; before v2.50.0 the file
+ * header). One question-set version -> { kind: 'csv', content } (the CSV of before); several -> { kind: 'zip', buffer,
+ * fileName } with one CSV per version + README.txt.
  */
-async function generateEssEvidenceCsv(metric, options = {}) {
+async function generateEssEvidence(metric, options = {}) {
   const escapeCsv = (val) => {
     if (val === null || val === undefined) return '';
     let str = val.toString();
@@ -382,30 +418,46 @@ async function generateEssEvidenceCsv(metric, options = {}) {
   const uploads = new Map((await storage.getSurveyUploads()).map(u => [u.upload_id, u]));
   rows.sort((a, b) => (b.survey_year * 100 + b.survey_month) - (a.survey_year * 100 + a.survey_month)
     || (a.org_level === b.org_level ? String(a.directorate).localeCompare(String(b.directorate)) : (a.org_level === 'BANKWIDE' ? -1 : 1)));
-  const labels = [];
-  rows.forEach(r => (r.questions || []).forEach(q => { if (!labels.includes(q.label)) labels.push(q.label); }));
-  const headers = ['Directorate', 'Level', 'Year', 'Month', 'Participation', 'Index_%', ...labels.map(l => `${l} (%)`),
-    'Metric_ID', 'Metric_Name', 'Upload_ID', 'File_Name', 'Uploaded_By', 'Uploaded_At'];
-  const lines = [headers.map(escapeCsv).join(',')];
-  rows.forEach(r => {
-    const u = uploads.get(r.upload_id) || {};
-    lines.push([
-      r.org_level === 'BANKWIDE' ? BANKWIDE_NAME : r.directorate,
-      r.org_level === 'BANKWIDE' ? 'Bankwide' : 'Directorate',
-      r.survey_year,
-      MONTH_NAMES[r.survey_month - 1],
-      r.participation,
-      r.index_score,
-      ...labels.map(l => { const q = (r.questions || []).find(x => x.label === l); return q && q.score !== null ? q.score : ''; }),
-      metric.metric_id,
-      metric.metric_name,
-      r.upload_id,
-      u.file_name || '',
-      u.uploaded_by || '',
-      u.uploaded_at || ''
-    ].map(escapeCsv).join(','));
+  // the question texts of a row: its own snapshot (key + text) or, before v2.50.0, the header text of its file
+  const versions = groupByQuestionSet(rows, r => ({
+    questions: (r.questions || []).map(q => (q.key ? { key: q.key, label: q.label, text: q.text, type: q.type } : { text: q.label })),
+    source: (r.questions || []).some(q => q.key) ? 'SNAPSHOT' : 'FILE_HEADER',
+    uploaded_at: (uploads.get(r.upload_id) || {}).uploaded_at || r.created_at
+  }));
+  const csvOf = vRows => {
+    const count = vRows.reduce((mx, r) => Math.max(mx, (r.questions || []).length), 0);
+    const first = vRows.find(r => (r.questions || []).length === count) || { questions: [] };
+    const labels = first.questions.map(q => q.text || q.label);
+    const headers = ['Directorate', 'Level', 'Year', 'Month', 'Participation', 'Index_%', ...labels.map(l => `${l} (%)`),
+      'Metric_ID', 'Metric_Name', 'Upload_ID', 'File_Name', 'Uploaded_By', 'Uploaded_At'];
+    const lines = [headers.map(escapeCsv).join(',')];
+    vRows.forEach(r => {
+      const u = uploads.get(r.upload_id) || {};
+      lines.push([
+        r.org_level === 'BANKWIDE' ? BANKWIDE_NAME : r.directorate,
+        r.org_level === 'BANKWIDE' ? 'Bankwide' : 'Directorate',
+        r.survey_year,
+        MONTH_NAMES[r.survey_month - 1],
+        r.participation,
+        r.index_score,
+        ...labels.map((_, i) => { const q = (r.questions || [])[i]; return q && q.score !== null && q.score !== undefined ? q.score : ''; }),
+        metric.metric_id,
+        metric.metric_name,
+        r.upload_id,
+        u.file_name || '',
+        u.uploaded_by || '',
+        u.uploaded_at || ''
+      ].map(escapeCsv).join(','));
+    });
+    return '﻿' + lines.join('\r\n');
+  };
+  if (versions.length <= 1) return { kind: 'csv', content: csvOf(rows) };
+  const zip = await buildVersionedZip({
+    baseName: `Evidence_ESS_Summary_Metric_${metric.metric_id}`,
+    title: `ESS summary evidence - metric ${metric.metric_id} ${metric.metric_name}`,
+    versions: versions.map(v => ({ ...v, csv: csvOf(v.items) }))
   });
-  return '﻿' + lines.join('\r\n');
+  return { kind: 'zip', ...zip };
 }
 
 module.exports = {
@@ -420,10 +472,12 @@ module.exports = {
   parseScore,
   poolRows,
   selectEssResult,
+  essPeriodEndKey,
   essOrgFor,
+  configuredEssQuestions,
   importEssSummary,
   essOriginalFilePath,
   buildXlsx,
   generateEssTemplateXlsx,
-  generateEssEvidenceCsv
+  generateEssEvidence
 };

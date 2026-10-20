@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(346-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(355-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (346 cases on SQL; v2.49.0 run 267/267, 9 skipped, media modules 27/32/38/41/42/43 skipped; full JSON suite not re-run since v2.30.1) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (355 cases on SQL; v2.50.0 run 269/269, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (32 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
@@ -707,6 +707,14 @@ domain model, not just descriptive:
 
 - **v2.49.1** (2026-10-20, see `CHANGELOG.md` [2.49.1]): Admin Score Deficit Alerts now follow the Header directorate/sub-directorate filter
   (`App.jsx` always sends them to `/api/alerts`; backend already supported it). Alerts stay current-year YTD.
+
+- **v2.50.0** (2026-10-20, see `CHANGELOG.md` [2.50.0], `docs/01` §4, `docs/04`/`05` "Catatan v2.50.0", `docs/06`, `docs/07` §39, `docs/08` §23, `SQLServerDB.md` §22): user: ESS question texts in the detail
+  differed from Manage Questions; ESS = once a year. Now ESS template + web = Manage Questions; file columns map BY POSITION (G = Q1...), count must match (else 400); header kept as `file_label`.
+  New question type `PERCENTAGE` (all ESS questions, enforced at every boot + on save). ESS = latest result <= period end, any year (`basis LATEST_RESULT`, `ess_carried_forward`; SUPERSEDES the
+  v2.37.0 exact-month rule); 2026 dummy ESS quarters deleted at boot (33 uploads/429 rows). Uploads store `px_survey_uploads.questions_snapshot_json`; detail flags `questions_changed_since_upload`
+  + "At upload:" lines; evidence = .zip (one CSV per question-set version + README) when versions differ. Explore Metrics: Detail/View Data/FIXED removed (row click opens detail). YTD 2026
+  PX 85.27 -> 84.43. OPEN: metric 9's configured questions don't match the real file's column order (G/H swapped, I differs) - fix in Manage Questions. Old uploads have no snapshot (no backfill).
+  Module 52 (9), Modules 11/39/45/46 adjusted -> SQL 269/269, 16 skipped (suite 355); JSON full suite not run.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

@@ -5,8 +5,7 @@ import { surveySourceLabel, surveySourceBadgeClass, surveyTemplateFileName } fro
 import { 
   Layers, 
   Search, 
-  Filter, 
-  Eye, 
+  Filter,
   FileSpreadsheet, 
   Download,
   FileText,
@@ -294,10 +293,6 @@ export default function Calculator({
             <FileSpreadsheet className="w-3 h-3 text-slate-500 shrink-0" />
             <span><strong>Upload:</strong> Import CSV (ESS: .xlsx summary)</span>
           </div>
-          <div className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-white/90 text-slate-700 font-semibold text-[10.5px]">
-            <Eye className="w-3 h-3 text-slate-500 shrink-0" />
-            <span><strong>Detail:</strong> Metric Drilldown</span>
-          </div>
         </div>
 
         {/* Right: Table View & Quick Scroll Controls */}
@@ -391,9 +386,6 @@ export default function Calculator({
                 <th className={`py-3 ${isFit ? 'px-3 w-[260px]' : 'px-3.5 w-[300px]'} text-right sticky right-0 bg-[var(--theme-deep)] backdrop-blur-xs z-30 shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.3)] border-l border-white/10`}>
                   <div className="flex items-center justify-end space-x-1.5">
                     <span>Actions & Evidence</span>
-                    <span className="text-[9px] bg-white/90 text-[var(--theme-dark)] px-1.5 py-0.2 rounded font-bold uppercase">
-                      Fixed
-                    </span>
                   </div>
                 </th>
               </tr>
@@ -620,7 +612,7 @@ export default function Calculator({
                               {/* 2. Download Evidence */}
                               <a
                                 href={`/api/surveys/evidence?metric_id=${m.metric_id}&period=${period || 'YTD'}`}
-                                download={`Evidence_Survey_Metric_${m.metric_id}_${period || 'YTD'}.csv`}
+                                download /* name from the server: .csv, or .zip when the rows span several question sets (v2.50.0) */
                                 onClick={(e) => e.stopPropagation()}
                                 className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
                                 title={`Download Survey Evidence and Respondent Records for ${m.metric_name}`}
@@ -643,36 +635,8 @@ export default function Calculator({
                               </button>
 
                               </>)}
-
-                              {/* 4. View Detail */}
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (onSelectMetric) onSelectMetric(m.metric_id);
-                                }}
-                                className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
-                                title={`Drilldown details and analytics for ${m.metric_name}`}
-                              >
-                                <Eye className="w-3 h-3 text-slate-500 shrink-0" />
-                                <span>Detail</span>
-                              </button>
                             </>
-                          ) : (
-                            <>
-                              {/* Outcome Metric Actions */}
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (onSelectMetric) onSelectMetric(m.metric_id);
-                                }}
-                                className="inline-flex items-center space-x-1 px-2.5 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
-                                title={`View Data & Specs for Outcome Metric ${m.metric_id}`}
-                              >
-                                <Database className="w-3 h-3 text-slate-500 shrink-0" />
-                                <span>View Data</span>
-                              </button>
-                            </>
-                          )}
+                          ) : null /* v2.50.0: no Detail / View Data button - clicking the metric row opens the detail */}
                         </div>
                       </td>
                     </tr>

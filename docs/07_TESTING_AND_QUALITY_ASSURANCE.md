@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    51 MODUL PENGUJIAN    │     346 AUTOMATED TESTS     │       100% PASS RATE          │
+│    52 MODUL PENGUJIAN    │     355 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -74,6 +74,8 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 32. **ESS Metric #24 (Performance Feedback Quality Index)**: Dimensi *Performance Feedback & Development*, 3 questions.
 33. **ESS Metric #25 (Meaningful Contribution Index)**: Dimensi *Purpose & Meaningful Contribution*, 3 questions.
 34. **ESS Metric #27 (Intent to Stay Index)**: Dimensi *Employee Commitment*, 3 questions.
+
+Sejak v2.50.0 setiap tes Modul 11 juga memastikan `questions_breakdown` (key + teks) = pertanyaan terkonfigurasi di Manage Questions (`GET /api/admin/survey-questions/:id`) dan semua bertipe `PERCENTAGE` (lihat §39).
 
 ### 📦 Modul 12: Date Normalization & Canonical ISO YYYY-MM-DD Format (2 Test Cases)
 35. **Standardized ISO Dates in Calculated Metrics**: Memvalidasi seluruh tanggal metrik (`last_survey_date`, `last_data_date`) mematuhi format ISO standar `YYYY-MM-DD`.
@@ -989,6 +991,8 @@ Perubahan tampilan saja (`MetricDetailModal.jsx`) + teks `ess_summary.descriptio
 
 ## 31. v2.37.0 - Periode MTD ESS = Bulan Template, Seed ESS 2026
 
+> Aturan ESS "hanya bulan template" dan kuartal dummy 2026 di bagian ini **diganti di v2.50.0** (carry-forward, dummy dihapus); Modul 46 ditulis ulang, lihat §39.
+
 **Regression suite: 215/215 lulus, 0 gagal, 16 dilewati, di SQL Server** (angka dari laporan developer, backend kedua; penulis dokumen ini tidak menjalankan ulang suite) dengan `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`. 215 = 212 (v2.36.0) + 3 (Modul 46). Ukuran suite penuh di SQL kini 301 = 298 + 3 (dihitung penulis, bukan dari output). Hitungan statis `await runTest(` 288 (285 + 3). **Suite JSON penuh tidak dijalankan**; developer hanya menjalankan cek in-process terarah pada backend JSON (`store.json` dipulihkan). Jumlah data setelah run: ESS 572 baris (143 + 429 seed 2026), 205 upload (172 + 33), 2.788 baris respons, 1 user.
 
 **Modul 46 = 13 tes di SQL, 12 di JSON** (dihitung dari kode: 13 pemanggilan `runTest`, satu di dalam `if (isSql46())`). Perubahan terhadap §30:
@@ -1090,3 +1094,32 @@ Tidak diuji otomatis: tampilan panel, urutan kartu journey, sumbu Y grafik, kart
 **Hasil** (developer, SQL, backend kedua; modul media 27, 32, 38, 41, 42, 43 di-skip; modul 8 dan 24 dijalankan karena route event berubah): run 1 266/267 - tes Modul 49 masih memakai `/api/events`, diperbaiki; run 2 **267/267 lulus, 0 gagal, 9 tes dilewati**. JSON: cek terarah pada salinan sementara 12/12; suite JSON penuh tidak dijalankan. `vite build` OK. Ukuran suite penuh SQL kini 346 (339 + 7); hitungan statis `await runTest(` 333 (326 + 7), selisih 13 sama seperti sebelumnya.
 
 Tidak diuji otomatis: tampilan Header, fallback tab, pesan tanpa menu dan form Manage Users.
+
+## 39. v2.50.0 - Pertanyaan ESS dari Manage Questions, tipe PERCENTAGE, ESS carry-forward, snapshot pertanyaan
+
+**Modul 52** (9 tes; 1 khusus SQL di dalam `if (isSql52())`). Membuat metrik ESS dan SYSTEM sementara (`REGRESSION M52 ...`) dan menghapusnya di akhir beserta upload, hasil, respons dan file asli ESS-nya; data asli hanya dibaca.
+
+| # | Jenis | Yang diuji |
+| :---: | :---: | :--- |
+| 1 | Positif | Katalog `question_types` memuat `PERCENTAGE` "Percentage (0–100%)" dan 4 tipe lama tetap ada; API pertanyaan menerima `PERCENTAGE` untuk metrik SYSTEM; semua pertanyaan 11 metrik ESS `PERCENTAGE` setelah boot; pertanyaan metrik SYSTEM 8 tidak ikut diubah |
+| 2 | Positif | Header template ESS = teks terkonfigurasi; menyimpan pertanyaan ESS menghasilkan `PERCENTAGE`; perubahan teks langsung terlihat di template |
+| 3 | Negatif | File dengan jumlah kolom pertanyaan bernilai yang berbeda dari pertanyaan terkonfigurasi (3 kolom dan 1 kolom untuk 2 pertanyaan) -> 400, tidak ada yang tersimpan; teks header yang berbeda BUKAN error |
+| 4 | Positif | Pemetaan posisi: G = pertanyaan 1, H = pertanyaan 2 apa pun headernya; detail menampilkan teks terkonfigurasi, header file sebagai `file_label`; upload menyimpan snapshot pertanyaan |
+| 5 | Positif | Teks pertanyaan diubah setelah upload: template dan detail langsung memakai teks baru, hasil lama ditandai "changed since upload" dengan teks aslinya; upload kedua membuat evidence menjadi `.zip` (satu CSV per set pertanyaan, teks A / teks B) + README |
+| 6 | Positif | CSV SYSTEM: pertanyaan `PERCENTAGE` menerima 0-100 (nilai > 100 ditolak), batch menyimpan snapshot, satu versi = CSV biasa; setelah teks diubah + upload baru evidence menjadi `.zip` dan detail menandai pertanyaan yang berubah |
+| 7 | Positif | Carry-forward di data asli: YTD 2026, MTD 2026-01 dan MTD 2026-10 membaca hasil 2025-11 untuk 11 metrik ESS (Role Clarity = 92), YTD 2025 juga; metrik sementara membaca 2025-11 sampai upload 2026-03-nya |
+| 8 | Negatif | ESS sebelum hasil pertama = `NO_DATA` (MTD 2025-10: ke-11 metrik); kuartal dummy 2026 hilang (tidak ada upload `seed-ess-*-2026-*`, tidak ada hasil seed 2026) |
+| 9 | Positif, khusus SQL | Boot (switch `PERCENTAGE` + pembersihan kuartal dummy + top-up seed) tidak pernah menghapus upload ESS Admin periode 2026 |
+
+**Modul lama disesuaikan** (jumlah tes tidak berubah):
+
+| Modul | Perubahan |
+| :--- | :--- |
+| 11 | Selain asersi lama: `questions_breakdown` (key + teks) = pertanyaan terkonfigurasi, semua `PERCENTAGE` |
+| 39 | Fixture upload ESS PIC: sel pertanyaan yang dulu kosong kini berisi nilai (metrik ESS sementara punya 1 pertanyaan, jumlah kolom harus cocok) |
+| 45 | Teks detail = teks terkonfigurasi, header file sebagai `file_label`, `question_text_source` `SNAPSHOT`, `questions_changed_since_upload` false; tes PIC mengonfigurasi 2 pertanyaan dulu; pemulihan SQL mengembalikan `questions_json` seed metrik 9 periode 2025-11 |
+| 46 | Ditulis ulang untuk carry-forward (tetap 13 tes di SQL, 12 di JSON): MTD 2025-11 / YTD 2025 = 92 tidak carried; MTD 2026-06 dan YTD 2026 = 2025-11 carried (`period_window.basis` `LATEST_RESULT`, jendela = bulan/tahun yang dipilih); `NO_DATA` untuk MTD 2025-10, MTD 2024-12, YTD 2024 dan bulan yang belum dimulai; MTD 2025-12 / 2026-01 / 2026-03 berisi ke-11 metrik dari 2025-11; tes boot SQL membuktikan upload Admin 2026-06 bertahan; tes Survey Index dan detail `NO_DATA` pindah ke MTD 2025-10 |
+
+**Hasil** (developer, SQL, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): run 1 268/269 - fixture Modul 39 (sel pertanyaan kosong), diperbaiki; run 2 **269/269 lulus, 0 gagal, 16 dilewati** (blok 8, 24, 27, 32, 38, 41, 42, 43 tidak dijalankan). JSON: hanya cek in-process pada salinan sementara; suite JSON penuh tidak dijalankan. Ukuran suite penuh SQL kini 355 (346 + 9); hitungan statis `await runTest(` 342 (333 + 9), selisih 13 sama seperti sebelumnya. Data setelah run: 27 metrik, 1 user, 172 upload, 2.788 baris respons, 143 baris ESS, 1.818 baris exit.
+
+**Tidak diuji otomatis / tidak terverifikasi**: suite JSON penuh; modul 8, 24, 27, 32, 38, 41, 42, 43 (dilewati); tampilan UI (catatan amber, baris "At upload", tombol yang dihapus di Explore Metrics, dropdown tipe terkunci) - tidak ada tes render; pengecekan browser dilakukan main session.

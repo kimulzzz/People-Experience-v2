@@ -235,7 +235,9 @@ const rowToUpload = r => ({
   invalid_rows: r.invalid_rows,
   calculated_avg_score: r.calculated_avg_score,
   uploaded_by: r.uploaded_by,
-  uploaded_at: iso(r.uploaded_at)
+  uploaded_at: iso(r.uploaded_at),
+  // v2.50.0: { "<metric_id>": [{ key, label, text, type, order }] } of the moment of upload; null = before v2.50.0
+  questions_snapshot: parseJson(r.questions_snapshot_json, null)
 });
 
 const rowToQuestion = r => {
@@ -487,6 +489,41 @@ async function enforceEssManualUpload() {
   console.log(`[sqlStorage] ESS metrics are always uploaded manually: requires_manual_upload turned on for metric(s) ${rows.map(r => r.metric_id).join(', ')}.`);
 }
 
+// v2.50.0: an ESS summary reports every question as a percentage, so every question of an ESS metric has type
+// PERCENTAGE. Switches the ones that are not (the admin route stores ESS questions as PERCENTAGE, so after the first
+// boot that needed it this finds nothing). SYSTEM survey questions are never touched. Returns the number of rows changed.
+async function enforceEssPercentageQuestions() {
+  const rows = await run(`UPDATE q SET q.question_type = 'PERCENTAGE' FROM dbo.px_survey_questions q
+                          JOIN dbo.px_metrics m ON m.metric_id = q.metric_id
+                          WHERE m.metric_type = 'SURVEY' AND m.survey_source = 'ESS' AND q.question_type <> 'PERCENTAGE';
+                          SELECT @@ROWCOUNT AS n;`);
+  const n = rows[0] ? rows[0].n : 0;
+  if (n) console.log(`[sqlStorage] ESS questions are percentages: ${n} question(s) of ESS metrics switched to type PERCENTAGE.`);
+  return n;
+}
+
+// v2.50.0: the 2026 dummy ESS quarters of v2.37.0 are no longer seeded (ESS = once a year, carry-forward). Deletes ONLY
+// the seed uploads seed-ess-<metric>-2026-03|06|09 with uploaded_by "Seed (dummy)" and their result rows; an admin
+// upload of any period is never touched. Returns { uploads, rows }.
+async function cleanupRemovedEssDummySeed() {
+  const ids = (await run(`SELECT upload_id, metric_id, uploaded_by FROM dbo.px_survey_uploads WHERE upload_id LIKE 'seed-ess-%'`))
+    .filter(seed.isRemovedEssDummyUpload).map(u => u.upload_id);
+  if (!ids.length) return { uploads: 0, rows: 0 };
+  const out = await inTransaction(async tx => {
+    let rows = 0;
+    let uploads = 0;
+    for (const id of ids) {
+      const r = await run('DELETE FROM dbo.px_ess_results WHERE upload_id = @id; SELECT @@ROWCOUNT AS n;', { id }, tx);
+      const u = await run('DELETE FROM dbo.px_survey_uploads WHERE upload_id = @id AND uploaded_by = @by; SELECT @@ROWCOUNT AS n;', { id, by: 'Seed (dummy)' }, tx);
+      rows += r[0] ? r[0].n : 0;
+      uploads += u[0] ? u[0].n : 0;
+    }
+    return { uploads, rows };
+  });
+  console.log(`[sqlStorage] Removed the 2026 dummy ESS quarters: ${out.uploads} seed upload(s), ${out.rows} ESS result row(s).`);
+  return out;
+}
+
 // ------------------------------------------------------------------ login accounts (px_users)
 const rowToUser = r => ({
   user_id: r.user_id,
@@ -666,6 +703,20 @@ async function topUpOptionLabels() {
     await run('UPDATE dbo.px_app_settings SET setting_value = @value, updated_at = SYSUTCDATETIME() WHERE setting_key = @key',
       { key, value: T.max(JSON.stringify(next)) });
     console.log(`[sqlStorage] Setting '${key}': Indonesian default option labels replaced with the English ones.`);
+  }
+}
+
+// v2.50.0: option values added to a value-locked catalog in a later version (question type PERCENTAGE) are appended to
+// the stored catalog; labels and the other options stay as the admin left them.
+async function topUpAddedOptions() {
+  for (const key of Object.keys(seed.ADDED_OPTION_VALUES || {})) {
+    const rows = await run('SELECT setting_value FROM dbo.px_app_settings WHERE setting_key = @key', { key });
+    if (!rows.length) continue;
+    const next = seed.addMissingOptions(key, parseJson(rows[0].setting_value, null));
+    if (!next) continue;
+    await run('UPDATE dbo.px_app_settings SET setting_value = @value, updated_at = SYSUTCDATETIME() WHERE setting_key = @key',
+      { key, value: T.max(JSON.stringify(next)) });
+    console.log(`[sqlStorage] Setting '${key}': added option(s) ${seed.ADDED_OPTION_VALUES[key].join(', ')}.`);
   }
 }
 
@@ -971,12 +1022,13 @@ async function importStore(store, log = () => {}) {
     // surveyUploads is newest-first in the JSON store; insert oldest-first so upload_seq grows with time.
     const uploads = [...(store.surveyUploads || [])].reverse();
     for (const u of uploads) {
-      await run(`INSERT INTO dbo.px_survey_uploads (upload_id, metric_id, file_name, total_rows, valid_rows, invalid_rows, calculated_avg_score, uploaded_by, uploaded_at)
-                 VALUES (@upload_id, @metric_id, @file_name, @total_rows, @valid_rows, @invalid_rows, @avg, @uploaded_by, @uploaded_at)`, {
+      await run(`INSERT INTO dbo.px_survey_uploads (upload_id, metric_id, file_name, total_rows, valid_rows, invalid_rows, calculated_avg_score, uploaded_by, uploaded_at, questions_snapshot_json)
+                 VALUES (@upload_id, @metric_id, @file_name, @total_rows, @valid_rows, @invalid_rows, @avg, @uploaded_by, @uploaded_at, @snap)`, {
         upload_id: u.upload_id, metric_id: Number.isInteger(u.metric_id) ? u.metric_id : null, file_name: u.file_name || '',
         total_rows: u.total_rows || 0, valid_rows: u.valid_rows || 0, invalid_rows: u.invalid_rows || 0,
         avg: u.calculated_avg_score === undefined ? null : u.calculated_avg_score,
-        uploaded_by: u.uploaded_by || 'HR Admin', uploaded_at: toDateObj(u.uploaded_at)
+        uploaded_by: u.uploaded_by || 'HR Admin', uploaded_at: toDateObj(u.uploaded_at),
+        snap: u.questions_snapshot ? T.max(JSON.stringify(u.questions_snapshot)) : null
       }, tx);
     }
     counts.survey_uploads = uploads.length;
@@ -1343,10 +1395,13 @@ const storage = {
     await migrateDirectorates();     // v2.31.0: old demo directorate names -> the 12 real ones (before any top-up)
     await inTransaction(async tx => { await seedSurveyQuestions(tx); await seedAppSettings(tx); await seedEmailSettings(tx); });
     await topUpOptionLabels();
+    await topUpAddedOptions();
     await topUpDirectory();
     await topUpMetricUnits();
     await topUpSurveySource();
     await enforceEssManualUpload();
+    await enforceEssPercentageQuestions();
+    await cleanupRemovedEssDummySeed();
     if (essUpgrade) {
       const cleaned = await cleanupEssRespondentRows();
       console.log(`[sqlStorage] ESS now uses uploaded summaries: deleted ${cleaned.responses} per-respondent ESS rows and ${cleaned.uploads} upload batches left empty.`);
@@ -1728,7 +1783,8 @@ const storage = {
       };
       await insertMetric(tx, metric);
       await upsertTarget(tx, newId, metric);
-      if (metric.metric_type === 'SURVEY') await replaceSurveyQuestions(tx, newId, defaultQuestionsFor(newId), false);
+      // v2.50.0: the questions of an ESS metric are percentages
+      if (metric.metric_type === 'SURVEY') await replaceSurveyQuestions(tx, newId, defaultQuestionsFor(newId).map(q => (surveySource === 'ESS' ? { ...q, type: 'PERCENTAGE' } : q)), false);
       return { ...metric, metric_weight: metric.weight };
     });
   },
@@ -2108,12 +2164,13 @@ const storage = {
       invalid_rows: batchData.invalid_rows,
       calculated_avg_score: batchData.calculated_avg_score,
       uploaded_by: batchData.uploaded_by || 'HR Admin',
-      uploaded_at: new Date().toISOString()
+      uploaded_at: new Date().toISOString(),
+      questions_snapshot: batchData.questions_snapshot || null
     };
     await inTransaction(async tx => {
-      await run(`INSERT INTO dbo.px_survey_uploads (upload_id, metric_id, file_name, total_rows, valid_rows, invalid_rows, calculated_avg_score, uploaded_by, uploaded_at)
-                 VALUES (@upload_id, @metric_id, @file_name, @total_rows, @valid_rows, @invalid_rows, @calculated_avg_score, @uploaded_by, @uploaded_at)`,
-        { ...record, uploaded_at: new Date(record.uploaded_at) }, tx);
+      await run(`INSERT INTO dbo.px_survey_uploads (upload_id, metric_id, file_name, total_rows, valid_rows, invalid_rows, calculated_avg_score, uploaded_by, uploaded_at, questions_snapshot_json)
+                 VALUES (@upload_id, @metric_id, @file_name, @total_rows, @valid_rows, @invalid_rows, @calculated_avg_score, @uploaded_by, @uploaded_at, @snap)`,
+        { ...record, questions_snapshot: undefined, uploaded_at: new Date(record.uploaded_at), snap: record.questions_snapshot ? T.max(JSON.stringify(record.questions_snapshot)) : null }, tx);
       await bulkInsertResponses(tx, record.upload_id, responses.map(normalizeResponse));
     });
     return record;
@@ -2149,12 +2206,13 @@ const storage = {
       invalid_rows: meta.invalid_rows || 0,
       calculated_avg_score: meta.calculated_avg_score,
       uploaded_by: meta.uploaded_by || 'HR Admin',
-      uploaded_at: new Date().toISOString()
+      uploaded_at: new Date().toISOString(),
+      questions_snapshot: meta.questions_snapshot || null
     };
     const replaced = await inTransaction(async tx => {
-      await run(`INSERT INTO dbo.px_survey_uploads (upload_id, metric_id, file_name, total_rows, valid_rows, invalid_rows, calculated_avg_score, uploaded_by, uploaded_at)
-                 VALUES (@upload_id, @metric_id, @file_name, @total_rows, @valid_rows, @invalid_rows, @calculated_avg_score, @uploaded_by, @uploaded_at)`,
-        { ...record, uploaded_at: new Date(record.uploaded_at) }, tx);
+      await run(`INSERT INTO dbo.px_survey_uploads (upload_id, metric_id, file_name, total_rows, valid_rows, invalid_rows, calculated_avg_score, uploaded_by, uploaded_at, questions_snapshot_json)
+                 VALUES (@upload_id, @metric_id, @file_name, @total_rows, @valid_rows, @invalid_rows, @calculated_avg_score, @uploaded_by, @uploaded_at, @snap)`,
+        { ...record, questions_snapshot: undefined, uploaded_at: new Date(record.uploaded_at), snap: record.questions_snapshot ? T.max(JSON.stringify(record.questions_snapshot)) : null }, tx);
       const del = await run(`DELETE FROM dbo.px_ess_results WHERE metric_id = @id AND survey_year = @y AND survey_month = @m; SELECT @@ROWCOUNT AS n;`,
         { id: record.metric_id, y: parseInt(meta.survey_year, 10), m: parseInt(meta.survey_month, 10) }, tx);
       for (const r of rows) await insertEssResult(tx, record.upload_id, { ...r, metric_id: record.metric_id, survey_year: meta.survey_year, survey_month: meta.survey_month });

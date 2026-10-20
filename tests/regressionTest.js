@@ -551,7 +551,7 @@ async function runRegressionSuite() {
 
   for (const item of essMetricsToTest) {
     await runTest(`Verify ESS Metric #${item.id} (${item.name}) has valid dimension, % favorable summary, and visible/required config`, async () => {
-      // v2.36.0: strict ESS period - the seed result (2025-11) is read through a 2025 window (no carry-forward into this year)
+      // the seed result (2025-11) read through a 2025 window (v2.50.0: later periods carry it forward too, see Module 52)
       const res = await fetch(`${BASE_URL}/api/metrics/${item.id}/detail?mode=YTD&year=2025`);
       assert.strictEqual(res.status, 200);
       const data = await res.json();
@@ -573,6 +573,10 @@ async function runRegressionSuite() {
       assert.strictEqual(q1.percent_unfavorable, null, 'unfavorable is not part of the ESS summary');
       assert.strictEqual(q1.visible_based_on, 'Always', `Q1 visible_based_on must be 'Always'`);
       assert.strictEqual(q1.required_based_on, 'Always', `Q1 required_based_on must be 'Always'`);
+      // v2.50.0: the questions shown are the ones configured in Manage Questions, all of type PERCENTAGE
+      const configured = (await (await fetch(`${BASE_URL}/api/admin/survey-questions/${item.id}`)).json()).questions;
+      assert.deepStrictEqual(data.questions_breakdown.map(q => [q.key, q.text]), configured.map(q => [q.key, q.text || q.label]));
+      assert.ok(configured.every(q => q.type === 'PERCENTAGE') && data.questions_breakdown.every(q => q.type === 'PERCENTAGE'), 'ESS questions are PERCENTAGE');
     });
   }
 
@@ -3571,7 +3575,8 @@ async function runRegressionSuite() {
           assert.strictEqual(calc.metrics.find(x => x.metric_id === id).can_upload, true, `PIC sees the upload buttons for ${id}`);
           assert.strictEqual((await csvFor(picUser, id)).status, 200);
           const up = m === essM
-            ? await postEssFile(id, await essXlsx([ESS_HEAD(), [A, 'Directorate', new Date().getFullYear(), 1, 1, 0.9, '']]), 'pic39.xlsx', picUser.cookie)
+            // v2.50.0: one value per configured question (the new ESS metric has 1 question), mapped by position
+            ? await postEssFile(id, await essXlsx([ESS_HEAD(), [A, 'Directorate', new Date().getFullYear(), 1, 1, 0.9, 0.9]]), 'pic39.xlsx', picUser.cookie)
             : await post36(picUser, { csvText: csv36([`93200${id}1,Pic Unggah ${id},pu${id}@cimbniaga.co.id,${csvCell(A)},${csvCell(divX)},${day39},5`]), metric_id: String(id), fileName: 'pic39.csv' });
           assert.strictEqual(up.status, 200, `PIC upload to ${id}`);
           const body = await up.json();
@@ -5531,9 +5536,8 @@ async function runRegressionSuite() {
         assert.ok(log.some(e => e.action === 'SURVEY_UPLOAD' && e.target.includes(`ESS summary metric ${RC};`) && e.target.includes(body.upload_id)), 'audited');
       });
 
-      // v2.36.0: strict period (no carry-forward) - the 2025-11 result only counts in a window that contains 2025-11,
-      // so the org-level checks read YTD 2025 (was: YTD of the current year via carry-forward).
-      await runTest('[POSITIVE] Strict ESS period and org level: YTD 2025 = Bankwide 92 / 7756 from 2025-11; Business Banking 91 / 449; a Human Resources division reads Human Resources (92.33 / 129, flagged); YTD 2025 to October and MTD 2025-10 = NO_DATA, full 2025 and MTD 2025-11 = the result', async () => {
+      // v2.50.0: carry-forward - the latest result on or before the period's end (Module 52 covers the later periods)
+      await runTest('[POSITIVE] ESS period and org level: YTD 2025 = Bankwide 92 / 7756 from 2025-11; Business Banking 91 / 449; a Human Resources division reads Human Resources (92.33 / 129, flagged); YTD 2025 to October and MTD 2025-10 = NO_DATA (no result on or before), full 2025 and MTD 2025-11 = the result', async () => {
         const year = 2025;
         const all = await m9calc(`mode=YTD&year=${year}`);
         assert.strictEqual(all.normalized_score, 92); assert.strictEqual(all.sample_size, 7756);
@@ -5558,14 +5562,19 @@ async function runRegressionSuite() {
         assert.strictEqual((await m9calc('mode=MTD&year=2025&month=10')).status, 'NO_DATA');
       });
 
-      await runTest('[POSITIVE] Detail of an ESS metric: participation, period "November 2025", per-question % favorable from the file (neutral/unfavorable null), results by directorate (Bankwide first for the Admin) and the upload of the period', async () => {
-        const d = await aj45(`/api/metrics/${RC}/detail?mode=YTD&year=2025`); // v2.36.0: the window must contain 2025-11
+      await runTest('[POSITIVE] Detail of an ESS metric: participation, period "November 2025", per-question % favorable from the file mapped BY POSITION to the configured questions (file header kept as file_label; neutral/unfavorable null), results by directorate (Bankwide first for the Admin) and the upload of the period', async () => {
+        const d = await aj45(`/api/metrics/${RC}/detail?mode=YTD&year=2025`);
         assert.strictEqual(d.is_ess_summary, true);
         assert.strictEqual(d.total_respondents, 7756);
         assert.strictEqual(d.ess_period_label, 'November 2025');
         assert.strictEqual(d.latest_survey_period, '2025-11');
         assert.deepStrictEqual(d.questions_breakdown.map(q => q.percent_favorable), [96, 90, 90]);
-        assert.deepStrictEqual(d.questions_breakdown.map(q => q.text), QS45);
+        // v2.50.0: the texts are the Manage Questions texts (G = question 1 ...), the file header text is only file_label
+        const configured45 = (await aj45(`/api/admin/survey-questions/${RC}`)).questions;
+        assert.deepStrictEqual(d.questions_breakdown.map(q => q.text), configured45.map(q => q.text || q.label));
+        assert.deepStrictEqual(d.questions_breakdown.map(q => q.file_label), QS45);
+        assert.strictEqual(d.question_text_source, 'SNAPSHOT');
+        assert.strictEqual(d.questions_changed_since_upload, false, 'uploaded with the current questions');
         assert.ok(d.questions_breakdown.every(q => q.percent_neutral === null && q.percent_unfavorable === null));
         assert.strictEqual(d.ess_results_by_directorate.length, 13);
         assert.strictEqual(d.ess_results_by_directorate[0].org_level, 'BANKWIDE');
@@ -5666,6 +5675,9 @@ async function runRegressionSuite() {
         assert.strictEqual(created.status, 201);
         const mid = (await created.json()).metric.metric_id;
         metrics45.push(mid);
+        // v2.50.0: the file's question columns must match the configured questions in number (2 here)
+        assert.strictEqual((await adminJson('POST', `/api/admin/survey-questions/${mid}`, { questions: [
+          { key: 'q1_a', label: 'Q A', text: 'Q A', type: 'SCALE_1_5', mandatory: true }, { key: 'q2_b', label: 'Q B', text: 'Q B', type: 'SCALE_1_5', mandatory: true }] })).status, 200);
         const file = await essXlsx([ESS_HEAD('PIC Index', ['Q A', 'Q B']), ['PT Bank CIMB Niaga Tbk', 'Bankwide', 2026, 2, 50, 0.81, 0.8, 0.82], ['Business Banking', 'Directorate', 2026, 'Feb', 20, 82, 80, ''], ['Human Resources', 'Directorate', 2026, 'Februari', 30, '79%', 0.79, 0.79]]);
         const res = await postEssFile(mid, file, 'pic45.xlsx', pic.cookie);
         const body = await res.json();
@@ -5726,6 +5738,12 @@ async function runRegressionSuite() {
           try {
             await pool.request().input('m', sql.Int, RC).input('u', sql.NVarChar, `seed-ess-${RC}-2025-11`)
               .query('UPDATE dbo.px_ess_results SET upload_id = @u WHERE metric_id = @m AND survey_year = 2025 AND survey_month = 11');
+            // v2.50.0: an upload stores a question snapshot per row; the seed rows hold only the file's header text
+            for (const r of require('../server/db/seedData').initialEssResults.filter(x => x.metric_id === RC && x.survey_year === 2025 && x.survey_month === 11)) {
+              await pool.request().input('m', sql.Int, RC).input('q', sql.NVarChar(sql.MAX), JSON.stringify(r.questions)).input('d', sql.NVarChar, r.directorate)
+                .query(`UPDATE dbo.px_ess_results SET questions_json = @q WHERE metric_id = @m AND survey_year = 2025 AND survey_month = 11
+                        AND ${r.org_level === 'BANKWIDE' ? "org_level = 'BANKWIDE'" : "org_level = 'DIRECTORATE' AND directorate = @d"}`);
+            }
             for (const id of uploads45.filter(Boolean)) await pool.request().input('u', sql.NVarChar, id).query('DELETE FROM dbo.px_survey_uploads WHERE upload_id = @u');
           } finally {
             await pool.close();
@@ -5813,41 +5831,42 @@ async function runRegressionSuite() {
       assert.ok(d.responses.length > 0 && d.responses.every(r => String(r.survey_date).startsWith(sep)), `MTD ${sep}: only rows of that month`);
     });
 
-    // v2.37.0: an ESS result only counts in MTD for EXACTLY its template month (Year + Month); update_frequency no
-    // longer changes the period. Seed: 2025-11 (metric 9 = the user's real file) + dummy quarters 2026-03/06/09.
+    // v2.50.0: ESS runs once a year (November): every period reads the LATEST result on or before its end, from any
+    // earlier year (carry-forward; replaces the v2.37.0 exact-month rule). Seed: 2025-11 only (metric 9 = the real file).
     const essSeed46 = require('../server/db/seedData').initialEssResults;
-    const seedBank46 = (y, m) => essSeed46.find(r => r.metric_id === RC46 && r.survey_year === y && r.survey_month === m && r.org_level === 'BANKWIDE').index_score;
     const essOf46 = c => c.metrics.filter(m => m.metric_type === 'SURVEY' && m.survey_source === 'ESS');
 
-    await runTest('[POSITIVE] ESS period = the template month: Role Clarity MTD 2025-11 = YTD 2025 = 92 (basis MONTH); MTD 2026-06 = the seeded 2026-06 bankwide value; YTD 2026 reads the latest quarter 2026-09', async () => {
+    await runTest('[POSITIVE] ESS carry-forward: Role Clarity MTD 2025-11 = YTD 2025 = 92 (basis LATEST_RESULT, not carried); MTD 2026-06 and YTD 2026 read 2025-11 (= 92, carried forward); the detail says so', async () => {
       assert.strictEqual(rc46 ? rc46.update_frequency : 'ONE_TIME_ANNUAL', 'ONE_TIME_ANNUAL', 'still annual (reminders only)');
       const nov = metricOf46(await calc46('mode=MTD&year=2025&month=11'), RC46);
-      assert.deepStrictEqual([nov.normalized_score, nov.ess_period], [92, '2025-11']);
-      assert.deepStrictEqual(nov.period_window, { from: '2025-11-01', to: '2025-11-30', basis: 'MONTH' });
+      assert.deepStrictEqual([nov.normalized_score, nov.ess_period, nov.ess_carried_forward], [92, '2025-11', false]);
+      assert.deepStrictEqual(nov.period_window, { from: '2025-11-01', to: '2025-11-30', basis: 'LATEST_RESULT' });
       const y25 = metricOf46(await calc46('mode=YTD&year=2025'), RC46);
-      assert.deepStrictEqual([y25.normalized_score, y25.ess_period], [92, '2025-11']);
+      assert.deepStrictEqual([y25.normalized_score, y25.ess_period, y25.ess_carried_forward], [92, '2025-11', false]);
       const jun = metricOf46(await calc46('mode=MTD&year=2026&month=06'), RC46);
-      assert.deepStrictEqual([jun.normalized_score, jun.ess_period, jun.sample_size > 0], [seedBank46(2026, 6), '2026-06', true]);
+      assert.deepStrictEqual([jun.normalized_score, jun.ess_period, jun.sample_size, jun.ess_carried_forward], [92, '2025-11', 7756, true]);
+      assert.deepStrictEqual(jun.period_window, { from: '2026-06-01', to: '2026-06-30', basis: 'LATEST_RESULT' });
       const y26 = metricOf46(await calc46('mode=YTD&year=2026'), RC46);
-      assert.deepStrictEqual([y26.normalized_score, y26.ess_period], [seedBank46(2026, 9), '2026-09']);
+      assert.deepStrictEqual([y26.normalized_score, y26.ess_period, y26.ess_carried_forward], [92, '2025-11', true]);
       const d = await aj46(`/api/metrics/${RC46}/detail?mode=MTD&year=2026&month=06`);
-      assert.deepStrictEqual([d.ess_period, d.normalized_score, d.ess_results_by_directorate.length, d.period_window.basis], ['2026-06', seedBank46(2026, 6), 13, 'MONTH']);
+      assert.deepStrictEqual([d.ess_period, d.ess_period_label, d.ess_carried_forward, d.normalized_score, d.ess_results_by_directorate.length, d.period_window.basis],
+        ['2025-11', 'November 2025', true, 92, 13, 'LATEST_RESULT']);
     });
 
-    await runTest('[NEGATIVE] ESS outside its template month is NO_DATA: MTD 2025-12 (the month after the result), 2025-10, 2026-01 and 2026-10 have no ESS metric with data; MTD 2025-11 / 2026-03 / 2026-06 / 2026-09 and YTD 2026 have all 11', async () => {
-      const dec = metricOf46(await calc46('mode=MTD&year=2025&month=12'), RC46);
-      assert.deepStrictEqual([dec.status, dec.has_data, dec.raw_value, dec.normalized_score, dec.sample_size, dec.gap, dec.ess_period || null], ['NO_DATA', false, null, null, 0, null, null]);
-      assert.deepStrictEqual(dec.period_window, { from: '2025-12-01', to: '2025-12-31', basis: 'MONTH' });
-      for (const p of ['2025-12', '2025-10', '2026-01', '2026-10']) {
-        const ess = essOf46(await calc46(`mode=MTD&year=${p.slice(0, 4)}&month=${p.slice(5)}`));
-        assert.ok(ess.length >= 11 && ess.every(m => m.status === 'NO_DATA'), `MTD ${p}: ${ess.filter(m => m.has_data).map(m => m.metric_id)}`);
+    await runTest('[NEGATIVE] ESS without a result on or before the period is NO_DATA: MTD 2025-10, MTD 2024-12, YTD 2024 and a month that has not started yet; MTD 2025-12 / 2026-01 / 2026-03 hold all 11 from 2025-11', async () => {
+      const oct = metricOf46(await calc46('mode=MTD&year=2025&month=10'), RC46);
+      assert.deepStrictEqual([oct.status, oct.has_data, oct.raw_value, oct.normalized_score, oct.sample_size, oct.gap, oct.ess_period || null], ['NO_DATA', false, null, null, 0, null, null]);
+      assert.deepStrictEqual(oct.period_window, { from: '2025-10-01', to: '2025-10-31', basis: 'LATEST_RESULT' });
+      const empties = ['mode=MTD&year=2025&month=10', 'mode=MTD&year=2024&month=12', 'mode=YTD&year=2024'];
+      if (M46 < 12) empties.push(`mode=MTD&year=${Y46}&month=${mm46(M46 + 1)}`); // not started yet
+      for (const q of empties) {
+        const ess = essOf46(await calc46(q));
+        assert.ok(ess.length >= 11 && ess.every(m => m.status === 'NO_DATA'), `${q}: ${ess.filter(m => m.has_data).map(m => m.metric_id)}`);
       }
-      for (const p of ['2025-11', '2026-03', '2026-06', '2026-09']) {
+      for (const p of ['2025-12', '2026-01', '2026-03']) {
         const ess = essOf46(await calc46(`mode=MTD&year=${p.slice(0, 4)}&month=${p.slice(5)}`)).filter(m => m.metric_id <= 27);
-        assert.ok(ess.length === 11 && ess.every(m => m.has_data && m.ess_period === p), `MTD ${p}`);
+        assert.ok(ess.length === 11 && ess.every(m => m.has_data && m.ess_period === '2025-11' && m.ess_carried_forward === true), `MTD ${p}`);
       }
-      const ytd = essOf46(await calc46('mode=YTD&year=2026')).filter(m => m.metric_id <= 27);
-      assert.ok(ytd.length === 11 && ytd.every(m => m.ess_period === '2026-09'), 'YTD 2026 = the latest quarter');
     });
 
     await runTest('[POSITIVE] The 2025-11 rows of Role Clarity are still exactly the user\'s real file (index + participation + question scores of all 13 org units)', async () => {
@@ -5864,7 +5883,7 @@ async function runRegressionSuite() {
     });
 
     if (isSql46()) {
-      await runTest('[POSITIVE/NEGATIVE] (SQL Server) Boot top-up per (metric, period): an upload of a seeded period is never overwritten by the dummy rows; a period without rows gets its seed back', async () => {
+      await runTest('[POSITIVE/NEGATIVE] (SQL Server) An admin ESS upload of a 2026 period survives the boot (seed top-up + dummy cleanup) and becomes the latest result: MTD / YTD 2026-06 read it, 2026-05 still carries 2025-11; removed again afterwards', async () => {
         const st = require('../server/db/storage');
         const ess46 = require('../server/services/essSummaryService');
         const sql = require('mssql');
@@ -5877,24 +5896,15 @@ async function runRegressionSuite() {
           const body = await res.json();
           assert.strictEqual(res.status, 200, JSON.stringify(body).slice(0, 300));
           uploadId = body.upload_id;
-          assert.deepStrictEqual([body.period, body.replaced_rows], ['2026-06', 13], 'the upload replaced the 13 seeded rows');
-          await st.init(); // the boot top-up
+          assert.deepStrictEqual([body.period, body.replaced_rows], ['2026-06', 0], 'no seed rows for 2026-06 any more');
+          await st.init(); // the boot: seed top-up + removal of the old dummy quarters
           const after = await st.getEssResults(RC46, { year: 2026, month: 6 });
-          assert.deepStrictEqual(after.map(r => [r.upload_id, r.index_score, r.participation]), [[uploadId, 77.77, 321]], 'the dummy rows did not come back over the upload');
+          assert.deepStrictEqual(after.map(r => [r.upload_id, r.index_score, r.participation]), [[uploadId, 77.77, 321]], 'the upload survives the boot');
           assert.strictEqual(metricOf46(await calc46('mode=MTD&year=2026&month=06'), RC46).normalized_score, 77.77);
-          // no rows left for the period -> the seed is inserted again (this also restores the seed state)
-          await pool.request().input('m', sql.Int, RC46).query('DELETE FROM dbo.px_ess_results WHERE metric_id = @m AND survey_year = 2026 AND survey_month = 6');
-          await st.init();
-          const back = await st.getEssResults(RC46, { year: 2026, month: 6 });
-          assert.strictEqual(back.length, 13);
-          assert.ok(back.every(r => r.upload_id === `seed-ess-${RC46}-2026-06`));
-          assert.strictEqual(metricOf46(await calc46('mode=MTD&year=2026&month=06'), RC46).normalized_score, seedBank46(2026, 6));
+          assert.strictEqual(metricOf46(await calc46('mode=YTD&year=2026'), RC46).ess_period, '2026-06');
+          assert.deepStrictEqual([metricOf46(await calc46('mode=MTD&year=2026&month=05'), RC46).ess_period, metricOf46(await calc46('mode=MTD&year=2026&month=05'), RC46).normalized_score], ['2025-11', 92]);
         } finally {
-          const left = await st.getEssResults(RC46, { year: 2026, month: 6 });
-          if (left.length !== 13 || left.some(r => !String(r.upload_id).startsWith('seed-ess-'))) {
-            await pool.request().input('m', sql.Int, RC46).query('DELETE FROM dbo.px_ess_results WHERE metric_id = @m AND survey_year = 2026 AND survey_month = 6');
-            await st.init();
-          }
+          await pool.request().input('m', sql.Int, RC46).query('DELETE FROM dbo.px_ess_results WHERE metric_id = @m AND survey_year = 2026 AND survey_month = 6');
           if (uploadId) {
             await pool.request().input('u', sql.NVarChar, uploadId).query('DELETE FROM dbo.px_survey_uploads WHERE upload_id = @u');
             const f = require('path').join(ess46.ESS_UPLOAD_DIR, `${uploadId}.xlsx`);
@@ -5942,10 +5952,10 @@ async function runRegressionSuite() {
     });
 
     await runTest('[POSITIVE] Survey Index = weighted mean of the survey metrics WITH data only; PX = 70/30 with basis BOTH; journeys / checkpoints only roll up metrics with data', async () => {
-      const c = await calc46('mode=MTD&year=2025&month=12'); // v2.37.0: SYSTEM surveys have December rows, ESS has no December result
+      const c = await calc46('mode=MTD&year=2025&month=10'); // SYSTEM surveys have October 2025 rows, ESS has no result on or before it (v2.50.0)
       const live = c.metrics.filter(m => !m.is_disabled && !m.excluded_from_index);
       const noData = live.filter(m => m.status === 'NO_DATA');
-      assert.ok(noData.length > 0 && noData.every(m => m.metric_type === 'SURVEY' && m.normalized_score === null), 'the ESS metrics have no data in December 2025');
+      assert.ok(noData.length > 0 && noData.every(m => m.metric_type === 'SURVEY' && m.normalized_score === null), 'the ESS metrics have no data in October 2025');
       assert.strictEqual(c.no_data_metrics_count, noData.length);
       const surveys = live.filter(m => m.metric_type === 'SURVEY' && m.has_data);
       const w = surveys.reduce((s, m) => s + m.weight, 0);
@@ -5975,7 +5985,7 @@ async function runRegressionSuite() {
     });
 
     await runTest('[POSITIVE] Detail of a NO_DATA metric answers 200 with null scores (ESS without a result in the window; SYSTEM survey in a month without rows)', async () => {
-      const ess = await aj46(`/api/metrics/${RC46}/detail?mode=MTD&year=2025&month=12`); // v2.37.0: no ESS result in December 2025
+      const ess = await aj46(`/api/metrics/${RC46}/detail?mode=MTD&year=2025&month=10`); // v2.50.0: no ESS result on or before October 2025
       assert.deepStrictEqual([ess.status, ess.has_data, ess.current_raw_value, ess.normalized_score], ['NO_DATA', false, null, null]);
       assert.ok(ess.ess_summary && ess.ess_summary.summary_score === null, 'the ESS card has no score for this period');
       const sys = await aj46(`/api/metrics/${SYS46}/detail?mode=MTD&year=${Y46 + 1}&month=01`);
@@ -6996,6 +7006,206 @@ async function runRegressionSuite() {
     } finally {
       for (const id of events51) await adminJson('DELETE', `/api/events/${id}`);
       for (const id of users51) await adminJson('DELETE', `/api/admin/users/${id}`);
+    }
+  }
+
+  // --- MODULE 52 (v2.50.0): ESS QUESTIONS FROM MANAGE QUESTIONS, PERCENTAGE TYPE, ESS CARRY-FORWARD, QUESTION SNAPSHOTS ---
+  // Temporary ESS + SYSTEM metrics (deleted at the end: their uploads, results and responses go with them, the original
+  // ESS files are removed); the real data is only read. Cases: template = configured questions, position mapping, wrong
+  // number of question columns refused, PERCENTAGE type, carry-forward of the 2025-11 result, the 2026 dummy quarters
+  // gone, an admin upload survives the boot cleanup, and evidence that keeps the question texts of each upload (.zip
+  // per question-set version, plain CSV when there is one version).
+  console.log('\n📦 MODULE 52: ESS questions from Manage Questions, PERCENTAGE type, ESS carry-forward, question snapshots in history / evidence (Positive & Negative Testing)');
+  {
+    const JSZip52 = require('jszip');
+    const fs52 = require('fs');
+    const path52 = require('path');
+    const ess52 = require('../server/services/essSummaryService');
+    const aj52 = async q => (await adminJson('GET', q)).json();
+    const calc52 = q => aj52(`/api/metrics/calculate?${q}`);
+    const params52 = (await aj52('/api/admin/parameters')).metrics;
+    const realEss52 = params52.filter(m => m.metric_type === 'SURVEY' && m.survey_source === 'ESS' && m.metric_id <= 27);
+    const RC52 = (realEss52.find(m => /role clarity/i.test(m.metric_name)) || { metric_id: 9 }).metric_id;
+    const metrics52 = [];
+    const essUploads52 = [];
+    const isSql52 = () => require('../server/db/storage').backend === 'sql';
+    const mkMetric52 = async (name, source, questions) => {
+      const res = await adminJson('POST', '/api/admin/metrics', { metric_name: name, metric_type: 'SURVEY', scale_type: 'PERCENTAGE', survey_source: source, journey_id: 2, checkpoint_id: 5, target_value: 85, min_threshold: 80 });
+      assert.strictEqual(res.status, 201);
+      const id = (await res.json()).metric.metric_id;
+      metrics52.push(id);
+      const q = await adminJson('POST', `/api/admin/survey-questions/${id}`, { questions });
+      assert.strictEqual(q.status, 200);
+      return { id, saved: (await q.json()).questions };
+    };
+    const QA52 = [{ key: 'q1_clarity', label: 'Clarity', text: 'Text A one', type: 'SCALE_1_5', mandatory: true },
+      { key: 'q2_support', label: 'Support', text: 'Text A two', type: 'SCALE_1_5', mandatory: true }];
+    const essRow52 = (dir, level, y, m, part, idx, ...qs) => [dir, level, y, m, part, idx, ...qs];
+    const essFile52 = (y, m, heads, vals) => essXlsx([ESS_HEAD('Module52 Index', heads),
+      essRow52('PT Bank CIMB Niaga Tbk', 'Bankwide', y, m, 500, ...vals), essRow52('Business Banking', 'Directorate', y, m, 100, ...vals)]);
+    const postEss52 = async (id, buf, name) => {
+      const res = await postEssFile(id, buf, name);
+      const body = await res.json();
+      if (body.upload_id) essUploads52.push(body.upload_id);
+      return { status: res.status, body };
+    };
+    const unzip52 = async res => {
+      const zip = await JSZip52.loadAsync(Buffer.from(await res.arrayBuffer()));
+      const out = {};
+      for (const name of Object.keys(zip.files)) out[name] = await zip.file(name).async('string');
+      return out;
+    };
+
+    try {
+      await runTest('[POSITIVE] Question type PERCENTAGE: in the question_types catalog ("Percentage (0–100%)"), accepted by the question API for a SYSTEM metric, and every question of the 11 ESS metrics is PERCENTAGE after the boot', async () => {
+        const opts = (await aj52('/api/settings')).question_types;
+        assert.ok(opts.some(o => o.value === 'PERCENTAGE' && o.label === 'Percentage (0–100%)'), JSON.stringify(opts.map(o => o.value)));
+        assert.ok(['SCALE_1_5', 'SCALE_1_10', 'YES_NO', 'FREE_TEXT'].every(v => opts.some(o => o.value === v)), 'the other types stay');
+        const sys = await mkMetric52('REGRESSION M52 SYSTEM Metric', 'SYSTEM', [{ key: 'q1_pct', label: 'Pct Q', text: 'System text A', type: 'PERCENTAGE', mandatory: true }]);
+        assert.strictEqual(sys.saved[0].type, 'PERCENTAGE');
+        assert.strictEqual(realEss52.length, 11);
+        for (const m of realEss52) {
+          const qs = (await aj52(`/api/admin/survey-questions/${m.metric_id}`)).questions;
+          assert.ok(qs.length > 0 && qs.every(q => q.type === 'PERCENTAGE'), `metric ${m.metric_id}: ${qs.map(q => q.type)}`);
+        }
+        const sysQs = (await aj52('/api/admin/survey-questions/8')).questions;
+        assert.ok(sysQs.every(q => q.type !== 'PERCENTAGE'), 'SYSTEM survey questions are not switched');
+      });
+
+      await runTest('[POSITIVE] ESS questions come from Manage Questions: the template header = the configured texts; saving ESS questions stores them as PERCENTAGE; a text change is in the template at once', async () => {
+        const e = await mkMetric52('REGRESSION M52 ESS Metric', 'ESS', QA52);
+        assert.ok(e.saved.every(q => q.type === 'PERCENTAGE'), 'ESS questions saved as PERCENTAGE');
+        const head = async () => (await ess52.readFirstSheet(Buffer.from(await (await fetch(`${BASE_URL}/api/surveys/template?metric_id=${e.id}`)).arrayBuffer())))[0].cells.map(c => (c && c.value !== null ? String(c.value) : ''));
+        assert.deepStrictEqual((await head()).slice(5), ['REGRESSION M52 ESS Metric', 'Text A one', 'Text A two']);
+      });
+      const E52 = metrics52[1];
+
+      await runTest('[NEGATIVE] An ESS file whose number of question columns with values differs from the configured questions is refused (400, nothing stored): 3 columns and 1 column for 2 questions; a header text that differs is NOT an error', async () => {
+        const before = (await aj52('/api/surveys/history')).length;
+        for (const [heads, vals, found] of [[['x', 'y', 'z'], [0.9, 0.8, 0.7, 0.6], 3], [['x'], [0.9, 0.8], 1]]) {
+          const r = await postEss52(E52, await essFile52(2025, 'November', heads, vals), 'm52_wrong_count.xlsx');
+          assert.strictEqual(r.status, 400, JSON.stringify(r.body).slice(0, 300));
+          assert.ok(r.body.errors.some(er => er.row_number === 1 && er.reason.includes(`${found} question column`) && er.reason.includes('2 questions are configured')), JSON.stringify(r.body.errors));
+        }
+        assert.strictEqual((await aj52('/api/surveys/history')).length, before, 'nothing recorded');
+        assert.strictEqual((await calc52('mode=YTD&year=2025')).metrics.find(m => m.metric_id === E52).status, 'NO_DATA');
+      });
+
+      await runTest('[POSITIVE] Position mapping: column G = question 1, H = question 2 whatever the header says; the detail shows the configured texts, the file header as file_label, and the upload stores the question snapshot', async () => {
+        const r = await postEss52(E52, await essFile52(2025, 'November', ['File header X', 'File header Y'], [0.9, 0.8, 0.7]), 'm52_2025.xlsx');
+        assert.strictEqual(r.status, 200, JSON.stringify(r.body).slice(0, 300));
+        assert.deepStrictEqual(r.body.question_labels, ['Text A one', 'Text A two']);
+        assert.deepStrictEqual(r.body.file_question_labels, ['File header X', 'File header Y']);
+        const d = await aj52(`/api/metrics/${E52}/detail?mode=YTD&year=2025`);
+        assert.deepStrictEqual(d.questions_breakdown.map(q => [q.key, q.text, q.normalized_score, q.file_label, q.type]),
+          [['q1_clarity', 'Text A one', 80, 'File header X', 'PERCENTAGE'], ['q2_support', 'Text A two', 70, 'File header Y', 'PERCENTAGE']]);
+        assert.deepStrictEqual([d.question_text_source, d.questions_changed_since_upload], ['SNAPSHOT', false]);
+        const h = (await aj52('/api/surveys/history')).find(x => x.upload_id === r.body.upload_id);
+        assert.deepStrictEqual(h.questions_snapshot[E52].map(q => [q.key, q.text, q.type, q.order]), [['q1_clarity', 'Text A one', 'PERCENTAGE', 1], ['q2_support', 'Text A two', 'PERCENTAGE', 2]]);
+        const ev = await fetch(`${BASE_URL}/api/surveys/evidence?metric_id=${E52}&period=YTD`);
+        assert.match(ev.headers.get('content-type'), /text\/csv/, 'one question-set version -> plain CSV as before');
+        assert.match(ev.headers.get('content-disposition'), new RegExp(`Evidence_ESS_Summary_Metric_${E52}\\.csv`));
+        const lines = (await ev.text()).replace(/^﻿/, '').split(/\r\n/);
+        assert.ok(lines[0].startsWith('Directorate,Level,Year,Month,Participation,Index_%,Text A one (%),Text A two (%),Metric_ID,'), lines[0]);
+        assert.ok(lines[1].startsWith('PT Bank CIMB Niaga Tbk,Bankwide,2025,November,500,90,80,70,'), lines[1]);
+      });
+
+      await runTest('[POSITIVE] Question text changed after the upload: template and detail follow the new text at once, the old result is flagged "changed since upload" with its original text; a second upload makes the evidence a .zip with one CSV per question set (text A / text B) + README', async () => {
+        const qB = [{ ...QA52[0], text: 'Text B one' }, QA52[1]];
+        assert.strictEqual((await adminJson('POST', `/api/admin/survey-questions/${E52}`, { questions: qB })).status, 200);
+        const tpl = await ess52.readFirstSheet(Buffer.from(await (await fetch(`${BASE_URL}/api/surveys/template?metric_id=${E52}`)).arrayBuffer()));
+        assert.deepStrictEqual(tpl[0].cells.slice(6).map(c => c.value), ['Text B one', 'Text A two']);
+        const d = await aj52(`/api/metrics/${E52}/detail?mode=YTD&year=2025`);
+        assert.strictEqual(d.questions_changed_since_upload, true);
+        assert.deepStrictEqual(d.questions_breakdown.map(q => [q.text, q.text_changed, q.original_texts]), [['Text B one', true, ['Text A one']], ['Text A two', false, []]]);
+        const r = await postEss52(E52, await essFile52(2026, 'March', ['a', 'b'], [0.95, 0.9, 0.85]), 'm52_2026.xlsx');
+        assert.strictEqual(r.status, 200, JSON.stringify(r.body).slice(0, 300));
+        assert.strictEqual((await aj52(`/api/metrics/${E52}/detail?mode=MTD&year=2026&month=03`)).questions_changed_since_upload, false);
+        const ev = await fetch(`${BASE_URL}/api/surveys/evidence?metric_id=${E52}&period=YTD`);
+        assert.strictEqual(ev.status, 200);
+        assert.match(ev.headers.get('content-type'), /application\/zip/);
+        assert.match(ev.headers.get('content-disposition'), new RegExp(`Evidence_ESS_Summary_Metric_${E52}\\.zip`));
+        const files = await unzip52(ev);
+        const csvs = Object.keys(files).filter(n => n.endsWith('.csv')).sort();
+        assert.strictEqual(csvs.length, 2, Object.keys(files).join(','));
+        assert.ok(files['README.txt'] && files['README.txt'].includes('Text A one') && files['README.txt'].includes('Text B one'));
+        const heads = csvs.map(n => files[n].replace(/^﻿/, '').split(/\r\n/));
+        const vA = heads.find(l => l[0].includes('Text A one (%)'));
+        const vB = heads.find(l => l[0].includes('Text B one (%)'));
+        assert.ok(vA && vB, csvs.map(n => files[n].split(/\r\n/)[0]).join(' | '));
+        assert.ok(vA.slice(1).every(l => l.includes(',2025,November,')) && vA.length === 3, 'version A = the 2025 rows');
+        assert.ok(vB.slice(1).every(l => l.includes(',2026,March,')) && vB.length === 3, 'version B = the 2026 rows');
+        assert.ok(!vA[0].includes('Text B one'), 'old rows are never relabelled with the new text');
+      });
+
+      await runTest('[POSITIVE] SYSTEM CSV upload: a PERCENTAGE question takes 0-100 (a value over 100 is refused), the batch stores its question snapshot, one version = plain CSV; after a text change + new upload the evidence is a .zip and the detail flags the changed question', async () => {
+        const S52 = metrics52[0];
+        const csv = (rows) => ['nip,employee_name,cimb_email,directorate,division,survey_date,q1_pct,verbatim_feedback', ...rows].join('\r\n');
+        const up1 = await adminJson('POST', '/api/surveys/upload', { csvText: csv(['8852001,Regression M52 A,m52a@cimbniaga.co.id,Human Resources,People Experience & Culture,2026-02-10,85%,ok', '8852002,Regression M52 B,m52b@cimbniaga.co.id,Human Resources,People Experience & Culture,2026-02-11,150,too high']), fileName: 'm52_sys_1.csv', metric_id: S52 });
+        const b1 = await up1.json();
+        assert.strictEqual(up1.status, 200, JSON.stringify(b1).slice(0, 300));
+        assert.deepStrictEqual([b1.valid_rows, b1.invalid_rows], [1, 1]);
+        assert.match(b1.errors[0].reason, /0 - 100%/);
+        const h = (await aj52('/api/surveys/history')).find(x => x.upload_id === b1.upload_id);
+        assert.deepStrictEqual(h.questions_snapshot[S52].map(q => [q.key, q.text, q.type]), [['q1_pct', 'System text A', 'PERCENTAGE']]);
+        const one = await fetch(`${BASE_URL}/api/surveys/evidence?metric_id=${S52}&period=2026`);
+        assert.match(one.headers.get('content-type'), /text\/csv/);
+        const lines = (await one.text()).replace(/^﻿/, '').split(/\r\n/);
+        assert.ok(lines[0].includes('q1_pct_Pct_Q') && lines.length === 2 && lines[1].includes(',85,'), lines.join(' | '));
+        assert.strictEqual((await aj52(`/api/metrics/${S52}/detail?mode=YTD&year=2026`)).questions_breakdown[0].avg_score, 85);
+        assert.strictEqual((await adminJson('POST', `/api/admin/survey-questions/${S52}`, { questions: [{ key: 'q1_pct', label: 'Pct Q', text: 'System text B', type: 'PERCENTAGE', mandatory: true }] })).status, 200);
+        const up2 = await adminJson('POST', '/api/surveys/upload', { csvText: csv(['8852003,Regression M52 C,m52c@cimbniaga.co.id,Human Resources,People Experience & Culture,2026-03-10,70,ok']), fileName: 'm52_sys_2.csv', metric_id: S52 });
+        assert.strictEqual(up2.status, 200);
+        const d = await aj52(`/api/metrics/${S52}/detail?mode=YTD&year=2026`);
+        assert.strictEqual(d.questions_changed_since_upload, true);
+        assert.deepStrictEqual(d.questions_breakdown[0].original_texts, ['System text A']);
+        const two = await fetch(`${BASE_URL}/api/surveys/evidence?metric_id=${S52}&period=2026`);
+        assert.match(two.headers.get('content-type'), /application\/zip/);
+        const files = await unzip52(two);
+        assert.strictEqual(Object.keys(files).filter(n => n.endsWith('.csv')).length, 2);
+        assert.ok(files['README.txt'].includes('System text A') && files['README.txt'].includes('System text B'));
+      });
+
+      await runTest('[POSITIVE] ESS carry-forward on the real data: YTD 2026, MTD 2026-01 and MTD 2026-10 read the 2025-11 result for all 11 ESS metrics (Role Clarity = 92), YTD 2025 too; the temporary metric reads 2025-11 until its 2026-03 upload', async () => {
+        for (const q of ['mode=YTD&year=2026', 'mode=MTD&year=2026&month=01', 'mode=MTD&year=2026&month=10', 'mode=YTD&year=2025']) {
+          const c = await calc52(q);
+          const ess = c.metrics.filter(m => realEss52.some(r => r.metric_id === m.metric_id));
+          assert.ok(ess.length === 11 && ess.every(m => m.has_data && m.ess_period === '2025-11' && m.period_window.basis === 'LATEST_RESULT'), `${q}: ${ess.map(m => `${m.metric_id}:${m.ess_period}`)}`);
+          assert.strictEqual(ess.find(m => m.metric_id === RC52).normalized_score, 92, q);
+        }
+        assert.strictEqual((await calc52('mode=MTD&year=2026&month=02')).metrics.find(m => m.metric_id === E52).ess_period, '2025-11');
+        assert.strictEqual((await calc52('mode=MTD&year=2026&month=03')).metrics.find(m => m.metric_id === E52).normalized_score, 95);
+      });
+
+      await runTest('[NEGATIVE] ESS before the first result is NO_DATA (MTD 2025-10: all 11); the 2026 dummy quarters are gone (no seed-ess-*-2026-* upload, no 2026 ESS result of the seed)', async () => {
+        const c = await calc52('mode=MTD&year=2025&month=10');
+        assert.ok(c.metrics.filter(m => realEss52.some(r => r.metric_id === m.metric_id)).every(m => m.status === 'NO_DATA'));
+        const hist = await aj52('/api/surveys/history');
+        assert.ok(!hist.some(u => /^seed-ess-\d+-2026-/.test(u.upload_id)), 'no dummy 2026 seed uploads');
+        assert.strictEqual(hist.filter(u => /^seed-ess-\d+-2025-11$/.test(u.upload_id)).length, 11, 'the 2025-11 seed stays');
+        const seed = require('../server/db/seedData');
+        assert.ok(seed.initialEssResults.every(r => r.survey_year === 2025 && r.survey_month === 11), 'the seed has only 2025-11');
+        assert.strictEqual(seed.isRemovedEssDummyUpload({ upload_id: `seed-ess-${RC52}-2026-03`, metric_id: RC52, uploaded_by: 'Regression Suite Admin (rt-suite-x)' }), false, 'never an upload by somebody else');
+        assert.strictEqual(seed.isRemovedEssDummyUpload({ upload_id: `seed-ess-${RC52}-2025-11`, metric_id: RC52, uploaded_by: 'Seed (dummy)' }), false, 'never the 2025-11 seed');
+        assert.strictEqual(seed.isRemovedEssDummyUpload({ upload_id: `seed-ess-${RC52}-2026-06`, metric_id: RC52, uploaded_by: 'Seed (dummy)' }), true);
+      });
+
+      if (isSql52()) {
+        await runTest('[POSITIVE] (SQL Server) The boot (ESS PERCENTAGE switch + dummy-quarter cleanup + seed top-up) never deletes an admin ESS upload of a 2026 period', async () => {
+          const st = require('../server/db/storage');
+          const before = (await st.getEssResults(E52)).map(r => `${r.upload_id}|${r.survey_year}-${r.survey_month}`).sort();
+          assert.ok(before.some(k => k.endsWith('|2026-3')));
+          await st.init();
+          assert.deepStrictEqual((await st.getEssResults(E52)).map(r => `${r.upload_id}|${r.survey_year}-${r.survey_month}`).sort(), before);
+          assert.ok((await st.getSurveyUploads()).some(u => u.upload_id === essUploads52[essUploads52.length - 1]));
+        });
+      }
+    } finally {
+      for (const id of metrics52) await adminJson('DELETE', `/api/admin/metrics/${id}`);
+      for (const id of essUploads52) {
+        const f = path52.join(ess52.ESS_UPLOAD_DIR, `${id}.xlsx`);
+        if (fs52.existsSync(f)) fs52.unlinkSync(f);
+      }
     }
   }
 

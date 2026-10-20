@@ -1,6 +1,8 @@
 // server/services/surveyEvidenceService.js
 const storage = require('../db/storage');
 const { rowInScopes } = require('../db/scopeUtils');
+const { snapshotQuestions } = require('./metricQuestionService');
+const { groupByQuestionSet, buildVersionedZip } = require('./evidenceVersions');
 
 function normalizeDateString(dateVal) {
   if (!dateVal) return null;
@@ -54,10 +56,14 @@ function normalizeDateString(dateVal) {
 }
 
 /**
- * Generates an Audit Evidence CSV file containing full respondent submissions,
- * question-level scores, survey dates, and verbatim feedback for a given metric and period.
+ * Generates the Audit Evidence of full respondent submissions, question-level scores, survey dates, and verbatim
+ * feedback for a given metric and period.
+ * v2.50.0: every response is exported with the question set stored with ITS upload (px_survey_uploads.questions_snapshot;
+ * uploads from before v2.50.0 have none and use the current Manage Questions configuration). One question-set version
+ * -> { kind: 'csv', content } (the CSV of before); several -> { kind: 'zip', buffer, fileName } with one CSV per
+ * version + README.txt. The all-metrics export has no per-question columns and is always one CSV.
  */
-async function generateSurveyEvidenceCsv(metric_id, period = 'YTD', options = {}) {
+async function generateSurveyEvidence(metric_id, period = 'YTD', options = {}) {
   const metrics = await storage.getMetrics();
   
   // CSV injection guard: a text cell starting with = + - @ (or tab/CR) would run as a formula when the file is
@@ -105,59 +111,78 @@ async function generateSurveyEvidenceCsv(metric_id, period = 'YTD', options = {}
       divHeader = 'Saluran_Rekrutmen';
     }
 
-    // Headers with descriptive question headers
-    const headers = [
-      idHeader,
-      nameHeader,
-      emailHeader,
-      dirHeader,
-      divHeader,
-      'Tanggal_Survei_Dilakukan',
-      'Metric_ID',
-      'Nama_Metrik',
-      ...questions.map(q => `${q.key}_${q.label.replace(/\s+/g, '_')}`),
-      'Rata_Rata_Skor',
-      'Skala_Penilaian',
-      'Komentar_Verbatim_Feedback',
-      'Sumber_Data_Survei'
-    ];
-
-    const rows = [];
-    rows.push(headers.join(','));
-
-    responses.forEach(r => {
-      const qScores = questions.map(q => {
-        if (r.ratings && r.ratings[q.key] !== undefined) {
-          return r.ratings[q.key];
-        }
-        return r.rating_score || (isScale5 ? 4.0 : 80);
-      });
-
-      const identifier = r.participant_id || r.candidate_id || r.nip || '-';
-      const name = r.participant_name || r.candidate_name || r.employee_name || 'Respondent';
-      const email = r.email || r.cimb_email || '-';
-      const dirVal = r.university || r.applied_position || r.directorate || 'General';
-      const divVal = r.major || r.recruitment_channel || r.division || 'General';
-
-      rows.push([
-        escapeCsv(identifier),
-        escapeCsv(name),
-        escapeCsv(email),
-        escapeCsv(dirVal),
-        escapeCsv(divVal),
-        escapeCsv(normalizeDateString(r.survey_date || r.created_at) || '-'),
-        escapeCsv(targetMetric.metric_id),
-        escapeCsv(targetMetric.metric_name),
-        ...qScores.map(escapeCsv),
-        escapeCsv(r.rating_score || (isScale5 ? 4.0 : 80)),
-        escapeCsv(isScale5 ? 'Skala 1.0 - 5.0' : 'Skala 0 - 100%'),
-        escapeCsv(r.verbatim_feedback || '-'),
-        escapeCsv(r.source || 'CIMB Niaga PE Survey System')
-      ].join(','));
+    const uploads = new Map((await storage.getSurveyUploads()).map(u => [u.upload_id, u]));
+    const versions = groupByQuestionSet(responses, r => {
+      const u = uploads.get(r.upload_id);
+      const snap = u && u.questions_snapshot ? (u.questions_snapshot[mId] || u.questions_snapshot[String(mId)]) : null;
+      return Array.isArray(snap)
+        ? { questions: snap, source: 'SNAPSHOT', uploaded_at: u.uploaded_at }
+        : { questions: snapshotQuestions(questions), source: 'CURRENT_CONFIG', uploaded_at: (u && u.uploaded_at) || r.created_at };
     });
 
-    // Return with UTF-8 BOM for Excel compatibility
-    return '\uFEFF' + rows.join('\r\n');
+    const csvOf = (questions, responses) => {
+      // Headers with descriptive question headers
+      const headers = [
+        idHeader,
+        nameHeader,
+        emailHeader,
+        dirHeader,
+        divHeader,
+        'Tanggal_Survei_Dilakukan',
+        'Metric_ID',
+        'Nama_Metrik',
+        ...questions.map(q => `${q.key}_${String(q.label || '').replace(/\s+/g, '_')}`),
+        'Rata_Rata_Skor',
+        'Skala_Penilaian',
+        'Komentar_Verbatim_Feedback',
+        'Sumber_Data_Survei'
+      ];
+
+      const rows = [];
+      rows.push(headers.join(','));
+
+      responses.forEach(r => {
+        const qScores = questions.map(q => {
+          if (r.ratings && r.ratings[q.key] !== undefined) {
+            return r.ratings[q.key];
+          }
+          return r.rating_score || (isScale5 ? 4.0 : 80);
+        });
+
+        const identifier = r.participant_id || r.candidate_id || r.nip || '-';
+        const name = r.participant_name || r.candidate_name || r.employee_name || 'Respondent';
+        const email = r.email || r.cimb_email || '-';
+        const dirVal = r.university || r.applied_position || r.directorate || 'General';
+        const divVal = r.major || r.recruitment_channel || r.division || 'General';
+
+        rows.push([
+          escapeCsv(identifier),
+          escapeCsv(name),
+          escapeCsv(email),
+          escapeCsv(dirVal),
+          escapeCsv(divVal),
+          escapeCsv(normalizeDateString(r.survey_date || r.created_at) || '-'),
+          escapeCsv(targetMetric.metric_id),
+          escapeCsv(targetMetric.metric_name),
+          ...qScores.map(escapeCsv),
+          escapeCsv(r.rating_score || (isScale5 ? 4.0 : 80)),
+          escapeCsv(isScale5 ? 'Skala 1.0 - 5.0' : 'Skala 0 - 100%'),
+          escapeCsv(r.verbatim_feedback || '-'),
+          escapeCsv(r.source || 'CIMB Niaga PE Survey System')
+        ].join(','));
+      });
+
+      // Return with UTF-8 BOM for Excel compatibility
+      return '\uFEFF' + rows.join('\r\n');
+    };
+
+    if (versions.length <= 1) return { kind: 'csv', content: csvOf(versions[0] ? versions[0].questions : questions, responses) };
+    const zip = await buildVersionedZip({
+      baseName: `Evidence_Survey_Metric_${mId}_${period}`,
+      title: `Survey evidence - metric ${mId} ${targetMetric.metric_name}, period ${period}`,
+      versions: versions.map(v => ({ ...v, csv: csvOf(v.questions, v.items) }))
+    });
+    return { kind: 'zip', ...zip };
 
   } else {
     // Evidence for ALL Survey Metrics
@@ -208,11 +233,11 @@ async function generateSurveyEvidenceCsv(metric_id, period = 'YTD', options = {}
       ].join(','));
     });
 
-    return '\uFEFF' + rows.join('\r\n');
+    return { kind: 'csv', content: '\uFEFF' + rows.join('\r\n') };
   }
 }
 
 module.exports = {
-  generateSurveyEvidenceCsv
+  generateSurveyEvidence
 };
 

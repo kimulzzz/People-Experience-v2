@@ -57,7 +57,7 @@ graph TD
     
     %% Modals Layer
     App --> ModalDetail["MetricDetailModal.jsx<br/>(ESS Dimensions Breakdown & Respondent Logs)"]
-    App --> ModalAdminQ["AdminSurveyQuestionsModal.jsx<br/>(Survey Template Editor: Scale 1-5, 1-10, Yes/No, Free Text)"]
+    App --> ModalAdminQ["AdminSurveyQuestionsModal.jsx<br/>(Survey Template Editor: Scale 1-5, 1-10, Yes/No, Free Text, Percentage)"]
     App --> ModalTarget["AdminSettingsModal.jsx<br/>(Target & Minimum Threshold Settings)"]
     App --> ModalWeight["WeightsModal.jsx<br/>(Dynamic Metric & Journey Weight Settings)"]
     App --> ModalImport["SurveyImportModal.jsx<br/>(Data Center, CSV Specs & Recalculation)"]
@@ -134,8 +134,7 @@ graph TD
   - 📥 **Template**: Download CSV template spesifik metrik dengan butir pertanyaan kustom.
   - 📄 **Evidence**: Download CSV rekapitulasi data jawaban responden dan tanggal transaksi.
   - 📤 **Upload**: Modal impor cepat data jawaban CSV responden.
-  - 🔍 **Detail**: Modal deep-dive butir soal, dimensi ESS, dan audit trail.
-  - 🗄️ **View Data** (metrik Outcome): Melihat data HR internal. Tombol ⚙️ **Target** (khusus Admin, baris Outcome) **dihapus di v2.30.0**; target/threshold diatur lewat menu **Admin Parameters** di Header.
+  - 🔍 **Detail** dan 🗄️ **View Data** (metrik Outcome): **dihapus di v2.50.0** - detail metrik (survei maupun Outcome) dibuka dengan klik baris metrik. Baris Outcome kini tidak punya tombol aksi. Tombol ⚙️ **Target** (khusus Admin, baris Outcome) **dihapus di v2.30.0**; target/threshold diatur lewat menu **Admin Parameters** di Header.
 
 ---
 
@@ -156,7 +155,7 @@ graph TD
 ---
 
 ### 3.6 Modal Admin Pengaturan Pertanyaan ([`src/components/AdminSurveyQuestionsModal.jsx`](file:///d:/Mul/Project/Anti%20Gravity/People%20Experience/src/components/AdminSurveyQuestionsModal.jsx))
-- Panel visual bagi Admin untuk menambah, mengedit, memilih tipe jawaban (4 tipe), menyusun ulang urutan pertanyaan (*Move Up/Down*), mengunduh template aktif, dan melihat *Live CSV Header Preview*.
+- Panel visual bagi Admin untuk menambah, mengedit, memilih tipe jawaban (5 tipe sejak v2.50.0: Scale 1-5, Scale 1-10, Yes/No, Free Text, Percentage 0-100%; untuk metrik ESS dropdown tipe terkunci di Percentage), menyusun ulang urutan pertanyaan (*Move Up/Down*), mengunduh template aktif, dan melihat *Live CSV Header Preview*.
 
 ---
 
@@ -193,7 +192,7 @@ graph TD
 | **Primary** | **Primary Red** | `R255 G0 B0` (`#ED1C24` / `#FF0000`) | Aksen utama brand, PX Index Consolidated Score (100%), tombol CTA primer, garis tab aktif |
 | **Primary** | **Deep Maroon** | `R120 G0 B0` (`#780000`) | Garis batas target threshold (85%), gradient header, aksen penekanan eksekutif |
 | **Primary** | **Cool Gray** | `R167 G169 B172` (`#A7A9AC`) | Garis grid tabel, batas badge non-aktif, teks metadata sekunder |
-| **Primary** | **Slate (Soft Corporate)** | Tailwind `slate-100`/`slate-700` | Tombol *Actions & Evidence* di Explore Metrics (Template/Evidence/Upload/Detail/View Data; tombol Target dihapus di v2.30.0) — netral, dipisahkan dari palet warna status |
+| **Primary** | **Slate (Soft Corporate)** | Tailwind `slate-100`/`slate-700` | Tombol *Actions & Evidence* di Explore Metrics (Template/Evidence/Upload; Detail/View Data dihapus di v2.50.0, tombol Target dihapus di v2.30.0) — netral, dipisahkan dari palet warna status |
 | **Secondary** | **Pure White** | `R255 G255 B255` (`#FFFFFF`) | Permukaan kartu, kontainer scorecard, background modal |
 | **Secondary** | **Royal Blue** | `R37 G99 B235` (`#2563EB`) | **Outcome Metrics (30%)**, garis tren Outcome pada Trend Chart, badge database HRIS |
 | **Secondary** | **Blush Pink** | `R248 G177 B176` (`#F8B1B0`) | Titik data proyeksi benchmark & efek hover halus baris tabel |
@@ -346,7 +345,7 @@ Tidak diuji otomatis: seluruh tampilan di atas (diperiksa QC di Browser pane); t
 
 **Header** - lihat §3.2: info user + **Sign out** di pojok kanan atas; select Directorate / Sub-Dir tidak tumpang tindih pada lebar <= 500px.
 
-**Explore Metrics** - tombol **Target** (Admin, baris Outcome) dihapus; baris Outcome hanya punya **View Data** (§3.4).
+**Explore Metrics** - tombol **Target** (Admin, baris Outcome) dihapus; baris Outcome hanya punya **View Data** (§3.4; tombol ini juga dihapus di v2.50.0).
 
 **Mode publik (form check-in & feedback tanpa login)** - `src/utils/publicRoute.js` (baru):
 
@@ -401,6 +400,18 @@ API kini bisa mengirim indeks dan skor `null` serta status `NO_DATA` (lihat `doc
 | `Calculator.jsx` (Explore Metrics) | Baris `NO_DATA`: nilai aktual, skor dan tanggal "—", badge abu-abu "No Data". |
 | `MetricDetailModal.jsx` | Nilai "—", "No survey data in this period - left out of the index", badge abu-abu "No Data", pertanyaan berlabel "No Data" tanpa skor. Catatan "Annual metric: shows the result of Jan–Sep 2026" untuk metrik tahunan pada filter MTD **dihapus di v2.37.0** (MTD kini selalu satu bulan, `period_window.basis = 'MONTH'`). |
 | `TrendChart.jsx` | Titik `null` menjadi celah (garis dipotong per segmen), tooltip "—". |
+
+## Catatan v2.50.0 - Pertanyaan ESS dari Manage Questions, Percentage, carry-forward, snapshot pertanyaan
+
+API: `docs/04` "Catatan v2.50.0".
+
+| Komponen | Perubahan |
+| :--- | :--- |
+| `MetricDetailModal.jsx` (§3.5) | Teks pertanyaan ESS (Spreadsheet View dan Card View) kini dari server = Manage Questions. Bila `ess_carried_forward`: baris "ESS result November 2025 (latest available) - ESS runs once a year" di bawah "ESS Result Period". Bila `questions_changed_since_upload`: catatan amber "Questions changed since this result was uploaded. The current questions are shown; the text in use at upload is listed under each changed question. The evidence download keeps the original texts." di atas tabel/kartu; di bawah setiap pertanyaan dengan `original_texts`: baris miring amber "At upload: <teks lama>" (beberapa teks dipisah " / "). Card View: pertanyaan `PERCENTAGE` metrik SYSTEM tampil "xx.x%" dengan badge "Percentage 0 - 100%"; badge ESS menjadi "ESS score (%)" (dulu "ESS score"). Kedua tautan Evidence memakai atribut `download` tanpa nama, jadi nama file (CSV atau `.zip`) dari server. |
+| `Calculator.jsx` (Explore Metrics, §3.4) | Tombol **Detail** (survei) dan **View Data** (Outcome), label **FIXED** di header kolom "Actions & Evidence" dan chip legenda "Detail: Metric Drilldown" dihapus; detail dibuka dengan klik baris (seperti sebelumnya). Template / Evidence / Upload tetap (Admin atau PIC). Tautan Evidence: nama file dari server. |
+| `AdminSurveyQuestionsModal.jsx` (§3.6) | Pilihan tipe dari `GET /api/settings` kini memuat "Percentage (0–100%)". Untuk metrik ESS (`survey_source === 'ESS'`) dropdown tipe `disabled` (tooltip "ESS questions are always Percentage (0–100%) ...") dan pertanyaan baru bertipe `PERCENTAGE`. Server tetap memaksa `PERCENTAGE` untuk ESS. |
+
+Tidak diuji otomatis: semua tampilan di atas (pengecekan browser oleh main session).
 
 ## Catatan v2.49.1 - Alert Admin mengikuti filter
 

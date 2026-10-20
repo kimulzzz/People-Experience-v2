@@ -361,6 +361,10 @@ async function computeMonthlyTrends(filterOptions = {}) {
  * directorate - the division's parent directorate ('__NONE__' when the division is unknown, i.e. no ESS data).
  * Scopes (USER) are handled by essOrgFor itself.
  */
+// The window of an ESS metric (v2.50.0): the selected window, with basis LATEST_RESULT (the latest ESS result on or before
+// its end is used, see essSummaryService.selectEssResult).
+const essWindow = mp => ({ ...(periodWindow(mp) || { from: null, to: null }), basis: 'LATEST_RESULT' });
+
 async function essDirectorateFor(directorate, subDirectorate, scopes) {
   if (scopes || (directorate && directorate !== 'ALL') || !subDirectorate || subDirectorate === 'ALL') return directorate;
   const parent = (await storage.getDirectorates()).find(d => (d.divisions || []).includes(subDirectorate));
@@ -455,14 +459,14 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
     let hasData = true;
     const isEss = m.metric_type === 'SURVEY' && isEssMetric(m);
     let essResult = null;
-    // The period this metric is read for (v2.37.0): exactly the selected period for every SURVEY metric - MTD = that
-    // month only, also for annual/ESS metrics; update_frequency no longer changes the period (reminders only).
+    // The period this metric is read for (v2.37.0): exactly the selected period for every SYSTEM survey metric - MTD =
+    // that month only; update_frequency does not change the period (reminders only). ESS: see selectEssResult (v2.50.0).
     const mp = { mode, year, month, endMonth };
     const metricFilter = { ...queryFilter, mode: mp.mode, endMonth: mp.endMonth };
 
     if (isEss) {
-      // ESS metric (v2.32.0): the uploaded ESS summary, not per-respondent rows. Only a result whose (year, month)
-      // lies inside the window counts (v2.36.0, no carry-forward); sample size = participation.
+      // ESS metric (v2.32.0): the uploaded ESS summary, not per-respondent rows. v2.50.0: the latest result on or
+      // before the period's end, from any earlier year (ESS runs once a year - carry-forward); sample size = participation.
       essResult = selectEssResult(essResults, m.metric_id, mp,
         essOrgFor({ directorate: essDirectorate, scopes, bankwide: isBankwideValue }));
       if (essResult) {
@@ -531,7 +535,8 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       has_data: hasData,
       update_frequency: m.update_frequency || 'MONTHLY',
       // the dates this SURVEY metric was read for (OUTCOME = current snapshot, no window)
-      period_window: m.metric_type === 'SURVEY' ? periodWindow(mp) : null,
+      // ESS (v2.50.0): basis LATEST_RESULT - the result of ess_period is used for the whole selected window
+      period_window: m.metric_type === 'SURVEY' ? (isEss ? essWindow(mp) : periodWindow(mp)) : null,
       sample_size: sampleSize,
       last_survey_date: lastSurveyDate,
       gap: hasData ? parseFloat((normalizedTarget - normScore).toFixed(2)) : null,
@@ -545,6 +550,7 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       ...(isEss ? {
         ess_period: essResult ? essResult.period : null,
         ess_period_label: essResult ? essResult.period_label : null,
+        ess_carried_forward: essResult ? essResult.carried_forward : null,
         ess_level: essResult ? essResult.level : null
       } : {})
     };
@@ -775,7 +781,7 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
   // v2.37.0: the period this metric is read for = exactly the selected period (MTD = that month), same as the scorecard
   const mp = { mode, year, month, endMonth };
   const metricFilter = { ...queryFilter, mode: mp.mode, endMonth: mp.endMonth };
-  const windowInfo = { update_frequency: metric.update_frequency || 'MONTHLY', period_window: isSurvey ? periodWindow(mp) : null,
+  const windowInfo = { update_frequency: metric.update_frequency || 'MONTHLY', period_window: isSurvey ? (isEss ? essWindow(mp) : periodWindow(mp)) : null,
     is_bankwide_value: isBankwideValue, px_weights: await getPxWeights() };
 
   if (!isSurvey) {
@@ -877,6 +883,8 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
   // Survey metric logic
   const questions = await storage.getSurveyQuestions(id);
   const responses = await storage.getResponsesByMetricAndPeriod(id, metricFilter);
+  // v2.50.0: question texts stored with the uploads of these responses that differ from today's Manage Questions text
+  const previousTexts = await previousQuestionTexts(id, questions, responses);
 
   const questionBreakdown = questions.map(q => {
     const qType = q.type || 'SCALE_1_5';
@@ -940,6 +948,35 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
         no_count: tidakCount,
         response_count: totalAnswered,
         percent_yes: Math.round(percentYa * 10) / 10,
+        percent_favorable: fav,
+        percent_neutral: neut,
+        percent_unfavorable: unfav
+      };
+    }
+
+    if (qType === 'PERCENTAGE') {
+      // v2.50.0: answer 0-100 (%), used as is
+      let sum = 0;
+      let count = 0;
+      responses.forEach(r => {
+        if (r.ratings && r.ratings[q.key] !== undefined) {
+          const num = parseFloat(r.ratings[q.key]);
+          if (!isNaN(num)) { sum += num; count += 1; }
+        }
+      });
+      const avg = count > 0 ? Math.round((sum / count) * 100) / 100 : null;
+      return {
+        key: q.key,
+        label: q.label,
+        text: q.text,
+        type: 'PERCENTAGE',
+        dimension: q.dimension || null,
+        visible_based_on: q.visible_based_on || 'Always',
+        required_based_on: q.required_based_on || (q.mandatory ? 'Always' : 'Optional'),
+        max: 100,
+        avg_score: avg,
+        normalized_score: avg === null ? null : parseFloat(avg.toFixed(1)),
+        response_count: count,
         percent_favorable: fav,
         percent_neutral: neut,
         percent_unfavorable: unfav
@@ -1066,6 +1103,11 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
     // the ESS card of a period without an uploaded summary: no score, only the explanation
     essSummary = { ...essSummary, summary_score: null, percent_favorable: null, percent_neutral: null, percent_unfavorable: null };
   }
+  questionBreakdown.forEach(q => {
+    q.original_texts = previousTexts[q.key] || [];
+    q.text_changed = q.original_texts.length > 0;
+  });
+  const questionsChanged = previousTexts.__setChanged || questionBreakdown.some(q => q.text_changed);
 
   return {
     metric: {
@@ -1119,6 +1161,8 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
     total_respondents: totalRespondents,
     questions: questionBreakdown,
     questions_breakdown: questionBreakdown,
+    // v2.50.0: some responses were uploaded with other question texts / another question set (see original_texts)
+    questions_changed_since_upload: questionsChanged,
     // Most-recent-first, capped at 100 for payload size — sorting before capping matters:
     // as seeded response volume has grown (2025 + extended 2026 monthly data), a metric can
     // now have well over 100 responses in a single period, and a plain insertion-order slice
@@ -1132,6 +1176,30 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
 const normalizeQuestionText = t => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 /**
+ * v2.50.0: per current question key, the DIFFERENT question texts stored in the question snapshots of the uploads the
+ * responses came from (uploads before v2.50.0 have no snapshot and are skipped). __setChanged = some upload used a
+ * question set with other keys / another number of questions.
+ */
+async function previousQuestionTexts(metricId, questions, responses) {
+  const out = {};
+  const uploadIds = new Set(responses.map(r => r.upload_id).filter(Boolean));
+  if (!uploadIds.size) return out;
+  const current = new Map(questions.map(q => [q.key, normalizeQuestionText(q.text || q.label)]));
+  (await storage.getSurveyUploads()).forEach(u => {
+    if (!uploadIds.has(u.upload_id) || !u.questions_snapshot) return;
+    const snap = u.questions_snapshot[metricId] || u.questions_snapshot[String(metricId)];
+    if (!Array.isArray(snap)) return;
+    if (snap.length !== questions.length || snap.some(q => !current.has(q.key))) out.__setChanged = true;
+    snap.forEach(q => {
+      if (!current.has(q.key) || current.get(q.key) === normalizeQuestionText(q.text || q.label)) return;
+      const list = out[q.key] || (out[q.key] = []);
+      if (!list.includes(q.text)) list.push(q.text);
+    });
+  });
+  return out;
+}
+
+/**
  * Metric detail of an ESS metric from its uploaded ESS summary: the index, participation and per-question % come
  * from the file (neutral / unfavorable are not part of the ESS summary -> null). ess_results_by_directorate lists
  * the rows of that period the viewer may see: everything for an unscoped viewer (Bankwide first), only the scoped
@@ -1139,19 +1207,30 @@ const normalizeQuestionText = t => String(t || '').toLowerCase().replace(/[^a-z0
  */
 async function buildEssDetail({ id, metric, targetConfig, journey, checkpoint, isEmployeeMetric, isDisabled, disabledReason,
   periodString, queryFilter, essResult, scopes, subDirectorate, essDirectorate }) {
+  // v2.50.0: the questions shown are ALWAYS the ones configured in Manage Questions; the stored scores map to them BY
+  // POSITION (stored question i = configured question i). A result uploaded since v2.50.0 carries the snapshot of its
+  // questions: when that differs from today's configuration the question shows original_text and the detail says
+  // questions_changed_since_upload. A result from before v2.50.0 has only the file's header text (file_label).
   const configured = (await storage.getSurveyQuestions(id)).filter(q => (q.type || 'SCALE_1_5') !== 'FREE_TEXT');
-  const breakdown = (essResult.questions || []).map((fq, i) => {
-    // the file's header text is the question; a configured question with the same text lends its key/label/dimension
-    const match = configured.find(q => normalizeQuestionText(q.text || q.label) === normalizeQuestionText(fq.label));
-    const score = fq.score === null || fq.score === undefined ? null : parseFloat(Number(fq.score).toFixed(2));
+  const stored = essResult.questions || [];
+  const hasSnapshot = stored.some(q => q && q.key);
+  const breakdown = configured.map((q, i) => {
+    const fq = stored[i] || null;
+    const score = !fq || fq.score === null || fq.score === undefined ? null : parseFloat(Number(fq.score).toFixed(2));
+    const originalText = hasSnapshot && fq ? (fq.text || fq.label || null) : null;
+    const textChanged = hasSnapshot && (!fq || normalizeQuestionText(originalText) !== normalizeQuestionText(q.text || q.label));
     return {
-      key: match ? match.key : `ess_q${i + 1}`,
-      label: match ? match.label : `Question ${i + 1}`,
-      text: fq.label,
-      type: 'ESS_PERCENT',
-      dimension: match ? (match.dimension || null) : null,
-      visible_based_on: (match && match.visible_based_on) || 'Always',
-      required_based_on: (match && match.required_based_on) || (match && match.mandatory === false ? 'Optional' : 'Always'),
+      key: q.key,
+      label: q.label,
+      text: q.text || q.label,
+      type: 'PERCENTAGE',
+      dimension: q.dimension || null,
+      visible_based_on: q.visible_based_on || 'Always',
+      required_based_on: q.required_based_on || (q.mandatory === false ? 'Optional' : 'Always'),
+      original_text: originalText,
+      original_texts: textChanged && originalText ? [originalText] : [],
+      text_changed: textChanged,
+      file_label: fq ? (fq.file_label !== undefined ? fq.file_label : (hasSnapshot ? null : fq.label || null)) : null,
       avg_score: score,
       normalized_score: score,
       response_count: essResult.participation,
@@ -1173,7 +1252,7 @@ async function buildEssDetail({ id, metric, targetConfig, journey, checkpoint, i
       directorate: r.org_level === 'BANKWIDE' ? 'PT Bank CIMB Niaga Tbk (Bankwide)' : r.directorate,
       participation: r.participation,
       index_score: parseFloat(Number(r.index_score).toFixed(2)),
-      questions: (r.questions || []).map(q => ({ label: q.label, score: q.score === null || q.score === undefined ? null : parseFloat(Number(q.score).toFixed(2)) })),
+      questions: (r.questions || []).map((q, i) => ({ label: configured[i] ? (configured[i].text || configured[i].label) : (q.text || q.label), score: q.score === null || q.score === undefined ? null : parseFloat(Number(q.score).toFixed(2)) })),
       is_selected: essResult.level === 'BANKWIDE' ? r.org_level === 'BANKWIDE' : (r.org_level === 'DIRECTORATE' && (scopedDirs ? scopedDirs.includes(r.directorate) : r.directorate === essDirectorate))
     }));
   const uploadId = (essResult.rows[0] || {}).upload_id || null;
@@ -1205,6 +1284,10 @@ async function buildEssDetail({ id, metric, targetConfig, journey, checkpoint, i
     is_ess_summary: true,
     ess_period: essResult.period,
     ess_period_label: essResult.period_label,
+    ess_carried_forward: essResult.carried_forward,
+    // v2.50.0: SNAPSHOT = the result stores its question set; CURRENT_CONFIG = uploaded before v2.50.0 (shown with today's questions)
+    question_text_source: hasSnapshot ? 'SNAPSHOT' : 'CURRENT_CONFIG',
+    questions_changed_since_upload: hasSnapshot && (stored.length !== configured.length || breakdown.some(b => b.text_changed)),
     latest_survey_period: essResult.period,
     last_survey_date: essResult.period,
     ess_level: essResult.level,
@@ -1219,7 +1302,7 @@ async function buildEssDetail({ id, metric, targetConfig, journey, checkpoint, i
       participation: essResult.participation,
       period: essResult.period,
       period_label: essResult.period_label,
-      description: `ESS result ${essResult.period_label} (uploaded ESS summary): the index (column F) and the question scores as stated in the file${essResult.level === 'DIRECTORATE' ? ', at directorate level' : ', bankwide'}.`
+      description: `ESS result ${essResult.period_label}${essResult.carried_forward ? ' (latest available)' : ''} (uploaded ESS summary): the index (column F) and the question scores as stated in the file${essResult.level === 'DIRECTORATE' ? ', at directorate level' : ', bankwide'}.`
     },
     ess_results_by_directorate: byDirectorate,
     ess_upload: upload ? { upload_id: upload.upload_id, file_name: upload.file_name, uploaded_by: upload.uploaded_by, uploaded_at: upload.uploaded_at, has_original_file: !!essOriginalFilePath(upload.upload_id) } : null,

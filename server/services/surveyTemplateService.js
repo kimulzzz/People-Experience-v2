@@ -56,6 +56,7 @@ async function generateSurveyCsvTemplate(metric_id = 'ALL') {
           if (type === 'YES_NO') return `[${q.label}: Ya / Tidak]`;
           if (type === 'SCALE_1_10') return `[${q.label}: Skala 1.0-10.0]`;
           if (type === 'FREE_TEXT') return `[${q.label}: Free Text / Komentar]`;
+          if (type === 'PERCENTAGE') return `[${q.label}: Persentase 0-100]`;
           return `[${q.label}: Skala 1.0-5.0]`;
         }),
         'Komentar / Saran Verbatim'
@@ -115,6 +116,7 @@ async function generateSurveyCsvTemplate(metric_id = 'ALL') {
           if (type === 'YES_NO') return `[${q.label}: Ya / Tidak]`;
           if (type === 'SCALE_1_10') return `[${q.label}: Skala 1.0-10.0]`;
           if (type === 'FREE_TEXT') return `[${q.label}: Free Text / Komentar]`;
+          if (type === 'PERCENTAGE') return `[${q.label}: Persentase 0-100]`;
           return `[${q.label}: Skala 1.0-5.0]`;
         }),
         'Komentar / Saran Verbatim'
@@ -174,6 +176,7 @@ async function generateSurveyCsvTemplate(metric_id = 'ALL') {
           if (type === 'YES_NO') return `[${q.label}: Ya / Tidak]`;
           if (type === 'SCALE_1_10') return `[${q.label}: Skala 1.0-10.0]`;
           if (type === 'FREE_TEXT') return `[${q.label}: Free Text / Komentar]`;
+          if (type === 'PERCENTAGE') return `[${q.label}: Persentase 0-100]`;
           return `[${q.label}: Skala 1.0-5.0]`;
         }),
         'Komentar / Saran Verbatim'
@@ -222,6 +225,10 @@ async function generateSurveyCsvTemplate(metric_id = 'ALL') {
       }
       if (type === 'SCALE_1_10') {
         const vals = [9.5, 9.0, 8.5];
+        return vals[sampleIndex % vals.length];
+      }
+      if (type === 'PERCENTAGE') {
+        const vals = [92, 88, 85];
         return vals[sampleIndex % vals.length];
       }
       if (type === 'FREE_TEXT') {

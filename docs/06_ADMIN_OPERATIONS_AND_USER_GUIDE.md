@@ -35,6 +35,8 @@ Sistem People Experience melayani dua kelompok peran utama:
   - `Skala 1 - 10`: Untuk rating kepuasan 1.0 s/d 10.0.
   - `Jawaban Ya / Tidak`: Untuk pertanyaan biner kepatuhan (Ya = 100%, Tidak = 0%).
   - `Jawaban Free Text`: Untuk saran kualitatif terbuka.
+  - `Percentage (0–100%)` (sejak v2.50.0): nilai persen 0-100. Untuk metrik **ESS** tipe ini wajib: dropdown tipe terkunci dan server selalu menyimpan Percentage.
+- **Metrik ESS - urutan = kolom Excel (sejak v2.50.0)**: pertanyaan metrik ESS di Manage Questions menentukan kolom pertanyaan file ringkasan ESS **menurut urutan**: pertanyaan 1 = kolom G, pertanyaan 2 = kolom H, pertanyaan 3 = kolom I, dst. Susun pertanyaan dengan urutan dan jumlah yang sama persis dengan kolom file ESS; teks header di file tidak dipakai. Teks di Manage Questions adalah teks yang tampil di web dan di template.
 - **Menambah Pertanyaan Baru**: Klik tombol **"+ Tambah Butir Pertanyaan"** di bagian bawah daftar.
 - **Mengubah Urutan Kolom**: Gunakan tombol panah **Naik (↑)** atau **Turun (↓)** untuk menyesuaikan urutan kolom pada CSV.
 - **Menghapus Pertanyaan**: Klik ikon tong sampah merah pada butir pertanyaan yang ingin dihapus.
@@ -42,6 +44,13 @@ Sistem People Experience melayani dua kelompok peran utama:
 ### Langkah 4: Menyimpan Konfigurasi / Reset
 - Klik tombol **"Simpan Perubahan Template"** untuk menerapkan konfigurasi.
 - Jika ingin mengembalikan ke format baku awal CIMB Niaga, klik tombol **"Reset ke Template Standar"**.
+
+### Apa yang terjadi bila pertanyaan diubah (sejak v2.50.0)
+- **Template** dan **tampilan web** langsung memakai pertanyaan baru.
+- **Data lama tidak diubah**: setiap upload (CSV System maupun ringkasan ESS) sejak v2.50.0 menyimpan set pertanyaan yang dipakai saat itu. Di detail metrik, data yang diunggah dengan teks lain ditandai catatan kuning "Questions changed since this result was uploaded", dan di bawah pertanyaan yang berubah tampil "At upload: <teks lama>".
+- **Evidence**: bila data periode itu berasal dari lebih dari satu versi pertanyaan, unduhan Evidence berupa **`.zip`** berisi satu CSV per versi (dengan teks pertanyaan saat data dikirim) + `README.txt` yang menjelaskan tiap versi. Satu versi = satu CSV seperti biasa.
+- Upload dari sebelum v2.50.0 tidak punya catatan pertanyaan: data CSV System lama diekspor dengan pertanyaan saat ini (ditandai di README), hasil ESS lama dengan teks header file aslinya.
+- Untuk ESS, mengubah **jumlah** pertanyaan membuat file dengan jumlah kolom lama ditolak; unduh template terbaru.
 
 ---
 
@@ -61,6 +70,7 @@ Buka berkas CSV di Microsoft Excel atau editor teks dan isi baris data:
   - Untuk tipe `SCALE_1_10`: Masukkan angka desimal `1.0` hingga `10.0` (misal: `9.0`).
   - Untuk tipe `YES_NO`: Masukkan `"Ya"` atau `"Tidak"` (sistem juga menerima variasi `"Y"`, `"T"`, `"1"`, `"0"`, `"True"`, `"False"`).
   - Untuk tipe `FREE_TEXT`: Masukkan komentar terbuka (misal: *"Proses onboarding sangat memuaskan"*).
+  - Untuk tipe `PERCENTAGE` (sejak v2.50.0): Masukkan angka `0` hingga `100` (misal: `92`, `92%` atau `92,5`); di luar rentang itu baris ditolak.
 - **Kolom `survey_date`**: Isi dengan format `YYYY-MM-DD` (misal: `2026-03-25`).
 
 ### Langkah 3: Mengunggah Berkas CSV
@@ -76,6 +86,7 @@ Buka berkas CSV di Microsoft Excel atau editor teks dan isi baris data:
 1. Buka tabel *Metrics Explorer* atau modal rincian metrik.
 2. Klik tombol pill ungu **"Evidence"**.
 3. Sistem akan menghasilkan berkas `.csv` berformat UTF-8 BOM yang memuat rekaman lengkap seluruh jawaban koresponden, NIP, tanggal survei, dan komentar verbatim yang siap diserahkan kepada auditor internal bank.
+4. Sejak v2.50.0: bila pertanyaan metrik diubah di antara upload, berkasnya berupa **`.zip`** (satu CSV per versi pertanyaan + `README.txt`), lihat §2 "Apa yang terjadi bila pertanyaan diubah". Nama berkas ditentukan server.
 
 ---
 
@@ -131,7 +142,7 @@ Buka **Admin Parameters → Metric Parameters → Edit** pada metrik yang dituju
 | **Monthly (Periodic Update Every Month)** (dulu Bulanan) | Metrik yang datanya perlu di-upload/diperbarui setiap bulan (default untuk sebagian besar metrik). |
 | **Annual (One Upload for the Full Year)** (dulu Tahunan) | Metrik yang cukup diupload sekali dan dipakai untuk kalkulasi sepanjang tahun — contoh default: 11 metrik **ESS (Employee Sentiment Survey)**. |
 
-**Periode baca**: di v2.36.0 pilihan ini sempat menentukan periode filter MTD (Annual = Januari s.d. bulan terpilih). **Sejak v2.37.0 tidak lagi**: filter MTD selalu membaca hanya bulan terpilih untuk semua metrik Survey (metrik ESS: hanya hasil yang Month + Year di template-nya sama dengan bulan itu), jadi mengubah pilihan ini tidak mengubah nilai metrik; pilihan ini hanya dipakai pengingat e-mail (§7.2). Metrik tanpa data di periode terpilih tampil "No Data" dan tidak ikut indeks (lihat `docs/01` §4).
+**Periode baca**: di v2.36.0 pilihan ini sempat menentukan periode filter MTD (Annual = Januari s.d. bulan terpilih). **Sejak v2.37.0 tidak lagi**: filter MTD selalu membaca hanya bulan terpilih untuk semua metrik Survey System (metrik ESS sejak v2.50.0: hasil ESS terakhir sampai periode yang dilihat, lihat bagian ESS di bawah), jadi mengubah pilihan ini tidak mengubah nilai metrik; pilihan ini hanya dipakai pengingat e-mail (§7.2). Metrik tanpa data di periode terpilih tampil "No Data" dan tidak ikut indeks (lihat `docs/01` §4).
 
 ### 7.2 Pengingat Upload Survei Manual (Reminder Email PIC)
 Khusus metrik bertipe **Survey**, tersedia toggle **"This survey is still uploaded manually by the PIC (enable email reminders)"**.
@@ -344,20 +355,22 @@ Setelah mengubah `.env`, restart backend. Bila batas ringkasan habis, kartu vide
 
 **Langkah**
 1. Explore Metrics -> baris metrik ESS -> **Template (.xlsx)** (atau dari detail metrik / menu Survey Templates -> "Download ESS Template (.xlsx)"). File `Template_ESS_Metric_<id>.xlsx` sudah berisi header (nama index + pertanyaan aktif) dan nama Bankwide + 12 direktorat.
-2. Isi kolom C Year, D Month (sama untuk semua baris), E Participation, F skor index (mis. `0.92` atau `92`) dan skor pertanyaan di kolom G dst. Baris direktorat tanpa data harus dihapus (baris yang hanya berisi nama + Level akan ditolak karena Year/Month/Participation/F kosong). Simpan sebagai **Excel Workbook (*.xlsx)**.
+2. Isi kolom C Year, D Month (sama untuk semua baris), E Participation, F skor index (mis. `0.92` atau `92`) dan skor pertanyaan di kolom G dst. **Sejak v2.50.0** kolom G = pertanyaan 1 di Manage Questions, H = pertanyaan 2, dst. (menurut posisi, bukan teks header), dan jumlah kolom pertanyaan yang berisi nilai harus sama dengan jumlah pertanyaan metrik itu di Manage Questions; bila tidak, file ditolak dengan pesan mis. "The file has 3 question columns with values (G-I), but 2 questions are configured for this metric in Manage Questions...". Baris direktorat tanpa data harus dihapus (baris yang hanya berisi nama + Level akan ditolak karena Year/Month/Participation/F kosong). Simpan sebagai **Excel Workbook (*.xlsx)**.
 3. Klik **Upload** pada metrik itu -> pilih file `.xlsx` -> **Process ESS Summary & Recalculate PX Index**.
 4. Hasil sukses menampilkan periode, jumlah baris, dan index Bankwide. Bila periode itu sudah pernah diunggah, datanya **diganti** (upload lama tetap ada di riwayat).
 5. Bila ditolak, tidak ada yang tersimpan; perbaiki semua baris yang disebut di daftar error lalu unggah ulang.
 
 **Yang perlu diketahui**
 - CSV dan `.xls` tidak diterima untuk metrik ESS; template CSV master (`ALL`) tidak lagi memuat metrik ESS.
-- Skor yang dipakai Dashboard adalah hasil ESS **terakhir sampai periode yang dilihat**, termasuk dari tahun sebelumnya. Contoh: YTD 2026 memakai hasil November 2025 sampai hasil 2026 diunggah.
+- Skor yang dipakai Dashboard adalah hasil ESS **terakhir sampai periode yang dilihat**, termasuk dari tahun sebelumnya (berlaku lagi sejak v2.50.0; v2.36.0-v2.49.x memakai periode ketat). ESS hanya sekali setahun (November), jadi YTD 2026 dan MTD Januari-Oktober 2026 memakai hasil November 2025 sampai hasil 2026 diunggah; detail metrik menampilkan "ESS result November 2025 (latest available)". Periode sebelum hasil pertama (mis. MTD Oktober 2025) dan bulan/tahun yang belum dimulai tampil "No Data".
+- **Pertanyaan yang tampil** (Spreadsheet View dan Card View) = pertanyaan di Manage Questions, bukan teks header file (sejak v2.50.0). Teks header file hanya disimpan untuk audit.
 - Filter direktorat memakai baris direktorat itu; filter divisi memakai baris direktorat induknya (detail metrik menampilkan catatan "ESS is reported at directorate level").
 - Jumlah sampel = Participation. Ringkasan ESS hanya berisi % favorable; % neutral / % unfavorable tampil "—".
-- **Evidence** metrik ESS = CSV baris ringkasan tersimpan semua periode beserta nama file dan pengunggahnya. PIC hanya mendapat direktorat dalam cakupannya (tanpa baris Bankwide).
+- **Evidence** metrik ESS = CSV baris ringkasan tersimpan semua periode beserta nama file dan pengunggahnya. PIC hanya mendapat direktorat dalam cakupannya (tanpa baris Bankwide). Sejak v2.50.0 bisa berupa `.zip` (satu CSV per versi pertanyaan) bila pertanyaan diubah di antara upload.
 - **Original File** di detail metrik mengunduh file asli yang diunggah (Admin atau PIC metrik itu). File asli disimpan di server di `server/data/ess-uploads/` (tidak bisa dibuka lewat `/uploads`); data seed tidak punya file asli. Folder ini tidak ikut backup database - backup terpisah (lihat `SQLServerDB.md` §16).
 - Menghapus metrik ESS di Admin Parameters ikut menghapus hasil ESS dan file aslinya.
-- Data ESS per responden lama dihapus sekali saat upgrade ke v2.32.0. Data saat ini (November 2025) adalah seed: metrik 9 = nilai file user, metrik ESS lain **dummy** - ganti dengan mengunggah hasil asli.
+- Data ESS per responden lama dihapus sekali saat upgrade ke v2.32.0. Data saat ini (November 2025) adalah seed: metrik 9 = nilai file user, metrik ESS lain **dummy** - ganti dengan mengunggah hasil asli. Dummy kuartal 2026 (Maret/Juni/September, v2.37.0) dihapus otomatis saat start pertama v2.50.0 (hanya upload seed "Seed (dummy)"; upload Admin tidak disentuh).
+- **Perlu dicek: metrik 9 (Role Clarity & DS Support)**: pertanyaan metrik 9 di Manage Questions tidak sama urutannya dengan file asli `docs/ESS 2025 Result_Role Clarity & DS Support.xlsx` (kolom G dan H tertukar, kolom I pertanyaan lain). Karena kolom dipetakan menurut posisi, skor kolom G (96) kini tampil di bawah pertanyaan 1 "Employees clearly understand what is expected of them.". Susun ulang/ubah pertanyaan metrik 9 di Manage Questions agar urutan dan teksnya sama dengan file.
 - **Pengingat e-mail**: metrik ESS bersifat tahunan dengan batas 25 November; mulai 25 November 2026 PIC akan menerima pengingat bila hasil ESS 2026 belum diunggah. Hasil ESS dianggap data bulan periodenya.
 
 ---

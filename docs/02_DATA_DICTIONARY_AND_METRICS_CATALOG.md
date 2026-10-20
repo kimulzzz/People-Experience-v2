@@ -125,6 +125,8 @@ Untuk metrik yang bersumber dari ESS, data disajikan dalam format **Spreadsheet 
 
 > **Sejak v2.32.0** data metrik ESS adalah **ringkasan hasil ESS yang diunggah (.xlsx)**, bukan jawaban per responden (lihat §5.3). Ringkasan hanya memuat % favorable per pertanyaan; % Neutral / % Unfavorable tidak tersedia (`null`). Kolom % Neut / % Unfav di tabel di bawah adalah angka referensi lama. Nilai seed saat ini: periode November 2025, index Bankwide metrik 9 = 92,00 (nilai file user), metrik lain = `raw_value` seed metrik (dummy).
 
+> **Sejak v2.50.0** semua pertanyaan 11 metrik ESS bertipe **`PERCENTAGE`** (0-100%; tipe pertanyaan ke-5, label "Percentage (0–100%)" di setting `question_types`). Boot mengubah pertanyaan ESS yang belum `PERCENTAGE`, route simpan pertanyaan memaksa `PERCENTAGE` untuk metrik ESS, dan dropdown tipe di Manage Questions terkunci untuk ESS. Pertanyaan yang tampil di web dan template ESS = pertanyaan di Manage Questions (urut tampilan); kolom pertanyaan file ESS dipetakan menurut posisi (§5.3). Hasil ESS dipakai *carry-forward* (`docs/01` §4). Kuartal dummy 2026 (v2.37.0) dihapus; data ESS saat ini hanya periode November 2025.
+
 | ID | Nama Metrik ESS | Dimensi ESS | Jml Soal | % Fav Total | % Neut Total | % Unfav Total |
 | :-: | :--- | :--- | :---: | :---: | :---: | :---: |
 | **9** | Role Clarity & DS Support Score Index | Employee Commitment | 3 | 92.3% | 7.0% | 0.7% |
@@ -160,7 +162,7 @@ nip,employee_name,cimb_email,directorate,division,metric_id,metric_name,q1_...,q
 | **`division`** | Opsional | String | `Core Banking Dev` | Unit kerja spesifik. |
 | **`metric_id`** | **Mandatory** | Integer | `7` | ID Metrik survei (1-27). |
 | **`metric_name`** | Opsional | String | `Day 1 Onboarding Satisfaction Index` | Nama metrik deskriptif. |
-| **`q1_...` s/d `qN_...`** | **Sesuai Tipe** | Desimal/Teks | `5.0` atau `"Ya"` | Nilai jawaban per butir pertanyaan. |
+| **`q1_...` s/d `qN_...`** | **Sesuai Tipe** | Desimal/Teks | `5.0` atau `"Ya"` | Nilai jawaban per butir pertanyaan. Tipe `PERCENTAGE` (sejak v2.50.0): 0-100, akhiran `%` dan koma desimal diterima (`92`, `92%`, `92,5`); di luar 0-100 atau bukan angka -> baris ditolak. |
 | **`verbatim_feedback`**| Opsional | Teks | `Fasilitas sangat siap!` | Saran, apresiasi, atau kritik terbuka. |
 | **`survey_date`** | Opsional | YYYY-MM-DD | `2026-03-25` | Tanggal pelaksanaan survei. |
 
@@ -170,6 +172,8 @@ Menghasilkan berkas CSV berstandar UTF-8 BOM yang memuat kolom audit:
 
 Untuk metrik ESS (sejak v2.32.0) evidence berisi baris ringkasan tersimpan semua periode (`Evidence_ESS_Summary_Metric_<id>.csv`, parameter `period` diabaikan):
 `Directorate, Level, Year, Month, Participation, Index_%, [<teks pertanyaan> (%) ...], Metric_ID, Metric_Name, Upload_ID, File_Name, Uploaded_By, Uploaded_At`. PIC hanya mendapat baris direktorat dalam cakupannya (tanpa baris Bankwide).
+
+**Versi set pertanyaan (sejak v2.50.0)**: setiap baris diekspor dengan pertanyaan yang tersimpan bersama upload-nya (snapshot `px_survey_uploads.questions_snapshot_json`; baris ESS: snapshot per pertanyaan di `questions_json`). Batch SYSTEM dari sebelum v2.50.0 tidak punya snapshot dan memakai konfigurasi Manage Questions saat ini (`CURRENT_CONFIG`); baris ESS lama memakai teks header file-nya (`FILE_HEADER`). Bila baris yang diekspor berasal dari satu versi set pertanyaan -> satu CSV seperti sebelumnya; lebih dari satu -> berkas **`.zip`** berisi satu CSV per versi (`<nama dasar>_v<n>_<YYYY-MM-DD>_to_<YYYY-MM-DD>.csv`, satu tanggal bila awal = akhir; versi 1 = tertua; nama `.zip` = `<nama dasar>.zip`, mis. `Evidence_Survey_Metric_8_2026.zip` / `Evidence_ESS_Summary_Metric_9.zip`) + `README.txt` (tanggal upload, jumlah baris, sumber, dan daftar pertanyaan tiap versi). Header kolom pertanyaan CSV SYSTEM tetap `<key>_<label>` (perubahan teks hanya terlihat di README); header CSV ESS memuat teks pertanyaan. Export semua metrik (`metric_id=ALL`) tidak berubah (selalu satu CSV).
 
 ### 5.3 Berkas Ringkasan ESS (.xlsx) dan Tabel `px_ess_results` (sejak v2.32.0)
 
@@ -182,8 +186,8 @@ Satu file = satu metrik ESS dan satu periode; aturan lengkap ada di `docs/SURVEY
 | C Year, D Month | `survey_year`, `survey_month` | integer | Sama untuk semua baris. |
 | E Participation | `participation` | integer >= 0 | Dipakai sebagai `sample_size` / `total_respondents`. |
 | F <nama index> | `index_score` | desimal 0-100 | Skor metrik; pecahan 0-1 dikali 100. |
-| G.. <pertanyaan> | `questions` (`questions_json`) | JSON `[{label, score}]` | `label` = teks header file, `score` 0-100 atau `null`. |
-| - | `upload_id`, `metric_id`, `created_at` | - | `upload_id` = batch di `px_survey_uploads` (riwayat). |
+| G.. <pertanyaan> | `questions` (`questions_json`) | JSON | Sejak v2.50.0 kolom dipetakan **menurut posisi** ke pertanyaan Manage Questions (G = pertanyaan 1, H = pertanyaan 2, ...); jumlah kolom bernilai harus sama dengan jumlah pertanyaan terkonfigurasi. Disimpan per pertanyaan `{ key, label, text, type, order, file_label, score }` (snapshot pertanyaan saat upload; `file_label` = teks header file, hanya untuk audit; `score` 0-100 atau `null`). Baris dari sebelum v2.50.0: `[{label, score}]` dengan `label` = teks header file, dibaca menurut posisi. |
+| - | `upload_id`, `metric_id`, `created_at` | - | `upload_id` = batch di `px_survey_uploads` (riwayat; sejak v2.50.0 dengan `questions_snapshot_json`). |
 
 ### 5.4 Berkas Exit Interview "Termination Report" (.xlsx) dan Tabel `px_exit_interviews` (sejak v2.38.0)
 

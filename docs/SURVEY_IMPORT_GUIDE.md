@@ -28,6 +28,7 @@ nip,employee_name,cimb_email,directorate,division,metric_id,metric_name,rating_s
 | **`metric_id`** | **Wajib** | Integer | `8` | ID Metrik survei (1–27) yang diukur. |
 | **`metric_name`** | Opsional | String | `New Joiner Onboarding Journey` | Nama deskriptif metrik. |
 | **`rating_score`** | **Wajib** | Desimal | `4.85` | Nilai skor survei. Skala 1.0–5.0 untuk metrik rating bintang, atau 0–100 untuk metrik persentase. |
+| **kolom pertanyaan** (template per metrik) | Sesuai pertanyaan | Desimal/Teks | `92` | Tipe pertanyaan `PERCENTAGE` (sejak v2.50.0, label "Percentage (0–100%)"): angka 0–100, akhiran `%` dan koma desimal diterima (`92`, `92%`, `92,5`); di luar 0–100 atau bukan angka -> baris ditolak; kosong boleh bila pertanyaan tidak wajib. Template memberi petunjuk `[<label>: Persentase 0-100]`. |
 | **`verbatim_feedback`** | Opsional | Text | `Materi sangat aplikatif!` | Komentar, masukan, atau kritik dari karyawan (otomatis memperkaya insight AI). |
 | **`survey_date`** | Opsional | Date (YYYY-MM-DD) | `2026-03-20` | Tanggal pengisian survei oleh karyawan. |
 
@@ -102,7 +103,7 @@ Metrik ESS diisi dari **ringkasan hasil survei**, bukan jawaban per responden. S
 | **D** | `Month` (atau `Bulan`) | mis. `November` | Nama bulan Inggris/Indonesia, singkatan 3 huruf, atau angka 1-12. |
 | **E** | `Participation` (atau `Partisipasi`) | mis. `7756` | Bilangan bulat >= 0. |
 | **F** | nama index (bebas, wajib diisi) | mis. `0.92` atau `92` | **Skor metrik.** Pecahan 0-1 dikali 100; nilai > 1 s.d. 100 dianggap persen; teks `"92%"` dibaca sebagai persen. Nilai `1` = 100%. |
-| **G, H, ...** | teks pertanyaan | skor per pertanyaan | Opsional, format sama dengan F; sel kosong = tanpa skor. Pertanyaan dicocokkan ke pertanyaan yang dikonfigurasi lewat **teks**; bila teksnya berbeda, detail metrik menampilkannya sebagai "Question N". |
+| **G, H, ...** | teks pertanyaan (tidak dipakai untuk pemetaan) | skor per pertanyaan | Format sama dengan F; sel kosong = tanpa skor. **Sejak v2.50.0 dipetakan menurut posisi** ke pertanyaan metrik di **Manage Questions**: G = pertanyaan 1, H = pertanyaan 2, dst. Jumlah kolom pertanyaan (G s.d. kolom terakhir yang berisi nilai di baris data mana pun) **harus sama** dengan jumlah pertanyaan metrik itu di Manage Questions. Teks header boleh berbeda; web selalu menampilkan teks Manage Questions dan teks header hanya disimpan untuk audit (`file_label`). (Sebelum v2.50.0: dicocokkan lewat teks, yang tidak cocok tampil "Question N".) |
 
 Contoh (nilai dari file user):
 
@@ -125,7 +126,7 @@ Contoh (nilai dari file user):
 - Year bukan 2000-2100; Month tidak dikenali; Year/Month berbeda antar baris.
 - Participation bukan bilangan bulat >= 0.
 - Skor F kosong; skor bukan angka atau di luar 0-100; sel error Excel (mis. `#DIV/0!`); sel formula tanpa nilai tersimpan.
-- Kolom berisi nilai tetapi tanpa teks pertanyaan di baris 1.
+- Jumlah kolom pertanyaan bernilai (G s.d. kolom terakhir yang berisi nilai) tidak sama dengan jumlah pertanyaan di Manage Questions (sejak v2.50.0; contoh pesan: "The file has 3 question columns with values (G-I), but 2 questions are configured for this metric in Manage Questions. Column G must hold question 1, H question 2, and so on - download the current template."). Aturan lama "kolom berisi nilai tanpa teks pertanyaan di baris 1" dihapus.
 - Sheet tanpa baris data; file bukan workbook `.xlsx` (walau berakhiran `.xlsx`).
 
 ### Langkah
@@ -134,7 +135,8 @@ Contoh (nilai dari file user):
 3. Klik **Upload** pada metrik itu, pilih file `.xlsx`, lalu **Process ESS Summary & Recalculate PX Index**. Hasil: periode, jumlah baris, index Bankwide, dan keterangan bila upload periode yang sama diganti.
 
 ### Cara skor dipakai
-- Dashboard/Explore Metrics memakai hasil ESS **terakhir yang periodenya <= akhir periode yang dilihat**, termasuk dari tahun sebelumnya (mis. YTD 2026 memakai hasil November 2025 sampai ada hasil 2026).
+- Dashboard/Explore Metrics memakai hasil ESS **terakhir yang periodenya <= akhir periode yang dilihat**, termasuk dari tahun sebelumnya (mis. YTD 2026 dan MTD Januari-Oktober 2026 memakai hasil November 2025 sampai ada hasil 2026). Aturan ini berlaku lagi sejak v2.50.0 (v2.36.0-v2.49.x memakai periode ketat). Periode sebelum hasil pertama atau yang belum dimulai = "No Data".
+- Upload menyimpan set pertanyaan Manage Questions saat itu (sejak v2.50.0). Bila pertanyaan diubah kemudian, detail metrik menandai hasil lama ("Questions changed since this result was uploaded" + "At upload: ...") dan Evidence bisa berupa `.zip` per versi pertanyaan.
 - Tanpa filter direktorat = baris Bankwide; filter direktorat = baris direktorat itu; filter divisi = baris direktorat induknya; akun User dengan beberapa direktorat = rata-rata berbobot partisipasi dari direktorat dalam cakupannya.
 - Ukuran sampel = Participation. Ringkasan ESS hanya memuat % favorable; neutral/unfavorable tidak tersedia.
 

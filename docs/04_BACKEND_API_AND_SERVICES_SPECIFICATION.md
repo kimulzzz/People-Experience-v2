@@ -538,12 +538,12 @@ Perubahan terkait: `updateMedia` (`sqlStorage.js`, `jsonStorage.js`) kini meneri
 
 | Aspek | Aturan |
 | :--- | :--- |
-| Periode (*carry-forward*, **diganti v2.36.0**: periode ketat, lihat "Catatan v2.36.0") | Batas akhir: YTD tahun Y = Y-12 (atau `endMonth` bila ada, mis. titik tren YTD); MTD Y-M = Y-M. Dipakai hasil dengan (tahun, bulan) terbesar yang <= batas itu, dari tahun mana pun. |
+| Periode (*carry-forward*, **diganti v2.36.0**: periode ketat, lihat "Catatan v2.36.0"; **berlaku lagi sejak v2.50.0** dengan batas YTD = bulan akhir YTD yang dibatasi jam server, lihat "Catatan v2.50.0") | Batas akhir: YTD tahun Y = Y-12 (atau `endMonth` bila ada, mis. titik tren YTD); MTD Y-M = Y-M. Dipakai hasil dengan (tahun, bulan) terbesar yang <= batas itu, dari tahun mana pun. |
 | Level org | Tanpa filter direktorat: baris `BANKWIDE` (bila tidak ada: gabungan baris direktorat). Filter direktorat: baris direktorat itu. Filter divisi tanpa direktorat: baris direktorat induk divisi (`essDirectorateFor`; divisi tak dikenal -> tanpa data). Akun USER dengan `scopes`: gabungan berbobot partisipasi baris direktorat dalam cakupan (tiap direktorat sekali), tidak pernah baris Bankwide. |
 | Nilai metrik | `raw_value` = `index`, `sample_size` = `participation`, `last_survey_date` = `YYYY-MM`; tambahan `ess_period`, `ess_period_label`, `ess_level`. Normalisasi/status seperti metrik `PERCENTAGE` lain. |
 | Tanpa hasil (**diganti v2.36.0**: `NO_DATA`, skor `null`) | `raw_value` statis metrik, `sample_size` 0, `last_survey_date` = `last_survey_date` metrik atau hari ini. |
 | Tren | `response_count` per titik ikut menjumlah partisipasi ESS (lewat `sample_size`). Carry-forward ke bulan/tahun berikutnya berlaku sampai v2.35.0; sejak v2.36.0 hanya dalam tahun hasil itu. |
-| Detail (`getMetricDetail` -> `buildEssDetail`) | `is_ess_summary: true`, `ess_summary` (`summary_score` = index, `percent_neutral`/`percent_unfavorable` = `null`, `participation`, `period_label`), `questions_breakdown` bertipe `ESS_PERCENT` (`percent_favorable` = skor file), `ess_results_by_directorate` (Admin/tanpa scope: semua baris, Bankwide dulu; USER: hanya direktorat dalam cakupan; `is_selected`), `ess_upload`, `ess_division_filtered`, `total_respondents` = partisipasi, `responses: []`. Pertanyaan file dicocokkan ke pertanyaan terkonfigurasi lewat teks yang dinormalisasi (huruf kecil, non-alfanumerik jadi spasi); tidak cocok -> `key` `ess_q<N>`, label "Question N". Bila metrik ESS tidak punya hasil, detail jatuh ke jalur survei lama (placeholder `ess_summary`). |
+| Detail (`getMetricDetail` -> `buildEssDetail`) | `is_ess_summary: true`, `ess_summary` (`summary_score` = index, `percent_neutral`/`percent_unfavorable` = `null`, `participation`, `period_label`), `questions_breakdown` bertipe `ESS_PERCENT` (`percent_favorable` = skor file), `ess_results_by_directorate` (Admin/tanpa scope: semua baris, Bankwide dulu; USER: hanya direktorat dalam cakupan; `is_selected`), `ess_upload`, `ess_division_filtered`, `total_respondents` = partisipasi, `responses: []`. Pertanyaan file dicocokkan ke pertanyaan terkonfigurasi lewat teks yang dinormalisasi (huruf kecil, non-alfanumerik jadi spasi); tidak cocok -> `key` `ess_q<N>`, label "Question N" (**diganti v2.50.0**: pertanyaan = Manage Questions, skor dipetakan menurut posisi, tipe `PERCENTAGE`; lihat "Catatan v2.50.0"). Bila metrik ESS tidak punya hasil, detail jatuh ke jalur survei lama (placeholder `ess_summary`). |
 
 **Storage (kedua backend, kontrak sama)**: `getEssResults(metric_id|null, { year, month })`, `getLatestEssPeriod(metric_id, endYear, endMonth)`, `saveEssResultUpload(meta, rows)` (insert ke `px_survey_uploads` + hapus baris metrik/periode yang sama + insert baris baru, satu transaksi; mengembalikan `{ record, replaced_rows }`), `deleteEssResultsForMetric(metric_id)`. `getLatestEssPeriod` dan `deleteEssResultsForMetric` belum dipanggil kode lain. `hasSurveyDataInPeriod` kini juga benar bila ada hasil ESS bertanggal tanggal 1 bulannya dalam rentang (pengingat e-mail), `getAvailableSurveyYears` ikut memuat `survey_year` ESS.
 
@@ -597,11 +597,61 @@ Pengujian: `docs/07` §30 (Modul 46).
 
 ## Catatan v2.37.0 - Periode MTD = Bulan Template ESS & Seed ESS 2026
 
-**Ringkasan**: `effectiveMetricPeriod` dihapus dari `server/db/filterUtils.js` (ekspor kini `CURRENT_YEAR`, `ytdEndMonth`, `periodWindow`, `parseFilterOptions`, `normalizeDateString`, `todayDateString`). `calculatePEIndex()` dan `getMetricDetail()` membaca setiap metrik SURVEY pada periode terpilih apa adanya: MTD Y-M -> hanya bulan itu, `period_window.basis` selalu `MONTH` (`YEAR_TO_MONTH` kini hanya untuk YTD); ESS lewat `selectEssResult` (tidak berubah) = hanya hasil dengan `survey_year`/`survey_month` = Y-M. `update_frequency` tetap dikirim di `metrics[]` dan detail, tetapi kembali hanya dipakai pengingat e-mail. Pernyataan "Catatan v2.36.0" tentang metrik `ONE_TIME_ANNUAL` pada MTD tidak berlaku lagi. Tidak ada endpoint, tabel, setting, atau env baru; `/api/health` `version` = `2.37.0`.
+**Ringkasan**: `effectiveMetricPeriod` dihapus dari `server/db/filterUtils.js` (ekspor kini `CURRENT_YEAR`, `ytdEndMonth`, `periodWindow`, `parseFilterOptions`, `normalizeDateString`, `todayDateString`). `calculatePEIndex()` dan `getMetricDetail()` membaca setiap metrik SURVEY pada periode terpilih apa adanya: MTD Y-M -> hanya bulan itu, `period_window.basis` selalu `MONTH` (`YEAR_TO_MONTH` kini hanya untuk YTD); ESS lewat `selectEssResult` (tidak berubah) = hanya hasil dengan `survey_year`/`survey_month` = Y-M (**diganti v2.50.0**: carry-forward, `basis` `LATEST_RESULT`; dummy 2026 dihapus - lihat "Catatan v2.50.0"). `update_frequency` tetap dikirim di `metrics[]` dan detail, tetapi kembali hanya dipakai pengingat e-mail. Pernyataan "Catatan v2.36.0" tentang metrik `ONE_TIME_ANNUAL` pada MTD tidak berlaku lagi. Tidak ada endpoint, tabel, setting, atau env baru; `/api/health` `version` = `2.37.0`.
 
 **Seed ESS**: `seedData.generateInitialEssResults()` juga membuat periode dummy `ESS_SEED_DUMMY_PERIODS` (2026-03, 2026-06, 2026-09; 429 baris + 33 batch). `sqlStorage.topUpEssSeed()` / `jsonStorage.topUpStoreEssSeed()` kini menyisipkan per (metrik, periode) yang belum punya baris dan mengembalikan daftar `upload_id` yang ditambahkan. Rincian: `docs/08` §17, `CHANGELOG.md` [2.37.0].
 
 Pengujian: `docs/07` §31 (Modul 46).
+
+---
+
+## Catatan v2.50.0 - Pertanyaan ESS dari Manage Questions, Tipe PERCENTAGE, ESS Carry-Forward & Snapshot Pertanyaan
+
+**Ringkasan**: (1) pertanyaan ESS di template dan web = pertanyaan Manage Questions, kolom file dipetakan menurut posisi; (2) tipe pertanyaan baru `PERCENTAGE` (semua pertanyaan ESS); (3) nilai ESS = hasil terakhir pada/sebelum akhir periode (*carry-forward*, menggantikan aturan bulan-template v2.37.0); (4) setiap upload menyimpan set pertanyaannya, dan detail/evidence memakai teks yang berlaku saat data dikirim. Tidak ada endpoint atau env baru; kolom baru `px_survey_uploads.questions_snapshot_json` (`docs/08` §23); opsi baru `PERCENTAGE` di setting `question_types`. `/api/health` `version` = `2.50.0`. Angka sebelum/sesudah: `CHANGELOG.md` [2.50.0]. Pengujian: `docs/07` §39 (Modul 52).
+
+**Aturan**
+
+| Aspek | Perilaku |
+| :--- | :--- |
+| Pertanyaan ESS | `essSummaryService.configuredEssQuestions(metricId)` = pertanyaan metrik yang bukan `FREE_TEXT`, urut tampilan Manage Questions. Dipakai template (`generateEssTemplateXlsx`), validasi upload dan detail (`buildEssDetail`). |
+| Pemetaan kolom file ESS | Kolom G = pertanyaan 1, H = pertanyaan 2, dst. Teks header file tidak dipakai untuk pemetaan maupun tampilan; disimpan sebagai `file_label`. Hasil lama (`[{label, score}]`) dipetakan menurut posisi saat dibaca, tanpa migrasi. `poolRows` menggabungkan skor pertanyaan per posisi (dulu per label). |
+| Jumlah kolom | Kolom pertanyaan = G s.d. kolom terakhir yang berisi nilai di baris data mana pun. Tidak sama dengan jumlah pertanyaan terkonfigurasi -> error `row_number` 1, kolom `G-<huruf>` (atau `G`), pesan "The file has N question column(s) with values (G-X), but M question(s) are configured for this metric in Manage Questions. Column G must hold question 1, H question 2, and so on - download the current template." -> seluruh file 400, tidak ada yang tersimpan. Error lama "Column X has a value but no question text in row 1" dihapus. |
+| Periode ESS | `essPeriodEndKey(period)`: MTD Y-M -> Y-M (`null` bila bulan itu setelah bulan berjalan); YTD Y -> Y-`ytdEndMonth` (`null` untuk tahun depan). `selectEssResult` memakai hasil dengan (tahun, bulan) terbesar yang <= batas itu, dari tahun mana pun; `null` -> `NO_DATA`. `carried_forward` = MTD: bulan hasil != bulan terpilih; YTD: tahun hasil != tahun terpilih. Metrik SYSTEM tidak berubah. |
+| `PERCENTAGE` | `QUESTION_TYPES.PERCENTAGE` (`metricQuestionService.js`), label "Percentage (0–100%)". Default kode 11 metrik ESS kini `PERCENTAGE`. CSV SYSTEM (`processSurveyCsv`): nilai 0-100, akhiran `%` dan koma desimal diterima, dipakai apa adanya; bukan angka atau di luar 0-100 -> baris ditolak; kosong boleh bila pertanyaan tidak wajib. Template CSV: petunjuk `[<label>: Persentase 0-100]`, contoh 92 / 88 / 85. Detail survei: `max` 100, `avg_score` = rata-rata 0-100, `normalized_score` = `avg_score`. |
+| Snapshot | `metricQuestionService.snapshotQuestions(questions)` -> `[{ key, label, text, type, order }]`. CSV SYSTEM: `questions_snapshot = { "<metric_id>": [...] }` untuk setiap metrik di batch; ESS: `{ "<metric_id>": [...] }` di upload + `{ key, label, text, type, order, file_label, score }` per pertanyaan di setiap baris `px_ess_results`. Data dari sebelum v2.50.0 tidak di-backfill (`questions_snapshot` `null`). Template selalu memakai konfigurasi saat ini. |
+
+**Endpoint yang berubah**
+
+| Endpoint | Perubahan |
+| :--- | :--- |
+| `POST /api/surveys/upload` (ESS `.xlsx`) | Validasi jumlah kolom di atas. Respons: `question_labels` = teks terkonfigurasi, baru `file_question_labels` = header file per posisi (`null` bila kosong). Upload menyimpan `questions_snapshot`. |
+| `POST /api/surveys/upload` (CSV SYSTEM) | Validasi `PERCENTAGE`; batch menyimpan `questions_snapshot`. |
+| `GET /api/surveys/template` | ESS: header = pertanyaan terkonfigurasi (sudah begitu; kini juga sumber tampilan web). CSV: petunjuk `PERCENTAGE`. |
+| `GET /api/surveys/evidence?metric_id=<id>` | `generateSurveyEvidence` / `generateEssEvidence` (dulu `generateSurveyEvidenceCsv` / `generateEssEvidenceCsv`) mengembalikan `{ kind: 'csv', content }` atau `{ kind: 'zip', buffer, fileName }`. Baris dikelompokkan per versi set pertanyaan (`evidenceVersions.groupByQuestionSet`, identitas = urutan + key + label + teks + tipe). Satu versi -> CSV seperti sebelumnya (`text/csv`, nama file lama). Lebih dari satu -> `application/zip`, `<nama dasar>.zip` (mis. `Evidence_Survey_Metric_8_2026.zip`, `Evidence_ESS_Summary_Metric_9.zip`) berisi satu CSV per versi (`<nama dasar>_v<n>_<dari>_to_<sampai>.csv`, versi 1 = tertua) + `README.txt`. Sumber versi: `SNAPSHOT`, `FILE_HEADER` (baris ESS lama: teks header file), `CURRENT_CONFIG` (batch SYSTEM lama: konfigurasi saat ini). Header CSV SYSTEM tetap `<key>_<label>`; CSV ESS memakai teks pertanyaan. `metric_id=ALL` selalu satu CSV. Aturan akses/PIC tidak berubah. |
+| `GET /api/surveys/history` | Setiap batch memuat `questions_snapshot` (`null` untuk upload lama). |
+| `POST /api/admin/survey-questions/:metric_id` | Metrik ESS: setiap pertanyaan disimpan bertipe `PERCENTAGE` apa pun yang dikirim. |
+| `GET /api/settings` | `question_types` memuat `{ value: 'PERCENTAGE', label: 'Percentage (0–100%)' }`. |
+| `GET /api/metrics/calculate` (dan titik `/trends`) | Metrik ESS: `period_window = { from, to, basis: 'LATEST_RESULT' }` (from/to = jendela yang dipilih), field baru `ess_carried_forward`. |
+| `GET /api/metrics/:id/detail` | Field baru di bawah. |
+
+**Field detail baru / berubah**
+
+| Field | Jalur | Arti |
+| :--- | :--- | :--- |
+| `ess_carried_forward` | detail ESS (juga `metrics[]` calculate) | `true` bila hasil yang dipakai sebelum periode terpilih |
+| `ess_summary.description` | detail ESS | ditambah " (latest available)" bila carried |
+| `question_text_source` | detail ESS | `SNAPSHOT` (hasil menyimpan set pertanyaannya) / `CURRENT_CONFIG` (hasil sebelum v2.50.0) |
+| `questions_changed_since_upload` | detail survei dan ESS | Survei: ada upload dari respons periode itu yang snapshot-nya berbeda teks, jumlah pertanyaan atau key (`previousQuestionTexts`). ESS: hasil punya snapshot dan jumlah atau teks berbeda. Upload tanpa snapshot tidak pernah memicu flag ini |
+| `questions_breakdown[].original_texts`, `.text_changed` | detail survei dan ESS | teks lama (berbeda dari teks saat ini, setelah normalisasi) per key; `text_changed` = ada teks lama |
+| `questions_breakdown[].original_text`, `.file_label` | detail ESS | teks snapshot (`null` tanpa snapshot); header file |
+| `questions_breakdown[].type` | detail ESS | `PERCENTAGE` (dulu `ESS_PERCENT`); `key`/`label`/`dimension`/visible/required dari Manage Questions |
+| `ess_results_by_directorate[].questions[].label` | detail ESS | teks terkonfigurasi menurut posisi (tidak dipakai UI sejak v2.34.0) |
+
+**Boot (`storage.init`)**: SQL menjalankan `topUpOptionLabels` -> `topUpAddedOptions` (baru, menambahkan opsi `ADDED_OPTION_VALUES` = `PERCENTAGE` ke `question_types` bila belum ada; label lain tidak disentuh) -> `topUpDirectory` -> `topUpMetricUnits` -> `topUpSurveySource` -> `enforceEssManualUpload` -> `enforceEssPercentageQuestions` (baru, `UPDATE` pertanyaan metrik ESS yang belum `PERCENTAGE`; database utama: 38 baris pada boot pertama) -> `cleanupRemovedEssDummySeed` (baru, lihat `docs/08` §23). JSON: langkah yang sama saat `store.json` dimuat. Metrik ESS baru (SQL `createMetric`) mendapat pertanyaan default bertipe `PERCENTAGE`; di JSON tidak (tampil `SCALE_1_5` sampai pertanyaannya disimpan).
+
+**Storage (kedua backend)**: `getSurveyUploads()` mengirim `questions_snapshot` (objek atau `null`); `saveSurveyUploadBatch(batchData, ...)` dan `saveEssResultUpload(meta, rows)` menerima `questions_snapshot`; import `store.json` (`migrate.js`) dan `npm run db:export` ikut membawanya.
+
+**`server/services/evidenceVersions.js` (baru)**: `questionSetSignature`, `groupByQuestionSet(items, versionOf)`, `buildVersionedZip({ baseName, title, versions })` (pakai `jszip`), `SOURCE_NOTES`.
 
 ---
 

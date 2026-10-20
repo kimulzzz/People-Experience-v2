@@ -333,6 +333,9 @@ export default function MetricDetailModal({
                         <Calendar className="w-3 h-3 text-[#ED1C24]" />
                         <span>{isEssSummary ? 'ESS Result Period' : 'Latest Survey Date'}: <strong>{isEssSummary ? detailData.ess_period_label : (normalizeDateString(detailData.last_survey_date) || (detailData.has_data === false ? '—' : todayDateString()))}</strong></span>
                       </div>
+                      {isEssSummary && detailData.ess_carried_forward && (
+                        <div className="text-[10px] text-indigo-700 mt-0.5">ESS result {detailData.ess_period_label} (latest available) - ESS runs once a year</div>
+                      )}
                       {isEssSummary && detailData.ess_division_filtered && (
                         <div className="text-[10px] text-indigo-700 mt-0.5">ESS is reported at directorate level</div>
                       )}
@@ -366,7 +369,7 @@ export default function MetricDetailModal({
                         )}
                         <a
                           href={`/api/surveys/evidence?metric_id=${detailData.metric_id}&period=${period || 'YTD'}`}
-                          download={`Evidence_Survey_Metric_${detailData.metric_id}_${period || 'YTD'}.csv`}
+                          download /* name from the server: .csv, or .zip when the rows span several question sets (v2.50.0) */
                           className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
                           title="Download survey respondent records for audit validation"
                         >
@@ -588,6 +591,14 @@ export default function MetricDetailModal({
                     </div>
                   </div>
 
+                  {/* v2.50.0: the questions shown are the current Manage Questions; this result was uploaded with other texts */}
+                  {detailData.questions_changed_since_upload && (
+                    <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      <span><strong>Questions changed since this result was uploaded.</strong> The current questions are shown; the text in use at upload is listed under each changed question. The evidence download keeps the original texts.</span>
+                    </div>
+                  )}
+
                   {/* SPREADSHEET TABLE VIEW (v2.33.0): same content as the ESS summary template - the index (column F) and one score per question */}
                   {isEss && essViewMode === 'table' ? (
                     <div className="border border-purple-200/80 rounded-xl overflow-hidden shadow-xs bg-white">
@@ -615,6 +626,11 @@ export default function MetricDetailModal({
                                     <span className="text-[10px] font-bold text-gray-400 shrink-0 mt-0.5">Q{qIdx + 1}.</span>
                                     <span className="text-xs">{q.text || q.label}</span>
                                   </div>
+                                  {(q.original_texts || []).length > 0 && (
+                                    <div className="ml-6 mt-0.5 text-[10.5px] font-normal italic text-amber-700" title="Question text in use when this data was uploaded">
+                                      At upload: {q.original_texts.join(' / ')}
+                                    </div>
+                                  )}
                                 </td>
                                 <td className="py-2.5 px-2 text-center font-bold text-gray-800 align-top">
                                   {isEssSummary ? pct(q.normalized_score) : '—'}
@@ -764,10 +780,11 @@ export default function MetricDetailModal({
                           );
                         }
 
-                        // Numeric Scale: SCALE_1_5 or SCALE_1_10
+                        // Numeric Scale: SCALE_1_5, SCALE_1_10 or PERCENTAGE (0-100 %, v2.50.0)
                         const isScale10 = qType === 'SCALE_1_10';
+                        const isPercent = qType === 'PERCENTAGE';
                         const maxScore = isScale10 ? 10.0 : 5.0;
-                        const scoreFormatted = `${(q.avg_score || 0).toFixed(2)} / ${maxScore.toFixed(1)}`;
+                        const scoreFormatted = isPercent ? `${(q.avg_score || 0).toFixed(1)}%` : `${(q.avg_score || 0).toFixed(2)} / ${maxScore.toFixed(1)}`;
                         const isHigh = q.normalized_score >= 80;
                         const isWarning = q.normalized_score >= 75 && q.normalized_score < 80;
 
@@ -787,7 +804,7 @@ export default function MetricDetailModal({
                                       {q.label}
                                     </h4>
                                     <span className="text-[10px] font-bold px-2 py-0.5 bg-gray-200 text-gray-800 rounded-full">
-                                      {isEss ? 'ESS score' : (isScale10 ? 'Scale 1 - 10' : 'Scale 1 - 5')}
+                                      {isEss ? 'ESS score (%)' : (isPercent ? 'Percentage 0 - 100%' : (isScale10 ? 'Scale 1 - 10' : 'Scale 1 - 5'))}
                                     </span>
                                     {q.dimension && (
                                       <span className="text-[10px] font-semibold px-2 py-0.5 bg-red-50 text-[#ED1C24] border border-red-200 rounded-full">
@@ -798,6 +815,11 @@ export default function MetricDetailModal({
                                   <p className="text-xs text-gray-600 mt-0.5">
                                     {q.text}
                                   </p>
+                                  {(q.original_texts || []).length > 0 && (
+                                    <p className="text-[10.5px] italic text-amber-700 mt-0.5" title="Question text in use when this data was uploaded">
+                                      At upload: {q.original_texts.join(' / ')}
+                                    </p>
+                                  )}
                                 </div>
                               </div>
 
@@ -883,7 +905,7 @@ export default function MetricDetailModal({
                     {isAdmin && <div className="flex items-center space-x-2 shrink-0 w-full md:w-auto justify-end">
                       <a
                         href={`/api/surveys/evidence?metric_id=${detailData.metric_id}&period=${period || 'YTD'}`}
-                        download={`Evidence_Survey_Metric_${detailData.metric_id}_${period || 'YTD'}.csv`}
+                        download /* name from the server: .csv, or .zip when the rows span several question sets (v2.50.0) */
                         className="px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-lg text-xs font-bold flex items-center space-x-2 transition shadow-xs whitespace-nowrap"
                         title="Download all survey responses and records for audit trail evidence"
                       >

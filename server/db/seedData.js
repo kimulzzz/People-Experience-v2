@@ -1365,12 +1365,13 @@ const ESS_ROLE_CLARITY_ROWS = [
   [90.3333, 95, 88, 88]
 ];
 
-// v2.37.0: dummy ESS summaries for 2026, one per quarter (March, June, September), for every ESS metric (the user's
-// real file only covers 2025-11). Each org unit starts from its own 2025-11 row and drifts deterministically:
-// +0.3..+1.0 pp per quarter with +/-1.5 pp noise (clamped 0-100); question scores keep their 2025-11 distance to the
-// index (+/-1); participation = the 2025-11 participation +/-3%. Inserted by the boot top-up per (metric, period),
-// only when that metric has no result for that period yet.
-const ESS_SEED_DUMMY_PERIODS = [{ year: 2026, month: 3 }, { year: 2026, month: 6 }, { year: 2026, month: 9 }];
+// v2.50.0: ESS runs once a year (November) and a later period reads the latest result (carry-forward), so the 2026
+// dummy quarters of v2.37.0 (March, June, September) were removed. These are the periods whose seed uploads
+// (upload_id seed-ess-<metric>-<period>, uploaded_by "Seed (dummy)") the storage boot deletes from an existing database.
+const ESS_REMOVED_DUMMY_PERIODS = ['2026-03', '2026-06', '2026-09'];
+const ESS_SEED_UPLOADED_BY = 'Seed (dummy)';
+const isRemovedEssDummyUpload = u => !!u && u.uploaded_by === ESS_SEED_UPLOADED_BY
+  && ESS_REMOVED_DUMMY_PERIODS.some(p => String(u.upload_id || '') === 'seed-ess-' + u.metric_id + '-' + p);
 
 function generateInitialEssResults() {
   const { DEFAULT_METRIC_QUESTIONS } = require('../services/metricQuestionService');
@@ -1378,7 +1379,6 @@ function generateInitialEssResults() {
   const uploads = [];
   const clamp = v => Math.min(100, Math.max(0, v));
   const r2 = v => Math.round(v * 100) / 100;
-  const pad = n => String(n).padStart(2, '0');
   const pushUpload = (uploadId, m, fileName, rowCount, uploadedAt) => uploads.push({
     upload_id: uploadId,
     metric_id: m.metric_id,
@@ -1387,7 +1387,7 @@ function generateInitialEssResults() {
     valid_rows: rowCount,
     invalid_rows: 0,
     calculated_avg_score: results.find(r => r.upload_id === uploadId && r.org_level === 'BANKWIDE').index_score,
-    uploaded_by: 'Seed (dummy)',
+    uploaded_by: ESS_SEED_UPLOADED_BY,
     uploaded_at: uploadedAt
   });
   initialMetrics.filter(m => m.survey_source === 'ESS').forEach(m => {
@@ -1398,7 +1398,6 @@ function generateInitialEssResults() {
       ? ESS_ROLE_CLARITY_QUESTIONS
       : (DEFAULT_METRIC_QUESTIONS[m.metric_id] || []).filter(q => (q.type || 'SCALE_1_5') !== 'FREE_TEXT').map(q => q.text || q.label);
     const orgRows = [[null, ESS_SEED_BANKWIDE_PARTICIPATION], ...ESS_SEED_PARTICIPATION];
-    const baseRows = []; // the 2025-11 values per org unit: the starting point of the 2026 dummy quarters
     orgRows.forEach(([directorate, participation], i) => {
       let index;
       let scores;
@@ -1409,7 +1408,6 @@ function generateInitialEssResults() {
         index = r2(clamp(i === 0 ? base : base + (((m.metric_id * 7 + i * 13) % 17) - 8) / 2));
         scores = labels.map((_, q) => Math.round(clamp(index + (((q * 5 + i * 3 + m.metric_id) % 7) - 3))));
       }
-      baseRows.push({ directorate, participation, index, scores });
       results.push({
         upload_id: uploadId,
         metric_id: m.metric_id,
@@ -1424,32 +1422,6 @@ function generateInitialEssResults() {
     });
     pushUpload(uploadId, m, isRoleClarity ? 'ESS 2025 Result_Role Clarity & DS Support.xlsx' : `ESS 2025 Result_${shortName} (dummy).xlsx`,
       orgRows.length, '2025-11-30T10:00:00.000Z');
-
-    ESS_SEED_DUMMY_PERIODS.forEach(({ year, month }, qi) => {
-      const quarter = qi + 1;
-      const periodId = `${year}-${pad(month)}`;
-      const dummyId = `seed-ess-${m.metric_id}-${periodId}`;
-      baseRows.forEach((b, i) => {
-        const step = 0.3 + ((m.metric_id * 3 + i * 5) % 8) / 10;                  // +0.3 .. +1.0 pp per quarter
-        const noise = (((m.metric_id * 11 + i * 7 + quarter * 13) % 31) - 15) / 10; // -1.5 .. +1.5 pp
-        const index = r2(clamp(b.index + step * quarter + noise));
-        const scores = b.scores.map((sc, q) => (sc === undefined || sc === null ? null
-          : Math.round(clamp(index + (sc - b.index) + (((m.metric_id + i * 3 + q * 5 + quarter * 7) % 5) - 2) / 2))));
-        results.push({
-          upload_id: dummyId,
-          metric_id: m.metric_id,
-          survey_year: year,
-          survey_month: month,
-          org_level: b.directorate ? 'DIRECTORATE' : 'BANKWIDE',
-          directorate: b.directorate,
-          participation: Math.round(b.participation * (1 + (((m.metric_id * 7 + i * 11 + quarter * 17) % 61) - 30) / 1000)),
-          index_score: index,
-          questions: labels.map((label, q) => ({ label, score: scores[q] === undefined ? null : scores[q] }))
-        });
-      });
-      const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
-      pushUpload(dummyId, m, `ESS ${periodId} Result_${shortName} (dummy).xlsx`, baseRows.length, `${periodId}-${pad(lastDay)}T10:00:00.000Z`);
-    });
   });
   return { results, uploads };
 }
@@ -1690,7 +1662,8 @@ const initialAppSettings = {
       { value: 'SCALE_1_5', label: '1. Scale 1 - 5 (Rating 1.0 to 5.0)', desc: 'Score rating 1 to 5, normalized as (score/5)*100' },
       { value: 'SCALE_1_10', label: '2. Scale 1 - 10 (Rating 1.0 to 10.0)', desc: 'Score rating 1 to 10, normalized as (score/10)*100' },
       { value: 'YES_NO', label: '3. Yes / No Binary (Score 100 / 0)', desc: 'Binary choice: Yes = 100%, No = 0%' },
-      { value: 'FREE_TEXT', label: '4. Free Text Response (Qualitative / Feedback)', desc: 'Open text feedback without numeric scale' }
+      { value: 'FREE_TEXT', label: '4. Free Text Response (Qualitative / Feedback)', desc: 'Open text feedback without numeric scale' },
+      { value: 'PERCENTAGE', label: 'Percentage (0–100%)', desc: 'Score 0 to 100 (%), used as is (every question of an ESS metric)' }
     ],
     description: 'Pilihan Tipe Pertanyaan di Survey Questions'
   },
@@ -1896,6 +1869,18 @@ const LEGACY_OPTION_LABELS = {
 };
 
 // Returns the upgraded option list for `settingKey`, or null when nothing needs to change.
+// v2.50.0: option values added to a value-locked catalog after it was first seeded (only the labels of these catalogs
+// are admin-editable, so a new value can only arrive through the boot). Appends the missing default options; null when
+// nothing is missing.
+const ADDED_OPTION_VALUES = { question_types: ['PERCENTAGE'] };
+function addMissingOptions(settingKey, currentValue) {
+  const wanted = ADDED_OPTION_VALUES[settingKey];
+  const target = initialAppSettings[settingKey];
+  if (!wanted || !target || !Array.isArray(currentValue)) return null;
+  const missing = target.value.filter(o => wanted.includes(o.value) && !currentValue.some(c => c && c.value === o.value));
+  return missing.length ? [...currentValue, ...missing.map(o => ({ ...o }))] : null;
+}
+
 function upgradeLegacyOptionLabels(settingKey, currentValue) {
   const legacy = LEGACY_OPTION_LABELS[settingKey];
   const target = initialAppSettings[settingKey];
@@ -1929,6 +1914,10 @@ module.exports = {
   initialAppSettings,
   LEGACY_OPTION_LABELS,
   upgradeLegacyOptionLabels,
+  ADDED_OPTION_VALUES,
+  addMissingOptions,
+  ESS_REMOVED_DUMMY_PERIODS,
+  isRemovedEssDummyUpload,
   initialEmailSettings,
   initialJourneys,
   initialCheckpoints,

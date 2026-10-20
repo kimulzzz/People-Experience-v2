@@ -18,8 +18,8 @@ const { generateEventPPT } = require('./services/pptGenerator');
 const { isOllamaAvailable, generateEventSummary } = require('./services/localAiService');
 const { generateSurveyCsvTemplate } = require('./services/surveyTemplateService');
 const { processSurveyCsv } = require('./services/surveyImportService');
-const { generateSurveyEvidenceCsv } = require('./services/surveyEvidenceService');
-const { importEssSummary, generateEssTemplateXlsx, generateEssEvidenceCsv, essOriginalFilePath } = require('./services/essSummaryService');
+const { generateSurveyEvidence } = require('./services/surveyEvidenceService');
+const { importEssSummary, generateEssTemplateXlsx, generateEssEvidence, essOriginalFilePath } = require('./services/essSummaryService');
 const { importExitInterviews, resolveExitPeriod, getExitInterviewSummary, generateExitTemplateXlsx, generateExitExportCsv } = require('./services/exitInterviewService');
 const { isEssMetric } = require('./db/surveySource');
 const { getPendingUploadReminders, sendPendingUploadReminders, startReminderScheduler } = require('./services/reminderService');
@@ -134,12 +134,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.49.1' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.50.0' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.49.1',
+    version: '2.50.0',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',
@@ -592,8 +592,11 @@ app.post('/api/admin/survey-questions/:metric_id', async (req, res) => {
     if (!Array.isArray(questions)) {
       return res.status(400).json({ error: 'questions must be an array' });
     }
-    if (!(await storage.getMetricById(metric_id))) return res.status(404).json({ error: `Metric #${metric_id} not found.` });
-    const saved = await storage.saveSurveyQuestions(metric_id, questions);
+    const metric = await storage.getMetricById(metric_id);
+    if (!metric) return res.status(404).json({ error: `Metric #${metric_id} not found.` });
+    // v2.50.0: an ESS summary reports every question as a percentage, so the questions of an ESS metric are always PERCENTAGE
+    const isEss = metric.metric_type === 'SURVEY' && isEssMetric(metric);
+    const saved = await storage.saveSurveyQuestions(metric_id, isEss ? questions.map(q => ({ ...(q || {}), type: 'PERCENTAGE' })) : questions);
     res.json({
       success: true,
       message: `Survey questions for Metric ID ${metric_id} saved successfully`,
@@ -783,22 +786,28 @@ app.get('/api/surveys/evidence', async (req, res) => {
     if (!(await checkMetricRef(res, metric_id, { allowAll: true }))) return;
     const picMetric = req.user.role === 'ADMIN' ? null : await auth.getPicMetric(req.user, metric_id);
     const essMetric = metric_id !== 'ALL' ? (await storage.getMetrics()).find(m => m.metric_id === parseInt(metric_id, 10) && m.metric_type === 'SURVEY' && isEssMetric(m)) : null;
+    // v2.50.0: rows are exported with the question texts stored with their upload; rows of more than one question-set
+    // version come as a .zip (one CSV per version + README.txt), one version stays the single CSV of before.
+    const sendEvidence = (out, csvName) => {
+      if (out.kind === 'zip') {
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="${out.fileName}"`);
+        return res.send(out.buffer);
+      }
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${csvName}"`);
+      return res.send(out.content);
+    };
     if (essMetric) {
       // ESS (v2.32.0): the stored summary rows of every period with the upload that brought them. A PIC gets only the
       // directorates of their own scope (the Bankwide row is for the Admin).
-      const essCsv = await generateEssEvidenceCsv(essMetric, { scopes: picMetric ? auth.respondentScopeFor(req.user, picMetric) : null });
-      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Content-Disposition', `attachment; filename="Evidence_ESS_Summary_Metric_${essMetric.metric_id}.csv"`);
-      return res.send(essCsv);
+      const essOut = await generateEssEvidence(essMetric, { scopes: picMetric ? auth.respondentScopeFor(req.user, picMetric) : null });
+      return sendEvidence(essOut, `Evidence_ESS_Summary_Metric_${essMetric.metric_id}.csv`);
     }
-    const csvContent = await generateSurveyEvidenceCsv(metric_id, period, { scopes: picMetric ? auth.respondentScopeFor(req.user, picMetric) : null });
-    const filename = metric_id === 'ALL'
+    const out = await generateSurveyEvidence(metric_id, period, { scopes: picMetric ? auth.respondentScopeFor(req.user, picMetric) : null });
+    sendEvidence(out, metric_id === 'ALL'
       ? `Evidence_Survey_Master_All_Metrics_${period}.csv`
-      : `Evidence_Survey_Metric_${metric_id}_${period}.csv`;
-
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(csvContent);
+      : `Evidence_Survey_Metric_${metric_id}_${period}.csv`);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
