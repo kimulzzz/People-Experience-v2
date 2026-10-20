@@ -82,11 +82,11 @@ const GLOSSARY_TERMS = [
 const CATEGORIES = [
   { id: 'FRAMEWORK', label: 'Core Framework & Concepts', color: '#780000', icon: Compass },
   { id: 'TOOLS', label: 'Tools & Systems', color: '#2563EB', icon: Wrench },
-  { id: 'ARRIVAL', label: 'Arrival', color: '#FF8000', icon: UserPlus },
-  { id: 'CONNECT', label: 'Connect', color: '#F7901E', icon: Users },
-  { id: 'BELONG', label: 'Belong', color: '#6716C4', icon: HeartHandshake },
-  { id: 'CONTRIBUTE', label: 'Contribute', color: '#16C0B7', icon: TrendingUp },
-  { id: 'DEPART', label: 'Depart', color: '#C1009D', icon: LogOut }
+  { id: 'ARRIVAL', label: 'Arrival', color: '#2A5BBA', icon: UserPlus },
+  { id: 'CONNECT', label: 'Connect', color: '#D9534F', icon: Users },
+  { id: 'BELONG', label: 'Belong', color: '#0F9CA3', icon: HeartHandshake },
+  { id: 'CONTRIBUTE', label: 'Contribute', color: '#E08424', icon: TrendingUp },
+  { id: 'DEPART', label: 'Depart', color: '#8731C8', icon: LogOut }
 ];
 
 export default function GlossaryView() {

@@ -674,6 +674,9 @@ domain model, not just descriptive:
   (60 s warning, multi-tab via localStorage). Suite keeps its session alive via `/api/auth/activity`. Gotcha: in-process `require('jsonStorage')` can rewrite
   `store.json` - back it up first. Suite SQL 246/246, 16 skipped.
 
+- **v2.45.0** (2026-10-20, see `CHANGELOG.md` [2.45.0]): journey colors follow the "People Experience Measurement" slide (`docs/warna journey PX.PNG`):
+  Arrival `#2A5BBA`, Connect `#D9534F`, Belong `#0F9CA3`, Contribute `#E08424`, Depart `#8731C8` - in `px_journeys.color`, seed and `GlossaryView.jsx`.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan

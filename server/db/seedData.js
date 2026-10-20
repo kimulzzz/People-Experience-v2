@@ -9,7 +9,7 @@ const initialJourneys = [
     journey_code: 'ARRIVAL',
     journey_name: 'Arrival',
     tagline: 'Attract and onboard the right talent seamlessly, creating a strong and positive first impression.',
-    color: '#FF8000', // CIMB Bright Orange (R:255 G:128 B:0)
+    color: '#2A5BBA', // Arrival blue (People Experience Measurement slide, v2.45.0)
     icon: 'UserPlus',
     display_order: 1
   },
@@ -18,7 +18,7 @@ const initialJourneys = [
     journey_code: 'CONNECT',
     journey_name: 'Connect',
     tagline: 'Build early trust and alignment through clear role, expectations, and team connection.',
-    color: '#F7901E', // CIMB Amber Orange (R:247 G:144 B:30)
+    color: '#D9534F', // Connect coral red (v2.45.0)
     icon: 'Users',
     display_order: 2
   },
@@ -27,7 +27,7 @@ const initialJourneys = [
     journey_code: 'BELONG',
     journey_name: 'Belong',
     tagline: 'Foster emotional connection, inclusion, psychological safety, and a strong sense of belonging.',
-    color: '#6716C4', // CIMB Royal Purple (R:103 G:22 B:196)
+    color: '#0F9CA3', // Belong teal (v2.45.0)
     icon: 'HeartHandshake',
     display_order: 3
   },
@@ -36,7 +36,7 @@ const initialJourneys = [
     journey_code: 'CONTRIBUTE',
     journey_name: 'Contribute',
     tagline: 'Enable employees to perform, grow and create meaningful impact.',
-    color: '#16C0B7', // CIMB Digital Teal (R:22 G:192 B:183)
+    color: '#E08424', // Contribute orange (v2.45.0)
     icon: 'TrendingUp',
     display_order: 4
   },
@@ -45,7 +45,7 @@ const initialJourneys = [
     journey_code: 'DEPART',
     journey_name: 'Depart',
     tagline: 'Ensure a smooth, respectful, and positive exit experience.',
-    color: '#C1009D', // CIMB Magenta (R:193 G:0 B:157)
+    color: '#8731C8', // Depart purple (v2.45.0)
     icon: 'LogOut',
     display_order: 5
   }
