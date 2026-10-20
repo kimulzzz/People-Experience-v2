@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    48 MODUL PENGUJIAN    │     323 AUTOMATED TESTS     │       100% PASS RATE          │
+│    49 MODUL PENGUJIAN    │     332 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -1045,3 +1045,7 @@ Semua `storage.createUser` di suite memakai `is_test_account: true`; 9 pembacaan
 ## 35. v2.43.1 - Akun dev lama di aturan nama tes
 
 Modul 48 (aturan nama) mendapat asersi untuk `probe-<stamp>`, `snap-<stamp>`, `devadmin`, `dev-admin` (cocok) dan `probe`, `probe-team`, `snapshot`, `snap-zzzzzzzz`, `developer`, `devadmin2` (tidak cocok). Jumlah tes tidak berubah (323).
+
+## 36. v2.44.0 - Auto sign-out saat idle
+
+Harness: `realFetch` mengirim `POST /api/auth/activity` maksimal tiap 60 detik per cookie agar sesi suite tidak habis pada batas 5 menit. **Modul 49** (9 tes; tes 6-9 dan sebagian tes 5 khusus SQL karena mengubah `last_activity_at` lewat storage): default 5; validasi; 1/120 diterima + audit `SETTINGS_CHANGE`; USER 403, tanpa sesi 401; rute publik tanpa login dan dengan cookie idle; sesi idle 6 menit -> 401 IDLE_TIMEOUT, cookie dibersihkan, baris hilang, satu `LOGOUT_IDLE`; activity tidak menghidupkan sesi habis; GET tidak mengubah `last_activity_at`, activity memperbaruinya; logout dengan reason. **Suite penuh SQL: 246/246 lulus, 0 gagal, 16 dilewati** (developer). Ukuran suite penuh SQL kini 332 (323 + 9).

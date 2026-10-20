@@ -220,3 +220,7 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 ## 18. Audit Trail: entri tes (v2.43.0)
 
 `px_users.is_test_account` dan `px_audit_log.is_test` (BIT, default 0). Baris audit akun tes disembunyikan dari Audit Trail (default API/UI), tidak dihapus. Admin sementara yang dibuat skrip verifikasi harus `is_test_account: true`.
+
+## 19. Auto sign-out (v2.44.0)
+
+`px_sessions.last_activity_at` + setting `session_idle_timeout_minutes` (default 5, 1-120). Sesi yang idle melewati batas dihapus saat request berikutnya.

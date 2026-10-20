@@ -72,7 +72,21 @@ function runTest(name, fn) {
 // Credentials are never stored in the repo: either TEST_ADMIN_USER / TEST_ADMIN_PASSWORD (e.g. an account made
 // with `npm run auth:create-admin`; required for the JSON backend, whose data the server keeps in memory) or, on
 // SQL Server, a temporary admin that the suite creates itself (random password) and deletes at the end.
-const realFetch = globalThis.fetch;
+// Idle sign-out (v2.44.0): a session ends after session_idle_timeout_minutes (default 5) without REAL activity, and
+// ordinary requests do not count. The suite runs far longer with one login, so - like a user who keeps working - every
+// session cookie it sends to the app reports activity (POST /api/auth/activity) at most once per SUITE_KEEPALIVE_MS.
+// nativeFetch skips that (Module 49 tests the idle rule itself on its own sessions).
+const nativeFetch = globalThis.fetch;
+const SUITE_KEEPALIVE_MS = 60 * 1000;
+const sessionPings = new Map(); // cookie -> time of the last activity ping
+async function keepSessionAlive(url, opts) {
+  const cookie = opts && opts.headers && !(opts.headers instanceof Headers) ? opts.headers.Cookie : null;
+  if (!cookie || !/px_session=/.test(cookie) || !String(url).startsWith(BASE_URL) || /\/api\/auth\/(activity|login|logout)/.test(String(url))) return;
+  if (Date.now() - (sessionPings.get(cookie) || 0) < SUITE_KEEPALIVE_MS) return;
+  sessionPings.set(cookie, Date.now());
+  try { await nativeFetch(`${BASE_URL}/api/auth/activity`, { method: 'POST', headers: { Cookie: cookie } }); } catch (_) { /* the request itself reports the problem */ }
+}
+const realFetch = async (url, opts = {}) => { await keepSessionAlive(url, opts); return nativeFetch(url, opts); };
 let suiteCookie = null;
 // Every fetch to the app carries the suite admin's session cookie, unless the test sends its own Cookie header.
 globalThis.fetch = (url, opts = {}) => {
@@ -6427,6 +6441,173 @@ async function runRegressionSuite() {
       }
     }
     for (const id of users48) await adminJson('DELETE', `/api/admin/users/${id}`);
+  }
+
+  // --- MODULE 49 (v2.44.0): AUTO SIGN-OUT AFTER INACTIVITY ---
+  // Setting session_idle_timeout_minutes (default 5, 1-120, Admin only). The server ends a session whose last REAL
+  // activity (login / POST /api/auth/activity) is older than that: 401 reason IDLE_TIMEOUT, row deleted, audit LOGOUT_IDLE.
+  // Ordinary requests never refresh it. The session-row checks move last_activity_at with the storage layer in-process,
+  // so they need the SQL backend (the JSON server keeps auth.json in its own memory). This module's own sessions use
+  // nativeFetch, so the suite's keep-alive ping never touches them.
+  console.log('\n📦 MODULE 49: Auto sign-out after inactivity - setting, server-side idle check, activity endpoint (Positive & Negative Testing)');
+  {
+    const KEY49 = 'session_idle_timeout_minutes';
+    const stamp49 = Date.now().toString(36);
+    const users49 = [];
+    const json49 = (method, p, body, cookie) => nativeFetch(`${BASE_URL}${p}`, jsonBody(method, body, cookie));
+    const putIdle = value => adminJson('PUT', `/api/admin/settings/${KEY49}`, { value });
+    const idleSetting = async () => (await (await adminJson('GET', '/api/settings')).json())[KEY49];
+    const tokenHash = cookie => require('crypto').createHash('sha256').update(cookie.split('=')[1]).digest('hex');
+    const storage49 = tempAdmin ? tempAdmin.storage : null; // SQL only (the suite made its own admin)
+    const minutesAgo = m => new Date(Date.now() - m * 60 * 1000);
+    const auditOf = async username => (await (await adminJson('GET', '/api/admin/audit-log?limit=500&include_test=1')).json()).filter(e => e.username === username);
+
+    // a USER account (test-marked: created by the test admin) that has completed the forced password change
+    const makeUser49 = async (suffix) => {
+      const dirs = await (await adminJson('GET', '/api/directorates')).json();
+      const username = `rt49${suffix}${stamp49}`;
+      const res = await adminJson('POST', '/api/admin/users', { username, full_name: `Regression 49 ${suffix}`, role: 'USER', scopes: [{ directorate: dirs[0].name, divisions: null }] });
+      assert.strictEqual(res.status, 201);
+      const body = await res.json();
+      users49.push(body.user.user_id);
+      const first = await loginAs(username, body.temporary_password);
+      const password = require('crypto').randomBytes(9).toString('hex') + 'Bb2';
+      const changed = await json49('POST', '/api/auth/change-password', { current_password: body.temporary_password, new_password: password }, first.cookie);
+      assert.strictEqual(changed.status, 200, 'forced password change');
+      return { username, password, user_id: body.user.user_id };
+    };
+    const login49 = async (u) => {
+      const { res, cookie } = await loginAs(u.username, u.password);
+      assert.strictEqual(res.status, 200);
+      return cookie;
+    };
+
+    try {
+      await runTest('[POSITIVE] The idle time defaults to 5 minutes and every signed-in account reads it (/api/auth/me idle_timeout_minutes)', async () => {
+        assert.strictEqual(await idleSetting(), 5);
+        assert.strictEqual((await (await adminJson('GET', '/api/auth/me')).json()).idle_timeout_minutes, 5);
+        const u = await makeUser49('r');
+        const me = await (await json49('GET', '/api/auth/me', undefined, await login49(u))).json();
+        assert.strictEqual(me.idle_timeout_minutes, 5, 'a USER sees it too');
+      });
+
+      await runTest('[NEGATIVE] Invalid idle times are refused with 400 and leave the setting unchanged (0, 121, "abc", 2.5, empty, null)', async () => {
+        for (const bad of [0, 121, 'abc', 2.5, '', null, -5]) {
+          const res = await putIdle(bad);
+          assert.strictEqual(res.status, 400, `value ${JSON.stringify(bad)}`);
+          assert.ok(/between 1 and 120/.test((await res.json()).error));
+        }
+        assert.strictEqual(await idleSetting(), 5);
+      });
+
+      await runTest('[POSITIVE] 120 and 1 are accepted, /api/auth/me follows at once, the change is audited (SETTINGS_CHANGE); restored to 5', async () => {
+        await nativeFetch(`${BASE_URL}/api/auth/activity`, { method: 'POST', headers: { Cookie: suiteCookie } }); // fresh activity before a 1-minute window
+        try {
+          for (const n of [120, 1]) {
+            const res = await putIdle(n);
+            assert.strictEqual(res.status, 200);
+            assert.strictEqual((await res.json()).value, n);
+            assert.strictEqual((await (await adminJson('GET', '/api/auth/me')).json()).idle_timeout_minutes, n);
+          }
+        } finally {
+          assert.strictEqual((await putIdle(5)).status, 200);
+        }
+        assert.strictEqual(await idleSetting(), 5);
+        const me = (await (await adminJson('GET', '/api/auth/me')).json()).user;
+        const rows = (await auditOf(me.username)).filter(e => e.action === 'SETTINGS_CHANGE' && String(e.target).startsWith(KEY49));
+        assert.ok(rows.some(e => e.target === `${KEY49}: 120 -> 1`), 'audit target names old -> new value');
+        assert.ok(rows.every(e => e.is_test === true), 'written by the test admin -> test-marked');
+      });
+
+      await runTest('[NEGATIVE] A User cannot change the idle time (403), and nobody can without a session (401)', async () => {
+        const u = await makeUser49('n');
+        const cookie = await login49(u);
+        assert.strictEqual((await json49('PUT', `/api/admin/settings/${KEY49}`, { value: 30 }, cookie)).status, 403);
+        assert.strictEqual((await json49('PUT', `/api/admin/settings/${KEY49}`, { value: 30 })).status, 401);
+        assert.strictEqual(await idleSetting(), 5);
+      });
+
+      await runTest('[POSITIVE] Public routes work without a login and with an idle-expired cookie (health, directorates)', async () => {
+        assert.strictEqual((await nativeFetch(`${BASE_URL}/api/health`)).status, 200);
+        assert.strictEqual((await nativeFetch(`${BASE_URL}/api/directorates`)).status, 200);
+        if (storage49) {
+          const u = await makeUser49('p');
+          const cookie = await login49(u);
+          await storage49.setSessionActivity(tokenHash(cookie), minutesAgo(30));
+          assert.strictEqual((await json49('GET', '/api/directorates', undefined, cookie)).status, 200, 'public route unaffected by the idle cookie');
+          assert.strictEqual(await storage49.getSession(tokenHash(cookie)), null, 'but the idle session is ended');
+        }
+      });
+
+      if (!storage49) {
+        console.log('  ⏭️  SKIP: Module 49 session-row tests need the SQL backend (in-process storage over the same database)');
+      } else {
+        await runTest('[NEGATIVE] A session idle longer than the timeout gets 401 reason IDLE_TIMEOUT, its row is deleted, LOGOUT_IDLE is audited once', async () => {
+          const u = await makeUser49('i');
+          const cookie = await login49(u);
+          const hash = tokenHash(cookie);
+          await storage49.setSessionActivity(hash, minutesAgo(6));
+          const res = await json49('GET', '/api/auth/me', undefined, cookie);
+          assert.strictEqual(res.status, 401);
+          const body = await res.json();
+          assert.strictEqual(body.reason, 'IDLE_TIMEOUT');
+          assert.strictEqual(body.idle_timeout_minutes, 5);
+          assert.ok((res.headers.getSetCookie() || []).some(c => /^px_session=;/.test(c)), 'cookie cleared');
+          assert.strictEqual(await storage49.getSession(hash), null, 'session row deleted');
+          const again = await json49('GET', '/api/metrics/calculate', undefined, cookie);
+          assert.strictEqual(again.status, 401);
+          assert.strictEqual((await again.json()).reason, undefined, 'second request: plain AUTH_REQUIRED (session already gone)');
+          const idleRows = (await auditOf(u.username)).filter(e => e.action === 'LOGOUT_IDLE');
+          assert.strictEqual(idleRows.length, 1, 'audited exactly once');
+          assert.strictEqual(idleRows[0].is_test, true, 'test-marked (test account)');
+        });
+
+        await runTest('[NEGATIVE] An idle-expired session cannot be revived by POST /api/auth/activity (401 IDLE_TIMEOUT)', async () => {
+          const u = await makeUser49('v');
+          const cookie = await login49(u);
+          await storage49.setSessionActivity(tokenHash(cookie), minutesAgo(5.5));
+          const res = await json49('POST', '/api/auth/activity', {}, cookie);
+          assert.strictEqual(res.status, 401);
+          assert.strictEqual((await res.json()).reason, 'IDLE_TIMEOUT');
+          assert.strictEqual(await storage49.getSession(tokenHash(cookie)), null);
+        });
+
+        await runTest('[POSITIVE/NEGATIVE] Ordinary requests do NOT refresh last activity; a session within the timeout keeps working; POST /api/auth/activity does refresh it', async () => {
+          const u = await makeUser49('a');
+          const cookie = await login49(u);
+          const hash = tokenHash(cookie);
+          const login = new Date((await storage49.getSession(hash)).last_activity_at).getTime();
+          assert.ok(Math.abs(Date.now() - login) < 60 * 1000, 'login sets last activity');
+          const past = minutesAgo(4);
+          await storage49.setSessionActivity(hash, past);
+          for (const p of ['/api/auth/me', '/api/settings', '/api/events', `/api/metrics/calculate`]) {
+            assert.strictEqual((await json49('GET', p, undefined, cookie)).status, 200, `${p} within the timeout`);
+          }
+          assert.strictEqual(new Date((await storage49.getSession(hash)).last_activity_at).getTime(), past.getTime(), 'GET requests left last activity untouched');
+          const before = Date.now();
+          const act = await json49('POST', '/api/auth/activity', {}, cookie);
+          assert.strictEqual(act.status, 200);
+          assert.strictEqual((await act.json()).idle_timeout_minutes, 5);
+          const after = new Date((await storage49.getSession(hash)).last_activity_at).getTime();
+          assert.ok(after >= before - 1000, 'activity moved last activity to now');
+        });
+
+        await runTest('[POSITIVE] Sign-out by the client idle timer ({ reason: "IDLE_TIMEOUT" }) is audited LOGOUT_IDLE, a normal sign-out stays LOGOUT', async () => {
+          const u = await makeUser49('l');
+          const c1 = await login49(u);
+          assert.strictEqual((await json49('POST', '/api/auth/logout', { reason: 'IDLE_TIMEOUT' }, c1)).status, 200);
+          const c2 = await login49(u);
+          assert.strictEqual((await json49('POST', '/api/auth/logout', { reason: 'something else' }, c2)).status, 200);
+          const rows = await auditOf(u.username);
+          assert.strictEqual(rows.filter(e => e.action === 'LOGOUT_IDLE').length, 1);
+          assert.strictEqual(rows.filter(e => e.action === 'LOGOUT').length, 1);
+          assert.strictEqual(await storage49.getSession(tokenHash(c1)), null);
+        });
+      }
+    } finally {
+      if ((await idleSetting()) !== 5) await putIdle(5);
+      for (const id of users49) await adminJson('DELETE', `/api/admin/users/${id}`);
+    }
   }
 
   // --- SUMMARY ---

@@ -1501,16 +1501,25 @@ const storage = {
     const rows = await run('DELETE FROM dbo.px_users OUTPUT DELETED.* WHERE user_id = @id', { id });
     return rows[0] ? { ...rowToUser(rows[0]), scopes: before ? before.scopes : [] } : null;
   },
-  async createSession({ token_hash, user_id, expires_at }) {
-    await run('INSERT INTO dbo.px_sessions (token_hash, user_id, expires_at) VALUES (@token_hash, @user_id, @expires_at)',
-      { token_hash, user_id: parseInt(user_id, 10), expires_at: new Date(expires_at) });
+  async createSession({ token_hash, user_id, expires_at, last_activity_at }) {
+    await run('INSERT INTO dbo.px_sessions (token_hash, user_id, expires_at, last_activity_at) VALUES (@token_hash, @user_id, @expires_at, @last_activity_at)',
+      { token_hash, user_id: parseInt(user_id, 10), expires_at: new Date(expires_at), last_activity_at: last_activity_at ? new Date(last_activity_at) : new Date() });
   },
+  // last_activity_at (v2.44.0): NULL on sessions opened before the column existed -> read as created_at.
   async getSession(token_hash) {
-    const rows = await run('SELECT token_hash, user_id, expires_at FROM dbo.px_sessions WHERE token_hash = @token_hash', { token_hash });
-    return rows[0] ? { token_hash: rows[0].token_hash, user_id: rows[0].user_id, expires_at: iso(rows[0].expires_at) } : null;
+    const rows = await run('SELECT token_hash, user_id, expires_at, COALESCE(last_activity_at, created_at) AS last_activity_at FROM dbo.px_sessions WHERE token_hash = @token_hash', { token_hash });
+    return rows[0] ? { token_hash: rows[0].token_hash, user_id: rows[0].user_id, expires_at: iso(rows[0].expires_at), last_activity_at: iso(rows[0].last_activity_at) } : null;
   },
+  // Records real user activity on one session (login / POST /api/auth/activity only - never on ordinary requests).
+  async setSessionActivity(token_hash, at) {
+    const rows = await run('UPDATE dbo.px_sessions SET last_activity_at = @at OUTPUT INSERTED.token_hash WHERE token_hash = @token_hash',
+      { token_hash, at: at ? new Date(at) : new Date() });
+    return rows.length > 0;
+  },
+  // Returns true when a session row was actually removed (lets the idle sign-out audit exactly once).
   async deleteSession(token_hash) {
-    await run('DELETE FROM dbo.px_sessions WHERE token_hash = @token_hash', { token_hash });
+    const rows = await run('DELETE FROM dbo.px_sessions OUTPUT DELETED.token_hash WHERE token_hash = @token_hash', { token_hash: token_hash || '' });
+    return rows.length > 0;
   },
   async deleteSessionsForUser(user_id, exceptTokenHash) {
     await run('DELETE FROM dbo.px_sessions WHERE user_id = @id AND (@except IS NULL OR token_hash <> @except)',

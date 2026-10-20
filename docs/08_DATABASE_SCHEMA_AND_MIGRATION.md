@@ -292,3 +292,7 @@ Diverifikasi oleh Modul 47 (`docs/07` §32).
 ## 19. Pembaruan v2.43.0 - Penandaan entri tes audit
 
 Kolom baru `px_users.is_test_account BIT NOT NULL DEFAULT 0` dan `px_audit_log.is_test BIT NOT NULL DEFAULT 0` (ALTER idempoten saat boot). `markHistoricalTestAudit()` berjalan sekali pada boot yang menambah kolom: di DB utama 9.525 baris ditandai, 266 tetap tampil. Tidak ada baris yang dihapus. Cek: `SELECT is_test, COUNT(*) FROM dbo.px_audit_log GROUP BY is_test;`
+
+## 20. Pembaruan v2.44.0 - Aktivitas sesi
+
+Kolom baru `px_sessions.last_activity_at DATETIME2(3) NULL DEFAULT SYSUTCDATETIME()` (ALTER idempoten; NULL dibaca sebagai `created_at`). Setting baru `session_idle_timeout_minutes` di `px_app_settings` (default 5). Tetap 32 tabel.

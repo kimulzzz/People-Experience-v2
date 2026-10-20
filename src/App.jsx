@@ -17,6 +17,7 @@ import PublicCheckInForm from './components/PublicCheckInForm';
 import PublicFeedbackForm from './components/PublicFeedbackForm';
 import GlossaryView from './components/GlossaryView';
 import { LoginPage, ChangePasswordScreen } from './components/AuthScreens';
+import IdleSessionGuard, { broadcastIdleSignOut, IDLE_TIMEOUT_CHANGED_EVENT } from './components/IdleSessionGuard';
 import { AuthContext, useAuth } from './utils/AuthContext';
 import { UNAUTHORIZED_EVENT } from './utils/apiClient';
 import { fetchWithRetry } from './utils/fetchWithRetry';
@@ -34,8 +35,31 @@ const CURRENT_YEAR = String(new Date().getFullYear());
 function AuthGate({ children }) {
   const [state, setState] = useState({ status: 'loading', session: null });
   const [notice, setNotice] = useState('');
+  // v2.44.0: auto sign-out after N minutes without activity (setting session_idle_timeout_minutes, from the server)
+  const [idleMinutes, setIdleMinutes] = useState(null);
+  const idleMinutesRef = useRef(null);
   const statusRef = useRef('loading');
-  const setAuth = (status, session = null) => { statusRef.current = status; setState({ status, session }); };
+  const setAuth = (status, session = null) => {
+    statusRef.current = status;
+    if (session && session.idle_timeout_minutes) { idleMinutesRef.current = session.idle_timeout_minutes; setIdleMinutes(session.idle_timeout_minutes); }
+    setState({ status, session });
+  };
+  const updateIdleMinutes = (n) => { if (n && n !== idleMinutesRef.current) { idleMinutesRef.current = n; setIdleMinutes(n); } };
+  const idleNotice = (n) => `You were signed out after ${n} minute${n === 1 ? '' : 's'} of inactivity.`;
+
+  // Idle time is up (this tab's timer, or another tab of this browser signed out): end the session on the server
+  // (only the tab that timed out calls it) and return to the login page with the reason.
+  const signOutIdle = async (minutes, { callServer }) => {
+    if (statusRef.current !== 'authed') return;
+    statusRef.current = 'anon';
+    if (callServer) {
+      try {
+        await fetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'IDLE_TIMEOUT' }) });
+      } catch (_) { /* the server ends the idle session by itself anyway */ }
+    }
+    setNotice(idleNotice(minutes || idleMinutesRef.current));
+    setAuth('anon');
+  };
 
   useEffect(() => {
     let alive = true;
@@ -45,12 +69,24 @@ function AuthGate({ children }) {
         if (res.ok) setAuth('authed', await res.json()); else setAuth('anon');
       })
       .catch(() => { if (alive) setAuth('anon'); });
-    const onUnauthorized = () => {
-      if (statusRef.current === 'authed') setNotice('Your session has expired. Please sign in again.');
+    const onUnauthorized = (e) => {
+      const detail = (e && e.detail) || {};
+      if (detail.reason === 'IDLE_TIMEOUT') { // also right at page load, e.g. after sleep / hibernate
+        if (statusRef.current === 'authed') broadcastIdleSignOut();
+        setNotice(idleNotice(detail.idle_timeout_minutes || idleMinutesRef.current || 5));
+      } else if (statusRef.current === 'authed') {
+        setNotice('Your session has expired. Please sign in again.');
+      }
       setAuth('anon');
     };
+    const onIdleChanged = (e) => updateIdleMinutes(Number(e.detail));
     window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
-    return () => { alive = false; window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized); };
+    window.addEventListener(IDLE_TIMEOUT_CHANGED_EVENT, onIdleChanged);
+    return () => {
+      alive = false;
+      window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+      window.removeEventListener(IDLE_TIMEOUT_CHANGED_EVENT, onIdleChanged);
+    };
   }, []);
 
   const logout = async () => {
@@ -66,14 +102,16 @@ function AuthGate({ children }) {
     return <LoginPage notice={notice} onLoggedIn={(session) => { setNotice(''); setAuth('authed', session); }} />;
   }
   const { user, permissions } = state.session;
+  const idleGuard = idleMinutes ? <IdleSessionGuard key={user.user_id} timeoutMinutes={idleMinutes} onIdle={signOutIdle} onTimeoutChange={updateIdleMinutes} /> : null;
   if (user.must_change_password) {
-    return <ChangePasswordScreen user={user} onChanged={(session) => setAuth('authed', session)} onLogout={logout} />;
+    return <>{idleGuard}<ChangePasswordScreen user={user} onChanged={(session) => setAuth('authed', session)} onLogout={logout} /></>;
   }
   return (
     <AuthContext.Provider
       key={user.user_id}
       value={{ user, isAdmin: !!permissions.is_admin, canManageEvents: !!permissions.can_manage_events, logout }}
     >
+      {idleGuard}
       {children}
     </AuthContext.Provider>
   );

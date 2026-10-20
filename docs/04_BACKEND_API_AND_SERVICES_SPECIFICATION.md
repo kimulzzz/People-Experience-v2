@@ -600,6 +600,10 @@ Pengujian: `docs/07` §31 (Modul 46).
 
 ---
 
+## Catatan v2.44.0 - Auto sign-out saat idle
+
+Setting `session_idle_timeout_minutes` (1-120, default 5; `NUMERIC_SETTINGS`). `px_sessions.last_activity_at` diperbarui HANYA oleh login dan `POST /api/auth/activity` (butuh sesi; juga saat wajib ganti password). Sesi idle -> dihapus + audit `LOGOUT_IDLE` + `401 { reason: 'IDLE_TIMEOUT', code: 'AUTH_REQUIRED', idle_timeout_minutes }`. `idle_timeout_minutes` ada di respons login, `/api/auth/me`, change-password. Logout menerima `{ reason: 'IDLE_TIMEOUT' }`. `PUT /api/admin/settings/:key` mengaudit `SETTINGS_CHANGE` untuk semua key. Storage: `createSession({..., last_activity_at})`, `getSession` mengembalikan `last_activity_at`, `setSessionActivity(token_hash, at)`, `deleteSession` mengembalikan boolean.
+
 ## Catatan v2.43.0 - Penandaan entri tes di Audit Trail
 
 `px_users.is_test_account` (hanya bisa diisi kode server lewat `storage.createUser({..., is_test_account: true})`; akun buatan API mewarisi flag admin pembuatnya; tidak bisa diubah lewat API) dan `px_audit_log.is_test` (diisi `authService.audit()` bila akun pelaku atau akun yang dikenai aksi - opsi `subject` - adalah akun tes; tidak pernah dari input request; login gagal username tak dikenal tidak ditandai). `GET /api/admin/audit-log` default mengecualikan `is_test`, `?include_test=1` menyertakannya, setiap baris membawa `is_test`, limit setelah filter. `markHistoricalTestAudit()` (sekali saat upgrade, idempoten; aturan nama `server/db/testAccounts.js`).

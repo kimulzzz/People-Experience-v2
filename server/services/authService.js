@@ -94,6 +94,21 @@ async function getAuthSettings() {
   };
 }
 
+// Idle sign-out (v2.44.0): setting session_idle_timeout_minutes (1-120, default 5). Read on every authenticated request,
+// so it is cached for IDLE_CACHE_MS instead of costing a database read per request; PUT /api/admin/settings clears the
+// cache of THIS process at once (another backend on the same database picks the new value up within IDLE_CACHE_MS).
+const DEFAULT_IDLE_MINUTES = 5;
+const IDLE_CACHE_MS = 30 * 1000;
+let idleCache = { value: null, at: 0 };
+async function getIdleTimeoutMinutes() {
+  if (idleCache.value !== null && Date.now() - idleCache.at < IDLE_CACHE_MS) return idleCache.value;
+  const n = Number((await storage.getSettings()).session_idle_timeout_minutes);
+  const value = Number.isInteger(n) && n >= 1 && n <= 120 ? n : DEFAULT_IDLE_MINUTES;
+  idleCache = { value, at: Date.now() };
+  return value;
+}
+function clearIdleTimeoutCache() { idleCache = { value: null, at: 0 }; }
+
 // ------------------------------------------------------------------ users: shapes & permissions
 // `scopes` is the data scope of a USER ([{ directorate, divisions: [..] | null }], null = all divisions of
 // that directorate; an ADMIN has none and reads everything). `directorate` / `division` are kept only as a
@@ -278,7 +293,7 @@ async function startSession(req, res, user) {
   const { sessionHours } = await getAuthSettings();
   const token = crypto.randomBytes(32).toString('hex');
   const maxAgeMs = sessionHours * 3600 * 1000;
-  await storage.createSession({ token_hash: sha256(token), user_id: user.user_id, expires_at: new Date(Date.now() + maxAgeMs) });
+  await storage.createSession({ token_hash: sha256(token), user_id: user.user_id, expires_at: new Date(Date.now() + maxAgeMs), last_activity_at: new Date() });
   res.cookie(COOKIE_NAME, token, cookieOptions(req, maxAgeMs));
 }
 
@@ -294,7 +309,7 @@ const PUBLIC_ROUTES = [
   ['POST', /^\/api\/events\/[^/]+\/feedback$/]
 ];
 // A user who must still change the temporary password can only reach these.
-const PASSWORD_CHANGE_ROUTES = /^\/api\/auth\/(me|logout|change-password)$/;
+const PASSWORD_CHANGE_ROUTES = /^\/api\/auth\/(me|logout|change-password|activity)$/;
 
 const isPublicRoute = (method, path) => PUBLIC_ROUTES.some(([m, re]) => m === method && re.test(path));
 
@@ -312,6 +327,9 @@ function crossOriginWrite(req) {
   }
 }
 
+// Besides the absolute expiry (session_hours), a session ends after session_idle_timeout_minutes without REAL user
+// activity. last_activity_at is only moved by login and POST /api/auth/activity (the client calls it on actual
+// input), never by an ordinary request - background polls must not keep an unattended session alive.
 async function loadSessionUser(req) {
   const token = parseCookies(req.headers.cookie)[COOKIE_NAME];
   if (!token || !/^[0-9a-f]{64}$/.test(token)) return null;
@@ -321,13 +339,31 @@ async function loadSessionUser(req) {
   if (new Date(session.expires_at).getTime() <= Date.now()) { await storage.deleteSession(hash); return null; }
   const user = await storage.getUserById(session.user_id);
   if (!user || !user.is_active) return null;
+  const idleMinutes = await getIdleTimeoutMinutes();
+  const lastActivity = new Date(session.last_activity_at).getTime();
+  if (!Number.isFinite(lastActivity) || Date.now() - lastActivity > idleMinutes * 60 * 1000) {
+    // audited once: only the request that actually removed the row writes LOGOUT_IDLE
+    if (await storage.deleteSession(hash)) await audit(req, 'LOGOUT_IDLE', { user, target: `idle > ${idleMinutes} min` });
+    return { idle: true, idleMinutes };
+  }
   return { user, hash };
 }
 
 // Attaches req.user (public shape, no hash) when the cookie holds a valid session. Does not reject.
+// req.idleSignOut = { idleMinutes } when the cookie's session has just been ended for inactivity.
 async function attachUser(req) {
   const loaded = await loadSessionUser(req);
-  if (loaded) { req.user = toPublicUser(loaded.user); req.sessionHash = loaded.hash; }
+  if (loaded && loaded.idle) req.idleSignOut = { idleMinutes: loaded.idleMinutes };
+  else if (loaded) { req.user = toPublicUser(loaded.user); req.sessionHash = loaded.hash; }
+}
+
+// The 401 answer for a request without a usable session; reason IDLE_TIMEOUT lets the client say why.
+function unauthorized(req, res) {
+  if (req.idleSignOut) {
+    res.clearCookie(COOKIE_NAME, cookieOptions(req));
+    return res.status(401).json({ error: 'Session expired after inactivity', reason: 'IDLE_TIMEOUT', code: 'AUTH_REQUIRED', idle_timeout_minutes: req.idleSignOut.idleMinutes });
+  }
+  return res.status(401).json({ error: 'Please sign in first.', code: 'AUTH_REQUIRED' });
 }
 
 async function authGate(req, res, next) {
@@ -336,7 +372,7 @@ async function authGate(req, res, next) {
     const path = req.baseUrl + req.path;
     await attachUser(req);
     if (isPublicRoute(req.method, path)) return next();
-    if (!req.user) return res.status(401).json({ error: 'Please sign in first.', code: 'AUTH_REQUIRED' });
+    if (!req.user) return unauthorized(req, res);
     if (req.user.must_change_password && !PASSWORD_CHANGE_ROUTES.test(path)) {
       return res.status(403).json({ error: 'You must change your temporary password first.', code: 'PASSWORD_CHANGE_REQUIRED' });
     }
@@ -351,7 +387,7 @@ async function authGate(req, res, next) {
 async function requireLogin(req, res, next) {
   try {
     await attachUser(req);
-    if (!req.user) return res.status(401).json({ error: 'Please sign in first.', code: 'AUTH_REQUIRED' });
+    if (!req.user) return unauthorized(req, res);
     if (req.user.must_change_password) return res.status(403).json({ error: 'You must change your temporary password first.', code: 'PASSWORD_CHANGE_REQUIRED' });
     next();
   } catch (err) {
@@ -440,7 +476,8 @@ function registerAuthRoutes(app) {
 
   const sessionPayload = async user => ({
     user: toPublicUser(user),
-    permissions: { is_admin: user.role === 'ADMIN', can_manage_events: await isEventManager(user) }
+    permissions: { is_admin: user.role === 'ADMIN', can_manage_events: await isEventManager(user) },
+    idle_timeout_minutes: await getIdleTimeoutMinutes()
   });
 
   app.post('/api/auth/login', async (req, res) => {
@@ -494,7 +531,9 @@ function registerAuthRoutes(app) {
   app.post('/api/auth/logout', async (req, res) => {
     try {
       await storage.deleteSession(req.sessionHash);
-      await audit(req, 'LOGOUT');
+      // the client's idle timer signs out with { reason: 'IDLE_TIMEOUT' } (only that exact value changes the audit label)
+      const idle = !!req.body && req.body.reason === 'IDLE_TIMEOUT';
+      await audit(req, idle ? 'LOGOUT_IDLE' : 'LOGOUT', idle ? { target: 'client idle timer' } : {});
       res.clearCookie(COOKIE_NAME, cookieOptions(req));
       res.json({ success: true });
     } catch (err) {
@@ -505,6 +544,17 @@ function registerAuthRoutes(app) {
   app.get('/api/auth/me', async (req, res) => {
     try {
       res.json(await sessionPayload(req.user));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Real user activity (mouse / keyboard / scroll / touch in the app, throttled by the client). The ONLY request
+  // besides login that keeps a session alive; an already idle-expired session never reaches this (authGate -> 401).
+  app.post('/api/auth/activity', async (req, res) => {
+    try {
+      await storage.setSessionActivity(req.sessionHash, new Date());
+      res.json({ success: true, idle_timeout_minutes: await getIdleTimeoutMinutes() });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -702,7 +752,7 @@ async function warnIfNoUsers() {
 module.exports = {
   COOKIE_NAME, ROLES, PUBLIC_ROUTES,
   hashPassword, verifyPassword, generateTempPassword, getDefaultInitialPassword, makeInitialPassword, validateNewPassword,
-  getAuthSettings, toPublicUser, isEventManager, canSeeRespondentData, redactRespondent,
+  getAuthSettings, getIdleTimeoutMinutes, clearIdleTimeoutCache, toPublicUser, isEventManager, canSeeRespondentData, redactRespondent,
   isPicOfMetric, picMetricIds, picMetrics, getPicMetric, requirePicMetric, rowsForViewer, respondentScopeFor, audit, resolveScope, isInScope, describeScopes,
   parseCookies, requireRole, requireLogin, requireEventManager, scopeFilter, registerAuthRoutes, warnIfNoUsers
 };

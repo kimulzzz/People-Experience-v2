@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { X, Users, Plus, Save, KeyRound, Loader2, AlertCircle, CheckCircle2, Copy, Lock, History, Trash2 } from 'lucide-react';
+import { X, Users, Plus, Save, KeyRound, Loader2, AlertCircle, CheckCircle2, Copy, Lock, History, Trash2, Clock } from 'lucide-react';
+import { IDLE_TIMEOUT_CHANGED_EVENT } from './IdleSessionGuard';
 
 // "Manage Users" (Admin only): accounts that may log in. Directorate / division choices come from the
 // directory in SQL Server (/api/directorates). Passwords are never shown except the one-time
@@ -42,16 +43,25 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId, em
   const [includeTestAudit, setIncludeTestAudit] = useState(false);
   const includeTestRef = useRef(false);
   const auditUrl = () => `/api/admin/audit-log?limit=100${includeTestRef.current ? '&include_test=1' : ''}`;
+  // v2.44.0 Session security: auto sign-out after N minutes of inactivity (setting session_idle_timeout_minutes)
+  const [idleMinutes, setIdleMinutes] = useState('');
+  const [savedIdleMinutes, setSavedIdleMinutes] = useState(null);
+  const [savingIdle, setSavingIdle] = useState(false);
+  const [idleMessage, setIdleMessage] = useState(null); // { type, text }
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [uRes, dRes, aRes] = await Promise.all([
-        fetch('/api/admin/users'), fetch('/api/directorates'), fetch(auditUrl())
+      const [uRes, dRes, aRes, sRes] = await Promise.all([
+        fetch('/api/admin/users'), fetch('/api/directorates'), fetch(auditUrl()), fetch('/api/settings')
       ]);
       if (uRes.ok) setUsers(await uRes.json());
       if (dRes.ok) setDirectory(await dRes.json());
       if (aRes.ok) setAudit(await aRes.json());
+      if (sRes.ok) {
+        const n = (await sRes.json()).session_idle_timeout_minutes;
+        if (n !== undefined) { setIdleMinutes(String(n)); setSavedIdleMinutes(n); }
+      }
     } catch (err) {
       setMessage({ type: 'error', text: 'Failed to load user data.' });
     } finally {
@@ -61,6 +71,7 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId, em
 
   useEffect(() => {
     if (!isOpen) return;
+    setIdleMessage(null);
     setMessage(null);
     setTempPassword(null);
     setShowForm(false);
@@ -156,6 +167,28 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId, em
     }
   };
 
+  const saveIdleTimeout = async (e) => {
+    e.preventDefault();
+    setIdleMessage(null);
+    const n = Number(idleMinutes);
+    if (!idleMinutes.trim() || !Number.isInteger(n) || n < 1 || n > 120) {
+      setIdleMessage({ type: 'error', text: 'Enter a whole number of minutes between 1 and 120.' });
+      return;
+    }
+    setSavingIdle(true);
+    try {
+      const data = await call('/api/admin/settings/session_idle_timeout_minutes', 'PUT', { value: n });
+      setSavedIdleMinutes(data.value);
+      setIdleMinutes(String(data.value));
+      window.dispatchEvent(new CustomEvent(IDLE_TIMEOUT_CHANGED_EVENT, { detail: data.value })); // this tab's own timer
+      setIdleMessage({ type: 'success', text: `Saved. Users are signed out after ${data.value} minute${data.value === 1 ? '' : 's'} of inactivity.` });
+    } catch (err) {
+      setIdleMessage({ type: 'error', text: err.message });
+    } finally {
+      setSavingIdle(false);
+    }
+  };
+
   const isLocked = (u) => u.locked_until && new Date(u.locked_until).getTime() > Date.now();
 
   return (
@@ -182,6 +215,31 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId, em
             {!embedded && <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500" aria-label="Close"><X className="w-5 h-5" /></button>}
           </div>
         </div>
+
+        <form onSubmit={saveIdleTimeout} className="p-4 bg-gray-50 border border-gray-200 rounded-xl text-xs space-y-2">
+          <div className="font-bold text-gray-800 flex items-center space-x-1.5"><Clock className="w-4 h-4 text-[var(--theme-base)]" /><span>Session security</span></div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor="idle-timeout-minutes" className="text-gray-700">Auto sign-out after</label>
+            <input
+              id="idle-timeout-minutes"
+              type="number" min="1" max="120" step="1"
+              value={idleMinutes}
+              onChange={e => setIdleMinutes(e.target.value)}
+              className="w-20 px-2 py-1.5 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-[var(--theme-base)] focus:outline-none"
+            />
+            <span className="text-gray-700">minutes of inactivity</span>
+            <button type="submit" disabled={savingIdle || savedIdleMinutes === null} className="px-3 py-1.5 font-bold text-white bg-[var(--theme-base)] hover:bg-[var(--theme-hover)] rounded-lg flex items-center space-x-1.5 disabled:opacity-60">
+              {savingIdle ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}<span>Save</span>
+            </button>
+          </div>
+          <p className="text-[10.5px] text-gray-500">Applies to every account (1-120 minutes). Users see a warning 60 seconds before they are signed out; only real activity (mouse, keyboard, scroll, touch) keeps a session open.</p>
+          {idleMessage && (
+            <div className={`flex items-start space-x-2 p-2 rounded-lg font-medium border ${idleMessage.type === 'error' ? 'bg-red-50 border-red-200 text-red-700' : 'bg-emerald-50 border-emerald-200 text-emerald-800'}`}>
+              {idleMessage.type === 'error' ? <AlertCircle className="w-4 h-4 shrink-0" /> : <CheckCircle2 className="w-4 h-4 shrink-0" />}
+              <span>{idleMessage.text}</span>
+            </div>
+          )}
+        </form>
 
         {message && (
           <div className={`flex items-start space-x-2 p-3 rounded-lg text-xs font-medium border ${message.type === 'error' ? 'bg-red-50 border-red-200 text-red-700' : 'bg-emerald-50 border-emerald-200 text-emerald-800'}`}>

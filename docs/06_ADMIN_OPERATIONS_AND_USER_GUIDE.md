@@ -390,3 +390,8 @@ Setelah mengubah `.env`, restart backend. Bila batas ringkasan habis, kartu vide
 ### Audit Trail tanpa entri tes (v2.43.0)
 
 Admin Parameters -> Manage Users -> **Audit Trail** default tidak menampilkan aktivitas akun regression test / verifikasi (akun bertanda `is_test_account`). Centang **Show test-run entries** untuk melihatnya (badge abu-abu TEST). Data tidak dihapus. Login gagal dengan username yang tidak terdaftar selalu tampil. Skrip yang membuat admin sementara harus memakai `is_test_account: true`.
+
+
+### Auto sign-out saat tidak ada aktivitas (v2.44.0)
+
+Admin Parameters -> Manage Users -> **Session security**: isi "Auto sign-out after [N] minutes of inactivity" (1-120, default 5) lalu Save. Berlaku untuk semua user dalam ~30 detik. User mendapat peringatan 60 detik sebelum keluar dan bisa klik **Stay signed in**. Polling otomatis (status video, grafik) tidak dihitung aktivitas, jadi dashboard yang dibiarkan terbuka tetap keluar. Kejadian tercatat di Audit Trail sebagai `LOGOUT_IDLE`; perubahan setting sebagai `SETTINGS_CHANGE`.

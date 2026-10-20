@@ -492,19 +492,34 @@ const storage = {
     saveAuth();
     return copyUser(removed);
   },
-  createSession({ token_hash, user_id, expires_at }) {
+  createSession({ token_hash, user_id, expires_at, last_activity_at }) {
     const a = getAuth();
-    a.sessions.push({ token_hash, user_id: parseInt(user_id, 10), expires_at: new Date(expires_at).toISOString(), created_at: new Date().toISOString() });
+    const now = new Date().toISOString();
+    a.sessions.push({ token_hash, user_id: parseInt(user_id, 10), expires_at: new Date(expires_at).toISOString(), created_at: now,
+      last_activity_at: last_activity_at ? new Date(last_activity_at).toISOString() : now });
     saveAuth();
   },
+  // last_activity_at (v2.44.0): missing on sessions opened before v2.44.0 -> read as created_at.
   getSession(token_hash) {
     const s = getAuth().sessions.find(x => x.token_hash === token_hash);
-    return s ? { token_hash: s.token_hash, user_id: s.user_id, expires_at: s.expires_at } : null;
+    return s ? { token_hash: s.token_hash, user_id: s.user_id, expires_at: s.expires_at, last_activity_at: s.last_activity_at || s.created_at || null } : null;
   },
+  // Records real user activity on one session (login / POST /api/auth/activity only - never on ordinary requests).
+  setSessionActivity(token_hash, at) {
+    const s = getAuth().sessions.find(x => x.token_hash === token_hash);
+    if (!s) return false;
+    s.last_activity_at = (at ? new Date(at) : new Date()).toISOString();
+    saveAuth();
+    return true;
+  },
+  // Returns true when a session was actually removed (lets the idle sign-out audit exactly once).
   deleteSession(token_hash) {
     const a = getAuth();
+    const before = a.sessions.length;
     a.sessions = a.sessions.filter(x => x.token_hash !== token_hash);
+    if (a.sessions.length === before) return false;
     saveAuth();
+    return true;
   },
   deleteSessionsForUser(user_id, exceptTokenHash) {
     const a = getAuth();

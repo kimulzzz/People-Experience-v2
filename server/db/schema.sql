@@ -544,8 +544,13 @@ CREATE TABLE dbo.px_sessions (                     -- only the SHA-256 of the co
   token_hash   CHAR(64)      NOT NULL CONSTRAINT PK_px_sessions PRIMARY KEY,
   user_id      INT           NOT NULL CONSTRAINT FK_px_sessions_user REFERENCES dbo.px_users(user_id) ON DELETE CASCADE,
   expires_at   DATETIME2(3)  NOT NULL,
-  created_at   DATETIME2(3)  NOT NULL CONSTRAINT DF_px_sessions_created DEFAULT (SYSUTCDATETIME())
+  created_at   DATETIME2(3)  NOT NULL CONSTRAINT DF_px_sessions_created DEFAULT (SYSUTCDATETIME()),
+  last_activity_at DATETIME2(3) NULL CONSTRAINT DF_px_sessions_activity DEFAULT (SYSUTCDATETIME())  -- v2.44.0: last REAL user activity (login / POST /api/auth/activity)
 );
+GO
+-- Databases created before v2.44.0: existing sessions keep NULL, which is read as created_at (idle sign-out).
+IF COL_LENGTH(N'dbo.px_sessions', N'last_activity_at') IS NULL
+ALTER TABLE dbo.px_sessions ADD last_activity_at DATETIME2(3) NULL CONSTRAINT DF_px_sessions_activity DEFAULT (SYSUTCDATETIME());
 GO
 IF OBJECT_ID(N'dbo.px_audit_log', N'U') IS NULL
 CREATE TABLE dbo.px_audit_log (                    -- login / user-management trail; never holds secrets

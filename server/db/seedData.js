@@ -1701,6 +1701,8 @@ const initialAppSettings = {
   login_max_attempts: { value: 5, description: 'Jumlah gagal login berturut-turut sebelum akun dikunci sementara' },
   login_lockout_minutes: { value: 15, description: 'Lama penguncian akun (menit) setelah gagal login berulang' },
   login_rate_limit_per_minute: { value: 20, description: 'Batas percobaan login GAGAL per alamat IP per menit' },
+  // v2.44.0: sesi diakhiri otomatis bila tidak ada aktivitas pengguna selama N menit (1-120)
+  session_idle_timeout_minutes: { value: 5, description: 'Logout otomatis setelah N menit tanpa aktivitas pengguna (1-120)' },
   event_manager_directorates: {
     value: [{ value: 'Human Resources', label: 'Human Resources' }],
     description: 'Direktorat yang pengguna (role User)-nya boleh mengelola Signature Event (Admin selalu boleh)'

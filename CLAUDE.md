@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(323-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(332-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (323 cases on SQL; v2.43.0 run 237/237, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (332 cases on SQL; v2.44.0 run 246/246, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (32 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
@@ -667,6 +667,12 @@ domain model, not just descriptive:
 
 - **v2.43.1** (2026-10-20, see `CHANGELOG.md` [2.43.1]): old dev accounts `probe-<stamp>`, `snap-<stamp>`, `devadmin`, `dev-admin` added to the
   historical test-name rules (`testAccounts.js`); their 16 audit rows are now hidden. Visible audit = admin, the exit import script, unknown-username failed logins.
+
+- **v2.44.0** (2026-10-20, see `CHANGELOG.md` [2.44.0], `docs/04`/`05`/`06` "v2.44.0", `docs/07` §36, `docs/08` §20): idle auto sign-out. Setting
+  `session_idle_timeout_minutes` (1-120, default 5; Admin Parameters -> Manage Users -> Session security). Server-enforced via `px_sessions.last_activity_at`,
+  refreshed ONLY by login and `POST /api/auth/activity` (polls don't count) -> 401 `reason: IDLE_TIMEOUT` + audit `LOGOUT_IDLE`. Client `IdleSessionGuard.jsx`
+  (60 s warning, multi-tab via localStorage). Suite keeps its session alive via `/api/auth/activity`. Gotcha: in-process `require('jsonStorage')` can rewrite
+  `store.json` - back it up first. Suite SQL 246/246, 16 skipped.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

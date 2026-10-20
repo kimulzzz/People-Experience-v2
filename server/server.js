@@ -130,12 +130,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.43.1' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.44.0' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.43.1',
+    version: '2.44.0',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',
@@ -152,7 +152,8 @@ const NUMERIC_SETTINGS = {
   session_hours: { min: 1, max: 72, integer: true, label: 'Login session lifetime (hours)' },
   login_max_attempts: { min: 3, max: 20, integer: true, label: 'Failed login limit' },
   login_lockout_minutes: { min: 1, max: 1440, integer: true, label: 'Account lockout duration (minutes)' },
-  login_rate_limit_per_minute: { min: 5, max: 200, integer: true, label: 'Failed login attempt limit per IP per minute' }
+  login_rate_limit_per_minute: { min: 5, max: 200, integer: true, label: 'Failed login attempt limit per IP per minute' },
+  session_idle_timeout_minutes: { min: 1, max: 120, integer: true, label: 'Auto sign-out after inactivity (minutes)' }
 };
 const LABEL_ONLY_SETTINGS = new Set(['metric_types', 'scale_types', 'target_audiences', 'update_frequencies', 'question_types']);
 
@@ -177,7 +178,10 @@ app.put('/api/admin/settings/:key', async (req, res) => {
       if (value === '' || value === null || !Number.isFinite(n) || n < min || n > max || (integer && !Number.isInteger(n))) {
         return res.status(400).json({ error: `${label} must be ${integer ? 'a whole number' : 'a number'} between ${min} and ${max}.` });
       }
-      return res.json({ key, value: await storage.setSetting(key, n) });
+      const saved = await storage.setSetting(key, n);
+      if (key === 'session_idle_timeout_minutes') auth.clearIdleTimeoutCache();
+      await auth.audit(req, 'SETTINGS_CHANGE', { target: `${key}: ${current} -> ${saved}` });
+      return res.json({ key, value: saved });
     }
     const validList = Array.isArray(value) && value.length > 0 &&
       value.every(o => o && typeof o.value === 'string' && o.value.trim() && typeof o.label === 'string' && o.label.trim());
@@ -188,7 +192,9 @@ app.put('/api/admin/settings/:key', async (req, res) => {
       const after = value.map(o => o.value.trim()).sort().join('|');
       if (before !== after) return res.status(400).json({ error: `The values of "${key}" cannot be added or changed — only the labels can be edited.` });
     }
-    res.json({ key, value: await storage.setSetting(key, value.map(o => ({ value: o.value.trim(), label: o.label.trim(), ...(typeof o.desc === 'string' ? { desc: o.desc } : {}) }))) });
+    const saved = await storage.setSetting(key, value.map(o => ({ value: o.value.trim(), label: o.label.trim(), ...(typeof o.desc === 'string' ? { desc: o.desc } : {}) })));
+    await auth.audit(req, 'SETTINGS_CHANGE', { target: `${key} (${saved.length} options)` });
+    res.json({ key, value: saved });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
