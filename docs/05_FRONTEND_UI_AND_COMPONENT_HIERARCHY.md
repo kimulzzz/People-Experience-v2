@@ -400,6 +400,10 @@ API kini bisa mengirim indeks dan skor `null` serta status `NO_DATA` (lihat `doc
 | `MetricDetailModal.jsx` | Nilai "—", "No survey data in this period - left out of the index", badge abu-abu "No Data", pertanyaan berlabel "No Data" tanpa skor. Catatan "Annual metric: shows the result of Jan–Sep 2026" untuk metrik tahunan pada filter MTD **dihapus di v2.37.0** (MTD kini selalu satu bulan, `period_window.basis = 'MONTH'`). |
 | `TrendChart.jsx` | Titik `null` menjadi celah (garis dipotong per segmen), tooltip "—". |
 
+## Catatan v2.40.0 - Headline slide 1 di atas kartu
+
+Hero hanya berisi judul "Exit Interview Summary" + subjudul periode. `overview_headline` dipindah menjadi judul seksi di atas kartu 1-6 (seperti headline slide 2) dengan baris base "Base: N voluntary exit records | M company-move records". Catatan v2.39.0 di bawah (headline di hero) sudah tidak berlaku.
+
 ## Catatan v2.39.0 - Hero Exit Interview
 
 Judul hero kini "Exit Interview Summary" (dulu "Voluntary Exits | Exit Interview Summary") sebagai label kecil, di bawahnya `overview_headline` dari API sebagai kalimat utama (cadangan saat memuat: "Exit Interview Summary"), lalu subjudul periode.

@@ -2,6 +2,14 @@
 
 Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Management & Scoring System dicatat di dalam dokumen ini mengikuti standar [Semantic Versioning](https://semver.org/).
 
+## [2.40.0] - 2026-10-19
+
+- **Permintaan user**: kalimat ringkasan slide 1 ("Company moves dominate exits; compensation is the main attraction") jangan di judul, tetapi di atas dashboard pertama.
+- **UI (`ExitInterviewDashboard.jsx`)**: hero kini hanya judul besar "Exit Interview Summary" + subjudul periode (label kecil dan headline di hero dihapus). `overview_headline` tampil sebagai judul seksi tepat di atas kartu 1-6 (gaya sama dengan headline slide 2), dengan baris "Base: <N> voluntary exit records | <M> company-move records" (cadangan bila kosong: "Why employees leave"). API tidak berubah.
+- **Tes**: tidak ada tes baru (perubahan tata letak). Suite penuh SQL (backend kedua, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **230/230 lulus, 0 gagal, 16 dilewati** (run pertama 2026-10-19 terputus di tengah karena sesi berakhir - tidak ada tes gagal - dan meninggalkan 15 metrik sementara "REGRESSION ...", 31 akun tes dan 11 upload tes; semuanya dihapus lewat fungsi hapus storage (cascade) sebelum run ulang 2026-10-20). `vite build` OK. Dicek main session di browser (admin sementara, sudah dihapus): urutan hero -> headline -> kartu 1 benar, tanpa NaN/null.
+
+---
+
 ## [2.39.0] - 2026-10-19
 
 - **Permintaan user**: (1) slide 1 Dashboard Exit Interview diberi kalimat ringkasan dari data seperti di PPT ("Company moves dominate exits; compensation is the main attraction" - meringkas chart 1 dan 4); (2) judul "Voluntary Exits | Exit Interview Summary" cukup "Exit Interview Summary". Permintaan tombol download per kartu dibatalkan user (tombol Export CSV yang sudah ada dianggap cukup) - tidak ada yang dibuat untuk itu.

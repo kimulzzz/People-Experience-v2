@@ -651,6 +651,9 @@ domain model, not just descriptive:
   slide-1 headline (`overview_headline`, rule-based from card 1 reasons + card 4 pull factors, e.g. "Company moves dominate exits;
   compensation is the main attraction"). Per-card download buttons were requested then cancelled by the user (Export CSV is enough).
 
+- **v2.40.0** (2026-10-19, see `CHANGELOG.md` [2.40.0]): the slide-1 headline moved out of the Exit Interview hero (hero = title
+  "Exit Interview Summary" + period subtitle only) to a section heading right above cards 1-6, like the slide-2 headline.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan

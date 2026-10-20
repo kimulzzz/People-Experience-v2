@@ -1,5 +1,5 @@
 // src/components/ExitInterviewDashboard.jsx
-// Exit Interview dashboard (v2.38.0; slide-1 headline v2.39.0): why employees resign - the two slides of the "exit interview dashboard template"
+// Exit Interview dashboard (v2.38.0; slide-1 headline v2.39.0, shown above the first cards v2.40.0): why employees resign - the two slides of the "exit interview dashboard template"
 // deck rebuilt as cards. Data = /api/exit-interview/summary for the Header filters (YTD/MTD + year + month on the
 // Effective Resignation Date, directorate / sub-directorate). Aggregates only; the Admin also gets template download,
 // upload, CSV export and the upload history.
@@ -370,9 +370,7 @@ export default function ExitInterviewDashboard({ filterOptions }) {
               <DoorOpen className="w-3.5 h-3.5" style={{ color: 'var(--theme-base)' }} />
               <span>Exit Interview • {data?.scope?.label || (isAdmin ? 'Bankwide' : 'My scope')}</span>
             </div>
-            <p className="text-xs font-bold uppercase tracking-widest text-red-100">Exit Interview Summary</p>
-            {/* headline of slide 1, generated from cards 1 and 4 (rule-based, v2.39.0) */}
-            <h2 className="text-2xl sm:text-3xl font-black tracking-tight">{data?.overview_headline || 'Exit Interview Summary'}</h2>
+            <h2 className="text-2xl sm:text-3xl font-black tracking-tight">Exit Interview Summary</h2>
             <p className="text-sm text-red-50 font-medium">{data?.subtitle || (loading ? 'Loading…' : '')}</p>
           </div>
           {data && (
@@ -430,7 +428,14 @@ export default function ExitInterviewDashboard({ filterOptions }) {
 
       {data && (
         <div className={`space-y-6 ${loading ? 'opacity-60 transition-opacity' : ''}`}>
-          {/* SLIDE 1 */}
+          {/* SLIDE 1 - headline generated from cards 1 and 4 (rule-based), shown above the first cards like slide 2 (v2.40.0) */}
+          <div className="space-y-4">
+            <div>
+              <h3 className="text-lg font-extrabold text-[#231F20]">{data.overview_headline || 'Why employees leave'}</h3>
+              <p className="text-xs text-gray-500">
+                Base: {fmt(data.counts.voluntary_records)} voluntary exit records | {fmt(data.counts.movers)} company-move records
+              </p>
+            </div>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
             <Card number="1" title="Reasons for resignation" base={`Base: ${fmt(data.reasons.base)} voluntary exit records`} footnote={data.reasons.footnote}>
               <BarList items={data.reasons.items} base={data.reasons.base} />
@@ -461,6 +466,7 @@ export default function ExitInterviewDashboard({ filterOptions }) {
             <Card number="6" title="Would you recommend CIMB Niaga?" base={`Base: ${fmt(data.recommend.base)} company-move records`}>
               <TwoSlicePie items={data.recommend.items} base={data.recommend.base} colors={yesNoColors} />
             </Card>
+          </div>
           </div>
 
           {/* SLIDE 2 */}
