@@ -400,6 +400,10 @@ API kini bisa mengirim indeks dan skor `null` serta status `NO_DATA` (lihat `doc
 | `MetricDetailModal.jsx` | Nilai "—", "No survey data in this period - left out of the index", badge abu-abu "No Data", pertanyaan berlabel "No Data" tanpa skor. Catatan "Annual metric: shows the result of Jan–Sep 2026" untuk metrik tahunan pada filter MTD **dihapus di v2.37.0** (MTD kini selalu satu bulan, `period_window.basis = 'MONTH'`). |
 | `TrendChart.jsx` | Titik `null` menjadi celah (garis dipotong per segmen), tooltip "—". |
 
+## Catatan v2.46.1 - Chip Critical merah
+
+Chip metrik CRITICAL di kartu journey Dashboard: `bg-red-600 text-white border-white/80 ring-1 ring-red-300` (dulu `bg-black/30`).
+
 ## Catatan v2.46.0 - Kartu journey berwarna journey
 
 Kartu "5 Employee Experience Journeys" di `Dashboard.jsx` berlatar gradasi warna journey (`shadeHex(color, -0.28)` -> `color`), bukan lagi gradasi merah tema; ikon `bg-white/20`, progress bar putih, label `text-white/80`.

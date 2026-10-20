@@ -458,7 +458,7 @@ export default function Dashboard({
                           className={`w-full text-[10px] font-semibold pl-1.5 pr-2 py-1 rounded-md border transition flex items-center justify-between space-x-2 ${
                             isDisabled ? 'bg-black/20 text-white/50 border-white/10 opacity-70 cursor-not-allowed' :
                             isNoData ? 'bg-gray-500/60 text-white/90 border-gray-300/40 hover:bg-gray-500/70' :
-                            m.status === 'CRITICAL' ? 'bg-black/30 text-white/80 border-red-300/50 hover:bg-black/40' :
+                            m.status === 'CRITICAL' ? 'bg-red-600 text-white border-white/80 ring-1 ring-red-300 hover:bg-red-700' :
                             m.status === 'WARNING' ? 'bg-amber-500/90 text-white border-amber-300 hover:bg-amber-500' :
                             'bg-emerald-500/90 text-white border-emerald-300 hover:bg-emerald-500'
                           }`}

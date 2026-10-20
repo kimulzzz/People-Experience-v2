@@ -2,6 +2,14 @@
 
 Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Management & Scoring System dicatat di dalam dokumen ini mengikuti standar [Semantic Versioning](https://semver.org/).
 
+## [2.46.1] - 2026-10-20
+
+- **Permintaan user**: di bagian "5 Employee Experience Journeys", status Critical jangan hitam/gelap, tetapi warna yang menggambarkan kondisi kritis.
+- **UI (`Dashboard.jsx`)**: chip metrik CRITICAL di kartu journey kini merah solid (`bg-red-600`, teks putih, border putih + ring merah muda agar tetap menonjol di atas latar kartu berwarna journey, termasuk Connect yang merah coral); dulu `bg-black/30`. Warna On Target (hijau), Warning (kuning), No Data (abu-abu) dan Exempted tidak berubah.
+- **Tes**: tidak ada tes baru (perubahan tampilan). Suite penuh SQL (backend kedua, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **246/246 lulus, 0 gagal, 16 dilewati**. `vite build` OK. Dicek di browser: metrik 11 (Signature Program participation rate, CRITICAL 0,33%) tampil merah terang di kartu Belong.
+
+---
+
 ## [2.46.0] - 2026-10-20
 
 - **Permintaan user**: kartu journey di Dashboard memakai warna journey sebagai latar/header seperti di slide "People Experience Measurement".

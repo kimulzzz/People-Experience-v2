@@ -680,6 +680,9 @@ domain model, not just descriptive:
 - **v2.46.0** (2026-10-20, see `CHANGELOG.md` [2.46.0]): Dashboard journey cards are painted in their own journey color (gradient `shadeHex(color,-0.28)` ->
   color) instead of the red theme gradient; icon box white/20, progress bar white, labels white/80. Status chip colors unchanged.
 
+- **v2.46.1** (2026-10-20, see `CHANGELOG.md` [2.46.1]): Critical metric chips on the Dashboard journey cards are solid red (`bg-red-600`, white text
+  and border) instead of dark/black.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan
