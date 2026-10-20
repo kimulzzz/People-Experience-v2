@@ -2,6 +2,14 @@
 
 Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Management & Scoring System dicatat di dalam dokumen ini mengikuti standar [Semantic Versioning](https://semver.org/).
 
+## [2.46.2] - 2026-10-20
+
+- **Permintaan user**: latar kartu journey di bagian "5 Employee Experience Journeys" dikembalikan ke warna tema (membatalkan v2.46.0).
+- **UI (`Dashboard.jsx`)**: kartu kembali bergradasi tema (`from-[var(--theme-deep)] to-[var(--theme-base)]`), kotak ikon dan isi progress bar kembali memakai warna journey (`px_journeys.color`), label kembali `text-red-100`; helper `shadeHex()` dihapus. Kode kartu kini identik dengan sebelum v2.46.0, kecuali chip CRITICAL merah solid dari v2.46.1 yang tetap dipertahankan (di atas latar merah tema chip itu tetap terbaca berkat border putih, tetapi kontrasnya lebih rendah daripada di kartu berwarna). Warna journey v2.45.0 (Arrival biru, Connect merah coral, Belong teal, Contribute oranye, Depart ungu) tetap berlaku untuk ikon, progress bar dan halaman lain.
+- **Tes**: tidak ada tes baru (perubahan tampilan). Suite penuh SQL (backend kedua, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **246/246 lulus, 0 gagal, 16 dilewati**. `vite build` OK. Dicek di browser (admin sementara bertanda tes, sudah dihapus).
+
+---
+
 ## [2.46.1] - 2026-10-20
 
 - **Permintaan user**: di bagian "5 Employee Experience Journeys", status Critical jangan hitam/gelap, tetapi warna yang menggambarkan kondisi kritis.

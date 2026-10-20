@@ -683,6 +683,9 @@ domain model, not just descriptive:
 - **v2.46.1** (2026-10-20, see `CHANGELOG.md` [2.46.1]): Critical metric chips on the Dashboard journey cards are solid red (`bg-red-600`, white text
   and border) instead of dark/black.
 
+- **v2.46.2** (2026-10-20, see `CHANGELOG.md` [2.46.2]): user asked to REVERT v2.46.0 - journey cards are back on the theme gradient (journey color
+  only on icon + progress bar); the red CRITICAL chip from v2.46.1 stays.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan
