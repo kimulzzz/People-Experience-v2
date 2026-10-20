@@ -2,6 +2,15 @@
 
 Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Management & Scoring System dicatat di dalam dokumen ini mengikuti standar [Semantic Versioning](https://semver.org/).
 
+## [2.43.1] - 2026-10-20
+
+- **Keputusan user**: 16 baris audit dari akun pengembangan lama (`probe-mvalwxyv`, `probe-mvalx7zw`, `snap-mvalp3kd`, `snap-mvaluj9j`, `devadmin`, `dev-admin`; semuanya sudah tidak ada) juga disembunyikan dari Audit Trail.
+- **Kode** (`server/db/testAccounts.js`): aturan nama data lama ditambah `probe-<stamp>` / `snap-<stamp>` (stamp 8 karakter 2026+) dan nama persis `devadmin` / `dev-admin`. Seperti aturan lain, hanya berlaku untuk akun yang sudah tidak ada (akun yang ada memakai flag `is_test_account`).
+- **Data**: `storage.markHistoricalTestAudit()` dijalankan sekali di DB utama -> 16 baris ditandai, jalankan ulang = 0. Yang tetap tampil di Audit Trail: 242 login gagal username tak dikenal, 12 baris `admin`, 1 baris skrip impor exit interview. Tidak ada baris yang dihapus.
+- **Tes**: Modul 48 (tes aturan nama) + asersi pola baru (positif dan negatif: `probe`, `probe-team`, `snapshot`, `snap-zzzzzzzz`, `developer`, `devadmin2` tidak cocok). Suite penuh SQL (backend kedua, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **237/237 lulus, 0 gagal, 16 dilewati**.
+
+---
+
 ## [2.43.0] - 2026-10-20
 
 - **Laporan user**: akun `rt37adminmvg452zw` sudah tidak ada di Manage Users tetapi Audit Trail tidak menunjukkan akun itu dihapus. Penyebab: akun itu admin sementara regression test (Modul 37); suite (dan skrip verifikasi/QC) membuat dan menghapus akun langsung lewat `storage.createUser/deleteUser`, bukan lewat API, jadi tidak ada baris USER_CREATE/USER_DELETE - tetapi aktivitas akun tes itu di API (login, membuat user tes, reset password, upload) tetap diaudit. Akibatnya 9.521 dari 9.791 baris `px_audit_log` adalah sampah tes. Keputusan user: entri tes tidak perlu ditampilkan di Audit Trail. Data audit TIDAK dihapus (kepatuhan), hanya ditandai.

@@ -1041,3 +1041,7 @@ Modul 47 + 2 tes: aturan murni `buildOverviewHeadline` (dominate/lead, seri 0 pp
 ## 34. v2.43.0 - Penandaan entri tes di Audit Trail
 
 Semua `storage.createUser` di suite memakai `is_test_account: true`; 9 pembacaan audit untuk aktivitas tes memakai `include_test=1`. **Modul 48** (7 tes): aturan nama data lama; via API (akun buatan admin tes = akun tes, tersembunyi default, terlihat dengan `include_test=1`, flag tidak bisa diubah klien termasuk body/header/query palsu, audit butuh sesi, limit setelah filter); SQL-only app sementara (aksi admin asli tetap tampil, reset password akun tes oleh admin asli ditandai, login gagal username tak dikenal tidak ditandai, penandaan ulang = 0). **Suite penuh SQL: 237/237 lulus, 0 gagal, 16 dilewati** (`TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; developer). Di JSON suite login dengan `TEST_ADMIN_USER` asli sehingga aktivitasnya tetap tampil dan Modul 48 bagian A melewati dirinya. Ukuran suite penuh SQL kini 323 (316 + 7).
+
+## 35. v2.43.1 - Akun dev lama di aturan nama tes
+
+Modul 48 (aturan nama) mendapat asersi untuk `probe-<stamp>`, `snap-<stamp>`, `devadmin`, `dev-admin` (cocok) dan `probe`, `probe-team`, `snapshot`, `snap-zzzzzzzz`, `developer`, `devadmin2` (tidak cocok). Jumlah tes tidak berubah (323).

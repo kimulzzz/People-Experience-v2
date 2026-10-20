@@ -6302,6 +6302,9 @@ async function runRegressionSuite() {
       assert.strictEqual(isTestUsernamePattern('rtanaka'), false);
       assert.strictEqual(isTestUsernamePattern('rtzzzzzzzzzz'), false, 'rt + 8 chars that are no plausible timestamp');
       assert.strictEqual(isTestUsernamePattern('12345678'), false);
+      // v2.43.1: old development accounts confirmed by the user as test accounts
+      for (const u of ['probe-mvalwxyv', 'snap-mvalp3kd', 'devadmin', 'dev-admin', 'DevAdmin']) assert.strictEqual(isTestUsernamePattern(u), true, u);
+      for (const u of ['probe', 'probe-team', 'snapshot', 'snap-zzzzzzzz', 'developer', 'devadmin2']) assert.strictEqual(isTestUsernamePattern(u), false, u);
     });
 
     if (me48.is_test_account !== true) {

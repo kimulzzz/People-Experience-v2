@@ -17,11 +17,15 @@ function isTestStamp(s) {
 }
 
 // Username templates used by tests/regressionTest.js (`rt-suite-<stamp>`, `rt37admin<stamp>`, `rt<suffix><stamp>`,
-// `rtadm<stamp>`, `rt44-<stamp>` ...) and by QC/verification scripts (`qc-*`, `verify-*`).
+// `rtadm<stamp>`, `rt44-<stamp>` ...) and by QC/verification scripts (`qc-*`, `verify-*`), plus the old development
+// accounts the user confirmed as test accounts on 2026-10-20 (v2.43.1): `probe-<stamp>`, `snap-<stamp>`, `devadmin`, `dev-admin`.
+const OLD_DEV_ACCOUNTS = new Set(['devadmin', 'dev-admin']);
 function isTestUsernamePattern(username) {
   const n = String(username || '').toLowerCase();
   if (!n) return false;
   if (/^(rt-suite-|qc-|verify-)/.test(n)) return true;
+  if (OLD_DEV_ACCOUNTS.has(n)) return true;
+  if (/^(probe|snap)-[0-9a-z]{8}$/.test(n) && isTestStamp(n.slice(-8))) return true;
   return /^rt[a-z0-9-]*$/.test(n) && n.length >= 10 && isTestStamp(n.slice(-8));
 }
 

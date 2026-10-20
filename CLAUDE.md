@@ -665,6 +665,9 @@ domain model, not just descriptive:
   flag) and their audit rows get `px_audit_log.is_test`; Audit Trail hides them by default ("Show test-run entries" + TEST badge; `?include_test=1`).
   Nothing deleted; 9,525 old rows marked, 266 visible. Verification/QC temp admins MUST use `is_test_account: true`. Suite SQL 237/237, 16 skipped.
 
+- **v2.43.1** (2026-10-20, see `CHANGELOG.md` [2.43.1]): old dev accounts `probe-<stamp>`, `snap-<stamp>`, `devadmin`, `dev-admin` added to the
+  historical test-name rules (`testAccounts.js`); their 16 audit rows are now hidden. Visible audit = admin, the exit import script, unknown-username failed logins.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan
