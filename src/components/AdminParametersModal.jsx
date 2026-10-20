@@ -21,7 +21,8 @@ import {
   CalendarClock,
   Mail,
   Bell,
-  Send
+  Send,
+  UserCog
 } from 'lucide-react';
 import { formatMetricValue, defaultUnitForScale } from '../utils/formatMetricValue';
 import { SURVEY_SOURCE_OPTIONS, surveySourceLabel, surveySourceBadgeClass } from '../utils/surveySource';
@@ -46,7 +47,7 @@ function computeTargetPercent(metric) {
   }
 }
 
-export default function AdminParametersModal({ isOpen, onClose, onParametersUpdated }) {
+export default function AdminParametersModal({ isOpen, onClose, onParametersUpdated, onOpenEmailSettings, onOpenUserManagement }) {
   const [activeTab, setActiveTab] = useState('metrics'); // 'journeys' | 'metrics'
   const [loading, setLoading] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState('');
@@ -495,7 +496,7 @@ All survey data (responses) and question settings of this metric will also be de
 
         {/* Modal Navigation Tabs */}
         <div className="px-6 bg-black/15 border-b border-white/15 flex items-center justify-between">
-          <div className="flex space-x-4">
+          <div className="flex flex-wrap gap-x-4">
             <button
               onClick={() => { setActiveTab('metrics'); setIsAddingMetric(false); setEditingMetric(null); }}
               className={`py-3 text-xs sm:text-sm font-bold border-b-2 flex items-center space-x-2 transition ${
@@ -519,6 +520,29 @@ All survey data (responses) and question settings of this metric will also be de
               <Layers className="w-4 h-4" />
               <span>Journey Parameters ({journeys.length})</span>
             </button>
+
+            {/* Email Settings and Manage Users live here instead of the Header (v2.41.0); they open their own modals */}
+            {onOpenEmailSettings && (
+              <button
+                onClick={onOpenEmailSettings}
+                className="py-3 text-xs sm:text-sm font-bold border-b-2 border-transparent text-red-100 hover:text-white flex items-center space-x-2 transition"
+                title="Email Settings for the sender of survey-upload reminders to PICs"
+              >
+                <Mail className="w-4 h-4" />
+                <span>Email Settings</span>
+              </button>
+            )}
+
+            {onOpenUserManagement && (
+              <button
+                onClick={onOpenUserManagement}
+                className="py-3 text-xs sm:text-sm font-bold border-b-2 border-transparent text-red-100 hover:text-white flex items-center space-x-2 transition"
+                title="Manage login accounts (add user, reset password, activate/deactivate)"
+              >
+                <UserCog className="w-4 h-4" />
+                <span>Manage Users</span>
+              </button>
+            )}
           </div>
 
           <div className="py-2">

@@ -654,6 +654,9 @@ domain model, not just descriptive:
 - **v2.40.0** (2026-10-19, see `CHANGELOG.md` [2.40.0]): the slide-1 headline moved out of the Exit Interview hero (hero = title
   "Exit Interview Summary" + period subtitle only) to a section heading right above cards 1-6, like the slide-2 headline.
 
+- **v2.41.0** (2026-10-20, see `CHANGELOG.md` [2.41.0], `docs/05` "Catatan v2.41.0", `docs/06`): Header buttons Email Settings and Manage
+  Users removed; they are now tabs in Admin Parameters that open the existing modals (closing returns to Admin Parameters). Frontend only.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan

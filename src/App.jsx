@@ -290,8 +290,6 @@ function AppContent() {
           setIsAdminSurveyQuestionsOpen(true);
         }}
         onOpenAdminParametersModal={() => setIsAdminParametersOpen(true)}
-        onOpenEmailSettingsModal={() => setIsEmailSettingsOpen(true)}
-        onOpenUserManagementModal={() => setIsUserManagementOpen(true)}
       />
 
       {/* Main App Body */}
@@ -447,15 +445,16 @@ function AppContent() {
         } : undefined}
       />
 
+      {/* Email Settings and Manage Users are opened from Admin Parameters (v2.41.0); closing returns there */}
       <EmailSettingsModal
         isOpen={isEmailSettingsOpen}
-        onClose={() => setIsEmailSettingsOpen(false)}
+        onClose={() => { setIsEmailSettingsOpen(false); setIsAdminParametersOpen(true); }}
       />
 
       {isAdmin && (
         <UserManagementModal
           isOpen={isUserManagementOpen}
-          onClose={() => setIsUserManagementOpen(false)}
+          onClose={() => { setIsUserManagementOpen(false); setIsAdminParametersOpen(true); }}
           currentUserId={user?.user_id}
         />
       )}
@@ -464,6 +463,8 @@ function AppContent() {
         isOpen={isAdminParametersOpen}
         onClose={() => setIsAdminParametersOpen(false)}
         onParametersUpdated={() => fetchAllData(filterOptions)}
+        onOpenEmailSettings={isAdmin ? () => { setIsAdminParametersOpen(false); setIsEmailSettingsOpen(true); } : undefined}
+        onOpenUserManagement={isAdmin ? () => { setIsAdminParametersOpen(false); setIsUserManagementOpen(true); } : undefined}
       />
 
       <AdminSettingsModal

@@ -2,6 +2,14 @@
 
 Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Management & Scoring System dicatat di dalam dokumen ini mengikuti standar [Semantic Versioning](https://semver.org/).
 
+## [2.41.0] - 2026-10-20
+
+- **Permintaan user**: tombol **Email Settings** dan **Manage Users** dipindah ke dalam **Admin Parameters** agar Header tidak kebanyakan tombol.
+- **UI**: `Header.jsx` - dua tombol itu (dan prop `onOpenEmailSettingsModal`/`onOpenUserManagementModal`, ikon `Mail`/`Users`) dihapus; Header Admin kini: Admin Parameters, Survey Templates, Theme. `AdminParametersModal.jsx` - baris tab mendapat dua tab baru **Email Settings** (ikon Mail) dan **Manage Users** (ikon UserCog) setelah Metric/Journey Parameters (prop baru `onOpenEmailSettings`/`onOpenUserManagement`, hanya Admin). `App.jsx` - tab itu menutup Admin Parameters lalu membuka modal Email Settings / Manage Users yang sudah ada (isi modal tidak berubah); menutup modal itu kembali ke Admin Parameters. Tidak ada perubahan backend/API.
+- **Tes**: tidak ada tes baru (perubahan tata letak). Suite penuh SQL (backend kedua, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **230/230 lulus, 0 gagal, 16 dilewati**. `vite build` OK. Dicek main session di browser (admin sementara, sudah dihapus): Header tanpa Email Settings/Manage Users; Admin Parameters berisi 4 tab; Email Settings terbuka dan Close kembali ke Admin Parameters; Manage Users terbuka.
+
+---
+
 ## [2.40.0] - 2026-10-19
 
 - **Permintaan user**: kalimat ringkasan slide 1 ("Company moves dominate exits; compensation is the main attraction") jangan di judul, tetapi di atas dashboard pertama.

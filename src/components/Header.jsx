@@ -13,8 +13,6 @@ import {
   BookMarked,
   Palette,
   Check,
-  Mail,
-  Users,
   LogOut,
   UserCircle2,
   DoorOpen
@@ -37,9 +35,7 @@ export default function Header({
   directoratesList = [],
   availableYears,
   onOpenAdminParametersModal,
-  onOpenSurveyQuestionsModal,
-  onOpenEmailSettingsModal,
-  onOpenUserManagementModal
+  onOpenSurveyQuestionsModal
 }) {
   const { user, isAdmin, logout } = useAuth();
   // A USER's filters only offer their data scope (one or more directorates, each all or some divisions);
@@ -287,7 +283,7 @@ export default function Header({
             <button
               onClick={onOpenAdminParametersModal}
               className="px-2.5 py-1 text-xs font-bold text-gray-800 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg flex items-center space-x-1.5 transition shadow-2xs"
-              title="Admin Menu: Manage Journey & Metric Parameters (Weight, Target, Threshold)"
+              title="Admin Menu: Metric & Journey Parameters, Email Settings and Manage Users"
             >
               <Sliders className="w-3.5 h-3.5 text-[#ED1C24]" />
               <span className="hidden sm:inline">Admin Parameters</span>
@@ -303,25 +299,6 @@ export default function Header({
               <span className="hidden md:inline">Survey Templates</span>
             </button>
 
-            {/* Admin Menu: Setting Email (sender account for the PIC upload reminders) */}
-            <button
-              onClick={onOpenEmailSettingsModal}
-              className="px-2.5 py-1 text-xs font-bold text-gray-800 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg flex items-center space-x-1.5 transition shadow-2xs"
-              title="Admin Menu: Email Settings for the sender of survey-upload reminders to PICs"
-            >
-              <Mail className="w-3.5 h-3.5 text-[#ED1C24]" />
-              <span className="hidden md:inline">Email Settings</span>
-            </button>
-
-            {/* Admin Menu: Kelola User (login accounts) */}
-            <button
-              onClick={onOpenUserManagementModal}
-              className="px-2.5 py-1 text-xs font-bold text-gray-800 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg flex items-center space-x-1.5 transition shadow-2xs"
-              title="Admin Menu: Manage login accounts (add user, reset password, activate/deactivate)"
-            >
-              <Users className="w-3.5 h-3.5 text-[#ED1C24]" />
-              <span className="hidden md:inline">Manage Users</span>
-            </button>
             </>)}
 
             {alertCount > 0 && (
