@@ -2,6 +2,14 @@
 
 Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Management & Scoring System dicatat di dalam dokumen ini mengikuti standar [Semantic Versioning](https://semver.org/).
 
+## [2.47.0] - 2026-10-20
+
+- **Permintaan user**: tambah pilihan warna abu-abu elegan di menu **Theme**.
+- **UI (`src/utils/theme.js`)**: preset baru **Slate Gray** (`id: 'slate'`, base `#475569`, abu-abu dengan nuansa biru dingin). Seperti preset lain, ke-13 variabel `--theme-*` diturunkan dari satu warna dasar: deep `#35404F`, strong `#566780`, base `#6D809C`, tint `#F7F7F8`/`#EEEFF1`. `deriveThemeVars()` kini memberi `--theme-dark` saturasi penuh hanya bila warna dasar berwarna (saturasi >= 40%); untuk warna netral saturasinya tetap rendah agar aksen tergelap tetap abu-abu, bukan biru dongker. Kelima preset lama (Crimson, Royal Blue, Teal, Violet, Tangerine) menghasilkan warna yang identik dengan sebelumnya (dicek). Pilihan tetap disimpan per browser (`localStorage` `px_theme_preset`).
+- **Tes**: tidak ada tes baru (perubahan tampilan). Suite penuh SQL (backend kedua, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **246/246 lulus, 0 gagal, 16 dilewati**. `vite build` OK. Dicek di browser: menu Theme berisi 6 pilihan; Slate Gray mengubah hero dan aksen menjadi abu-abu slate (badge merah dan tombol YTD tetap merah seperti di tema lain).
+
+---
+
 ## [2.46.2] - 2026-10-20
 
 - **Permintaan user**: latar kartu journey di bagian "5 Employee Experience Journeys" dikembalikan ke warna tema (membatalkan v2.46.0).

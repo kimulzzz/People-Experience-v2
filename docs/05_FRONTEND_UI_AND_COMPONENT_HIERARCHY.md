@@ -400,6 +400,10 @@ API kini bisa mengirim indeks dan skor `null` serta status `NO_DATA` (lihat `doc
 | `MetricDetailModal.jsx` | Nilai "—", "No survey data in this period - left out of the index", badge abu-abu "No Data", pertanyaan berlabel "No Data" tanpa skor. Catatan "Annual metric: shows the result of Jan–Sep 2026" untuk metrik tahunan pada filter MTD **dihapus di v2.37.0** (MTD kini selalu satu bulan, `period_window.basis = 'MONTH'`). |
 | `TrendChart.jsx` | Titik `null` menjadi celah (garis dipotong per segmen), tooltip "—". |
 
+## Catatan v2.47.0 - Tema Slate Gray
+
+`THEME_PRESETS` mendapat preset keenam **Slate Gray** (`slate`, base `#475569`). `deriveThemeVars()`: `--theme-dark` bersaturasi 100% hanya bila saturasi dasar >= 40%, selain itu saturasi dasar + 10 (preset lama tidak berubah).
+
 ## Catatan v2.46.2 - Kartu journey kembali warna tema
 
 Permintaan user: latar kartu journey kembali gradasi tema (v2.46.0 dibatalkan); ikon dan progress bar memakai warna journey. Chip CRITICAL merah dari v2.46.1 tetap.

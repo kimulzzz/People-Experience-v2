@@ -55,7 +55,9 @@ export function deriveThemeVars(baseHex) {
   const sat = (delta) => Math.max(Math.min(s + delta, 100), 8);
   return {
     '--theme-deep': hslToHex(h, sat(0), 26),
-    '--theme-dark': hslToHex(h, 100, 27),
+    // full saturation for the colourful presets; a neutral base (e.g. Slate Gray, v2.47.0) keeps its low saturation
+    // so the darkest accent stays grey instead of turning navy
+    '--theme-dark': hslToHex(h, s >= 40 ? 100 : sat(10), 27),
     '--theme-mid': hslToHex(h, sat(0), 34),
     '--theme-strong': hslToHex(h, sat(0), 42),
     '--theme-base': hslToHex(h, sat(0), 52),
@@ -79,7 +81,8 @@ export const THEME_PRESETS = [
   { id: 'blue', label: 'Royal Blue', base: '#2563EB' },
   { id: 'teal', label: 'Teal', base: '#0D9488' },
   { id: 'purple', label: 'Violet', base: '#6716C4' },
-  { id: 'orange', label: 'Tangerine', base: '#F7901E' }
+  { id: 'orange', label: 'Tangerine', base: '#F7901E' },
+  { id: 'slate', label: 'Slate Gray', base: '#475569' } // elegant neutral grey with a cool blue undertone (v2.47.0)
 ];
 
 export function applyTheme(presetId) {

@@ -686,6 +686,9 @@ domain model, not just descriptive:
 - **v2.46.2** (2026-10-20, see `CHANGELOG.md` [2.46.2]): user asked to REVERT v2.46.0 - journey cards are back on the theme gradient (journey color
   only on icon + progress bar); the red CRITICAL chip from v2.46.1 stays.
 
+- **v2.47.0** (2026-10-20, see `CHANGELOG.md` [2.47.0]): sixth Theme preset **Slate Gray** (`slate`, `#475569`); `deriveThemeVars` keeps `--theme-dark`
+  low-saturation for neutral bases (old presets unchanged).
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan
