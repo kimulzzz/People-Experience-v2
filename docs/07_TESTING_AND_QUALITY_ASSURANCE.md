@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    49 MODUL PENGUJIAN    │     332 AUTOMATED TESTS     │       100% PASS RATE          │
+│    50 MODUL PENGUJIAN    │     339 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -19,7 +19,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 
 ### 📦 Modul 1: Calculation Engine & Period Filtering (3 Test Cases)
 1. **System Health Endpoint**: Memvalidasi status online server dan identitas sistem (`GET /api/health`).
-2. **Formula PX Index YTD (Default)**: Memverifikasi kebenaran matematis formula $\text{PX Index} = 0.70 \times \text{Survey} + 0.30 \times \text{Outcome}$, serta menghitung 27 metrik, 17 checkpoint, dan 5 journey.
+2. **Formula PX Index YTD (Default)**: Memverifikasi kebenaran matematis formula $\text{PX Index} = 0.70 \times \text{Survey} + 0.30 \times \text{Outcome}$, serta menghitung 27 metrik, 17 checkpoint, dan 5 journey. Sejak v2.48.0 juga memastikan `px_weights` default = 70/30 (bobot kini setting `px_index_weights`).
 3. **Monthly Period Filtering**: Memverifikasi isolasi filter bulan spesifik (`2026-01` vs `2026-02`).
 
 ### 📦 Modul 2: Monthly Trends & Progression Engine (1 Test Case)
@@ -91,7 +91,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 
 ### 📦 Modul 15: Directorate & Sub-Directorate Filtering & Metric Exclusion (3 Test Cases)
 43. **Daftar Direktorat**: Memverifikasi `GET /api/directorates` mengembalikan 7 Direktorat beserta sub-direktoratnya.
-44. **Exclusion Filter Direktorat**: Memverifikasi filter Direktorat menonaktifkan metrik non-karyawan (Metrik #1–#5).
+44. **Metrik Non-Karyawan di Filter Direktorat**: Sejak v2.48.0 memverifikasi filter Direktorat membaca metrik non-karyawan (Metrik #1–#5) pada nilai bankwide dan ikut dihitung (tidak `is_disabled`, `is_bankwide_value`, skor/sampel = bankwide; metrik karyawan tidak bankwide; journey 1 tanpa metrik nonaktif; `disabled_metrics_count` 0). Sampai v2.47.0: memverifikasi metrik #1–#5 dinonaktifkan.
 45. **Filter Sub-Direktorat**: Memverifikasi kalkulasi dengan filter Sub-Direktorat aktif.
 
 ### 📦 Modul 16: Admin Parameters Management — CRUD & Reset (3 Test Cases)
@@ -684,7 +684,7 @@ Test jalur lengkap dan "belum dikonfigurasi" **dilewati otomatis** bila sudah ad
 | Signature Event | Positif/Negatif | Admin dan USER direktorat pengelola (dari setting database) boleh menulis; USER lain 403 tetapi bisa membaca |
 | Manajemen user | Positif/Negatif | validasi role/direktorat/divisi dari direktori, duplikat, username salah; tidak bisa mengunci diri sendiri; user nonaktif tertutup |
 | Audit | Positif | login berhasil/gagal/terkunci, logout, perubahan akun tercatat; tidak ada password di log/respons; username tak dikenal tanpa teks mentah |
-| Metrik non-karyawan | Positif | USER melihat #1-#5 sebagai agregat bankwide read-only sama dengan tampilan Admin ALL; indeks direktorat USER = tampilan Admin untuk direktorat itu |
+| Metrik non-karyawan | Positif | USER melihat #1-#5 sebagai agregat bankwide read-only sama dengan tampilan Admin ALL; indeks direktorat USER = tampilan Admin untuk direktorat itu. Sejak v2.48.0: Admin juga membaca #1-#5 pada nilai bankwide, dan bagi USER metrik itu ikut dihitung |
 | Proxy Vite | Positif/Negatif | login lewat proxy `:3000` sampai ke handler (401, bukan ditolak sebagai lintas-origin) dan Origin asing tetap 403 — dilewati bila Vite mati |
 | Unit | Positif/Negatif | hash scrypt ber-salt dan hanya cocok dengan password benar; helper scope/identitas; rate limiter memblokir lalu kedaluwarsa |
 
@@ -1049,3 +1049,24 @@ Modul 48 (aturan nama) mendapat asersi untuk `probe-<stamp>`, `snap-<stamp>`, `d
 ## 36. v2.44.0 - Auto sign-out saat idle
 
 Harness: `realFetch` mengirim `POST /api/auth/activity` maksimal tiap 60 detik per cookie agar sesi suite tidak habis pada batas 5 menit. **Modul 49** (9 tes; tes 6-9 dan sebagian tes 5 khusus SQL karena mengubah `last_activity_at` lewat storage): default 5; validasi; 1/120 diterima + audit `SETTINGS_CHANGE`; USER 403, tanpa sesi 401; rute publik tanpa login dan dengan cookie idle; sesi idle 6 menit -> 401 IDLE_TIMEOUT, cookie dibersihkan, baris hilang, satu `LOGOUT_IDLE`; activity tidak menghidupkan sesi habis; GET tidak mengubah `last_activity_at`, activity memperbaruinya; logout dengan reason. **Suite penuh SQL: 246/246 lulus, 0 gagal, 16 dilewati** (developer). Ukuran suite penuh SQL kini 332 (323 + 9).
+
+
+## 37. v2.48.0 - Bobot PX Index, PX Index per Direktorat & metrik non-karyawan bernilai bankwide
+
+**Modul 50** (7 tes; tanpa penjaga backend, tetapi hanya dijalankan di SQL). Membuat akun User sementara (`rt50<suffix><stamp>`) dan mengembalikan bobot ke 70/30 di `finally`. Gotcha: tes 1-3 mengharuskan bobot tersimpan 70/30 saat suite mulai; bila Admin sudah mengubah bobot di database yang diuji, modul ini gagal.
+
+| # | Jenis | Yang diuji |
+| :---: | :---: | :--- |
+| 1 | Positif | Default `px_index_weights` 70/30; `calculate` mengirim `px_weights` dan `weights_formula` berawalan `70% Survey + 30% Outcomes` |
+| 2 | Negatif | 11 nilai salah (jumlah != 100, desimal, negatif, > 100, bentuk salah) -> 400, setting tidak berubah |
+| 3 | Negatif | User -> 403, tanpa sesi -> 401 |
+| 4 | Positif | 60/40 disimpan dan langsung dipakai: `px_index = 0.6 x Survey + 0.4 x Outcome` pada bankwide, direktorat, journey dan by-directorate; audit `px_index_weights: 70/30 -> 60/40`; dikembalikan ke 70/30 |
+| 5 | Positif | Admin: `by-directorate` memuat semua direktorat master, terurut PX (tanpa data terakhir), tiap baris = `calculate?directorate=X` (YTD, plus cek MTD) |
+| 6 | Positif/Negatif | User dengan cakupan 2 direktorat mendapat tepat 2 (= scorecard-nya per direktorat); `?directorate` lain tidak membocorkan; tanpa sesi 401 |
+| 7 | Positif | Di bawah filter direktorat: Survey/Outcome/PX yang dihitung ulang dari nilai per metrik = scorecard; metrik non-karyawan = nilai bankwide; indeks hanya-metrik-karyawan berbeda (pembanding); detail `is_bankwide_value` + jumlah responden bankwide; alert = metrik defisit, termasuk flag bankwide |
+
+**Modul lama disesuaikan**: Modul 1 (asersi default `px_weights` 70/30); Modul 15 tes filter direktorat ditulis ulang (lihat §2, Modul 15); Modul 34 (Admin juga membaca #1-#5 pada nilai bankwide; User melihatnya bankwide dan dihitung); Modul 35 (+ cek `is_bankwide_value`). Jumlah tes modul lama tidak berubah.
+
+**Hasil** (developer, SQL, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): run 1 252/253 - satu kegagalan karena bug nyata di route detail (filter direset sebelum engine), diperbaiki; run 2 **253/253 lulus, 0 gagal, 16 dilewati**. JSON: hanya cek terarah in-process pada salinan `store.json`; suite JSON penuh tidak dijalankan. `vite build` OK. Ukuran suite penuh SQL kini 339 (332 + 7); hitungan statis `await runTest(` 326 (319 + 7), selisih 13 sama seperti sebelumnya.
+
+Tidak diuji otomatis: tampilan panel, urutan kartu journey, sumbu Y grafik, kartu PX Index Weights dan urutan About (dicek di browser oleh main session).

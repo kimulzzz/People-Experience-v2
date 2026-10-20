@@ -188,8 +188,8 @@ export default function Calculator({
           </div>
           <div className="h-8 w-px bg-white/20" />
           <div className="text-xs space-y-0.5">
-            <div><span className="text-red-100 font-medium">Survey (70%):</span> <strong className="text-white">{fmtPct(survey_index)}</strong></div>
-            <div><span className="text-red-100 font-medium">Outcome (30%):</span> <strong className="text-white">{fmtPct(outcome_index)}</strong></div>
+            <div><span className="text-red-100 font-medium">Survey{calculationData.px_weights ? ` (${calculationData.px_weights.survey}%)` : ''}:</span> <strong className="text-white">{fmtPct(survey_index)}</strong></div>
+            <div><span className="text-red-100 font-medium">Outcome{calculationData.px_weights ? ` (${calculationData.px_weights.outcome}%)` : ''}:</span> <strong className="text-white">{fmtPct(outcome_index)}</strong></div>
           </div>
         </div>
       </div>
@@ -455,6 +455,11 @@ export default function Calculator({
                           {isDisabled && (
                             <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-bold bg-gray-200 text-gray-600">
                               Bankwide Only (Non-Employee)
+                            </span>
+                          )}
+                          {m.is_bankwide_value && (
+                            <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-bold bg-slate-100 text-slate-700 shrink-0" title="Non-employee metric: under a directorate filter it is shown and counted at its bankwide value">
+                              Bankwide Value
                             </span>
                           )}
                           {isSurvey && m.survey_source && (

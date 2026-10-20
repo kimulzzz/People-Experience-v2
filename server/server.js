@@ -10,7 +10,9 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const storage = require('./db/storage');
-const { calculatePEIndex, getMetricDetail, computeMonthlyTrends, getLastCompleteMonth, normalizeTarget } = require('./services/calculationEngine');
+const { calculatePEIndex, getMetricDetail, computeMonthlyTrends, getLastCompleteMonth, normalizeTarget, syncLiveEventMetrics,
+  pxWeightsError, clearPxWeightsCache } = require('./services/calculationEngine');
+const { normalizeScopes } = require('./db/scopeUtils');
 const { getAlertsAndRecommendations } = require('./services/alertEngine');
 const { generateEventPPT } = require('./services/pptGenerator');
 const { isOllamaAvailable, generateEventSummary } = require('./services/localAiService');
@@ -130,12 +132,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.47.0' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.48.0' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.47.0',
+    version: '2.48.0',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',
@@ -172,6 +174,15 @@ app.put('/api/admin/settings/:key', async (req, res) => {
     const { value } = req.body || {};
     const current = (await storage.getSettings())[key];
     if (current === undefined) return res.status(404).json({ error: `Setting "${key}" not found.` });
+    if (key === 'px_index_weights') {
+      // v2.48.0: { survey, outcome } whole percentages adding up to 100
+      const invalid = pxWeightsError(value);
+      if (invalid) return res.status(400).json({ error: invalid });
+      const saved = await storage.setSetting(key, { survey: value.survey, outcome: value.outcome });
+      clearPxWeightsCache();
+      await auth.audit(req, 'SETTINGS_CHANGE', { target: `${key}: ${current ? `${current.survey}/${current.outcome}` : '-'} -> ${saved.survey}/${saved.outcome}` });
+      return res.json({ key, value: saved });
+    }
     if (NUMERIC_SETTINGS[key]) {
       const { min, max, integer, label } = NUMERIC_SETTINGS[key];
       const n = Number(value);
@@ -259,9 +270,9 @@ app.get('/api/metrics/calculate', async (req, res) => {
       sub_directorate: scope.sub_directorate,
       scopes: scope.scopes
     };
-    // A USER reads non-employee metrics (#1-#5 ...) as read-only bankwide values instead of "exempted";
-    // they stay out of the directorate's index so the total equals what the Admin sees for that directorate.
-    const calculation = await calculatePEIndex(filterOptions, { bankwideReadOnly: req.user.role !== 'ADMIN' });
+    // Under a directorate/division filter the non-employee metrics (#1-#5 ...) are read at their bankwide value and
+    // count in the index (v2.48.0, Admin and USER alike), so the number equals GET /api/metrics/by-directorate.
+    const calculation = await calculatePEIndex(filterOptions);
     // can_upload (computed here, never by the client): the Template / Evidence / Upload buttons of a SURVEY metric
     // are for the Admin and for that metric's PIC (v2.27.1).
     const picIds = new Set(await auth.picMetricIds(req.user));
@@ -279,13 +290,9 @@ app.get('/api/metrics/:id/detail', async (req, res) => {
     const { period, mode, year, month } = req.query;
     const scope = auth.scopeFilter(req, res);
     if (scope === null) return;
-    let { directorate, sub_directorate, scopes } = scope;
-    // Bankwide / non-employee metrics (campus, candidates, ...) have no directorate: a USER reads
-    // them as the bankwide aggregate (read-only) instead of an "exempted" empty view.
-    if (req.user.role !== 'ADMIN') {
-      const metric = (await storage.getMetrics()).find(m => String(m.metric_id) === String(req.params.id));
-      if (metric && metric.is_employee_metric === false) { directorate = 'ALL'; sub_directorate = 'ALL'; scopes = null; }
-    }
+    const { directorate, sub_directorate, scopes } = scope;
+    // Bankwide / non-employee metrics (campus, candidates, ...) have no directorate: getMetricDetail reads them as the
+    // bankwide aggregate (read-only, is_bankwide_value) under any directorate/scope filter - USER and Admin (v2.48.0).
     const filterOptions = {
       period: period || (mode === 'MTD' ? `${year || CURRENT_YEAR}-${month || '01'}` : (mode === 'YTD' ? 'YTD' : (year || CURRENT_YEAR))),
       mode: mode || (period && /^\d{4}-\d{2}$/.test(period) ? 'MTD' : 'YTD'),
@@ -347,6 +354,53 @@ app.get('/api/metrics/trends', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// 2d. PX Index per directorate (v2.48.0) for the selected period (?mode=YTD|MTD&year=&month=). Admin: every directorate
+// of the master list; USER: only the directorates of their own scope (a directorate outside it is never computed).
+// Every entry is computed exactly like GET /api/metrics/calculate?directorate=<that directorate> for this user, so
+// clicking it in the Dashboard (= setting the Header filter) shows the same number.
+app.get('/api/metrics/by-directorate', async (req, res) => {
+  try {
+    const { mode, year, month } = req.query;
+    const isMtd = (mode || 'YTD').toUpperCase() === 'MTD';
+    const y = /^\d{4}$/.test(String(year || '')) ? String(year) : CURRENT_YEAR;
+    const mo = /^(0?[1-9]|1[0-2])$/.test(String(month || '')) ? String(month).padStart(2, '0') : '01';
+    const period = { mode: isMtd ? 'MTD' : 'YTD', year: y, month: mo, period: isMtd ? `${y}-${mo}` : 'YTD' }; // same period string as /api/metrics/calculate
+
+    const names = req.user.role === 'ADMIN'
+      ? (await storage.getDirectorates()).map(d => d.directorate_name || d.name).filter(Boolean)
+      : normalizeScopes(req.user.scopes).map(s => s.directorate);
+
+    await syncLiveEventMetrics(); // once; the per-directorate calls below skip it (skipTrends)
+    const rows = await Promise.all(names.map(async name => {
+      const scope = auth.resolveScope(req.user, name, 'ALL');
+      if (scope.error) return null; // cannot happen for the names above; never compute outside the scope
+      const calc = await calculatePEIndex({ ...period, directorate: scope.directorate, sub_directorate: scope.sub_directorate, scopes: scope.scopes },
+        { skipTrends: true });
+      const own = scope.scopes ? scope.scopes.find(s => s.directorate === name) : null;
+      return {
+        directorate: name,
+        divisions: own ? own.divisions : null, // USER with a subset of divisions: the divisions the number covers
+        px_index: calc.px_index,
+        survey_index: calc.survey_index,
+        outcome_index: calc.outcome_index,
+        px_index_basis: calc.px_index_basis,
+        active_metrics_count: calc.active_metrics_count,
+        no_data_metrics_count: calc.no_data_metrics_count,
+        critical_count: calc.metrics.filter(m => m.status === 'CRITICAL').length,
+        warning_count: calc.metrics.filter(m => m.status === 'WARNING').length,
+        px_weights: calc.px_weights
+      };
+    }));
+    // highest PX Index first; directorates without data last; ties by name
+    const list = rows.filter(Boolean).sort((a, b) => (a.px_index === null) - (b.px_index === null)
+      || (b.px_index || 0) - (a.px_index || 0) || a.directorate.localeCompare(b.directorate));
+    res.json({ mode: period.mode, year: y, month: isMtd ? mo : null, px_weights: list.length ? list[0].px_weights : null, directorates: list });
+  } catch (err) {
+    console.error('Error calculating PX Index by directorate:', err);
+    res.status(500).json({ error: 'Failed to calculate the PX Index by directorate' });
   }
 });
 
@@ -627,7 +681,7 @@ app.get('/api/alerts', async (req, res) => {
     // optional ?directorate / ?sub_directorate filter).
     const scope = auth.scopeFilter(req, res);
     if (scope === null) return;
-    const alertsData = await getAlertsAndRecommendations({ ...scope, bankwideReadOnly: req.user.role !== 'ADMIN' });
+    const alertsData = await getAlertsAndRecommendations(scope);
     res.json(alertsData);
   } catch (err) {
     res.status(500).json({ error: err.message });

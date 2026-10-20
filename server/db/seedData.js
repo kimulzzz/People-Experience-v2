@@ -1708,6 +1708,8 @@ const initialAppSettings = {
     description: 'Direktorat yang pengguna (role User)-nya boleh mengelola Signature Event (Admin selalu boleh)'
   },
   px_index_target: { value: 85, description: 'Target PX Index (%) — garis target pada Performance Trend chart' },
+  // v2.48.0: bobot PX Index (bilangan bulat 0-100, jumlah harus 100) — Admin Parameters -> Index Weights
+  px_index_weights: { value: { survey: 70, outcome: 30 }, description: 'Bobot PX Index: % Survey Index + % Outcome Index (jumlah 100)' },
   event_program_categories: {
     value: [
       { value: 'Perspektif', label: 'Perspektif' },

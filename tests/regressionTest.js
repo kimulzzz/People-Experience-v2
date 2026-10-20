@@ -164,7 +164,8 @@ async function runRegressionSuite() {
     assert.strictEqual(data.journeys.length, 5, 'Total journeys must be 5');
     assert.strictEqual(data.checkpoints.length, 17, 'Total checkpoints must be 17');
     
-    // Formula verification: 0.70 * survey + 0.30 * outcome
+    // Formula verification: survey weight * survey + outcome weight * outcome (px_index_weights, default 70/30 - v2.48.0)
+    assert.deepStrictEqual(data.px_weights, { survey: 70, outcome: 30 }, 'default PX Index weights');
     const expectedPx = Math.round((0.70 * data.survey_index + 0.30 * data.outcome_index) * 100) / 100;
     const diff = Math.abs(pxIndex - expectedPx);
     assert(diff < 0.1, `Calculated PX Index ${pxIndex} does not match formula ${expectedPx}`);
@@ -747,30 +748,43 @@ async function runRegressionSuite() {
     assert(itDir.sub_directorates.length > 0, 'Operations, Technology, Analytics & AI must have sub-directorates');
   });
 
-  await runTest('Calculate with Directorate filter disables non-employee metrics (Metrics #1 to #5)', async () => {
+  // v2.48.0: was "disables non-employee metrics". Since v2.48.0 a directorate filter reads the non-employee metrics
+  // (#1-#5) at their BANKWIDE value and counts them in the index (nothing is exempted any more).
+  await runTest('Calculate with Directorate filter reads non-employee metrics (Metrics #1 to #5) at their bankwide value and counts them', async () => {
     const res = await fetch(`${BASE_URL}/api/metrics/calculate?mode=YTD&year=2026&directorate=${encodeURIComponent('Operations, Technology, Analytics & AI')}`);
     assert.strictEqual(res.status, 200);
     const data = await res.json();
     assert.strictEqual(data.filter_options.directorate, 'Operations, Technology, Analytics & AI');
-    
-    // Check that metrics 1 to 5 are disabled
+    const bank = await (await fetch(`${BASE_URL}/api/metrics/calculate?mode=YTD&year=2026`)).json();
+
+    // Metrics 1 to 5: not disabled, flagged as bankwide values, equal to the bankwide view
     const nonEmpMetrics = data.metrics.filter(m => m.metric_id <= 5);
+    assert.strictEqual(nonEmpMetrics.length, 5);
     nonEmpMetrics.forEach(m => {
-      assert.strictEqual(m.is_disabled, true, `Metric #${m.metric_id} must be marked is_disabled=true`);
+      assert.strictEqual(m.is_disabled, false, `Metric #${m.metric_id} must not be exempted`);
+      assert.strictEqual(m.excluded_from_index, false, `Metric #${m.metric_id} must count in the index`);
+      assert.strictEqual(m.is_bankwide_value, true, `Metric #${m.metric_id} must be flagged as a bankwide value`);
+      const b = bank.metrics.find(x => x.metric_id === m.metric_id);
+      assert.strictEqual(m.normalized_score, b.normalized_score, `Metric #${m.metric_id} bankwide score`);
+      assert.strictEqual(m.sample_size, b.sample_size, `Metric #${m.metric_id} bankwide sample`);
     });
 
-    // Check that employee metrics 6 to 27 are NOT disabled
+    // Employee metrics 6 to 27: directorate data, never flagged as bankwide
     const empMetrics = data.metrics.filter(m => m.metric_id >= 6);
     empMetrics.forEach(m => {
       assert.strictEqual(m.is_disabled, false, `Metric #${m.metric_id} must be active (is_disabled=false)`);
+      assert.strictEqual(m.is_bankwide_value, false, `Metric #${m.metric_id} is directorate data`);
     });
 
-    // Journey 1 has 5 disabled external metrics (metrics 1-5) and 2 active employee metrics (metrics 6-7)
+    // Journey 1 (metrics 1-7): nothing disabled, every metric with data is active
     const journey1 = data.journeys.find(j => j.journey_id === 1);
     assert(journey1 !== undefined);
-    assert.strictEqual(journey1.disabled_metrics_count, 5, '5 non-employee metrics in Journey 1 should be disabled for directorate');
-    assert.strictEqual(journey1.active_metrics_count, 2, '2 employee metrics in Journey 1 should remain active');
+    assert.strictEqual(journey1.disabled_metrics_count, 0, 'no metric of Journey 1 is exempted any more');
+    assert.strictEqual(journey1.active_metrics_count, journey1.metrics.filter(m => m.has_data).length, 'every Journey 1 metric with data is active');
+    assert(journey1.active_metrics_count >= 5, 'Journey 1 counts the bankwide non-employee metrics');
     assert(journey1.overall_score > 0, 'Journey 1 score should be calculated from active metrics');
+    assert.strictEqual(data.disabled_metrics_count, 0);
+    assert.strictEqual(data.bankwide_value_metrics_count, data.metrics.filter(m => m.is_employee_metric === false).length);
 
     // Overall PX index should be calculated from remaining active journeys (Journeys 1 to 5)
     assert(data.px_index > 0, 'PX index must be calculated from active employee metrics');
@@ -2634,7 +2648,7 @@ async function runRegressionSuite() {
       samples.forEach(sm => assert.ok(sm.employee_name === null && sm.text));
     });
 
-    await runTest('[POSITIVE] A USER sees non-employee metrics (#1-#5) as read-only bankwide values (not exempted), equal to the Admin ALL view, while the directorate index equals the Admin view of that directorate', async () => {
+    await runTest('[POSITIVE] A USER sees non-employee metrics (#1-#5) as read-only bankwide values (not exempted), equal to the Admin ALL view, and the index equals the Admin view of that directorate (which reads them the same way since v2.48.0)', async () => {
       const u = await readyUser('l', 'USER', itDir);
       const own = encodeURIComponent(itDir.directorate_name);
       const user = await (await rawFetch(`${BASE_URL}/api/metrics/calculate?period=YTD`, asUser(u.cookie))).json();
@@ -2650,7 +2664,9 @@ async function runRegressionSuite() {
       }
       assert.strictEqual(user.px_index, adminDir.px_index, 'scorecard total equals the Admin view of the same directorate');
       assert.strictEqual(user.survey_index, adminDir.survey_index);
-      assert.ok(adminDir.metrics.filter(m => m.is_employee_metric === false).every(m => m.is_disabled), 'Admin directorate view is unchanged (exempted)');
+      // v2.48.0: was "Admin directorate view is unchanged (exempted)" - now Admin and USER read #1-#5 identically
+      assert.ok(adminDir.metrics.filter(m => m.is_employee_metric === false).every(m => !m.is_disabled && m.is_bankwide_value), 'Admin directorate view reads them at the bankwide value too');
+      assert.ok(nonEmp.every(m => m.is_bankwide_value === true && m.excluded_from_index === false), 'USER: bankwide value, counted in the index');
     });
 
     await runTest('[POSITIVE/NEGATIVE] Public by-code lookup does not hand out the partner access code; failed logins for an unknown username store no raw text in the audit log', async () => {
@@ -2806,6 +2822,7 @@ async function runRegressionSuite() {
       const all = await aj('/api/metrics/calculate?period=YTD');
       for (const m of user.metrics.filter(x => x.is_employee_metric === false)) {
         assert.strictEqual(m.is_disabled, false);
+        assert.strictEqual(m.is_bankwide_value, true); // v2.48.0: counted in the index at the bankwide value
         assert.strictEqual(m.normalized_score, all.metrics.find(k => k.metric_id === m.metric_id).normalized_score);
       }
     });
@@ -6607,6 +6624,177 @@ async function runRegressionSuite() {
     } finally {
       if ((await idleSetting()) !== 5) await putIdle(5);
       for (const id of users49) await adminJson('DELETE', `/api/admin/users/${id}`);
+    }
+  }
+
+  // --- MODULE 50 (v2.48.0): PX INDEX WEIGHTS SETTING + PX INDEX PER DIRECTORATE ---
+  // px_index_weights { survey, outcome } (whole numbers adding up to 100, Admin only, default 70/30) drives every PX Index;
+  // GET /api/metrics/by-directorate lists the PX Index per directorate of the caller's scope, each equal to
+  // /api/metrics/calculate?directorate=<that one>; under a directorate filter the non-employee metrics count at their
+  // bankwide value.
+  console.log('\n📦 MODULE 50: PX Index weights setting, PX Index by directorate, bankwide non-employee metrics under a directorate filter (Positive & Negative Testing)');
+  {
+    const KEY50 = 'px_index_weights';
+    const stamp50 = Date.now().toString(36);
+    const users50 = [];
+    const json50 = (method, p, body, cookie) => nativeFetch(`${BASE_URL}${p}`, jsonBody(method, body, cookie));
+    const putWeights = value => adminJson('PUT', `/api/admin/settings/${KEY50}`, { value });
+    const weightsSetting = async () => (await (await adminJson('GET', '/api/settings')).json())[KEY50];
+    const aj50 = async p => { const r = await adminJson('GET', p); assert.strictEqual(r.status, 200, p); return r.json(); };
+    const near = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg}: ${a} vs ${b}`);
+    const dirNames = (await (await adminJson('GET', '/api/directorates')).json()).map(d => d.name);
+    const makeUser50 = async (suffix, scopes) => {
+      const username = `rt50${suffix}${stamp50}`;
+      const res = await adminJson('POST', '/api/admin/users', { username, full_name: `Regression 50 ${suffix}`, role: 'USER', scopes });
+      assert.strictEqual(res.status, 201);
+      const body = await res.json();
+      users50.push(body.user.user_id);
+      const first = await loginAs(username, body.temporary_password);
+      const password = require('crypto').randomBytes(9).toString('hex') + 'Cc3';
+      assert.strictEqual((await json50('POST', '/api/auth/change-password', { current_password: body.temporary_password, new_password: password }, first.cookie)).status, 200);
+      const { res: lr, cookie } = await loginAs(username, password);
+      assert.strictEqual(lr.status, 200);
+      return cookie;
+    };
+    const userGet = async (cookie, p) => { const r = await json50('GET', p, undefined, cookie); assert.strictEqual(r.status, 200, p); return r.json(); };
+
+    try {
+      await runTest('[POSITIVE] PX Index weights default to 70/30 and are exposed by /api/metrics/calculate (px_weights, weights_formula)', async () => {
+        assert.deepStrictEqual(await weightsSetting(), { survey: 70, outcome: 30 });
+        const calc = await aj50('/api/metrics/calculate?mode=YTD');
+        assert.deepStrictEqual(calc.px_weights, { survey: 70, outcome: 30 });
+        assert.ok(calc.weights_formula.startsWith('70% Survey + 30% Outcomes'));
+      });
+
+      await runTest('[NEGATIVE] Invalid weights are refused with 400 and leave the setting unchanged (sum != 100, decimals, negative, > 100, wrong shape)', async () => {
+        const bad = [{ survey: 70, outcome: 20 }, { survey: 60, outcome: 60 }, { survey: 70.5, outcome: 29.5 }, { survey: -10, outcome: 110 },
+          { survey: 110, outcome: -10 }, { survey: '70', outcome: '30' }, { survey: 100 }, [70, 30], 'abc', 70, null];
+        for (const value of bad) {
+          const res = await putWeights(value);
+          assert.strictEqual(res.status, 400, `value ${JSON.stringify(value)}`);
+          assert.ok((await res.json()).error);
+        }
+        assert.deepStrictEqual(await weightsSetting(), { survey: 70, outcome: 30 });
+      });
+
+      await runTest('[NEGATIVE] A User cannot change the weights (403) and nobody can without a session (401)', async () => {
+        const cookie = await makeUser50('w', [{ directorate: dirNames[0], divisions: null }]);
+        assert.strictEqual((await json50('PUT', `/api/admin/settings/${KEY50}`, { value: { survey: 50, outcome: 50 } }, cookie)).status, 403);
+        assert.strictEqual((await json50('PUT', `/api/admin/settings/${KEY50}`, { value: { survey: 50, outcome: 50 } })).status, 401);
+        assert.deepStrictEqual(await weightsSetting(), { survey: 70, outcome: 30 });
+      });
+
+      await runTest('[POSITIVE] 60/40 is saved and used at once: px_index = 0.6 x Survey + 0.4 x Outcome (bankwide, directorate, journey, by-directorate), audited; restored to 70/30', async () => {
+        try {
+          const res = await putWeights({ survey: 60, outcome: 40 });
+          assert.strictEqual(res.status, 200);
+          assert.deepStrictEqual((await res.json()).value, { survey: 60, outcome: 40 });
+          const calc = await aj50('/api/metrics/calculate?mode=YTD');
+          assert.deepStrictEqual(calc.px_weights, { survey: 60, outcome: 40 });
+          assert.strictEqual(calc.px_index_basis, 'BOTH');
+          near(calc.px_index, 0.6 * calc.survey_index + 0.4 * calc.outcome_index, 0.02, 'bankwide px');
+          const dir = await aj50(`/api/metrics/calculate?mode=YTD&directorate=${encodeURIComponent(dirNames[0])}`);
+          near(dir.px_index, 0.6 * dir.survey_index + 0.4 * dir.outcome_index, 0.02, 'directorate px');
+          const j = calc.journeys.find(x => x.survey_score !== null && x.outcome_score !== null);
+          assert.ok(j, 'guard: a journey with both survey and outcome scores');
+          near(j.overall_score, 0.6 * j.survey_score + 0.4 * j.outcome_score, 0.02, 'journey score');
+          const byDir = await aj50('/api/metrics/by-directorate?mode=YTD');
+          assert.deepStrictEqual(byDir.px_weights, { survey: 60, outcome: 40 });
+          assert.strictEqual(byDir.directorates.find(d => d.directorate === dirNames[0]).px_index, dir.px_index);
+        } finally {
+          assert.strictEqual((await putWeights({ survey: 70, outcome: 30 })).status, 200);
+        }
+        assert.deepStrictEqual(await weightsSetting(), { survey: 70, outcome: 30 });
+        const me = (await (await adminJson('GET', '/api/auth/me')).json()).user;
+        const rows = (await (await adminJson('GET', '/api/admin/audit-log?limit=500&include_test=1')).json())
+          .filter(e => e.username === me.username && e.action === 'SETTINGS_CHANGE' && String(e.target).startsWith(KEY50));
+        assert.ok(rows.some(e => e.target === `${KEY50}: 70/30 -> 60/40`), 'audit target names old -> new value');
+      });
+
+      await runTest('[POSITIVE] Admin: /api/metrics/by-directorate lists every master directorate, sorted by PX Index, each equal to /api/metrics/calculate?directorate=X (YTD and MTD)', async () => {
+        const byDir = await aj50('/api/metrics/by-directorate?mode=YTD');
+        assert.strictEqual(byDir.directorates.length, dirNames.length);
+        assert.deepStrictEqual(byDir.directorates.map(d => d.directorate).sort(), [...dirNames].sort());
+        const pxs = byDir.directorates.map(d => d.px_index);
+        for (let i = 1; i < pxs.length; i++) assert.ok(pxs[i] === null || (pxs[i - 1] !== null && pxs[i - 1] >= pxs[i]), 'sorted highest first, no-data last');
+        for (const d of byDir.directorates) {
+          const c = await aj50(`/api/metrics/calculate?mode=YTD&directorate=${encodeURIComponent(d.directorate)}`);
+          assert.strictEqual(d.px_index, c.px_index, `${d.directorate} px`);
+          assert.strictEqual(d.survey_index, c.survey_index, `${d.directorate} survey`);
+          assert.strictEqual(d.outcome_index, c.outcome_index, `${d.directorate} outcome`);
+          assert.strictEqual(d.px_index_basis, c.px_index_basis);
+        }
+        const year = String(new Date().getFullYear());
+        const mtd = await aj50(`/api/metrics/by-directorate?mode=MTD&year=${year}&month=03`);
+        assert.strictEqual(mtd.mode, 'MTD');
+        const first = mtd.directorates[0];
+        const c = await aj50(`/api/metrics/calculate?mode=MTD&year=${year}&month=03&directorate=${encodeURIComponent(first.directorate)}`);
+        assert.strictEqual(first.px_index, c.px_index, 'MTD entry equals the MTD scorecard');
+      });
+
+      await runTest('[POSITIVE/NEGATIVE] USER with a 2-directorate scope gets exactly those 2 (equal to their own scorecard per directorate); a directorate outside the scope never appears; no session -> 401', async () => {
+        const [dA, dB] = [dirNames[1], dirNames[2]];
+        const cookie = await makeUser50('s', [{ directorate: dA, divisions: null }, { directorate: dB, divisions: null }]);
+        const byDir = await userGet(cookie, '/api/metrics/by-directorate?mode=YTD');
+        assert.deepStrictEqual(byDir.directorates.map(d => d.directorate).sort(), [dA, dB].sort());
+        assert.ok(!JSON.stringify(byDir).includes(JSON.stringify(dirNames[0])), 'no other directorate in the payload');
+        for (const d of byDir.directorates) {
+          const own = await userGet(cookie, `/api/metrics/calculate?mode=YTD&directorate=${encodeURIComponent(d.directorate)}`);
+          assert.strictEqual(d.px_index, own.px_index, `${d.directorate}: equals the user's scorecard`);
+          const adm = await aj50(`/api/metrics/calculate?mode=YTD&directorate=${encodeURIComponent(d.directorate)}`);
+          assert.strictEqual(d.px_index, adm.px_index, `${d.directorate}: whole-directorate scope equals the Admin view`);
+        }
+        // the endpoint ignores ?directorate (it lists the scope), so asking for another directorate leaks nothing
+        const sneaky = await userGet(cookie, `/api/metrics/by-directorate?mode=YTD&directorate=${encodeURIComponent(dirNames[0])}`);
+        assert.deepStrictEqual(sneaky.directorates.map(d => d.directorate).sort(), [dA, dB].sort());
+        assert.strictEqual((await nativeFetch(`${BASE_URL}/api/metrics/by-directorate`)).status, 401);
+      });
+
+      await runTest('[POSITIVE] Under a directorate filter the bankwide-only metrics count at their bankwide value: recomputing Survey/Outcome/PX from the per-metric values gives the scorecard; detail and alerts read them bankwide too', async () => {
+        const name = dirNames[0];
+        const q = `mode=YTD&directorate=${encodeURIComponent(name)}`;
+        const dir = await aj50(`/api/metrics/calculate?${q}`);
+        const bank = await aj50('/api/metrics/calculate?mode=YTD');
+        const nonEmp = dir.metrics.filter(m => m.is_employee_metric === false);
+        assert.ok(nonEmp.length >= 5);
+        for (const m of nonEmp) {
+          const b = bank.metrics.find(x => x.metric_id === m.metric_id);
+          assert.strictEqual(m.is_bankwide_value, true);
+          assert.strictEqual(m.normalized_score, b.normalized_score, `metric ${m.metric_id} at its bankwide value`);
+        }
+        const wmean = list => { const w = list.reduce((s, m) => s + m.weight, 0); return w > 0 ? list.reduce((s, m) => s + m.normalized_score * m.weight, 0) / w : null; };
+        const live = dir.metrics.filter(m => m.has_data && !m.is_disabled && !m.excluded_from_index);
+        assert.strictEqual(live.length, dir.metrics.filter(m => m.has_data).length, 'every metric with data counts');
+        const S = wmean(live.filter(m => m.metric_type === 'SURVEY'));
+        const O = wmean(live.filter(m => m.metric_type === 'OUTCOME'));
+        near(dir.survey_index, S, 0.02, 'survey index incl. bankwide-only survey metrics');
+        near(dir.outcome_index, O, 0.02, 'outcome index = all outcome metrics');
+        near(dir.outcome_index, bank.outcome_index, 0.01, 'outcome index equals bankwide (all outcome metrics are snapshots)');
+        near(dir.px_index, 0.7 * S + 0.3 * O, 0.02, 'px index');
+        // the employee-only index differs: proves the bankwide-only survey metrics really are inside
+        const empOnly = wmean(live.filter(m => m.metric_type === 'SURVEY' && m.is_employee_metric !== false));
+        assert.ok(Math.abs(empOnly - S) > 0.001, 'guard: including the bankwide-only survey metrics changes the survey index');
+        // detail of a non-employee metric under the filter = bankwide detail (Admin too)
+        const sm = nonEmp.find(m => m.metric_type === 'SURVEY' && m.has_data);
+        const dDir = await aj50(`/api/metrics/${sm.metric_id}/detail?${q}`);
+        const dBank = await aj50(`/api/metrics/${sm.metric_id}/detail?mode=YTD`);
+        assert.strictEqual(dDir.is_bankwide_value, true);
+        assert.strictEqual(dDir.is_disabled, false);
+        assert.strictEqual(dDir.total_respondents, dBank.total_respondents);
+        // alerts under the filter: non-employee deficits appear flagged as bankwide, with the bankwide score
+        const alerts = await aj50(`/api/alerts?directorate=${encodeURIComponent(name)}`);
+        const expected = live.filter(m => m.status === 'CRITICAL' || m.status === 'WARNING').map(m => m.metric_id).sort((a, b) => a - b);
+        assert.deepStrictEqual(alerts.alerts.map(a => a.metric_id).sort((a, b) => a - b), expected, 'alerts = deficits of every counted metric');
+        alerts.alerts.forEach(a => {
+          const m = dir.metrics.find(x => x.metric_id === a.metric_id);
+          assert.strictEqual(a.is_bankwide_readonly, m.is_bankwide_value);
+          assert.strictEqual(a.current_score, m.normalized_score);
+        });
+      });
+    } finally {
+      const w = await weightsSetting();
+      if (!w || w.survey !== 70 || w.outcome !== 30) await putWeights({ survey: 70, outcome: 30 });
+      for (const id of users50) await adminJson('DELETE', `/api/admin/users/${id}`);
     }
   }
 

@@ -18,7 +18,7 @@ Dokumentasi ini disusun secara sistematis mulai dari fondasi konsep (*Brains & M
 ├── 📄 04_BACKEND_API_AND_SERVICES_SPECIFICATION.md# [Backend] Spesifikasi REST API, Service Engines & Storage
 ├── 📄 05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md  # [Frontend] Hirarki React Components, State & Desain UI
 ├── 📄 06_ADMIN_OPERATIONS_AND_USER_GUIDE.md      # [Panduan User] Manual Operasional HR & Konfigurasi Admin
-├── 📄 07_TESTING_AND_QUALITY_ASSURANCE.md        # [QA & Testing] Regression Test Suite (332 Test Cases)
+├── 📄 07_TESTING_AND_QUALITY_ASSURANCE.md        # [QA & Testing] Regression Test Suite (339 Test Cases)
 ├── 📄 08_DATABASE_SCHEMA_AND_MIGRATION.md        # [Database] Skema SQL Server, Migrasi JSON→SQL & Rollback
 └── 📄 SURVEY_IMPORT_GUIDE.md                     # [Panduan Impor] Impor CSV Survei & Ringkasan ESS (.xlsx)
 ```
@@ -29,13 +29,13 @@ Dokumentasi ini disusun secara sistematis mulai dari fondasi konsep (*Brains & M
 
 | No | Dokumen | Fokus Utama | Target Pembaca |
 | :---: | :--- | :--- | :--- |
-| **01** | [**Brains & Mathematical Model**](./01_PE_BRAINS_AND_MATHEMATICAL_MODEL.md) | Fondasi 5 Employee Journey, 17 Checkpoint, 27 Metrik, Bobot Konsolidasi ($70\%\ \text{Survey} + 30\%\ \text{Outcome}$), Normalisasi 4 Tipe Pertanyaan, dan Ambang Batas Alert. | Executive HR, Data Scientist, System Architect |
+| **01** | [**Brains & Mathematical Model**](./01_PE_BRAINS_AND_MATHEMATICAL_MODEL.md) | Fondasi 5 Employee Journey, 17 Checkpoint, 27 Metrik, Bobot Konsolidasi ($70\%\ \text{Survey} + 30\%\ \text{Outcome}$ default, diatur Admin sejak v2.48.0), Normalisasi 4 Tipe Pertanyaan, dan Ambang Batas Alert. | Executive HR, Data Scientist, System Architect |
 | **02** | [**Data Dictionary & Metrics Catalog**](./02_DATA_DICTIONARY_AND_METRICS_CATALOG.md) | Spesifikasi lengkap 7 Metrik Outcome (Data HR Internal) vs 20 Metrik Survey, Kamus Kolom CSV, 4 Tipe Skala, dan 15 Butir Pertanyaan Baku Metrik #7. | HR Business Partner, System Admin, Data Analyst |
 | **03** | [**System Architecture & Data Flow**](./03_SYSTEM_ARCHITECTURE_AND_DATA_FLOW.md) | Diagram arsitektur client-server, Data Flow Diagrams (DFD Level 0 & 1), siklus hidup data survei, kepatuhan on-premise, dan keamanan data NIP. | Solution Architect, DevOps, Security Auditor |
 | **04** | [**Backend API & Services Specification**](./04_BACKEND_API_AND_SERVICES_SPECIFICATION.md) | Endpoint REST API Express.js, Service Engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptExportService`), dan Storage Layer. | Backend Developer, Integrator, DevOps |
 | **05** | [**Frontend UI & Component Hierarchy**](./05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md) | Struktur pohon komponen React 19, Tailwind CSS styling, State management, Modal orchestration, dan Public mobile check-in/feedback forms. | Frontend Developer, UI/UX Designer |
 | **06** | [**Admin Operations & User Guide**](./06_ADMIN_OPERATIONS_AND_USER_GUIDE.md) | Panduan langkah demi langkah: Setting Template Survei Admin, Download CSV Template & Evidence, Upload Berkas Survei, Manajemen Signature Events, dan Generate PPT Report. | Super Admin HR, PIC Program, Operasional HR |
-| **07** | [**Testing & Quality Assurance**](./07_TESTING_AND_QUALITY_ASSURANCE.md) | Dokumentasi 47 Modul Regression Test Suite, 332 skenario pengujian otomatis (SQL Server), opsi melewati modul media, petunjuk eksekusi test runner, dan verifikasi build Vite. | QA Engineer, Lead Developer, HR Auditor |
+| **07** | [**Testing & Quality Assurance**](./07_TESTING_AND_QUALITY_ASSURANCE.md) | Dokumentasi 50 Modul Regression Test Suite, 339 skenario pengujian otomatis (SQL Server), opsi melewati modul media, petunjuk eksekusi test runner, dan verifikasi build Vite. | QA Engineer, Lead Developer, HR Auditor |
 
 ---
 
@@ -45,7 +45,7 @@ Dokumentasi ini disusun secara sistematis mulai dari fondasi konsep (*Brains & M
 - **Backend Core**: Node.js, Express.js REST API, Multi-format CSV Engine.
 - **Storage Layer**: Local JSON transactional store (`data/store.json`) dengan sinkronisasi memori real-time (100% On-Premise compliant, tanpa dependensi cloud pihak ketiga).
 - **Automation & Reporting**: PPTXgenJS (Otomasi PowerPoint Corporate Deck), UTF-8 BOM CSV Generator, Dynamic Question Header Compiler.
-- **Testing Engine**: Native Node.js Assertion Regression Runner (332 test pada SQL Server, v2.44.0; run terakhir 246/246 lulus, 16 dilewati dengan `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; lihat docs/07).
+- **Testing Engine**: Native Node.js Assertion Regression Runner (339 test pada SQL Server, v2.48.0; run terakhir 253/253 lulus, 16 dilewati dengan `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; lihat docs/07).
 
 ---
 

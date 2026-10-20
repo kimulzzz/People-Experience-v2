@@ -44,6 +44,7 @@ Backend dibangun menggunakan **Node.js dan Express.js** sebagai REST API Server 
 | `GET` | `/api/metrics/calculate` | Mengkalkulasi skor PE Index konsolidasi, skor journey, checkpoint, dan rincian 27 metrik (mendukung mode YTD/MTD & filter Direktorat). Tahun default diambil dari jam server saat ini (bukan lagi dibekukan ke `2026`). Response menyertakan `available_years` (daftar tahun yang benar-benar punya data survei di database, dipakai untuk mengisi dropdown Tahun di Header secara dinamis). Sejak v2.15.0, setiap metrik menyertakan `target_value_normalized` — `target_value` (yang tersimpan dalam skala asli metrik, mis. `4.00` untuk RATING_5) dikonversi ke skala 0-100 yang sama dengan `normalized_score`/`min_threshold` via `normalizeTarget()`, dan status HEALTHY/WARNING/CRITICAL kini dihitung dari perbandingan yang sudah senormalisasi ini (sebelumnya WARNING nyaris tidak pernah tercapai untuk metrik RATING_5/QUOTA_COUNT karena target mentah dibandingkan langsung dengan skor 0-100) | `mode=YTD\|MTD`, `year` (default: tahun berjalan), `month=01..12`, `endMonth` (opsional, mode YTD saja — batasi kumulatif s/d akhir bulan tertentu; sejak v2.36.0 tidak pernah melewati bulan berjalan, lihat "Catatan v2.36.0"), `directorate=...`, `sub_directorate=...` |
 | `GET` | `/api/metrics/trends` | Mengambil deret waktu Performance Trend, **bisa lintas tahun** (mis. November 2025 s/d Februari 2026) via `startYear`/`startMonth`/`endYear`/`endMonth` — tidak lagi dibekukan ke satu tahun atau ke 2026. `mode=YTD` (default) → tiap titik adalah rata-rata kumulatif Januari **tahunnya sendiri** s/d bulan tersebut (reset tiap 1 Januari, konvensi YTD standar — rentang lintas tahun menampilkan kurva YTD tiap tahun berurutan, bukan satu akumulasi menerus); `mode=MTD` → tiap titik berdiri sendiri (trivial lintas tahun). **Hanya bulan yang benar-benar lengkap yang dikembalikan** — bulan berjalan dan seterusnya **tidak muncul sama sekali** di array `trends`. `endYear`/`endMonth` selalu di-clamp ke bulan lengkap terakhir di tahun manapun yang diminta, sekalipun user meminta rentang jauh ke masa depan. Response menyertakan `year`, `last_complete_month`, dan `available_years` (daftar tahun yang benar-benar punya data di database, dari `storage.getAvailableSurveyYears()`) agar frontend tahu batas rentang & opsi tahun yang valid. Setiap titik trend menyertakan field `year` dan dihitung via `calculatePEIndex()` (metode normalisasi + bobot per-metrik yang **identik** dengan scorecard utama `/api/metrics/calculate`) | `mode` (`YTD`\|`MTD`), `year`, `startYear`, `startMonth`, `endYear`, `endMonth`, `directorate`, `sub_directorate` |
 | `GET` | `/api/metrics/:metric_id/detail`| Mengambil rincian drilldown metrik (question breakdown, responses table / HR operational logs). Untuk metrik OUTCOME, field `operational_records` (breakdown SLA/channel/recognition per unit) sejak v2.16.0 dibaca dari database (`storage.getOperationalRecords(metric_id)`, sumber: `seedData.js`'s `initialOperationalRecords`), bukan lagi array statis inline di `calculationEngine.js` — metrik tanpa tabel breakdown seeded mengembalikan `[]`. `total_respondents` selalu berupa hitungan respons asli dari database (bisa `0`), tidak lagi memakai placeholder fiktif untuk metrik ESS tanpa data | `period=YTD` atau `mode=YTD\|MTD&year=2026&month=01` |
+| `GET` | `/api/metrics/by-directorate` | (v2.48.0) PX Index per direktorat untuk periode terpilih. Admin: semua direktorat master (12); User: hanya direktorat cakupannya (`?directorate` diabaikan). Tiap baris = `calculate?directorate=<nama>` untuk user itu; urut PX tertinggi, tanpa data terakhir. Rincian: "Catatan v2.48.0" | `mode=YTD\|MTD`, `year`, `month` |
 | `GET` | `/api/directorates` | Mengambil daftar 7 Direktorat CIMB Niaga beserta Sub-Direktorat / Divisi terkait | `-` |
 
 ---
@@ -269,7 +270,8 @@ Aturan password baru: 10-128 karakter, mengandung huruf dan angka, tidak sama de
 ### Rute → aturan akses (USER vs ADMIN)
 | Rute | USER | ADMIN |
 | :--- | :--- | :--- |
-| `GET /api/metrics/calculate`, `/api/metrics/trends` | hanya cakupannya (v2.27.0: kosong/`ALL` → semua cakupan saya; direktorat/divisi di luar cakupan → 403). `calculate`: metrik non-karyawan = agregat bankwide read-only, `excluded_from_index` | semua |
+| `GET /api/metrics/calculate`, `/api/metrics/trends` | hanya cakupannya (v2.27.0: kosong/`ALL` → semua cakupan saya; direktorat/divisi di luar cakupan → 403). `calculate`: metrik non-karyawan = agregat bankwide read-only, `excluded_from_index` (sejak v2.48.0: nilai bankwide yang ikut dihitung, `is_bankwide_value`, sama untuk Admin) | semua |
+| `GET /api/metrics/by-directorate` (v2.48.0) | hanya direktorat cakupannya; `?directorate` diabaikan | semua direktorat master |
 | `GET /api/metrics/:id/detail` | idem; payload di-`redactRespondent()` + `respondent_data_hidden: true` | lengkap |
 | `GET /api/surveys/evidence`, `GET /api/surveys/responses/:metric_id` | 403, kecuali PIC metrik itu (v2.27.1, lihat tabel di bawah) | ya |
 | `GET /api/surveys/metrics`, `/template`, `/history`; `POST /api/surveys/upload` | 403, kecuali PIC (v2.27.1) | ya |
@@ -599,6 +601,43 @@ Pengujian: `docs/07` §30 (Modul 46).
 Pengujian: `docs/07` §31 (Modul 46).
 
 ---
+
+## Catatan v2.48.0 - Bobot PX Index, PX Index per Direktorat & Metrik Non-Karyawan Bernilai Bankwide
+
+**Setting `px_index_weights`** (`px_app_settings`; seed `{ "survey": 70, "outcome": 30 }`, disisipkan sekali bila key belum ada - SQL `seedAppSettings()`, JSON backfill dari `initialAppSettings` saat load; tidak pernah menimpa nilai admin)
+
+| Aspek | Perilaku |
+| :--- | :--- |
+| Ubah | `PUT /api/admin/settings/px_index_weights`, body `{ "value": { "survey": 60, "outcome": 40 } }`; Admin saja (User 403, tanpa sesi 401). Respons `{ key, value }` |
+| Validasi | `pxWeightsError()` (`calculationEngine.js`, dipakai route): objek `{ survey, outcome }`, keduanya bilangan bulat 0-100, jumlah 100; selain itu 400 dan setting tidak berubah |
+| Audit | `SETTINGS_CHANGE`, target mis. `px_index_weights: 70/30 -> 60/40` |
+| Baca | `getPxWeights()`: cache 30 detik per proses (`PX_WEIGHTS_CACHE_MS`); PUT memanggil `clearPxWeightsCache()` di proses itu; backend lain pada database yang sama memakai nilai baru dalam <= 30 detik. Nilai tersimpan hilang/tidak valid -> 70/30 |
+| Dipakai | PX Index (`px_index_basis = BOTH`: bobot Survey x Survey Index + bobot Outcome x Outcome Index) dan skor journey; `SURVEY_ONLY` / `OUTCOME_ONLY` / `NONE` tidak berubah. Bobot per metrik (`weight`, `POST /api/metrics/weights`) tidak terkait |
+| UI | Dibaca dari `GET /api/settings` (`px_index_weights`) dan dari `px_weights` di respons kalkulasi |
+
+**Field respons baru / berubah**
+
+| Endpoint | Field | Isi |
+| :--- | :--- | :--- |
+| `GET /api/metrics/calculate` | `px_weights` | `{ survey, outcome }` yang dipakai kalkulasi ini |
+| | `weights_formula` | dinamis, mis. `70% Survey + 30% Outcomes (Normalized across active metrics)` |
+| | `bankwide_value_metrics_count` | jumlah metrik `is_bankwide_value` |
+| | `metrics[].is_bankwide_value` | `true` = metrik non-karyawan dibaca pada nilai bankwide karena filter direktorat/divisi/cakupan aktif (`docs/01` §6.1) |
+| | `metrics[].is_disabled`, `excluded_from_index`, `disabled_reason` | tetap dikirim untuk kompatibilitas, selalu `false` / `false` / `null`; `disabled_metrics_count` karenanya 0 |
+| `GET /api/metrics/:id/detail` | `px_weights`, `is_bankwide_value` | metrik non-karyawan di bawah filter: `getMetricDetail()` mereset filter ke bankwide (`is_bankwide_value: true`, jumlah responden = bankwide). Override khusus User di route ini (sampai v2.47.0) dihapus |
+| `GET /api/alerts` | `is_bankwide_readonly` | kini dari `is_bankwide_value` metrik; komentar verbatim metrik itu diambil bankwide |
+
+Opsi `bankwideReadOnly` dihapus dari `calculatePEIndex()` dan `getAlertsAndRecommendations()` serta pemanggilnya di `/api/metrics/calculate` dan `/api/alerts`; Admin dan User mendapat aturan yang sama.
+
+**`GET /api/metrics/by-directorate`** (butuh login; tanpa sesi 401)
+
+- Query: `mode=YTD|MTD` (default YTD), `year` (4 digit, default tahun berjalan), `month` (1-12, default `01`, dipakai untuk MTD). Periode dibentuk sama seperti `/api/metrics/calculate`.
+- Daftar: Admin = semua direktorat master (`storage.getDirectorates()`, 12); User = direktorat dalam `scopes`-nya (`normalizeScopes`). `?directorate` tidak dibaca, jadi direktorat di luar cakupan tidak pernah dihitung.
+- Per direktorat: `auth.resolveScope(user, nama, 'ALL')` lalu `calculatePEIndex({ ...periode, directorate, sub_directorate, scopes }, { skipTrends: true })`; `syncLiveEventMetrics()` dipanggil sekali di awal. Hasil = `GET /api/metrics/calculate?directorate=<nama>` untuk user itu (User dengan sebagian divisi: hanya divisi itu).
+- Respons: `{ mode, year, month (null untuk YTD), px_weights, directorates: [...] }`; tiap entri: `directorate`, `divisions` (User dengan subset divisi: daftar divisinya; selain itu `null`), `px_index`, `survey_index`, `outcome_index`, `px_index_basis`, `active_metrics_count`, `no_data_metrics_count`, `critical_count`, `warning_count`, `px_weights`.
+- Urutan: PX Index tertinggi dulu, `px_index` `null` paling bawah, seri -> nama direktorat. Waktu ~140-160 ms (laporan developer). Error -> 500 `Failed to calculate the PX Index by directorate`.
+
+`/api/health` `version` = `2.48.0`. Tidak ada tabel, kolom, atau env baru. Pengujian: `docs/07` §37 (Modul 50).
 
 ## Catatan v2.44.0 - Auto sign-out saat idle
 

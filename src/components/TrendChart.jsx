@@ -34,7 +34,8 @@ export default function TrendChart({
   trendMode = 'YTD',
   directorate = 'ALL',
   subDirectorate = 'ALL',
-  year
+  year,
+  pxWeights = null // { survey, outcome } from /api/metrics/calculate (Admin Parameters -> Index Weights)
 }) {
   const [hoveredMonth, setHoveredMonth] = useState(null);
   const [trendData, setTrendData] = useState([]);
@@ -53,6 +54,7 @@ export default function TrendChart({
   const [rangeEndMonth, setRangeEndMonth] = useState(null);
 
   const isMtd = trendMode === 'MTD';
+  const weightLabel = key => (pxWeights ? ` (${pxWeights[key]}%)` : '');
 
   const fetchTrend = useCallback(async (range) => {
     setLoading(true);
@@ -148,10 +150,29 @@ export default function TrendChart({
     );
   }
 
-  // Full percentage scale from 0% to 100% to ensure no metric line is ever cut off
-  const minVal = 0;
-  const maxVal = 100;
-  const chartHeight = 220; // px
+  const hasVal = v => v !== null && v !== undefined && !Number.isNaN(v);
+  const pxOf = d => (d.px_index !== undefined ? d.px_index : d.pe_index);
+
+  // Y axis (v2.48.0): fitted to the lowest and highest plotted value of the selected range (PX, Survey, Outcome and
+  // the target line), with a little padding, rounded to a "nice" step and kept inside 0-100 - so month-to-month
+  // movements are visible instead of being squashed into a fixed 0-100 scale. No values -> 0-100.
+  const plottedValues = trendData.flatMap(d => [pxOf(d), d.survey_index, d.outcome_index]).filter(hasVal);
+  if (pxTarget !== null) plottedValues.push(pxTarget);
+  let minVal = 0;
+  let maxVal = 100;
+  let yStep = 20;
+  if (plottedValues.length > 0) {
+    const lo = Math.min(...plottedValues);
+    const hi = Math.max(...plottedValues);
+    const pad = Math.max((hi - lo) * 0.1, 2);
+    yStep = [1, 2, 5, 10, 20].find(st => ((hi + pad) - (lo - pad)) / st <= 6) || 20;
+    minVal = Math.max(0, Math.floor((lo - pad) / yStep) * yStep);
+    maxVal = Math.min(100, Math.ceil((hi + pad) / yStep) * yStep);
+    if (maxVal <= minVal) { minVal = Math.max(0, maxVal - yStep); maxVal = minVal + yStep; }
+  }
+  const yTicks = [];
+  for (let v = minVal; v <= maxVal + 1e-9; v += yStep) yTicks.push(Math.round(v * 100) / 100);
+  const chartHeight = 320; // svg units
   const chartWidth = 760; // svg units
   const paddingTop = 20;
   const paddingBottom = 35;
@@ -170,8 +191,6 @@ export default function TrendChart({
 
   // Generate SVG path points. A month without data (null index, v2.36.0) is a gap: each line is split into
   // segments of consecutive months that have a value.
-  const hasVal = v => v !== null && v !== undefined && !Number.isNaN(v);
-  const pxOf = d => (d.px_index !== undefined ? d.px_index : d.pe_index);
   const lineSegments = valueOf => {
     const segs = [];
     let cur = [];
@@ -216,7 +235,7 @@ export default function TrendChart({
             <p className="text-xs text-gray-500">
               {isMtd
                 ? 'Standalone monthly score movement (MTD) — each point is purely the data of that month, with no accumulation from previous months'
-                : 'Cumulative Year-to-Date progression — each point is the running average from January up to that month'} (PX Index 100%, Survey 70%, Outcome 30% — Scale 0% – 100%). Only fully completed months are shown.
+                : 'Cumulative Year-to-Date progression — each point is the running average from January up to that month'} (PX Index 100%{pxWeights ? `, Survey ${pxWeights.survey}%, Outcome ${pxWeights.outcome}%` : ''} — the scale follows the lowest and highest value shown). Only fully completed months are shown.
             </p>
           </div>
         </div>
@@ -229,11 +248,11 @@ export default function TrendChart({
           </div>
           <div className="flex items-center space-x-1.5">
             <span className="w-3 h-3 rounded-full bg-[#16C0B7]" />
-            <span className="text-[#0D9488] font-bold">Survey (70%)</span>
+            <span className="text-[#0D9488] font-bold">Survey{weightLabel('survey')}</span>
           </div>
           <div className="flex items-center space-x-1.5">
             <span className="w-3 h-3 rounded-full bg-[#2563EB]" />
-            <span className="text-[#2563EB] font-bold">Outcome (30%)</span>
+            <span className="text-[#2563EB] font-bold">Outcome{weightLabel('outcome')}</span>
           </div>
           {pxTarget !== null && (
             <div className="flex items-center space-x-1.5 border-l pl-3 border-gray-200">
@@ -331,12 +350,12 @@ export default function TrendChart({
       {/* SVG Chart Container */}
       <div className="relative overflow-x-auto">
         <div className="min-w-[700px]">
-          <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full h-56 overflow-visible">
-            {/* Grid Horizontal Lines (0-100% every 20%, plus the PX Index target from the database) */}
-            {Array.from(new Set([0, 20, 40, 60, 80, 100, ...(pxTarget !== null ? [pxTarget] : [])])).sort((a, b) => a - b).map(val => {
+          <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full h-80 overflow-visible">
+            {/* Grid Horizontal Lines (the fitted axis ticks, plus the PX Index target from the database) */}
+            {Array.from(new Set([...yTicks, ...(pxTarget !== null ? [pxTarget] : [])])).sort((a, b) => a - b).map(val => {
               const yPos = getY(val);
               const isTarget = pxTarget !== null && val === pxTarget;
-              const isBase = val === 0;
+              const isBase = val === minVal;
 
               return (
                 <g key={val}>
@@ -514,13 +533,13 @@ export default function TrendChart({
         {/* Breakdown Values */}
         <div className="flex items-center space-x-4">
           <div className="text-center sm:text-right">
-            <div className="text-[10px] text-gray-500 uppercase font-bold">Survey (70%)</div>
+            <div className="text-[10px] text-gray-500 uppercase font-bold">Survey{weightLabel('survey')}</div>
             <div className="font-black text-[#0D9488] text-sm">
               {activeHover ? fmtPoint(activeHover.survey_index) : '-'}
             </div>
           </div>
           <div className="text-center sm:text-right border-l pl-3 border-gray-200">
-            <div className="text-[10px] text-gray-500 uppercase font-bold">Outcome (30%)</div>
+            <div className="text-[10px] text-gray-500 uppercase font-bold">Outcome{weightLabel('outcome')}</div>
             <div className="font-black text-[#2563EB] text-sm">
               {activeHover ? fmtPoint(activeHover.outcome_index) : '-'}
             </div>

@@ -414,7 +414,7 @@ export default function MetricDetailModal({
                         {detailData.experience_owner || 'Human Resources'}
                       </div>
                       <div className="text-[10px] text-gray-500 mt-0.5">
-                        Metric Weight: <strong>30% Outcome Index</strong>
+                        Metric Weight: <strong>{detailData.px_weights ? `${detailData.px_weights.outcome}% ` : ''}Outcome Index</strong>
                       </div>
                     </div>
                   </>
@@ -1030,7 +1030,7 @@ export default function MetricDetailModal({
                         </div>
                         <div className="flex justify-between pb-1">
                           <dt className="text-gray-500">Weight Contribution:</dt>
-                          <dd className="font-bold text-[#ED1C24]">30% Outcome Index Consolidation</dd>
+                          <dd className="font-bold text-[#ED1C24]">{detailData.px_weights ? `${detailData.px_weights.outcome}% ` : ''}Outcome Index Consolidation</dd>
                         </div>
                       </dl>
                     </div>

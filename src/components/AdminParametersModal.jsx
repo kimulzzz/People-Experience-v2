@@ -49,6 +49,84 @@ function computeTargetPercent(metric) {
   }
 }
 
+// PX Index weights (v2.48.0): px_app_settings.px_index_weights { survey, outcome } - whole percentages adding up to 100.
+// Changing one field sets the other to the remainder; the server validates again (400 otherwise).
+function IndexWeightsCard({ initial, onSaved, onError }) {
+  const [survey, setSurvey] = useState('');
+  const [outcome, setOutcome] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (initial) { setSurvey(String(initial.survey)); setOutcome(String(initial.outcome)); }
+  }, [initial]);
+
+  const s = Number(survey);
+  const o = Number(outcome);
+  const valid = survey !== '' && outcome !== '' && Number.isInteger(s) && Number.isInteger(o) && s >= 0 && o >= 0 && s + o === 100;
+  const changed = initial && (s !== initial.survey || o !== initial.outcome);
+  const setPair = (key, raw) => {
+    const n = Number(raw);
+    const other = raw !== '' && Number.isInteger(n) && n >= 0 && n <= 100 ? String(100 - n) : (key === 'survey' ? outcome : survey);
+    if (key === 'survey') { setSurvey(raw); setOutcome(other); } else { setOutcome(raw); setSurvey(other); }
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/admin/settings/px_index_weights', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: { survey: s, outcome: o } })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to save the index weights');
+      onSaved(data.value);
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mb-6 p-5 bg-white border border-white rounded-xl shadow-lg">
+      <div className="flex flex-col md:flex-row md:items-end gap-4">
+        <div className="flex-1">
+          <h3 className="text-sm font-bold text-gray-900 flex items-center space-x-2">
+            <Sliders className="w-4 h-4 text-[var(--theme-base)]" />
+            <span>PX Index Weights</span>
+          </h3>
+          <p className="text-xs text-gray-500 mt-1">
+            PX Index = Survey weight × Survey Index + Outcome weight × Outcome Index. Whole numbers that add up to 100%.
+            When one index has no data in a period, the other one alone is used.
+          </p>
+        </div>
+        <label className="text-xs font-bold text-gray-700">
+          Survey (%)
+          <input type="number" min="0" max="100" step="1" value={survey} onChange={e => setPair('survey', e.target.value)}
+            className="mt-1 block w-24 px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--theme-base)]" />
+        </label>
+        <label className="text-xs font-bold text-gray-700">
+          Outcome (%)
+          <input type="number" min="0" max="100" step="1" value={outcome} onChange={e => setPair('outcome', e.target.value)}
+            className="mt-1 block w-24 px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--theme-base)]" />
+        </label>
+        <button
+          onClick={handleSave}
+          disabled={!valid || !changed || saving}
+          className="px-3 py-2 text-xs font-bold text-white bg-[var(--theme-base)] hover:bg-[var(--theme-hover)] disabled:opacity-50 disabled:cursor-not-allowed rounded-lg flex items-center space-x-1.5 shadow-sm transition"
+        >
+          <Save className="w-3.5 h-3.5" />
+          <span>{saving ? 'Saving...' : 'Save Weights'}</span>
+        </button>
+      </div>
+      {!valid && (survey !== '' || outcome !== '') && (
+        <p className="text-[11px] text-red-600 font-semibold mt-2">Use whole numbers from 0 to 100 that add up to 100.</p>
+      )}
+    </div>
+  );
+}
+
 export default function AdminParametersModal({ isOpen, onClose, onParametersUpdated, currentUserId }) {
   const [activeTab, setActiveTab] = useState('metrics'); // 'journeys' | 'metrics' | 'email' | 'users' (v2.42.0)
   const [loading, setLoading] = useState(false);
@@ -586,6 +664,18 @@ All survey data (responses) and question settings of this metric will also be de
           {/* ============================================================ */}
           {activeTab === 'journeys' && (
             <div>
+              {/* PX Index weights (Survey / Outcome), v2.48.0 */}
+              <IndexWeightsCard
+                initial={optionCatalogs.px_index_weights || null}
+                onSaved={(value) => {
+                  setOptionCatalogs(prev => ({ ...prev, px_index_weights: value }));
+                  setErrorMessage('');
+                  setSaveSuccess(`PX Index weights saved: Survey ${value.survey}% + Outcome ${value.outcome}%.`);
+                  if (onParametersUpdated) onParametersUpdated();
+                }}
+                onError={(msg) => { setSaveSuccess(''); setErrorMessage(msg); }}
+              />
+
               {/* Journey Form (Add or Edit) */}
               {(isAddingJourney || editingJourney) && (
                 <div className="mb-6 p-5 bg-white border border-white rounded-xl shadow-lg animate-in fade-in">

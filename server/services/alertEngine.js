@@ -9,7 +9,7 @@ const { rowInScopes } = require('../db/scopeUtils');
  * Narrative text is generated dynamically via local Ollama when available (falls back to a
  * deterministic rule-based sentence when Ollama is offline, so this always works on-premise).
  *
- * `scope` ({ directorate, sub_directorate, scopes, bankwideReadOnly }, see authService.resolveScope) limits
+ * `scope` ({ directorate, sub_directorate, scopes }, see authService.resolveScope) limits
  * everything to a data scope: scores are RE-COMPUTED from the in-scope responses (not just relabelled) and
  * verbatims / event feedback only come from in-scope respondents. No scope (Admin) = bankwide, as before.
  */
@@ -21,7 +21,7 @@ async function getAlertsAndRecommendations(scope = {}) {
 
   const calculation = await calculatePEIndex(
     { mode: 'YTD', directorate, sub_directorate: subDirectorate, scopes },
-    { skipTrends: true, bankwideReadOnly: !!scope.bankwideReadOnly });
+    { skipTrends: true });
   const actionLibrary = await storage.getActionLibrary();
   // Aggregate verbatim feedback across ALL signature events in the database, not just one
   // fixed event ID — any new event created via the admin UI (see docs/06) automatically
@@ -38,7 +38,7 @@ async function getAlertsAndRecommendations(scope = {}) {
       && (!scopes || rowInScopes(scopes, a.directorate, a.division))));
   }))).flatMap(list => list || []);
   // Uploaded comments: bankwide for Admin; for a scoped read only those of in-scope respondents (plus the
-  // bankwide read-only metrics, which are not directorate data).
+  // non-employee metrics read at their bankwide value, which are not directorate data).
   const uploadedVerbatims = isScoped ? null : ((await storage.getAllUploadedVerbatims()) || []);
   const acknowledgedList = (await storage.getAcknowledgedAlerts()) || [];
 
@@ -67,7 +67,7 @@ async function getAlertsAndRecommendations(scope = {}) {
     // Extract verbatim feedback insights (combining event feedback + uploaded survey comments)
     const metricUploadedVerbatims = uploadedVerbatims
       ? uploadedVerbatims.filter(u => u.metric_id === metric.metric_id).map(u => u.verbatim)
-      : ((await storage.getResponsesByMetricAndPeriod(metric.metric_id, metric.excluded_from_index
+      : ((await storage.getResponsesByMetricAndPeriod(metric.metric_id, metric.is_bankwide_value
         ? { mode: 'ALL' }
         : { mode: 'ALL', directorate, sub_directorate: subDirectorate, scopes })) || [])
         .filter(r => r.verbatim_feedback && r.verbatim_feedback.trim().length > 3)
@@ -101,7 +101,7 @@ async function getAlertsAndRecommendations(scope = {}) {
       min_threshold: metric.min_threshold,
       gap: metric.gap,
       severity: isCritical ? 'CRITICAL' : 'WARNING',
-      is_bankwide_readonly: !!metric.excluded_from_index,
+      is_bankwide_readonly: !!metric.is_bankwide_value,
       is_acknowledged: acknowledgedList.includes(metric.metric_id),
       recommended_action: actionText,
       suggested_initiatives: initiatives,

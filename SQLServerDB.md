@@ -224,3 +224,7 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 ## 19. Auto sign-out (v2.44.0)
 
 `px_sessions.last_activity_at` + setting `session_idle_timeout_minutes` (default 5, 1-120). Sesi yang idle melewati batas dihapus saat request berikutnya.
+
+## 20. Bobot PX Index (v2.48.0)
+
+Setting `px_index_weights` di `px_app_settings` (default `{"survey":70,"outcome":30}`; bilangan bulat 0-100, jumlah 100). Diubah Admin di Admin Parameters -> Journey Parameters -> PX Index Weights; perubahan tercatat `SETTINGS_CHANGE` di `px_audit_log`. Ikut `.bak` bersama tabel lain. Cek: `SELECT setting_value FROM dbo.px_app_settings WHERE setting_key = 'px_index_weights';`

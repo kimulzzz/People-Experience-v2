@@ -20,6 +20,7 @@ import {
   MinusCircle
 } from 'lucide-react';
 import TrendChart from './TrendChart';
+import DirectoratePxPanel from './DirectoratePxPanel';
 import { useAuth } from '../utils/AuthContext';
 import { monthName } from '../utils/months';
 
@@ -38,6 +39,16 @@ const journeyIcons = {
   DEPART: LogOut
 };
 
+// Journey card metric order (v2.48.0): Critical -> Warning -> On Target, each by score (highest first); No Data and
+// Exempted at the bottom. Only the Dashboard cards - Explore Metrics keeps the metric order.
+const STATUS_RANK = { CRITICAL: 0, WARNING: 1, HEALTHY: 2 };
+function sortJourneyMetrics(list) {
+  const rank = m => (m.is_disabled ? 4 : (STATUS_RANK[m.status] ?? 3));
+  return [...(list || [])].sort((a, b) => rank(a) - rank(b)
+    || (b.normalized_score ?? -1) - (a.normalized_score ?? -1)
+    || a.metric_id - b.metric_id);
+}
+
 export default function Dashboard({ 
   calculationData, 
   alertsData, 
@@ -48,7 +59,8 @@ export default function Dashboard({
   onSelectMetric,
   onAcknowledgeAlert,
   onNavigateToSimulator,
-  onNavigateToEvents
+  onNavigateToEvents,
+  onSelectDirectorate
 }) {
   const { isAdmin } = useAuth();
   if (!calculationData) {
@@ -64,6 +76,9 @@ export default function Dashboard({
   // v2.36.0: an index is null when none of its metrics has data in the selected period
   const fmtIndex = v => (v === null || v === undefined ? '—' : v.toFixed(2));
   const pxBasis = calculationData.px_index_basis;
+  // Survey / Outcome weights of the PX Index (Admin Parameters -> Index Weights, v2.48.0)
+  const pxWeights = calculationData.px_weights || null;
+  const weightPct = key => (pxWeights ? `${pxWeights[key]}%` : '');
   const noDataCount = calculationData.no_data_metrics_count || 0;
   const criticalAlerts = alertsData?.alerts?.filter(a => a.severity === 'CRITICAL') || [];
   const warningAlerts = alertsData?.alerts?.filter(a => a.severity === 'WARNING') || [];
@@ -114,7 +129,7 @@ export default function Dashboard({
             </div>
 
             <p className="text-sm text-red-50 font-medium">
-              Formula: <strong className="text-white">70% Survey Results</strong> ({survey_index === null ? 'no data' : `${survey_index.toFixed(2)}%`}) + <strong className="text-white">30% Outcome (HR Data)</strong> ({outcome_index === null ? 'no data' : `${outcome_index.toFixed(2)}%`})
+              Formula: <strong className="text-white">{weightPct('survey')} Survey Results</strong> ({survey_index === null ? 'no data' : `${survey_index.toFixed(2)}%`}) + <strong className="text-white">{weightPct('outcome')} Outcome (HR Data)</strong> ({outcome_index === null ? 'no data' : `${outcome_index.toFixed(2)}%`})
             </p>
             {(pxBasis === 'OUTCOME_ONLY' || pxBasis === 'SURVEY_ONLY' || pxBasis === 'NONE') && (
               <p className="text-xs text-amber-200 font-semibold">
@@ -154,7 +169,7 @@ export default function Dashboard({
             <div className="bg-white/10 backdrop-blur-md rounded-xl p-5 border border-[#16C0B7]/30 space-y-3">
               <div className="flex justify-between items-start">
                 <div>
-                  <span className="text-xs font-bold uppercase tracking-wider text-[#16C0B7]">Weight 70% • Survey Responses</span>
+                  <span className="text-xs font-bold uppercase tracking-wider text-[#16C0B7]">Weight {weightPct('survey')} • Survey Responses</span>
                   <h4 className="text-base font-bold text-white">Survey Results</h4>
                 </div>
                 <span className="px-2 py-0.5 bg-[#16C0B7]/20 text-[#16C0B7] border border-[#16C0B7]/40 rounded text-[11px] font-semibold">
@@ -182,7 +197,7 @@ export default function Dashboard({
             <div className="bg-white/10 backdrop-blur-md rounded-xl p-5 border border-blue-500/30 space-y-3">
               <div className="flex justify-between items-start">
                 <div>
-                  <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Weight 30% • Internal HR Data</span>
+                  <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Weight {weightPct('outcome')} • Internal HR Data</span>
                   <h4 className="text-base font-bold text-white">Outcome Metrics</h4>
                 </div>
                 <span className="px-2 py-0.5 bg-blue-500/20 text-blue-300 border border-blue-500/40 rounded text-[11px] font-semibold">
@@ -211,6 +226,16 @@ export default function Dashboard({
         </div>
       </div>
 
+      {/* 1b. PX INDEX PER DIRECTORATE (collapsible; scope-filtered by the server) */}
+      <DirectoratePxPanel
+        mode={mode}
+        year={year}
+        month={month}
+        selectedDirectorate={directorate}
+        refreshKey={calculationData}
+        onSelectDirectorate={onSelectDirectorate}
+      />
+
       {/* 2. MONTHLY TREND & PROGRESSION CHART */}
       <TrendChart
         selectedPeriod={selectedPeriod}
@@ -220,9 +245,164 @@ export default function Dashboard({
         directorate={directorate}
         subDirectorate={subDirectorate}
         year={year}
+        pxWeights={pxWeights}
       />
 
-      {/* 3. ACTIVE ALERTS & ACTION RECOMMENDATIONS (SLIDE 10 FRAMEWORK) */}
+      {/* 3. THE 5 JOURNEYS BREAKDOWN CARDS (above the alerts since v2.48.0) */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-extrabold text-[#231F20]">
+              5 Employee Experience Journeys (17 Check Points • 27 PX Metrics)
+            </h3>
+            <p className="text-xs text-gray-500">
+              Click a Journey card to filter checkpoints, or click a metric to inspect detailed questions and survey responses
+            </p>
+          </div>
+          <span className="text-xs font-semibold px-2.5 py-1 bg-red-100 text-[#ED1C24] rounded-md">
+            Period: {periodLabel}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {journeys.map((j) => {
+            const Icon = iconComponents[j.icon] || journeyIcons[j.journey_code] || Users;
+            return (
+              <div
+                key={j.journey_id}
+                className="bg-gradient-to-br from-[var(--theme-deep)] to-[var(--theme-base)] rounded-xl p-5 border border-transparent hover:shadow-lg transition flex flex-col justify-between group space-y-4"
+              >
+                {/* Header */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div
+                      onClick={() => onSelectJourney(j.journey_id)}
+                      className="flex items-center space-x-2 cursor-pointer"
+                    >
+                      <div
+                        className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold"
+                        style={{ backgroundColor: j.color }}
+                      >
+                        <Icon className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-bold text-red-100 uppercase tracking-wider">
+                          Journey #{j.journey_id}
+                        </span>
+                        <h4 className="text-base font-extrabold text-white transition">
+                          {j.journey_name}
+                        </h4>
+                      </div>
+                    </div>
+
+                    <div className="text-right">
+                      <span className="text-2xl font-black text-white">
+                        {j.overall_score !== null && j.overall_score !== undefined ? j.overall_score.toFixed(1) : (j.no_data_count > 0 ? 'No Data' : 'Exempted')}
+                      </span>
+                      {j.overall_score !== null && j.overall_score !== undefined && (
+                        <span className="text-xs text-red-100 font-bold">%</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-red-100 line-clamp-2">
+                    {j.tagline}
+                  </p>
+                </div>
+
+                {/* Progress Bar */}
+                <div className="space-y-1">
+                  <div className="w-full bg-black/30 rounded-full h-2 overflow-hidden">
+                    <div
+                      className="h-2 rounded-full transition-all duration-500"
+                      style={{
+                        width: `${Math.min(j.overall_score || 0, 100)}%`,
+                        backgroundColor: j.overall_score === null ? '#9CA3AF' : j.color
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Sub-scores: Survey vs Outcome */}
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/20 text-xs">
+                  <div className="bg-white/15 rounded-lg p-2">
+                    <span className="text-[10px] text-red-100 block font-semibold">Survey ({j.survey_count})</span>
+                    <span className="font-bold text-white">
+                      {j.survey_score !== null ? `${j.survey_score}%` : 'N/A'}
+                    </span>
+                  </div>
+                  <div className="bg-white/15 rounded-lg p-2">
+                    <span className="text-[10px] text-red-100 block font-semibold">Outcome ({j.outcome_count})</span>
+                    <span className="font-bold text-white">
+                      {j.outcome_score !== null ? `${j.outcome_score}%` : 'N/A'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Metrics List with Explicit Status Badge & Click-to-Drilldown */}
+                <div className="space-y-1 pt-1">
+                  <span className="text-[10px] font-bold text-red-100 uppercase">Metrics ({j.metrics?.length || 0}):</span>
+                  <div className="flex flex-col space-y-1 max-h-40 overflow-y-auto pr-0.5">
+                    {sortJourneyMetrics(j.metrics).map(m => {
+                      const isDisabled = m.is_disabled === true;
+                      const isNoData = !isDisabled && m.status === 'NO_DATA';
+                      const StatusIcon = isDisabled || isNoData ? MinusCircle : m.status === 'CRITICAL' ? AlertCircle : m.status === 'WARNING' ? AlertTriangle : CheckCircle2;
+                      const statusLabel = isDisabled ? 'Exempted' : isNoData ? 'No Data' : m.status === 'CRITICAL' ? 'Critical' : m.status === 'WARNING' ? 'Warning' : 'On Target';
+                      return (
+                        <button
+                          key={m.metric_id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!isDisabled && onSelectMetric) onSelectMetric(m.metric_id);
+                          }}
+                          className={`w-full text-[10px] font-semibold pl-1.5 pr-2 py-1 rounded-md border transition flex items-center justify-between space-x-2 ${
+                            isDisabled ? 'bg-black/20 text-white/50 border-white/10 opacity-70 cursor-not-allowed' :
+                            isNoData ? 'bg-gray-500/60 text-white/90 border-gray-300/40 hover:bg-gray-500/70' :
+                            m.status === 'CRITICAL' ? 'bg-red-600 text-white border-white/80 ring-1 ring-red-300 hover:bg-red-700' :
+                            m.status === 'WARNING' ? 'bg-amber-500/90 text-white border-amber-300 hover:bg-amber-500' :
+                            'bg-emerald-500/90 text-white border-emerald-300 hover:bg-emerald-500'
+                          }`}
+                          title={
+                            isDisabled
+                              ? `Metric ${m.metric_id} (${m.metric_name}) is disabled under the Directorate filter (Bankwide External).`
+                              : `Click to view survey details and questions for ${m.metric_name}`
+                          }
+                        >
+                          <span className="flex items-center space-x-1.5 min-w-0 text-left">
+                            <StatusIcon className="w-3 h-3 shrink-0" />
+                            <span className={`truncate ${isDisabled ? 'line-through' : ''}`}>{m.metric_id} - {m.metric_name}</span>
+                            {m.is_bankwide_value && (
+                              <span className="shrink-0 px-1 rounded bg-white/25 text-[8px] font-bold uppercase tracking-wide" title="Non-employee metric: shown and counted at its bankwide value">Bankwide</span>
+                            )}
+                          </span>
+                          <span className="flex items-center space-x-1 shrink-0">
+                            <span className="font-bold uppercase tracking-wide text-[9px]">{statusLabel}</span>
+                            {!isDisabled && !isNoData && <span className="font-bold">({m.normalized_score}%)</span>}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Footer Details */}
+                <div
+                  onClick={() => onSelectJourney(j.journey_id)}
+                  className="flex items-center justify-between text-xs pt-1 text-red-100 cursor-pointer"
+                >
+                  <span>{j.metrics_count} Metrics</span>
+                  <div className="flex items-center space-x-1 font-semibold text-white group-hover:translate-x-0.5 transition">
+                    <span>Explore Journey</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 4. ACTIVE ALERTS & ACTION RECOMMENDATIONS (SLIDE 10 FRAMEWORK) */}
       {(criticalAlerts.length > 0 || warningAlerts.length > 0) && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
@@ -335,157 +515,6 @@ export default function Dashboard({
           </div>
         </div>
       )}
-
-      {/* 4. THE 5 JOURNEYS BREAKDOWN CARDS */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-extrabold text-[#231F20]">
-              5 Employee Experience Journeys (17 Check Points • 27 PX Metrics)
-            </h3>
-            <p className="text-xs text-gray-500">
-              Click a Journey card to filter checkpoints, or click a metric to inspect detailed questions and survey responses
-            </p>
-          </div>
-          <span className="text-xs font-semibold px-2.5 py-1 bg-red-100 text-[#ED1C24] rounded-md">
-            Period: {periodLabel}
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {journeys.map((j) => {
-            const Icon = iconComponents[j.icon] || journeyIcons[j.journey_code] || Users;
-            return (
-              <div
-                key={j.journey_id}
-                className="bg-gradient-to-br from-[var(--theme-deep)] to-[var(--theme-base)] rounded-xl p-5 border border-transparent hover:shadow-lg transition flex flex-col justify-between group space-y-4"
-              >
-                {/* Header */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div
-                      onClick={() => onSelectJourney(j.journey_id)}
-                      className="flex items-center space-x-2 cursor-pointer"
-                    >
-                      <div
-                        className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold"
-                        style={{ backgroundColor: j.color }}
-                      >
-                        <Icon className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <span className="text-[10px] font-bold text-red-100 uppercase tracking-wider">
-                          Journey #{j.journey_id}
-                        </span>
-                        <h4 className="text-base font-extrabold text-white transition">
-                          {j.journey_name}
-                        </h4>
-                      </div>
-                    </div>
-
-                    <div className="text-right">
-                      <span className="text-2xl font-black text-white">
-                        {j.overall_score !== null && j.overall_score !== undefined ? j.overall_score.toFixed(1) : (j.no_data_count > 0 ? 'No Data' : 'Exempted')}
-                      </span>
-                      {j.overall_score !== null && j.overall_score !== undefined && (
-                        <span className="text-xs text-red-100 font-bold">%</span>
-                      )}
-                    </div>
-                  </div>
-
-                  <p className="text-xs text-red-100 line-clamp-2">
-                    {j.tagline}
-                  </p>
-                </div>
-
-                {/* Progress Bar */}
-                <div className="space-y-1">
-                  <div className="w-full bg-black/30 rounded-full h-2 overflow-hidden">
-                    <div
-                      className="h-2 rounded-full transition-all duration-500"
-                      style={{
-                        width: `${Math.min(j.overall_score || 0, 100)}%`,
-                        backgroundColor: j.overall_score === null ? '#9CA3AF' : j.color
-                      }}
-                    />
-                  </div>
-                </div>
-
-                {/* Sub-scores: Survey vs Outcome */}
-                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/20 text-xs">
-                  <div className="bg-white/15 rounded-lg p-2">
-                    <span className="text-[10px] text-red-100 block font-semibold">Survey ({j.survey_count})</span>
-                    <span className="font-bold text-white">
-                      {j.survey_score !== null ? `${j.survey_score}%` : 'N/A'}
-                    </span>
-                  </div>
-                  <div className="bg-white/15 rounded-lg p-2">
-                    <span className="text-[10px] text-red-100 block font-semibold">Outcome ({j.outcome_count})</span>
-                    <span className="font-bold text-white">
-                      {j.outcome_score !== null ? `${j.outcome_score}%` : 'N/A'}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Metrics List with Explicit Status Badge & Click-to-Drilldown */}
-                <div className="space-y-1 pt-1">
-                  <span className="text-[10px] font-bold text-red-100 uppercase">Metrics ({j.metrics?.length || 0}):</span>
-                  <div className="flex flex-col space-y-1 max-h-40 overflow-y-auto pr-0.5">
-                    {j.metrics?.map(m => {
-                      const isDisabled = m.is_disabled === true;
-                      const isNoData = !isDisabled && m.status === 'NO_DATA';
-                      const StatusIcon = isDisabled || isNoData ? MinusCircle : m.status === 'CRITICAL' ? AlertCircle : m.status === 'WARNING' ? AlertTriangle : CheckCircle2;
-                      const statusLabel = isDisabled ? 'Exempted' : isNoData ? 'No Data' : m.status === 'CRITICAL' ? 'Critical' : m.status === 'WARNING' ? 'Warning' : 'On Target';
-                      return (
-                        <button
-                          key={m.metric_id}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (!isDisabled && onSelectMetric) onSelectMetric(m.metric_id);
-                          }}
-                          className={`w-full text-[10px] font-semibold pl-1.5 pr-2 py-1 rounded-md border transition flex items-center justify-between space-x-2 ${
-                            isDisabled ? 'bg-black/20 text-white/50 border-white/10 opacity-70 cursor-not-allowed' :
-                            isNoData ? 'bg-gray-500/60 text-white/90 border-gray-300/40 hover:bg-gray-500/70' :
-                            m.status === 'CRITICAL' ? 'bg-red-600 text-white border-white/80 ring-1 ring-red-300 hover:bg-red-700' :
-                            m.status === 'WARNING' ? 'bg-amber-500/90 text-white border-amber-300 hover:bg-amber-500' :
-                            'bg-emerald-500/90 text-white border-emerald-300 hover:bg-emerald-500'
-                          }`}
-                          title={
-                            isDisabled
-                              ? `Metric ${m.metric_id} (${m.metric_name}) is disabled under the Directorate filter (Bankwide External).`
-                              : `Click to view survey details and questions for ${m.metric_name}`
-                          }
-                        >
-                          <span className="flex items-center space-x-1.5 min-w-0 text-left">
-                            <StatusIcon className="w-3 h-3 shrink-0" />
-                            <span className={`truncate ${isDisabled ? 'line-through' : ''}`}>{m.metric_id} - {m.metric_name}</span>
-                          </span>
-                          <span className="flex items-center space-x-1 shrink-0">
-                            <span className="font-bold uppercase tracking-wide text-[9px]">{statusLabel}</span>
-                            {!isDisabled && !isNoData && <span className="font-bold">({m.normalized_score}%)</span>}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Footer Details */}
-                <div
-                  onClick={() => onSelectJourney(j.journey_id)}
-                  className="flex items-center justify-between text-xs pt-1 text-red-100 cursor-pointer"
-                >
-                  <span>{j.metrics_count} Metrics</span>
-                  <div className="flex items-center space-x-1 font-semibold text-white group-hover:translate-x-0.5 transition">
-                    <span>Explore Journey</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
 
     </div>
   );

@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(332-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(339-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -69,13 +69,13 @@ domain model, not just descriptive:
 | File | Covers |
 |---|---|
 | `README.md` | Index of all docs |
-| `01_PE_BRAINS_AND_MATHEMATICAL_MODEL.md` | 5 employee journeys, 17 checkpoints, 27 metrics, scoring formula (70% Survey + 30% Outcome), normalization, alert thresholds |
+| `01_PE_BRAINS_AND_MATHEMATICAL_MODEL.md` | 5 employee journeys, 17 checkpoints, 27 metrics, scoring formula (70% Survey + 30% Outcome by default, Admin-editable since v2.48.0), normalization, alert thresholds |
 | `02_DATA_DICTIONARY_AND_METRICS_CATALOG.md` | 7 Outcome metrics vs 20 Survey metrics, CSV column dictionary, 4 answer-scale types, 15 standard questions |
 | `03_SYSTEM_ARCHITECTURE_AND_DATA_FLOW.md` | Client-server architecture, DFDs, survey data lifecycle, on-premise/security constraints |
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (332 cases on SQL; v2.44.0 run 246/246, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (339 cases on SQL; v2.48.0 run 253/253, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (32 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
@@ -688,6 +688,14 @@ domain model, not just descriptive:
 
 - **v2.47.0** (2026-10-20, see `CHANGELOG.md` [2.47.0]): sixth Theme preset **Slate Gray** (`slate`, `#475569`); `deriveThemeVars` keeps `--theme-dark`
   low-saturation for neutral bases (old presets unchanged).
+
+- **v2.48.0** (2026-10-20, see `CHANGELOG.md` [2.48.0], `docs/01` §3.1/§6.1, `docs/04`/`05` "Catatan v2.48.0", `docs/06`, `docs/07` §37, `docs/08` §21): PX weights are setting
+  `px_index_weights` (default 70/30, integers summing to 100; Admin Parameters -> Journey Parameters -> PX Index Weights; `PUT /api/admin/settings/px_index_weights`, audit
+  `SETTINGS_CHANGE`, engine cache 30 s); every 70/30 UI text reads `px_weights`. New `GET /api/metrics/by-directorate` (Admin 12, User own scope; each = `calculate?directorate=X`)
+  -> collapsible `DirectoratePxPanel` under the hero, click = Header filter. RULE CHANGE: under any directorate/division/scope filter (Admin AND User) non-employee metrics #1-#5
+  count at their bankwide value (`is_bankwide_value`); `is_disabled`/`excluded_from_index` always false, `bankwideReadOnly` removed (YTD 2026 Business Banking PX 83.28 -> 84.83).
+  Also: journey-card metrics sorted Critical -> Warning -> On Target (highest first), Journeys above Alerts, taller trend chart with fitted Y axis, About terms alphabetical. Module 50 (7)
+  -> SQL 253/253, 16 skipped (suite 339); JSON full suite not run; Module 50 needs stored weights 70/30. Known: Admin Dashboard alerts stay bankwide. Next: v2.49.0 menu order/access.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

@@ -17,6 +17,7 @@ Antarmuka pengguna People Experience dibangun menggunakan ekosistem **React 19, 
     ├── 📄 Header.jsx                        # Top Navigation, Period Selector & Admin Action Toolbar
     ├── 📄 Dashboard.jsx                     # Executive Scorecards, Journey Cards & Deficit Interventions
     ├── 📄 TrendChart.jsx                    # Interactive 12-Month Performance Trend Chart (SVG)
+    ├── 📄 DirectoratePxPanel.jsx            # PX Index by Directorate, collapsible (v2.48.0)
     ├── 📄 Calculator.jsx                    # Metrics Table, Freeze Sticky Actions, Scroll Controls
     ├── 📄 EventManager.jsx                  # Signature Programs Event Management, QR & PPT Generator
     ├── 📄 ActionLibraryView.jsx             # PX Action Library & Best Practice Interventions
@@ -47,7 +48,8 @@ graph TD
     %% Main Views
     App --> MainView{"View Mode Selector"}
     MainView -->|Tab: Dashboard| Dashboard["Dashboard.jsx<br/>(Scorecards, Journey Cards, Deficit Alerts)"]
-    Dashboard --> TrendChart["TrendChart.jsx<br/>(12-Month Trend SVG Chart: PX 100%, Survey 70%, Outcome 30%)"]
+    Dashboard --> TrendChart["TrendChart.jsx<br/>(Trend SVG Chart: PX, Survey & Outcome; weights from px_index_weights)"]
+    Dashboard --> DirPanel["DirectoratePxPanel.jsx<br/>(PX Index by Directorate, v2.48.0)"]
     MainView -->|Tab: Calculator| Calculator["Calculator.jsx<br/>(Sticky Action Column, Density View, Date Badges)"]
     MainView -->|Tab: Events| EventManager["EventManager.jsx<br/>(Signature Programs, QR Codes, PPT Export)"]
     MainView -->|Tab: Action Library| ActionLib["ActionLibraryView.jsx<br/>(Deficit Improvement Action Catalog)"]
@@ -99,15 +101,15 @@ graph TD
 ### 3.3 Executive Dashboard & Trend Performance ([`src/components/Dashboard.jsx`](file:///d:/Mul/Project/Anti%20Gravity/People%20Experience/src/components/Dashboard.jsx))
 - **Executive Scorecards**:
   - Skor Konsolidasi **PX Index (100%)** beraksen Primary Red (`#ED1C24` / `#FF0000`) dengan indikator delta dan status pencapaian target.
-  - Skor **Survey Index (70% Weight)** beraksen Digital Teal (`#16C0B7` / `#0D9488`).
-  - Skor **Outcome Index (30% Weight)** beraksen Royal Blue (`#2563EB` / `text-blue-400`), terbedakan secara kontras tinggi dari warna merah PX Index.
+  - Skor **Survey Index (bobot default 70%; sejak v2.48.0 dari setting `px_index_weights`)** beraksen Digital Teal (`#16C0B7` / `#0D9488`).
+  - Skor **Outcome Index (bobot default 30%; sejak v2.48.0 dari setting `px_index_weights`)** beraksen Royal Blue (`#2563EB` / `text-blue-400`), terbedakan secara kontras tinggi dari warna merah PX Index.
   - Total Partisipasi Sampel Responden.
 - **Grafik Tren Performa 12 Bulan ([`src/components/TrendChart.jsx`](file:///d:/Mul/Project/Anti%20Gravity/People%20Experience/src/components/TrendChart.jsx))**:
-  - **Skala Penuh 0% – 100% (*Full Y-Axis Scale*)**: Memastikan semua data titik persentase dari 0% hingga 100% tampil utuh tanpa ada garis yang terpotong di bagian bawah.
+  - **Sumbu Y dinamis (sejak v2.48.0, menggantikan skala tetap 0% – 100%)**: sumbu mengikuti nilai terendah/tertinggi yang diplot pada rentang terpilih, dibatasi 0-100; rincian di "Catatan v2.48.0".
   - **Diferensiasi Warna Garis**:
     - **PX Index (100%)**: Garis merah tebal 3.5px (`#ED1C24`).
-    - **Survey Index (70%)**: Garis hijau toska (*Digital Teal*) 2.5px (`#16C0B7`).
-    - **Outcome Index (30%)**: Garis biru royal (*Royal Blue*) 2.5px (`#2563EB`).
+    - **Survey Index (bobot dari setting, default 70%)**: Garis hijau toska (*Digital Teal*) 2.5px (`#16C0B7`).
+    - **Outcome Index (bobot dari setting, default 30%)**: Garis biru royal (*Royal Blue*) 2.5px (`#2563EB`).
     - **Target Benchmark (85.0%)**: Garis putus-putus merah marun (*Deep Maroon*) 1.5px (`#780000`).
   - **Hanya Menampilkan Bulan yang Benar-Benar Lengkap**: Grafik **tidak lagi memuat bulan kalender yang sedang berjalan atau setelahnya sama sekali** (tidak sekadar diberi warna pudar seperti versi sebelumnya) — jika hari ini September 2026, array data hanya berisi 8 titik (Januari–Agustus), titik ke-9 (September) dst. tidak ada. Tahun mengikuti tahun berjalan (tidak lagi dibekukan ke 2026).
   - **Filter Rentang Periode — Bisa Lintas Tahun (Dari Tahun+Bulan / Sampai Tahun+Bulan)**: Dua pasang dropdown Tahun+Bulan (bukan cuma Bulan) di atas grafik untuk mempersempit tampilan ke rentang periode tertentu — termasuk rentang yang **melewati batas tahun**, mis. "November 2025 s/d Februari 2026". Default **Januari s/d bulan lengkap terakhir tahun berjalan**. Opsi Tahun diambil dari `available_years` (data sungguhan di database); opsi Bulan dibatasi otomatis hanya sampai bulan lengkap terakhir tahun yang dipilih — tidak mungkin memilih bulan yang belum selesai, di tahun manapun. Judul chart dan label sumbu-X (mis. "Nov '25") menyesuaikan otomatis saat rentang lintas tahun aktif. Tombol **"Reset"** muncul saat rentang diubah dari default.
@@ -399,6 +401,20 @@ API kini bisa mengirim indeks dan skor `null` serta status `NO_DATA` (lihat `doc
 | `Calculator.jsx` (Explore Metrics) | Baris `NO_DATA`: nilai aktual, skor dan tanggal "—", badge abu-abu "No Data". |
 | `MetricDetailModal.jsx` | Nilai "—", "No survey data in this period - left out of the index", badge abu-abu "No Data", pertanyaan berlabel "No Data" tanpa skor. Catatan "Annual metric: shows the result of Jan–Sep 2026" untuk metrik tahunan pada filter MTD **dihapus di v2.37.0** (MTD kini selalu satu bulan, `period_window.basis = 'MONTH'`). |
 | `TrendChart.jsx` | Titik `null` menjadi celah (garis dipotong per segmen), tooltip "—". |
+
+## Catatan v2.48.0 - PX Index per Direktorat, Urutan Dashboard, Grafik Tren, Bobot PX Index & About
+
+| Komponen | Perubahan |
+| :--- | :--- |
+| `DirectoratePxPanel.jsx` (baru) | Panel **PX Index by Directorate** tepat di bawah hero Dashboard, tertutup default. Fetch `GET /api/metrics/by-directorate?mode&year&month` hanya saat terbuka (ulang bila periode atau `calculationData` berubah). Per baris: nomor urut, nama direktorat (+ "Your divisions: ..." untuk User dengan sebagian divisi), bar PX, "Survey x • Outcome y" + catatan basis (Survey only / Outcome only / No data), PX Index "/ 100". Daftar ditentukan server (Admin semua, User cakupannya); kosong -> "No directorates in your scope." Klik baris -> `onSelectDirectorate(nama)` di `App.jsx`: `filterOptions.directorate = nama`, `sub_directorate = 'ALL'`, scroll ke atas (sama dengan memilih di filter Header). Direktorat terpilih disorot. |
+| `Dashboard.jsx` | Urutan bagian: 1 Hero PX Index -> 1b PX Index by Directorate -> 2 Performance Trend -> 3 Journeys -> 4 Score Deficit Alerts (dulu Alerts di atas Journeys). Metrik di kartu journey diurutkan `sortJourneyMetrics()`: CRITICAL -> WARNING -> HEALTHY (On Target), di dalam status skor normalisasi tertinggi dulu, lalu status lain (No Data), `is_disabled` terakhir; seri -> `metric_id`. Hanya kartu Dashboard; Explore Metrics tetap urut nomor metrik. Tag kecil **Bankwide** pada metrik `is_bankwide_value`. Formula hero dan badge "Weight x%" memakai `calculationData.px_weights`. Label EXEMPTED tidak muncul lagi karena `is_disabled` selalu `false` sejak v2.48.0. |
+| `TrendChart.jsx` | Lebih tinggi: viewBox 760 x 320 di `h-80` (dulu 220 / `h-56`). Sumbu Y mengikuti nilai yang diplot pada rentang terpilih (PX, Survey, Outcome, garis target; `null` diabaikan): padding = max(10% rentang, 2 poin), langkah 1/2/5/10/20 (yang pertama memberi <= 6 interval), dibulatkan ke kelipatan langkah dan dibatasi 0-100; tanpa nilai -> 0-100. Garis dasar = nilai terendah sumbu. Menggantikan skala tetap 0-100 (§3.3). Prop baru `pxWeights` untuk label "Survey (x%)" / "Outcome (y%)" di legenda, deskripsi dan ringkasan hover. |
+| `AdminParametersModal.jsx` | Kartu **PX Index Weights** (`IndexWeightsCard`) di atas tab Journey Parameters: input bilangan bulat Survey (%) dan Outcome (%); mengubah satu mengisi yang lain dengan 100 - n; **Save Weights** aktif hanya bila valid dan berubah; pesan merah bila tidak valid. Simpan -> `PUT /api/admin/settings/px_index_weights`, pesan sukses, `onParametersUpdated()` me-refresh dashboard. Nilai awal dari `GET /api/settings`. |
+| `Calculator.jsx` | Snapshot "Survey (x%)" / "Outcome (y%)" dari `px_weights`; badge **Bankwide Value** (slate) untuk `is_bankwide_value`. |
+| `MetricDetailModal.jsx` | "Metric Weight" dan "Weight Contribution" metrik OUTCOME memakai `detailData.px_weights.outcome`. |
+| `GlossaryView.jsx` (tab About) | Istilah diurutkan abjad di tiap kategori (`Intl.Collator('id', { sensitivity: 'base', numeric: true })`); urutan kategori tetap. Definisi "People Experience Index (PE Index)", "Survey Results" dan "Outcomes" memakai bobot dari `GET /api/settings` (placeholder `{SURVEY}` / `{OUTCOME}`, "…" selama memuat). |
+
+Bila `px_weights` tidak ada di respons, label bobot dihilangkan (tidak kembali ke 70/30 hardcode). PPT dan teks alert tidak mencetak bobot.
 
 ## Catatan v2.47.0 - Tema Slate Gray
 

@@ -20,6 +20,35 @@ function todayDateString() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// PX Index weights (v2.48.0): px_app_settings.px_index_weights = { survey, outcome }, whole percentages that add up to
+// 100 (Admin Parameters -> Index Weights). One calculation can run calculatePEIndex dozens of times (trend months,
+// directorates), so the setting is cached for PX_WEIGHTS_CACHE_MS; PUT /api/admin/settings clears the cache of this
+// process at once (another backend on the same database picks the new value up within PX_WEIGHTS_CACHE_MS).
+// The fallback is only used when the stored value is missing/invalid (the seed writes 70/30 once).
+const FALLBACK_PX_WEIGHTS = { survey: 70, outcome: 30 };
+const PX_WEIGHTS_CACHE_MS = 30 * 1000;
+let pxWeightsCache = { value: null, at: 0 };
+
+// null when valid, else the reason (shared with the settings route)
+function pxWeightsError(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'The value must be { survey, outcome }.';
+  const { survey, outcome } = value;
+  if (![survey, outcome].every(n => typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= 100)) {
+    return 'Survey and Outcome weights must be whole numbers between 0 and 100.';
+  }
+  if (survey + outcome !== 100) return 'Survey and Outcome weights must add up to 100.';
+  return null;
+}
+
+async function getPxWeights() {
+  if (pxWeightsCache.value && Date.now() - pxWeightsCache.at < PX_WEIGHTS_CACHE_MS) return pxWeightsCache.value;
+  const stored = (await storage.getSettings()).px_index_weights;
+  const value = pxWeightsError(stored) ? { ...FALLBACK_PX_WEIGHTS } : { survey: stored.survey, outcome: stored.outcome };
+  pxWeightsCache = { value, at: Date.now() };
+  return value;
+}
+function clearPxWeightsCache() { pxWeightsCache = { value: null, at: 0 }; }
+
 /**
  * Normalizes raw metric value into 0-100 scale based on scale type.
  */
@@ -324,8 +353,8 @@ async function computeMonthlyTrends(filterOptions = {}) {
  * Calculates full PX Index consolidation based on active filter options:
  * - Mode: 'YTD' (default) -> Aggregates data for the selected year
  * - Mode: 'MTD' -> Filters data specific to selected year and month
- * - Directorate / Sub-Directorate: When selected, non-employee metrics (#1-#5) are disabled
- *   and excluded from journey & bankwide PX calculations.
+ * - Directorate / Sub-Directorate: When selected, the employee metrics are read for that unit and the
+ *   non-employee metrics (#1-#5 ...) at their bankwide value (both count in the index, v2.48.0).
  */
 /**
  * The directorate whose ESS row applies to a filter: the filter's directorate, or - for a division filter without a
@@ -381,20 +410,22 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
     if (Array.isArray(filterInput.scopes)) scopes = filterInput.scopes;
   }
 
-  // A scoped read (USER) is always a "directorate view": non-employee metrics are exempted from the index
-  // exactly as for an Admin who filters one directorate. The union scope pools the responses of ALL scoped
+  // A scoped read (USER) is always a "directorate view", exactly as for an Admin who filters one directorate. The union scope pools the responses of ALL scoped
   // directorates/divisions into the SAME per-metric mean -> normalize -> weight pipeline as the scorecard
   // (no average of averages), so a scope covering one whole directorate equals the Admin's directorate filter.
   const isDirectorateFiltered = (directorate && directorate !== 'ALL') || !!scopes;
   const queryFilter = { mode, year, month, directorate, sub_directorate: subDirectorate, period: periodString, endMonth, scopes };
 
-  const [metrics, journeys, checkpoints, targets, essResults] = await Promise.all([
+  const [metrics, journeys, checkpoints, targets, essResults, pxWeights] = await Promise.all([
     storage.getMetrics(),
     storage.getJourneys(),
     storage.getCheckpoints(),
     storage.getMetricTargets(),
-    storage.getEssResults(null) // ESS summaries (v2.32.0): small table, read once per calculation
+    storage.getEssResults(null), // ESS summaries (v2.32.0): small table, read once per calculation
+    getPxWeights()
   ]);
+  const wSurvey = pxWeights.survey / 100;
+  const wOutcome = pxWeights.outcome / 100;
   // ESS is reported per directorate: a division filter reads its parent directorate's row.
   const essDirectorate = await essDirectorateFor(directorate, subDirectorate, scopes);
 
@@ -408,13 +439,12 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
         min_threshold: m.min_threshold
       };
 
-    // Determine if this metric should be disabled in the current directorate scope
     const isEmployeeMetric = m.is_employee_metric !== undefined ? m.is_employee_metric : true;
-    // bankwideReadOnly (USER): show the bankwide value of a non-employee metric, but keep it out of the
-    // directorate's index (excluded_from_index) exactly like an Admin's directorate view does.
-    const bankwideReadOnly = !!options.bankwideReadOnly && isDirectorateFiltered && !isEmployeeMetric;
-    const isDisabled = isDirectorateFiltered && !isEmployeeMetric && !bankwideReadOnly;
-    const disabledReason = isDisabled ? 'Bankwide External / Non-Employee Metric (Exempted from Directorate Calculation)' : null;
+    // v2.48.0: under a directorate/division filter (Admin or USER) a non-employee metric (campus, candidates, ...),
+    // which has no directorate data, is read at its BANKWIDE value and counts in the index like any other metric
+    // (is_bankwide_value marks it so the UI shows it as bankwide, not as directorate data). Before v2.48.0 it was
+    // exempted (Admin) or excluded from the index (USER).
+    const isBankwideValue = isDirectorateFiltered && !isEmployeeMetric;
 
     let rawVal = parseFloat(m.raw_value || 0);
     let sampleSize = null;
@@ -434,7 +464,7 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       // ESS metric (v2.32.0): the uploaded ESS summary, not per-respondent rows. Only a result whose (year, month)
       // lies inside the window counts (v2.36.0, no carry-forward); sample size = participation.
       essResult = selectEssResult(essResults, m.metric_id, mp,
-        essOrgFor({ directorate: essDirectorate, scopes, bankwide: bankwideReadOnly }));
+        essOrgFor({ directorate: essDirectorate, scopes, bankwide: isBankwideValue }));
       if (essResult) {
         rawVal = essResult.index;
         sampleSize = essResult.participation;
@@ -444,7 +474,7 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
         sampleSize = 0;
       }
     } else if (m.metric_type === 'SURVEY') {
-      const responses = await storage.getResponsesByMetricAndPeriod(m.metric_id, bankwideReadOnly ? { ...metricFilter, directorate: 'ALL', sub_directorate: 'ALL', scopes: null } : metricFilter);
+      const responses = await storage.getResponsesByMetricAndPeriod(m.metric_id, isBankwideValue ? { ...metricFilter, directorate: 'ALL', sub_directorate: 'ALL', scopes: null } : metricFilter);
       sampleSize = responses.length;
 
       if (responses.length > 0) {
@@ -507,9 +537,11 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       gap: hasData ? parseFloat((normalizedTarget - normScore).toFixed(2)) : null,
       is_employee_metric: isEmployeeMetric,
       target_audience: m.target_audience || (isEmployeeMetric ? 'EMPLOYEE' : 'EXTERNAL_MARKET'),
-      is_disabled: isDisabled,
-      excluded_from_index: bankwideReadOnly,
-      disabled_reason: disabledReason,
+      // kept for API compatibility: nothing is exempted or excluded any more (v2.48.0)
+      is_disabled: false,
+      excluded_from_index: false,
+      disabled_reason: null,
+      is_bankwide_value: isBankwideValue,
       ...(isEss ? {
         ess_period: essResult ? essResult.period : null,
         ess_period_label: essResult ? essResult.period_label : null,
@@ -535,12 +567,13 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
   const weightedOutcomeSum = activeOutcomeMetrics.reduce((sum, m) => sum + (m.normalized_score * m.weight), 0);
   const outcomeIndex = totalOutcomeWeight > 0 ? weightedOutcomeSum / totalOutcomeWeight : null;
 
-  // 5. Consolidated PX Index: 70% Survey + 30% Outcomes; when one component has no data the other one alone
+  // 5. Consolidated PX Index: Survey weight x Survey + Outcome weight x Outcomes (px_index_weights, default 70/30);
+  // when one component has no data the other one alone
   // (px_index_basis says which), null when neither has data.
   let pxIndex = null;
   let pxIndexBasis = 'NONE';
   if (surveyIndex !== null && outcomeIndex !== null) {
-    pxIndex = (0.70 * surveyIndex) + (0.30 * outcomeIndex);
+    pxIndex = (wSurvey * surveyIndex) + (wOutcome * outcomeIndex);
     pxIndexBasis = 'BOTH';
   } else if (surveyIndex !== null) {
     pxIndex = surveyIndex;
@@ -566,7 +599,7 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
 
     let jOverallScore = null; // null = no metric of this journey has data in the window
     if (sScore !== null && oScore !== null) {
-      jOverallScore = (0.70 * sScore) + (0.30 * oScore);
+      jOverallScore = (wSurvey * sScore) + (wOutcome * oScore);
     } else if (sScore !== null) {
       jOverallScore = sScore;
     } else if (oScore !== null) {
@@ -647,10 +680,12 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
     px_index_basis: pxIndexBasis, // 'BOTH' | 'SURVEY_ONLY' | 'OUTCOME_ONLY' | 'NONE' (v2.36.0)
     survey_index: round2(surveyIndex),
     outcome_index: round2(outcomeIndex),
-    weights_formula: '70% Survey + 30% Outcomes (Normalized across active metrics)',
+    weights_formula: `${pxWeights.survey}% Survey + ${pxWeights.outcome}% Outcomes (Normalized across active metrics)`,
+    px_weights: { survey: pxWeights.survey, outcome: pxWeights.outcome }, // v2.48.0: Admin-editable (px_index_weights)
     total_metrics: enrichedMetrics.length,
     active_metrics_count: activeMetrics.length,
     disabled_metrics_count: enrichedMetrics.filter(m => m.is_disabled || m.excluded_from_index).length,
+    bankwide_value_metrics_count: enrichedMetrics.filter(m => m.is_bankwide_value).length,
     no_data_metrics_count: noDataMetrics.length,
     survey_metrics_count: activeSurveyMetrics.length,
     outcome_metrics_count: activeOutcomeMetrics.length,
@@ -713,11 +748,15 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
   }
 
   const isDirectorateFiltered = (directorate && directorate !== 'ALL') || !!scopes;
+  const isEmployeeMetric = metric.is_employee_metric !== undefined ? metric.is_employee_metric : true;
+  // v2.48.0: a non-employee metric (campus, candidates, ...) has no directorate data - under a directorate/division
+  // filter it is read at its bankwide value (same rule as calculatePEIndex), never "exempted".
+  const isBankwideValue = isDirectorateFiltered && !isEmployeeMetric;
+  if (isBankwideValue) { directorate = 'ALL'; subDirectorate = 'ALL'; scopes = null; }
   const queryFilter = { mode, year, month, directorate, sub_directorate: subDirectorate, period: periodString, scopes };
 
-  const isEmployeeMetric = metric.is_employee_metric !== undefined ? metric.is_employee_metric : true;
-  const isDisabled = isDirectorateFiltered && !isEmployeeMetric;
-  const disabledReason = isDisabled ? 'Bankwide External / Non-Employee Metric (Exempted from Directorate Calculation)' : null;
+  const isDisabled = false;
+  const disabledReason = null;
 
   const targetConfig = (await storage.getMetricTargetById(id)) || {
     target_value: metric.target_value,
@@ -736,7 +775,8 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
   // v2.37.0: the period this metric is read for = exactly the selected period (MTD = that month), same as the scorecard
   const mp = { mode, year, month, endMonth };
   const metricFilter = { ...queryFilter, mode: mp.mode, endMonth: mp.endMonth };
-  const windowInfo = { update_frequency: metric.update_frequency || 'MONTHLY', period_window: isSurvey ? periodWindow(mp) : null };
+  const windowInfo = { update_frequency: metric.update_frequency || 'MONTHLY', period_window: isSurvey ? periodWindow(mp) : null,
+    is_bankwide_value: isBankwideValue, px_weights: await getPxWeights() };
 
   if (!isSurvey) {
     // Outcome metric: Internal HR system data
@@ -1199,6 +1239,9 @@ async function buildEssDetail({ id, metric, targetConfig, journey, checkpoint, i
 }
 
 module.exports = {
+  getPxWeights,
+  clearPxWeightsCache,
+  pxWeightsError,
   normalizeScore,
   normalizeTarget,
   calculatePEIndex,

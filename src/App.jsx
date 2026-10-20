@@ -343,6 +343,11 @@ function AppContent() {
                 setFilterOptions(prev => ({ ...prev, mode: 'MTD', year: y, month: m }));
               }
             }}
+            onSelectDirectorate={(name) => {
+              // "PX Index by Directorate": same as choosing it in the Header filter (whole web follows)
+              setFilterOptions(prev => ({ ...prev, directorate: name, sub_directorate: 'ALL' }));
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
             onSelectJourney={(journeyId) => {
               setSelectedJourneyFilter(journeyId.toString());
               setActiveTab('calculator');

@@ -19,7 +19,7 @@ Sistem People Experience dirancang sebagai **"Measurement & Action Engine"** yan
                   ▼                                 ▼
        ┌─────────────────────┐           ┌─────────────────────┐
        │   SURVEY INDEX      │           │    OUTCOME INDEX    │
-       │     Bobot: 70%      │           │     Bobot: 30%      │
+       │   Bobot: 70%*       │           │   Bobot: 30%*       │
        │  (Persepsi & Rasa)  │           │   (Data Fakta HR)   │
        └──────────┬──────────┘           └──────────┬──────────┘
                   │                                 │
@@ -31,6 +31,8 @@ Sistem People Experience dirancang sebagai **"Measurement & Action Engine"** yan
         │      Arrival • Connect • Belong • Contribute • Depart│
         └──────────────────────────────────────────────────────┘
 ```
+
+\* Bobot default. Sejak v2.48.0 bobot diatur Admin (setting `px_index_weights`), lihat §3.1.
 
 ---
 
@@ -88,11 +90,13 @@ $$W_{\text{survey}} = 0.70 \quad (70\%), \qquad W_{\text{outcome}} = 0.30 \quad 
 
 $$PE\ Index = 0.70 \times Index_{\text{survey}} + 0.30 \times Index_{\text{outcome}}$$
 
-**Komponen tanpa data (sejak v2.36.0)**: indeks komponen yang tidak punya satu pun metrik berdata dalam periode terpilih bernilai `null`; bobot 70/30 tidak dipaksakan. `GET /api/metrics/calculate` mengirim `px_index_basis`:
+**Bobot dapat diubah (sejak v2.48.0)**: $W_{\text{survey}}$ dan $W_{\text{outcome}}$ dibaca dari setting `px_app_settings.px_index_weights` (seed `{ "survey": 70, "outcome": 30 }`). Admin mengubahnya di **Admin Parameters -> Journey Parameters -> PX Index Weights** (`PUT /api/admin/settings/px_index_weights`): bilangan bulat 0-100 yang berjumlah 100, selain itu ditolak (400). Bobot yang sama dipakai untuk PX Index dan skor journey (§3.6). Angka 0.70 / 0.30 di dokumen ini adalah nilai default. Engine membaca setting lewat `getPxWeights()` (cache 30 detik per proses); bila nilai tersimpan hilang atau tidak valid dipakai 70/30. `GET /api/metrics/calculate` mengirim bobot yang dipakai sebagai `px_weights` dan `weights_formula`.
+
+**Komponen tanpa data (sejak v2.36.0)**: indeks komponen yang tidak punya satu pun metrik berdata dalam periode terpilih bernilai `null`; bobot Survey/Outcome tidak dipaksakan. `GET /api/metrics/calculate` mengirim `px_index_basis`:
 
 | `px_index_basis` | Kondisi | PX Index |
 | :--- | :--- | :--- |
-| `BOTH` | Survey Index dan Outcome Index berdata | $0.70 \times Index_{\text{survey}} + 0.30 \times Index_{\text{outcome}}$ |
+| `BOTH` | Survey Index dan Outcome Index berdata | $W_{\text{survey}} \times Index_{\text{survey}} + W_{\text{outcome}} \times Index_{\text{outcome}}$ (default 0.70 / 0.30) |
 | `SURVEY_ONLY` | Tidak ada metrik Outcome aktif | = Survey Index |
 | `OUTCOME_ONLY` | Tidak ada metrik survei berdata (mis. tahun depan) | = Outcome Index |
 | `NONE` | Keduanya kosong | `null` |
@@ -173,7 +177,7 @@ Dimana:
 - $|M_{\text{survey}}| = 20$ metrik.
 - $|M_{\text{outcome}}| = 7$ metrik.
 
-**Implementasi (`calculatePEIndex()`, sejak v2.36.0)**: kedua rerata di atas adalah rerata berbobot (`weight` per metrik, default 1.0) dan hanya mencakup metrik aktif yang **punya data di jendela periode** (jumlahnya tidak selalu 20/7). Metrik SURVEY tanpa data (`NO_DATA`, §4) dan metrik yang dikecualikan filter direktorat (`is_disabled` / `excluded_from_index`, §6) tidak masuk pembilang maupun penyebut. Aturan yang sama berlaku untuk skor checkpoint (§3.5, rerata berbobot semua metrik berdata) dan journey (§3.6, 70/30 per journey, atau satu komponen saja bila komponen lain kosong). Journey/checkpoint tanpa metrik berdata bernilai `null` dengan `has_data: false`.
+**Implementasi (`calculatePEIndex()`, sejak v2.36.0)**: kedua rerata di atas adalah rerata berbobot (`weight` per metrik, default 1.0) dan hanya mencakup metrik aktif yang **punya data di jendela periode** (jumlahnya tidak selalu 20/7). Metrik SURVEY tanpa data (`NO_DATA`, §4) tidak masuk pembilang maupun penyebut. Sejak v2.48.0 tidak ada lagi metrik yang dikecualikan filter direktorat: metrik non-karyawan dihitung pada nilai bankwide (§6.1; `is_disabled` / `excluded_from_index` selalu `false`). Aturan yang sama berlaku untuk skor checkpoint (§3.5, rerata berbobot semua metrik berdata) dan journey (§3.6, bobot Survey/Outcome yang sama dengan PX Index per journey, atau satu komponen saja bila komponen lain kosong). Journey/checkpoint tanpa metrik berdata bernilai `null` dengan `has_data: false`.
 
 ---
 
@@ -248,7 +252,27 @@ Sistem mengimplementasikan deteksi anomali kinerja secara real-time untuk setiap
 
 ---
 
-## 🏛️ 6. Filter Direktorat & Eksklusi Dinamis Metrik Non-Karyawan (v2.9.0)
+## 🏛️ 6. Filter Direktorat & Metrik Non-Karyawan
+
+### 6.1 Aturan sejak v2.48.0: metrik non-karyawan dihitung pada nilai bankwide
+
+Permintaan user (2026-10-20): nilai sebuah direktorat = metrik direktorat itu + metrik yang hanya ada bankwide. Berlaku untuk setiap filter direktorat/divisi (Admin) dan setiap cakupan User (`scopes`), di `calculatePEIndex()`, `getMetricDetail()`, `alertEngine.js` dan `GET /api/metrics/by-directorate`:
+
+1. **Metrik karyawan** (`is_employee_metric` true, #6-#27) dibaca dari data unit/cakupan yang difilter (tidak berubah).
+2. **Metrik non-karyawan** (`is_employee_metric === false`, #1-#5: Career Website Traffic, Goes to Campus Evaluation, University Success Ratio, Channel Success Ratio, Candidate Experience Score) tidak punya data per direktorat, jadi dibaca pada **nilai bankwide**: SURVEY = respons bankwide (filter direktorat/divisi/cakupan diabaikan, periode tetap), ESS = baris Bankwide, OUTCOME = snapshot bankwide. Metrik ini ditandai `is_bankwide_value: true`.
+3. Metrik non-karyawan **ikut dihitung** di Survey Index, Outcome Index, checkpoint, journey dan alert:
+
+   $$PX_{dir} = W_{\text{survey}} \times \overline{S}_{dir} + W_{\text{outcome}} \times \overline{O}$$
+
+   dengan $\overline{S}_{dir}$ = rerata berbobot metrik SURVEY berdata (metrik karyawan direktorat + metrik non-karyawan pada nilai bankwide) dan $\overline{O}$ = rerata berbobot metrik OUTCOME (snapshot bankwide, sehingga Outcome Index di bawah filter = Outcome Index bankwide).
+4. Aturan `NO_DATA` (§4) dan `px_index_basis` (§3.1) tidak berubah.
+5. `is_disabled` dan `excluded_from_index` tetap ada di payload untuk kompatibilitas tetapi selalu `false` (`disabled_reason` = `null`, `disabled_metrics_count` = 0); `bankwide_value_metrics_count` = jumlah metrik `is_bankwide_value`.
+
+Dampak YTD 2026 (laporan developer, PX / Outcome): Business Banking 83.28 / 70.13 -> 84.83 / 75.08, Human Resources 83.61 / 70.13 -> 85.13 / 75.08, Sharia Banking 84.98 / 70.13 -> 86.30 / 75.08; bankwide tidak berubah (85.27). Sebelum v2.48.0 Admin melihat metrik #1-#5 dikecualikan (§6.2) dan User (sejak v2.26.0) melihatnya sebagai nilai bankwide read-only yang tidak dihitung (`excluded_from_index`).
+
+### 6.2 Aturan lama: eksklusi dinamis (v2.9.0 s/d v2.47.0) - TIDAK BERLAKU LAGI
+
+> Digantikan §6.1 sejak v2.48.0. Teks di bawah hanya catatan sejarah.
 
 Ketika sistem difilter berdasarkan **Direktorat atau Sub-Direktorat** tertentu (bukan *All / Bankwide*), metrik non-karyawan dieksklusikan secara dinamis:
 

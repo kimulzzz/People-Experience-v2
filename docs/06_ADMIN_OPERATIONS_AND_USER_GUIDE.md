@@ -105,6 +105,8 @@ Buka berkas CSV di Microsoft Excel atau editor teks dan isi baris data:
 3. Klik **"Simpan Target & Ambang"**.
 
 ### 6.2 Mengubah Bobot Konsolidasi & Bobot Journey
+> Langkah di bawah (tombol "Atur Bobot", slider) tidak sesuai UI saat ini. Sejak v2.48.0 bobot konsolidasi Survey/Outcome diubah di **Admin Parameters -> Journey Parameters -> PX Index Weights** (lihat bagian "Bobot PX Index & PX Index per Direktorat (v2.48.0)" di akhir dokumen).
+
 1. Klik tombol **"Atur Bobot"** pada navbar atas.
 2. Geser slider bobot konsolidasi (default: **70% Survey / 30% Outcome**).
 3. Sesuaikan bobot proporsi untuk masing-masing 5 Journey jika diperlukan.
@@ -395,3 +397,27 @@ Admin Parameters -> Manage Users -> **Audit Trail** default tidak menampilkan ak
 ### Auto sign-out saat tidak ada aktivitas (v2.44.0)
 
 Admin Parameters -> Manage Users -> **Session security**: isi "Auto sign-out after [N] minutes of inactivity" (1-120, default 5) lalu Save. Berlaku untuk semua user dalam ~30 detik. User mendapat peringatan 60 detik sebelum keluar dan bisa klik **Stay signed in**. Polling otomatis (status video, grafik) tidak dihitung aktivitas, jadi dashboard yang dibiarkan terbuka tetap keluar. Kejadian tercatat di Audit Trail sebagai `LOGOUT_IDLE`; perubahan setting sebagai `SETTINGS_CHANGE`.
+
+
+### Bobot PX Index & PX Index per Direktorat (v2.48.0)
+
+**Mengubah bobot Survey / Outcome (Admin)**
+
+1. Buka **Admin Parameters** -> tab **Journey Parameters**.
+2. Di kartu **PX Index Weights** isi **Survey (%)** atau **Outcome (%)**. Kolom lainnya terisi otomatis dengan sisanya (jumlah selalu 100). Hanya bilangan bulat 0-100.
+3. Klik **Save Weights**. Dashboard, Performance Trend, Explore Metrics, detail metrik dan tab About memakai bobot baru; perubahan tercatat di Audit Trail sebagai `SETTINGS_CHANGE` (mis. `px_index_weights: 70/30 -> 60/40`).
+
+Catatan: bobot berlaku untuk PX Index dan skor journey (default 70/30). Bila dalam suatu periode Survey atau Outcome tidak punya data, PX Index = komponen yang ada saja. Backend lain yang memakai database yang sama mengikuti dalam +-30 detik.
+
+**PX Index by Directorate (Dashboard)**
+
+- Di bawah panel PX Index ada **PX Index by Directorate**; klik judulnya untuk membuka. Periode sama dengan filter Header (YTD/MTD, tahun, bulan).
+- Admin melihat ke-12 direktorat; User hanya direktorat dalam cakupannya (User dengan sebagian divisi melihat angka divisi itu saja, tertulis "Your divisions: ...").
+- Urutan: PX Index tertinggi dulu; direktorat tanpa data paling bawah.
+- Klik satu direktorat = memilihnya di filter Direktorat Header, seluruh web mengikuti. Kembali ke bankwide lewat filter Header.
+
+**Metrik non-karyawan di filter direktorat**
+
+- Metrik #1-#5 (career website, Goes to Campus, rasio sukses universitas/kanal, candidate experience) tidak punya data per direktorat. Sejak v2.48.0, di filter direktorat/divisi (Admin dan User) metrik itu tampil dan **ikut dihitung** dengan nilai bankwide-nya: badge **Bankwide Value** di Explore Metrics, tag **Bankwide** di kartu journey. Dulu metrik ini dikecualikan ("EXEMPTED"), jadi PX Index direktorat berbeda dari angka v2.47.0, dan Outcome Index direktorat kini sama dengan Outcome bankwide.
+- Keterbatasan lama: bagi Admin, bagian Score Deficit Alerts di Dashboard tetap bankwide walau filter direktorat dipilih.
+- Metrik di kartu journey diurutkan Critical, Warning, On Target (skor tertinggi dulu), lalu No Data.

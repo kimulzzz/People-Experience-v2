@@ -1,5 +1,6 @@
 // src/components/GlossaryView.jsx
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { fetchWithRetry } from '../utils/fetchWithRetry';
 import {
   Search,
   BookMarked,
@@ -21,15 +22,15 @@ const GLOSSARY_TERMS = [
   // --- Framework & Konsep Inti ---
   { term: 'People Experience (PX)', def: 'Keseluruhan pengalaman karyawan di CIMB Niaga sepanjang employee lifecycle, mulai dari tahap menarik kandidat hingga karyawan meninggalkan organisasi. PX terdiri dari 5 journey yang membentuk momen-momen bermakna.', category: 'FRAMEWORK' },
   { term: 'People Experience Framework', def: 'Kerangka yang memetakan employee journey secara end-to-end ke dalam journey dan experience Check Point, lengkap dengan metrik dan Experience Owner.', category: 'FRAMEWORK' },
-  { term: 'People Experience Index (PE Index)', def: 'Skor keseluruhan People Experience yang menggabungkan seluruh metrik dengan rumus 70% Survey Results + 30% Outcomes.', category: 'FRAMEWORK' },
+  { term: 'People Experience Index (PE Index)', def: 'Skor keseluruhan People Experience yang menggabungkan seluruh metrik dengan rumus {SURVEY}% Survey Results + {OUTCOME}% Outcomes (bobot diatur Admin di Admin Parameters).', category: 'FRAMEWORK' },
   { term: 'Journey', def: 'Tahapan dalam perjalanan karyawan: Arrival, Connect, Belong, Contribute, dan Depart. Setiap journey memiliki experience intent dan beberapa Experience Check Point.', category: 'FRAMEWORK' },
   { term: 'Journey Score', def: 'Skor gabungan metrik dalam satu journey, yang terdiri dari skor Survey dan skor Outcome pada journey tersebut.', category: 'FRAMEWORK' },
   { term: 'Experience Check Point', def: 'Momen kunci dalam employee journey yang pengalamannya diukur melalui metrik. PX Framework memiliki 17 Experience Check Point.', category: 'FRAMEWORK' },
   { term: 'Experience Owner', def: 'Pihak yang ditunjuk dan bertanggung jawab (accountable) atas pengalaman karyawan pada suatu Experience Check Point, termasuk menyediakan data untuk metriknya.', category: 'FRAMEWORK' },
   { term: 'Metric', def: 'Ukuran yang dipakai untuk menilai pengalaman pada setiap Experience Check Point. PX Framework menggunakan 27 metrik.', category: 'FRAMEWORK' },
   { term: 'Target', def: 'Nilai yang ingin dicapai oleh suatu metrik, misalnya > 4,00 / 5, > 85%, atau minimal 500 peserta.', category: 'FRAMEWORK' },
-  { term: 'Survey Results', def: 'Hasil pengukuran yang bersumber dari survei internal dan ESS. Metrik jenis ini ditandai Type: Survey dan berbobot 70% dalam PE Index.', category: 'FRAMEWORK' },
-  { term: 'Outcomes', def: 'Hasil terukur dari metrik yang sudah ada, seperti partisipasi Signature Program atau jumlah karyawan yang menerima recognition. Ditandai Type: Outcome dan berbobot 30% dalam PE Index.', category: 'FRAMEWORK' },
+  { term: 'Survey Results', def: 'Hasil pengukuran yang bersumber dari survei internal dan ESS. Metrik jenis ini ditandai Type: Survey dan berbobot {SURVEY}% dalam PE Index.', category: 'FRAMEWORK' },
+  { term: 'Outcomes', def: 'Hasil terukur dari metrik yang sudah ada, seperti partisipasi Signature Program atau jumlah karyawan yang menerima recognition. Ditandai Type: Outcome dan berbobot {OUTCOME}% dalam PE Index.', category: 'FRAMEWORK' },
   { term: 'Assess Current State', def: 'Tahap ke-4 pengembangan People Experience: mengumpulkan existing score, menghitung skor metrik dan journey, lalu mengidentifikasi area yang kuat dan yang masih memiliki gap.', category: 'FRAMEWORK' },
   { term: 'Library Inisiatif & Intervensi', def: 'Kumpulan inisiatif dan intervensi yang menjadi rujukan untuk mendorong perbaikan People Experience secara berkelanjutan.', category: 'FRAMEWORK' },
   { term: 'PX Dashboard & Insight', def: 'Dashboard yang menampilkan hasil pengukuran dan insight People Experience.', category: 'FRAMEWORK' },
@@ -89,18 +90,35 @@ const CATEGORIES = [
   { id: 'DEPART', label: 'Depart', color: '#8731C8', icon: LogOut }
 ];
 
+// Terms are listed alphabetically inside each category (locale-aware, case-insensitive); category order is fixed.
+const termCollator = new Intl.Collator('id', { sensitivity: 'base', numeric: true });
+
 export default function GlossaryView() {
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState('ALL');
+  // PX Index weights in the definitions come from the database (px_index_weights, v2.48.0)
+  const [pxWeights, setPxWeights] = useState(null);
+
+  useEffect(() => {
+    fetchWithRetry('/api/settings')
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => { if (data && data.px_index_weights) setPxWeights(data.px_index_weights); })
+      .catch(() => {});
+  }, []);
+
+  const terms = useMemo(() => GLOSSARY_TERMS.map(t => ({
+    ...t,
+    def: t.def.split('{SURVEY}').join(pxWeights ? String(pxWeights.survey) : '…').split('{OUTCOME}').join(pxWeights ? String(pxWeights.outcome) : '…')
+  })).sort((a, b) => termCollator.compare(a.term, b.term)), [pxWeights]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return GLOSSARY_TERMS.filter(t => {
+    return terms.filter(t => {
       if (activeCategory !== 'ALL' && t.category !== activeCategory) return false;
       if (!q) return true;
       return t.term.toLowerCase().includes(q) || t.def.toLowerCase().includes(q);
     });
-  }, [search, activeCategory]);
+  }, [search, activeCategory, terms]);
 
   const grouped = useMemo(() => {
     return CATEGORIES
