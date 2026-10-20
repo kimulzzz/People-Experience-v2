@@ -13,11 +13,9 @@ import MetricDetailModal from './components/MetricDetailModal';
 import AdminSettingsModal from './components/AdminSettingsModal';
 import AdminSurveyQuestionsModal from './components/AdminSurveyQuestionsModal';
 import AdminParametersModal from './components/AdminParametersModal';
-import EmailSettingsModal from './components/EmailSettingsModal';
 import PublicCheckInForm from './components/PublicCheckInForm';
 import PublicFeedbackForm from './components/PublicFeedbackForm';
 import GlossaryView from './components/GlossaryView';
-import UserManagementModal from './components/UserManagementModal';
 import { LoginPage, ChangePasswordScreen } from './components/AuthScreens';
 import { AuthContext, useAuth } from './utils/AuthContext';
 import { UNAUTHORIZED_EVENT } from './utils/apiClient';
@@ -118,8 +116,6 @@ function AppContent() {
   const [isAdminSettingsOpen, setIsAdminSettingsOpen] = useState(false);
   const [isAdminSurveyQuestionsOpen, setIsAdminSurveyQuestionsOpen] = useState(false);
   const [isAdminParametersOpen, setIsAdminParametersOpen] = useState(false);
-  const [isEmailSettingsOpen, setIsEmailSettingsOpen] = useState(false);
-  const [isUserManagementOpen, setIsUserManagementOpen] = useState(false);
   const [selectedMetricDetailId, setSelectedMetricDetailId] = useState(null);
   const [preSelectedSurveyMetricId, setPreSelectedSurveyMetricId] = useState(null);
   const [preSelectedQuestionMetricId, setPreSelectedQuestionMetricId] = useState(null);
@@ -445,26 +441,11 @@ function AppContent() {
         } : undefined}
       />
 
-      {/* Email Settings and Manage Users are opened from Admin Parameters (v2.41.0); closing returns there */}
-      <EmailSettingsModal
-        isOpen={isEmailSettingsOpen}
-        onClose={() => { setIsEmailSettingsOpen(false); setIsAdminParametersOpen(true); }}
-      />
-
-      {isAdmin && (
-        <UserManagementModal
-          isOpen={isUserManagementOpen}
-          onClose={() => { setIsUserManagementOpen(false); setIsAdminParametersOpen(true); }}
-          currentUserId={user?.user_id}
-        />
-      )}
-
       <AdminParametersModal
         isOpen={isAdminParametersOpen}
         onClose={() => setIsAdminParametersOpen(false)}
         onParametersUpdated={() => fetchAllData(filterOptions)}
-        onOpenEmailSettings={isAdmin ? () => { setIsAdminParametersOpen(false); setIsEmailSettingsOpen(true); } : undefined}
-        onOpenUserManagement={isAdmin ? () => { setIsAdminParametersOpen(false); setIsUserManagementOpen(true); } : undefined}
+        currentUserId={user?.user_id}
       />
 
       <AdminSettingsModal

@@ -16,7 +16,8 @@ const EMPTY_FORM = {
   from_email: ''
 };
 
-export default function EmailSettingsModal({ isOpen, onClose }) {
+// embedded (v2.42.0): rendered as a tab inside Admin Parameters - no overlay, no own close button
+export default function EmailSettingsModal({ isOpen, onClose, embedded = false }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [hasPassword, setHasPassword] = useState(false);
   const [passwordReadable, setPasswordReadable] = useState(true);
@@ -134,8 +135,8 @@ export default function EmailSettingsModal({ isOpen, onClose }) {
   const inputCls = 'w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-[var(--theme-base)] focus:outline-none';
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-5 my-8">
+    <div className={embedded ? '' : 'fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto'}>
+      <div className={embedded ? 'bg-white rounded-2xl border border-gray-200 w-full max-w-3xl p-6 space-y-5' : 'bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-5 my-8'}>
 
         <div className="flex items-center justify-between pb-4 border-b border-gray-100">
           <div className="flex items-center space-x-3">
@@ -147,9 +148,11 @@ export default function EmailSettingsModal({ isOpen, onClose }) {
               <p className="text-[11px] text-gray-500">Sender account for the manual survey upload reminder emails to PICs</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500" aria-label="Close">
-            <X className="w-5 h-5" />
-          </button>
+          {!embedded && (
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500" aria-label="Close">
+              <X className="w-5 h-5" />
+            </button>
+          )}
         </div>
 
         {loading ? (

@@ -657,6 +657,9 @@ domain model, not just descriptive:
 - **v2.41.0** (2026-10-20, see `CHANGELOG.md` [2.41.0], `docs/05` "Catatan v2.41.0", `docs/06`): Header buttons Email Settings and Manage
   Users removed; they are now tabs in Admin Parameters that open the existing modals (closing returns to Admin Parameters). Frontend only.
 
+- **v2.42.0** (2026-10-20, see `CHANGELOG.md` [2.42.0], `docs/05` "Catatan v2.42.0"): the Email Settings / Manage Users tabs of Admin
+  Parameters now show their content in place (components got an `embedded` prop) instead of opening a separate pop-up. Frontend only.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan

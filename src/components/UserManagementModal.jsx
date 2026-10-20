@@ -25,7 +25,8 @@ const ScopeSummary = ({ scopes }) => (
 
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString('en-US') : '-');
 
-export default function UserManagementModal({ isOpen, onClose, currentUserId }) {
+// embedded (v2.42.0): rendered as a tab inside Admin Parameters - no overlay, no own close button
+export default function UserManagementModal({ isOpen, onClose, currentUserId, embedded = false }) {
   const [users, setUsers] = useState([]);
   const [directory, setDirectory] = useState([]);
   const [audit, setAudit] = useState([]);
@@ -143,8 +144,8 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId }) 
   const isLocked = (u) => u.locked_until && new Date(u.locked_until).getTime() > Date.now();
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-5xl w-full p-6 shadow-2xl space-y-4 my-8">
+    <div className={embedded ? '' : 'fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto'}>
+      <div className={embedded ? 'bg-white rounded-2xl border border-gray-200 w-full p-6 space-y-4' : 'bg-white rounded-2xl max-w-5xl w-full p-6 shadow-2xl space-y-4 my-8'}>
 
         <div className="flex items-center justify-between pb-4 border-b border-gray-100">
           <div className="flex items-center space-x-3">
@@ -163,7 +164,7 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId }) 
             <button onClick={openCreate} className="px-3 py-1.5 text-xs font-bold text-white bg-[var(--theme-base)] hover:bg-[var(--theme-hover)] rounded-lg flex items-center space-x-1.5">
               <Plus className="w-3.5 h-3.5" /><span>Add User</span>
             </button>
-            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500" aria-label="Close"><X className="w-5 h-5" /></button>
+            {!embedded && <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500" aria-label="Close"><X className="w-5 h-5" /></button>}
           </div>
         </div>
 

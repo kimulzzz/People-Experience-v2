@@ -2,6 +2,14 @@
 
 Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Management & Scoring System dicatat di dalam dokumen ini mengikuti standar [Semantic Versioning](https://semver.org/).
 
+## [2.42.0] - 2026-10-20
+
+- **Permintaan user**: tab **Email Settings** dan **Manage Users** di Admin Parameters harus tampil di tempat seperti Metric/Journey Parameters, bukan membuka pop-up baru (perilaku v2.41.0).
+- **UI**: `EmailSettingsModal.jsx` dan `UserManagementModal.jsx` mendapat prop `embedded` (tanpa overlay dan tanpa tombol close sendiri; isi tidak berubah). `AdminParametersModal.jsx` - `activeTab` kini `metrics | journeys | email | users`; dua tab baru bergaya sama dengan tab lain dan merender kedua komponen itu di badan modal (prop baru `currentUserId`; prop `onOpenEmailSettings`/`onOpenUserManagement` v2.41.0 dihapus). `App.jsx` - state, import dan render terpisah kedua modal itu dihapus. Tidak ada perubahan backend/API.
+- **Tes**: tidak ada tes baru (perubahan tata letak). Suite penuh SQL (backend kedua, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **230/230 lulus, 0 gagal, 16 dilewati**. `vite build` OK. Dicek main session di browser (admin sementara, sudah dihapus): selalu hanya satu jendela (Admin Parameters); Email Settings dan Manage Users tampil sebagai isi tab; kembali ke Metric Parameters berfungsi.
+
+---
+
 ## [2.41.0] - 2026-10-20
 
 - **Permintaan user**: tombol **Email Settings** dan **Manage Users** dipindah ke dalam **Admin Parameters** agar Header tidak kebanyakan tombol.

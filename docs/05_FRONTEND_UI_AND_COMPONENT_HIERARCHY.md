@@ -400,6 +400,10 @@ API kini bisa mengirim indeks dan skor `null` serta status `NO_DATA` (lihat `doc
 | `MetricDetailModal.jsx` | Nilai "—", "No survey data in this period - left out of the index", badge abu-abu "No Data", pertanyaan berlabel "No Data" tanpa skor. Catatan "Annual metric: shows the result of Jan–Sep 2026" untuk metrik tahunan pada filter MTD **dihapus di v2.37.0** (MTD kini selalu satu bulan, `period_window.basis = 'MONTH'`). |
 | `TrendChart.jsx` | Titik `null` menjadi celah (garis dipotong per segmen), tooltip "—". |
 
+## Catatan v2.42.0 - Email Settings & Manage Users sebagai isi tab
+
+Tab Email Settings dan Manage Users di `AdminParametersModal.jsx` kini merender `EmailSettingsModal`/`UserManagementModal` dengan prop `embedded` langsung di badan modal (seperti Metric/Journey Parameters), bukan pop-up terpisah; `activeTab`: `metrics | journeys | email | users`; prop baru `currentUserId`. Catatan v2.41.0 di bawah (pop-up terpisah, kembali saat ditutup) sudah tidak berlaku.
+
 ## Catatan v2.41.0 - Email Settings & Manage Users di dalam Admin Parameters
 
 Tombol Header **Email Settings** dan **Manage Users** dihapus. Keduanya kini tab di baris tab `AdminParametersModal.jsx` (setelah Metric/Journey Parameters; prop `onOpenEmailSettings`/`onOpenUserManagement`, hanya Admin). Klik tab -> Admin Parameters ditutup dan `EmailSettingsModal`/`UserManagementModal` dibuka (`App.jsx`); menutup modal itu membuka kembali Admin Parameters. Header Admin kini: Admin Parameters, Survey Templates, Theme.

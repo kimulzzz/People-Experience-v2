@@ -28,6 +28,8 @@ import { formatMetricValue, defaultUnitForScale } from '../utils/formatMetricVal
 import { SURVEY_SOURCE_OPTIONS, surveySourceLabel, surveySourceBadgeClass } from '../utils/surveySource';
 
 import { MONTH_NAMES } from '../utils/months';
+import EmailSettingsModal from './EmailSettingsModal';
+import UserManagementModal from './UserManagementModal';
 
 // Converts a metric's raw Target Nilai (stored in its own native scale — e.g. 4.00 on a
 // RATING_5 1-5 scale) into the same 0-100 % scale as Min Threshold, mirroring the backend's
@@ -47,8 +49,8 @@ function computeTargetPercent(metric) {
   }
 }
 
-export default function AdminParametersModal({ isOpen, onClose, onParametersUpdated, onOpenEmailSettings, onOpenUserManagement }) {
-  const [activeTab, setActiveTab] = useState('metrics'); // 'journeys' | 'metrics'
+export default function AdminParametersModal({ isOpen, onClose, onParametersUpdated, currentUserId }) {
+  const [activeTab, setActiveTab] = useState('metrics'); // 'journeys' | 'metrics' | 'email' | 'users' (v2.42.0)
   const [loading, setLoading] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -521,28 +523,32 @@ All survey data (responses) and question settings of this metric will also be de
               <span>Journey Parameters ({journeys.length})</span>
             </button>
 
-            {/* Email Settings and Manage Users live here instead of the Header (v2.41.0); they open their own modals */}
-            {onOpenEmailSettings && (
-              <button
-                onClick={onOpenEmailSettings}
-                className="py-3 text-xs sm:text-sm font-bold border-b-2 border-transparent text-red-100 hover:text-white flex items-center space-x-2 transition"
-                title="Email Settings for the sender of survey-upload reminders to PICs"
-              >
-                <Mail className="w-4 h-4" />
-                <span>Email Settings</span>
-              </button>
-            )}
+            {/* Email Settings and Manage Users are tabs of Admin Parameters (moved from the Header in v2.41.0, shown in place since v2.42.0) */}
+            <button
+              onClick={() => setActiveTab('email')}
+              className={`py-3 text-xs sm:text-sm font-bold border-b-2 flex items-center space-x-2 transition ${
+                activeTab === 'email'
+                  ? 'border-white text-white'
+                  : 'border-transparent text-red-100 hover:text-white'
+              }`}
+              title="Email Settings for the sender of survey-upload reminders to PICs"
+            >
+              <Mail className="w-4 h-4" />
+              <span>Email Settings</span>
+            </button>
 
-            {onOpenUserManagement && (
-              <button
-                onClick={onOpenUserManagement}
-                className="py-3 text-xs sm:text-sm font-bold border-b-2 border-transparent text-red-100 hover:text-white flex items-center space-x-2 transition"
-                title="Manage login accounts (add user, reset password, activate/deactivate)"
-              >
-                <UserCog className="w-4 h-4" />
-                <span>Manage Users</span>
-              </button>
-            )}
+            <button
+              onClick={() => setActiveTab('users')}
+              className={`py-3 text-xs sm:text-sm font-bold border-b-2 flex items-center space-x-2 transition ${
+                activeTab === 'users'
+                  ? 'border-white text-white'
+                  : 'border-transparent text-red-100 hover:text-white'
+              }`}
+              title="Manage login accounts (add user, reset password, activate/deactivate)"
+            >
+              <UserCog className="w-4 h-4" />
+              <span>Manage Users</span>
+            </button>
           </div>
 
           <div className="py-2">
@@ -570,6 +576,10 @@ All survey data (responses) and question settings of this metric will also be de
 
         {/* Modal Body Content */}
         <div ref={modalBodyRef} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+
+          {/* TABS 3-4: EMAIL SETTINGS / MANAGE USERS (same components as before, embedded, v2.42.0) */}
+          {activeTab === 'email' && <EmailSettingsModal isOpen embedded />}
+          {activeTab === 'users' && <UserManagementModal isOpen embedded currentUserId={currentUserId} />}
 
           {/* ============================================================ */}
           {/* TAB 1: PARAMETER JOURNEY                                      */}
