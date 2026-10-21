@@ -37,6 +37,14 @@ export default function DirectoratePxPanel({ mode = 'YTD', year, month, selected
 
   const fmt = v => (v === null || v === undefined ? '—' : v.toFixed(2));
 
+  // v2.51.0: listed alphabetically by directorate name (locale-aware, case-insensitive); the badge keeps the PX rank
+  // (highest PX Index = 1, ties by name): rank among the directorates with data of their own, "—" for the others.
+  const hasScore = r => r.px_index !== null && r.px_index !== undefined && r.has_own_data !== false;
+  const rankOf = new Map();
+  rows.filter(hasScore).sort((a, b) => b.px_index - a.px_index || String(a.directorate).localeCompare(String(b.directorate)))
+    .forEach((r, i) => rankOf.set(r.directorate, i + 1));
+  const sortedRows = [...rows].sort((a, b) => String(a.directorate).localeCompare(String(b.directorate), undefined, { sensitivity: 'base' }));
+
   return (
     <div className="bg-white rounded-2xl border border-gray-200 shadow-xs overflow-hidden">
       <button
@@ -71,7 +79,7 @@ export default function DirectoratePxPanel({ mode = 'YTD', year, month, selected
           )}
           {rows.length > 0 && (
             <div className={`divide-y divide-gray-100 ${loading ? 'opacity-60' : ''}`}>
-              {rows.map((r, i) => {
+              {sortedRows.map(r => {
                 const isSelected = selectedDirectorate === r.directorate;
                 return (
                   <button
@@ -82,7 +90,10 @@ export default function DirectoratePxPanel({ mode = 'YTD', year, month, selected
                     }`}
                     title={`Filter the dashboard on ${r.directorate}`}
                   >
-                    <span className="col-span-1 text-xs font-bold text-gray-400">{i + 1}</span>
+                    {/* v2.51.0: a directorate without data of its own (has_own_data false, null scores) is not ranked */}
+                    <span className="col-span-1 text-xs font-bold text-gray-400" title={rankOf.has(r.directorate) ? `PX rank ${rankOf.get(r.directorate)} of ${rankOf.size}` : 'No data of its own - not ranked'}>
+                      {rankOf.has(r.directorate) ? rankOf.get(r.directorate) : '—'}
+                    </span>
                     <span className="col-span-5 min-w-0">
                       <span className={`block text-xs font-bold truncate ${isSelected ? 'text-[var(--theme-dark)]' : 'text-[#231F20] group-hover:text-[var(--theme-base)]'}`}>
                         {r.directorate}

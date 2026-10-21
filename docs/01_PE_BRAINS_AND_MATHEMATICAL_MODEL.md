@@ -274,6 +274,7 @@ Permintaan user (2026-10-20): nilai sebuah direktorat = metrik direktorat itu + 
    dengan $\overline{S}_{dir}$ = rerata berbobot metrik SURVEY berdata (metrik karyawan direktorat + metrik non-karyawan pada nilai bankwide) dan $\overline{O}$ = rerata berbobot metrik OUTCOME (snapshot bankwide, sehingga Outcome Index di bawah filter = Outcome Index bankwide).
 4. Aturan `NO_DATA` (§4) dan `px_index_basis` (§3.1) tidak berubah.
 5. `is_disabled` dan `excluded_from_index` tetap ada di payload untuk kompatibilitas tetapi selalu `false` (`disabled_reason` = `null`, `disabled_metrics_count` = 0); `bankwide_value_metrics_count` = jumlah metrik `is_bankwide_value`.
+6. **Sejak v2.51.0, hanya di `GET /api/metrics/by-directorate`**: direktorat tanpa data sendiri - tidak ada metrik SURVEY berdata selain nilai bankwide (baris SYSTEM atau hasil ESS direktorat itu) - mendapat `has_own_data: false`, PX/Survey/Outcome Index `null`, `px_index_basis` `NONE` dan tidak diperingkat. Tanpa aturan ini direktorat baru yang kosong akan tampil dengan PX dari metrik #1-#5 dan snapshot OUTCOME saja. `GET /api/metrics/calculate?directorate=` tidak berubah.
 
 Dampak YTD 2026 (laporan developer, PX / Outcome): Business Banking 83.28 / 70.13 -> 84.83 / 75.08, Human Resources 83.61 / 70.13 -> 85.13 / 75.08, Sharia Banking 84.98 / 70.13 -> 86.30 / 75.08; bankwide tidak berubah (85.27). Sebelum v2.48.0 Admin melihat metrik #1-#5 dikecualikan (§6.2) dan User (sejak v2.26.0) melihatnya sebagai nilai bankwide read-only yang tidak dihitung (`excluded_from_index`).
 

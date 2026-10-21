@@ -1246,7 +1246,7 @@ async function buildEssDetail({ id, metric, targetConfig, journey, checkpoint, i
   const scopedDirs = scopes ? scopes.map(s => s.directorate) : null;
   const byDirectorate = essResult.rows
     .filter(r => (scopedDirs ? r.org_level === 'DIRECTORATE' && scopedDirs.includes(r.directorate) : true))
-    .sort((a, b) => (a.org_level === b.org_level ? String(a.directorate).localeCompare(String(b.directorate)) : (a.org_level === 'BANKWIDE' ? -1 : 1)))
+    .sort((a, b) => (a.org_level === b.org_level ? String(a.directorate).localeCompare(String(b.directorate), undefined, { sensitivity: 'base' }) : (a.org_level === 'BANKWIDE' ? -1 : 1)))
     .map(r => ({
       org_level: r.org_level,
       directorate: r.org_level === 'BANKWIDE' ? 'PT Bank CIMB Niaga Tbk (Bankwide)' : r.directorate,

@@ -40,12 +40,12 @@ Script `scripts/sqlserver/Setup-SqlServer.ps1` (idempoten, log di `scripts/sqlse
 
 ---
 
-## 3. Skema (`server/db/schema.sql` — 32 tabel sejak v2.38.0, prefix `px_`)
+## 3. Skema (`server/db/schema.sql` — 34 tabel sejak v2.51.0, prefix `px_`)
 
 | Kelompok | Tabel | Catatan |
 | :--- | :--- | :--- |
 | Parameter | `px_journeys`, `px_checkpoints`, `px_metrics` (kolom `unit` = satuan nilai aktual, v2.25.0; kolom `survey_source` = sumber survei SYSTEM/ESS, v2.29.0), `px_metric_targets` | Target hanya ada di `px_metric_targets` (JSON menggandakannya di metric). Bobot hanya di `px_metrics.weight` — **tabel `weights` dihapus** (duplikat murni). Sengaja **tanpa FK** antar-tiga tabel ini (admin boleh menghapus journey tanpa menyentuh metric — sama seperti perilaku JSON). |
-| Referensi | `px_directorates`, `px_divisions`, `px_action_library` | Direktorat/divisi memakai surrogate key + `UNIQUE` nama. |
+| Referensi | `px_directorates`, `px_divisions`, `px_directorate_aliases`, `px_division_aliases` (v2.51.0), `px_action_library` | Direktorat/divisi memakai surrogate key + `UNIQUE` nama. Former name direktorat/divisi (nama lama -> nama saat ini) di tabel alias, dirujuk per nama (§24). |
 | Pertanyaan | `px_master_survey_questions`, `px_event_questions`, `px_survey_questions` | Pertanyaan event = salinan (snapshot) per event. **`px_survey_questions`** = set pertanyaan setiap metric SURVEY (1 baris/pertanyaan, kolom `is_customized`); di-seed sekali dari template kode, setelahnya dibaca hanya dari SQL (v2.22.1). |
 | Reminder | `px_reminder_log` | Catatan tiap email reminder upload survei ke PIC (metrik, periode yang kosong, tanggal, SENT/FAILED) — dasar pencegah duplikat & pengulangan. Ikut terhapus bersama metriknya. |
 | Email | `px_email_settings` | 1 baris: akun pengirim reminder ke PIC (menu "Email Settings"; sebelum v2.30.0 bernama "Setting Email"). Password dienkripsi AES-256-GCM (`server/services/secretBox.js`); kunci `SETTINGS_ENCRYPTION_KEY` ada di `.env` dan harus ikut dibackup. |
@@ -332,3 +332,37 @@ JOIN dbo.px_metrics m ON m.metric_id = q.metric_id WHERE m.survey_source = 'ESS'
 ```
 
 Diverifikasi oleh Modul 52 (`docs/07` §39).
+
+
+## 24. Pembaruan v2.51.0 - Tabel Former Name Direktorat/Divisi, Setting `directory_admin_managed` & Snapshot Konfigurasi
+
+**Tabel baru** (dibuat idempoten saat boot, `IF OBJECT_ID(...) IS NULL` di `schema.sql`, tanpa ALTER tabel lama). Jumlah tabel 32 -> **34**.
+
+| Tabel | Kolom | Kunci |
+| :--- | :--- | :--- |
+| `px_directorate_aliases` | `alias_id INT IDENTITY` PK, `alias_name NVARCHAR(200) NOT NULL` (nama lama), `directorate_name NVARCHAR(200) NOT NULL` (nama saat ini), `created_at DATETIME2(3)` default `SYSUTCDATETIME()` | `UQ_px_directorate_aliases_name (alias_name)` |
+| `px_division_aliases` | `alias_id INT IDENTITY` PK, `directorate_name NVARCHAR(200) NOT NULL` (direktorat saat ini), `alias_name NVARCHAR(200) NOT NULL` (nama divisi lama), `division_name NVARCHAR(200) NOT NULL` (nama divisi saat ini), `created_at` | `UQ_px_division_aliases (directorate_name, alias_name)` |
+
+Dirujuk **per nama** (seperti data lain yang menyalin nama direktorat), tanpa FK. Diisi oleh rename/merge (nama lama -> nama saat ini; alias lama ikut dipindah sehingga rantai selalu satu langkah) dan oleh former name manual di Admin Parameters -> Directorates; dihapus bersama direktoratnya. Dibaca resolver impor (`server/db/directoryNames.js`). Backend JSON: `directorateAliases` / `divisionAliases` di `store.json` (`initialStore.js`). Ikut `npm run db:export` dan import `migrate.js` (hitungan verifikasi `directorate_aliases`, `division_aliases`); `migrate --reset` (`dropAllTables`) menghapus keduanya.
+
+**Setting baru** `directory_admin_managed` (`px_app_settings`, seed `false`): diset `true` oleh perubahan pertama lewat API direktori; sejak itu `topUpDirectory()` saat boot tidak menambah apa pun. Tidak bisa diubah lewat `PUT /api/admin/settings` (400). Sebelum `true`, top-up mencari nama seed lewat resolver (former name + `SEED_DIRECTORATE_RENAMES`), jadi database yang masih memakai ejaan lama tidak mendapat duplikat ejaan baru.
+
+**Data yang menyalin nama direktorat** (diubah dalam satu transaksi oleh rename/merge): `px_survey_uploaded_responses.org_unit_1`/`org_unit_2` (hanya `respondent_type = 'EMPLOYEE'`), `px_ess_results.directorate` (`org_level = 'DIRECTORATE'`; baris metrik+periode yang bentrok saat merge digabung berbobot partisipasi), `px_exit_interviews.directorate`/`division`, `px_attendances.directorate`/`division`, `px_user_scopes`, `px_users.directorate`/`division` (legacy), `px_recruitment_sla_by_unit.unit`, setting `event_manager_directorates`. Tidak diubah: `px_audit_log`.
+
+**Seed**: `initialDirectorates` memakai Syariah Banking, SLC ASG Satyaguna Langgeng Capital ("SLC" dan "Special Asset" dikenali sebagai ejaan seed lama), Strategy & Finance, Treasury & Financial Institutions (hanya untuk database baru; database yang ada tidak pernah di-rename oleh boot). Database utama di-rename lewat menu pada 2026-10-21 (nama lengkap "SLC ASG Satyaguna Langgeng Capital"); hasil di bawah. **"Reset Default"** (`resetParametersToDefault`) tidak lagi menghapus/mengisi ulang `px_directorates`/`px_divisions`. Tabel pemetaan migrasi v2.31.0 (§16) kini memetakan target lama ke nama saat ini (`opts.mapTarget`).
+
+**Snapshot konfigurasi** (`sqlStorage.snapshotConfiguration` / `restoreConfiguration`, dipakai config guard regression suite, `docs/07` §40): baris mentah 12 tabel `px_journeys`, `px_checkpoints`, `px_metrics`, `px_metric_targets`, `px_survey_questions`, `px_master_survey_questions`, `px_action_library`, `px_app_settings`, `px_directorates`, `px_divisions`, `px_directorate_aliases`, `px_division_aliases`. Restore: hanya untuk server+database yang sama dengan snapshot; metrik yang tidak ada di snapshot dihapus dengan cascade hapus metrik; tabel yang berbeda dihapus dan diisi ulang dalam satu transaksi (id tetap, `IDENTITY_INSERT`). File snapshot suite: `server/data/backups/regression-config-snapshot.json` (gitignored; berisi konfigurasi termasuk e-mail PIC, tanpa password).
+
+**Database utama setelah perubahan 2026-10-21** (dibaca penulis): 12 direktorat (Business Banking; Compliance, Corporate Affairs & Legal; Consumer & EBB; Corporate Assurance; Human Resources; Network & Digital Banking; Operations, Technology, Analytics & AI; Risk Management; Syariah Banking; SLC ASG Satyaguna Langgeng Capital; Strategy & Finance; Treasury & Financial Institutions), 6 former name direktorat (Sharia Banking, Special Asset, "Strategy, Finance & SPAPM", Treasury & Capital Market, SLC, Consumer & Emerging Business Banking), 0 former name divisi, `directory_admin_managed` = true.
+
+**Rollback**: kode lama tidak membaca kedua tabel dan setting itu (boleh dibiarkan). Kode lama akan menambahkan lagi direktorat seed lamanya saat boot bila namanya tidak ada (mis. "Sharia Banking" di samping "Syariah Banking"), karena top-up lama tidak mengenal former name - tidak diuji.
+
+Cek:
+
+```sql
+SELECT alias_name, directorate_name, created_at FROM dbo.px_directorate_aliases ORDER BY alias_id;
+SELECT directorate_name, alias_name, division_name FROM dbo.px_division_aliases ORDER BY alias_id;
+SELECT setting_value FROM dbo.px_app_settings WHERE setting_key = 'directory_admin_managed';
+```
+
+Diverifikasi oleh Modul 53 dan 54 (`docs/07` §40).

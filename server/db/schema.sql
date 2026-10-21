@@ -121,6 +121,29 @@ CREATE TABLE dbo.px_divisions (
 );
 GO
 
+-- v2.51.0: former names of directorates / divisions (Admin Parameters -> Directorates). A rename or merge records the
+-- old name -> the CURRENT name (kept current at every later rename / merge, so a chain A -> B -> C always resolves in
+-- one step); imports (ESS .xlsx, Exit Interview .xlsx, survey CSV, check-in) and seed top-ups map a former name to it.
+-- By name like the rest of the directory (a name is what the data rows carry). Deleting a directorate deletes its rows.
+IF OBJECT_ID(N'dbo.px_directorate_aliases', N'U') IS NULL
+CREATE TABLE dbo.px_directorate_aliases (
+  alias_id          INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_px_directorate_aliases PRIMARY KEY,
+  alias_name        NVARCHAR(200) NOT NULL CONSTRAINT UQ_px_directorate_aliases_name UNIQUE,   -- the former name
+  directorate_name  NVARCHAR(200) NOT NULL,                                                   -- the current name
+  created_at        DATETIME2(3)  NOT NULL CONSTRAINT DF_px_dir_alias_ts DEFAULT (SYSUTCDATETIME())
+);
+GO
+IF OBJECT_ID(N'dbo.px_division_aliases', N'U') IS NULL
+CREATE TABLE dbo.px_division_aliases (
+  alias_id          INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_px_division_aliases PRIMARY KEY,
+  directorate_name  NVARCHAR(200) NOT NULL,                                                   -- current directorate
+  alias_name        NVARCHAR(200) NOT NULL,                                                   -- the former division name
+  division_name     NVARCHAR(200) NOT NULL,                                                   -- the current division name
+  created_at        DATETIME2(3)  NOT NULL CONSTRAINT DF_px_div_alias_ts DEFAULT (SYSUTCDATETIME()),
+  CONSTRAINT UQ_px_division_aliases UNIQUE (directorate_name, alias_name)
+);
+GO
+
 -- ---------------------------------------------------------------- survey questions
 IF OBJECT_ID(N'dbo.px_master_survey_questions', N'U') IS NULL
 CREATE TABLE dbo.px_master_survey_questions (

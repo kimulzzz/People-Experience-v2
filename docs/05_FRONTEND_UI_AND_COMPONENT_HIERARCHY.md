@@ -401,6 +401,19 @@ API kini bisa mengirim indeks dan skor `null` serta status `NO_DATA` (lihat `doc
 | `MetricDetailModal.jsx` | Nilai "—", "No survey data in this period - left out of the index", badge abu-abu "No Data", pertanyaan berlabel "No Data" tanpa skor. Catatan "Annual metric: shows the result of Jan–Sep 2026" untuk metrik tahunan pada filter MTD **dihapus di v2.37.0** (MTD kini selalu satu bulan, `period_window.basis = 'MONTH'`). |
 | `TrendChart.jsx` | Titik `null` menjadi celah (garis dipotong per segmen), tooltip "—". |
 
+## Catatan v2.51.0 - Tab Directorates di Admin Parameters & urutan panel PX Index by Directorate
+
+API: `docs/04` "Catatan v2.51.0". Panduan Admin: `docs/06` "Mengelola Direktorat & Divisi (v2.51.0)".
+
+| Komponen | Perubahan |
+| :--- | :--- |
+| `AdminParametersModal.jsx` | Tab baru **Directorates** (ikon `Building2`) di antara Journey Parameters dan Email Settings; `activeTab`: `metrics \| journeys \| directorates \| email \| users`; prop baru `onDirectoryChanged` diteruskan ke `DirectoryManager`. |
+| `DirectoryManager.jsx` (baru) | Isi tab: tombol **Add Directorate** (form nama + divisi satu per baris); daftar direktorat dengan jumlah data yang merujuk (per sumber), tombol Rename / Merge into another directorate / Delete; per direktorat daftar divisi (Rename division, Delete division, **Add Division**), chip **former names** direktorat dan divisi (tambah lewat input "Former or alternative name", hapus lewat tombol x). Setiap perubahan lewat dialog konfirmasi: rename menyebut jumlah baris yang ikut berubah dan bahwa nama lama tetap dikenali impor; delete menyebut bahwa hanya mungkin bila tidak ada data yang merujuk (409 -> pesan + tombol "Merge into another directorate"); **merge** memanggil `merge-preview` dulu dan menampilkan baris yang pindah dan setiap akun yang cakupannya berubah ("— will now see ALL of ..." untuk cakupan yang melebar, dengan saran meninjau di Manage Users); nama yang dibawa data tanpa direktorat -> dialog "Adopt existing data?" (kirim ulang dengan `confirm_adopt`); nama yang merupakan former name direktorat lain -> catatan bahwa impor dengan nama itu akan pindah ke sini. Panjang input dibatasi `max_length` dari server (200). Divisi dikirim di body / query string. |
+| `App.jsx` | `refreshDirectorates()` (dipakai saat mount dan setelah perubahan) dan `handleDirectoryChanged(change)`: memuat ulang daftar direktorat untuk filter Header; filter Header mengikuti direktorat yang di-rename / di-merge (ke nama baru / tujuan) dan divisi yang di-rename; direktorat / divisi terpilih yang dihapus -> kembali ke `ALL`; selain itu dashboard (termasuk panel PX by directorate) dimuat ulang. |
+| `DirectoratePxPanel.jsx` | Baris diurutkan **abjad** nama direktorat (`localeCompare`, `sensitivity: 'base'`), bukan lagi PX tertinggi dulu. Kolom pertama = peringkat PX (PX tertinggi = 1, seri -> nama) di antara direktorat yang punya data sendiri, tooltip "PX rank n of m"; direktorat dengan `has_own_data === false` atau `px_index` `null` tampil "—" (tooltip "No data of its own - not ranked"). Kalimat "nomor urut" di Catatan v2.48.0 di bawah tidak berlaku lagi. |
+
+Tidak diuji otomatis: render tab Directorates, dialog dan panel (Modul 53/54 menguji lewat API). Pengecekan browser oleh main session tidak dilaporkan ke penulis.
+
 ## Catatan v2.50.0 - Pertanyaan ESS dari Manage Questions, Percentage, carry-forward, snapshot pertanyaan
 
 API: `docs/04` "Catatan v2.50.0".

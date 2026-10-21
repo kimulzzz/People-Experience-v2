@@ -15,6 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const storage = require('../db/storage');
 const { ytdEndMonth } = require('../db/filterUtils');
+const { buildResolver } = require('../db/directoryNames');
 const { snapshotQuestions } = require('./metricQuestionService');
 const { groupByQuestionSet, buildVersionedZip } = require('./evidenceVersions');
 
@@ -105,7 +106,7 @@ async function configuredEssQuestions(metricId) {
  * Returns { errors: [{ row_number, column, reason }], rows, period: { year, month } | null, index_label, question_labels,
  * file_question_labels }. Nothing is stored here; any error means the whole file is refused.
  */
-function validateEssSheet(sheetRows, directorates, configuredQuestions = []) {
+function validateEssSheet(sheetRows, directorates, configuredQuestions = [], resolver = null) {
   const errors = [];
   const err = (row_number, column, reason) => errors.push({ row_number, column, reason });
   const header = sheetRows.find(r => r.row_number === 1);
@@ -150,7 +151,8 @@ function validateEssSheet(sheetRows, directorates, configuredQuestions = []) {
     if (!dirText) err(n, 'A', 'Directorate is empty.');
     else if (isBankwideRow(dirText, levelText)) orgLevel = 'BANKWIDE';
     else {
-      directorate = dirByKey.get(canonicalDir(dirText)) || null;
+      // v2.51.0: a former name (renamed / merged directorate, seed rename) maps to the current directorate
+      directorate = dirByKey.get(canonicalDir(dirText)) || (resolver ? resolver.directorate(dirText.replace(/&amp;/gi, '&')) : null) || null;
       if (!directorate) err(n, 'A', `Directorate "${dirText}" is not in the directorate master.`);
       else orgLevel = 'DIRECTORATE';
     }
@@ -310,7 +312,7 @@ async function importEssSummary(buffer, fileName, metric, { uploadedBy } = {}) {
   }
   const directorates = await storage.getDirectorates();
   const configured = await configuredEssQuestions(metric.metric_id);
-  const v = validateEssSheet(sheetRows, directorates, configured);
+  const v = validateEssSheet(sheetRows, directorates, configured, buildResolver(directorates, await storage.getDirectoryAliases()));
   if (v.errors.length) {
     return {
       success: false,

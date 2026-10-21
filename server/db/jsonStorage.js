@@ -32,6 +32,8 @@ const { defaultUnitForScale, parseUnit } = require('./metricUnit');
 const { inferSurveySource, isEssMetric, resolveSurveySource, resolveRequiresManualUpload } = require('./surveySource');
 const { buildInitialStore: loadInitialStore } = require('./initialStore');
 const { planDirectory, renamedDirectorate, migrateScopes, migrateDirectorateOptions, DIRECTORATE_SETTING_KEYS } = require('./directorateMigration');
+const dirNames = require('./directoryNames');
+const { nameKey, buildResolver, currentSeedName, directoryError } = dirNames;
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const DATA_FILE = path.join(DATA_DIR, 'store.json');
@@ -51,33 +53,85 @@ const isEmployeeResponse = r => {
   return !(metricId === 2 || r.participant_id || r.university || metricId === 5 || r.candidate_id || r.applied_position);
 };
 
+// v2.51.0 directory helpers (same rules as sqlStorage; shared logic in directoryNames.js)
+// alphabetical, divisions too (dirNames.sortDirectory) - same order as sqlStorage.readDirectory; the store keeps its own order
+const storeDirectory = s => dirNames.sortDirectory((s.directorates || []).map(d => ({ directorate_id: d.directorate_id, directorate_name: d.directorate_name || d.name, divisions: d.divisions || d.sub_directorates || [] })));
+const storeAliases = s => ({ directorates: s.directorateAliases || [], divisions: s.divisionAliases || [] });
+const storeResolver = s => buildResolver(storeDirectory(s), storeAliases(s));
+const storeManaged = s => !!(s.appSettings && s.appSettings.directory_admin_managed && s.appSettings.directory_admin_managed.value === true);
+const migrationOpts = s => {
+  const resolver = storeResolver(s);
+  const managed = storeManaged(s);
+  return { isCurrent: resolver.isCurrent, mapTarget: name => resolver.directorate(name) || (managed ? null : currentSeedName(name)) };
+};
+
+// Every directorate entry gets the canonical { directorate_id, directorate_name, divisions } shape and a stable id (the
+// Admin menu addresses a directorate by id, like px_directorates.directorate_id); the alias lists exist.
+function normalizeStoreDirectory(s) {
+  s.directorates = s.directorates || [];
+  let next = s.directorates.reduce((mx, d) => Math.max(mx, parseInt(d.directorate_id, 10) || 0), 0) + 1;
+  s.directorates = s.directorates.map(d => ({
+    directorate_id: parseInt(d.directorate_id, 10) || next++,
+    directorate_name: d.directorate_name || d.name,
+    divisions: d.divisions || d.sub_directorates || []
+  }));
+  if (!Array.isArray(s.directorateAliases)) s.directorateAliases = [];
+  if (!Array.isArray(s.divisionAliases)) s.divisionAliases = [];
+}
+
+// Adds any seed directorate / division that is missing - never once the Admin manages the directory, and a seed name is
+// looked up through the resolver first (same rule as sqlStorage.topUpDirectory). Returns the number of entries added.
+function topUpStoreDirectory(s, seedList = initialDirectorates) {
+  if (storeManaged(s)) return 0;
+  const resolver = storeResolver(s);
+  let added = 0;
+  seedList.forEach(sd => {
+    const dirName = resolver.directorate(sd.directorate_name);
+    let d = dirName ? s.directorates.find(x => (x.directorate_name || x.name) === dirName) : null;
+    if (!d) { d = { directorate_name: sd.directorate_name, divisions: [] }; s.directorates.push(d); added++; }
+    const list = d.divisions || d.sub_directorates || (d.divisions = []);
+    sd.divisions.forEach(div => {
+      if (dirName && resolver.division(dirName, div)) return;
+      if (list.some(x => nameKey(x) === nameKey(div))) return;
+      list.push(div);
+      added++;
+    });
+  });
+  if (added) normalizeStoreDirectory(s);
+  return added;
+}
+
 // v2.31.0: renames the 8 old demo directorates to the bank's 12 real ones in the store (mapping in
 // directorateMigration.js). Only rows that still carry an old name change, so a second run changes 0
 // rows. Returns the rows changed per collection (the caller saves the store).
 function migrateStoreDirectorates(s) {
   const counts = { directorates_removed: 0, divisions_moved: 0, survey_responses: 0, attendances: 0, app_settings: 0, operational_records: 0 };
-  const plan = planDirectory(s.directorates || [], initialDirectorates);
+  // v2.51.0: once the Admin manages the directory the master is never rebuilt, and a v2.31.0 target is mapped to its
+  // CURRENT name (former-name aliases, seed renames) - same rule as sqlStorage.migrateDirectorates
+  const managed = storeManaged(s);
+  const plan = managed ? null : planDirectory(s.directorates || [], initialDirectorates, { mapTarget: currentSeedName });
   if (plan) {
     s.directorates = plan.directorates;
     counts.directorates_removed = plan.removed;
     counts.divisions_moved = plan.moved;
   }
+  const opts = migrationOpts(s);
   (s.surveyUploadedResponses || []).forEach(r => {
     if (!isEmployeeResponse(r)) return;
-    const to = renamedDirectorate(r.directorate, r.division);
+    const to = renamedDirectorate(r.directorate, r.division, opts);
     if (to) { r.directorate = to; counts.survey_responses++; }
   });
   (s.attendances || []).forEach(a => {
-    const to = renamedDirectorate(a.directorate, a.division);
+    const to = renamedDirectorate(a.directorate, a.division, opts);
     if (to) { a.directorate = to; counts.attendances++; }
   });
   DIRECTORATE_SETTING_KEYS.forEach(k => {
     const cur = s.appSettings && s.appSettings[k];
-    const next = cur && migrateDirectorateOptions(cur.value);
+    const next = cur && migrateDirectorateOptions(cur.value, opts);
     if (next) { s.appSettings[k] = { ...cur, value: next }; counts.app_settings++; }
   });
   Object.values(s.operationalRecords || {}).forEach(rows => (rows || []).forEach(r => {
-    const to = r && r.unit !== undefined && renamedDirectorate(r.unit, null);
+    const to = r && r.unit !== undefined && renamedDirectorate(r.unit, null, opts);
     if (to) { r.unit = to; counts.operational_records++; }
   }));
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
@@ -88,10 +142,11 @@ function migrateStoreDirectorates(s) {
 // Same for the login accounts (auth.json): scope lists and the legacy v2.26.0 directorate/division fields.
 function migrateAuthDirectorates(a) {
   const counts = { user_scopes: 0, users: 0 };
+  const opts = migrationOpts(getStore());
   (a.users || []).forEach(u => {
-    const next = Array.isArray(u.scopes) ? migrateScopes(u.scopes) : null;
+    const next = Array.isArray(u.scopes) ? migrateScopes(u.scopes, opts) : null;
     if (next) { counts.user_scopes += u.scopes.length; u.scopes = next; }
-    const to = renamedDirectorate(u.directorate, u.division);
+    const to = renamedDirectorate(u.directorate, u.division, opts);
     if (to) { u.directorate = to; counts.users++; }
   });
   if (counts.user_scopes + counts.users) console.log(`[jsonStorage] Directorate names migrated in login accounts: user_scopes=${counts.user_scopes}, users=${counts.users}.`);
@@ -119,10 +174,12 @@ function topUpStoreEssSeed(s) {
   const periodKey = r => `${r.metric_id}|${parseInt(r.survey_year, 10)}-${parseInt(r.survey_month, 10)}`;
   const have = new Set((s.essResults || []).map(periodKey));
   const todo = [...new Set(initialEssResults.filter(r => essIds.has(r.metric_id) && !have.has(periodKey(r))).map(r => r.upload_id))];
+  // v2.51.0: seed directorate names mapped to the current ones (a gone directorate dropped, a merged pair pooled)
+  const mappedRows = todo.length ? dirNames.mapEssSeedRows(initialEssResults.filter(r => todo.includes(r.upload_id)), storeResolver(s)) : [];
   todo.forEach(uploadId => {
     const up = initialEssUploads.find(u => u.upload_id === uploadId);
     if (up && !(s.surveyUploads || []).some(u => u.upload_id === up.upload_id)) s.surveyUploads.push(JSON.parse(JSON.stringify(up)));
-    initialEssResults.filter(r => r.upload_id === uploadId).forEach(r => {
+    mappedRows.filter(r => r.upload_id === uploadId).forEach(r => {
       s.essResults.push({ ess_result_id: nextEssResultId(s), ...JSON.parse(JSON.stringify(r)), created_at: up ? up.uploaded_at : new Date().toISOString() });
     });
   });
@@ -231,13 +288,10 @@ function getStore() {
         }
         // v2.31.0: old demo directorate names -> the 12 real directorates (before the top-up below).
         migrateStoreDirectorates(store);
-        // Add org units that exist in the seed directory but not yet in this store (non-destructive).
-        initialDirectorates.forEach(sd => {
-          let d = store.directorates.find(x => (x.directorate_name || x.name) === sd.directorate_name);
-          if (!d) { d = { directorate_name: sd.directorate_name, divisions: [] }; store.directorates.push(d); }
-          const list = d.divisions || d.sub_directorates || (d.divisions = []);
-          sd.divisions.forEach(div => { if (!list.includes(div)) list.push(div); });
-        });
+        normalizeStoreDirectory(store);
+        // Add org units that exist in the seed directory but not yet in this store (non-destructive; never once the
+        // Admin manages the directory, v2.51.0).
+        topUpStoreDirectory(store);
         // Backfill any admin setting that was added after this store.json was created.
         store.appSettings = { ...JSON.parse(JSON.stringify(initialAppSettings)), ...(store.appSettings || {}) };
         // v2.30.0: Indonesian default option labels -> English, only when still exactly the old default (admin edits stay).
@@ -287,8 +341,13 @@ function getStore() {
           );
           if (newSeedRecords.length > 0) {
             const maxId = store.surveyUploadedResponses.reduce((mx, r) => Math.max(mx, r.response_id || 0), 0);
+            // v2.51.0: an EMPLOYEE seed row's directorate / division is mapped to the current name (former names, seed renames)
+            const resolver = storeResolver(store);
             newSeedRecords.forEach((r, i) => {
-              store.surveyUploadedResponses.push({ ...r, response_id: maxId + i + 1 });
+              const row = { ...r, response_id: maxId + i + 1 };
+              const dir = isEmployeeResponse(row) ? resolver.directorate(row.directorate) : null;
+              if (dir) { row.division = resolver.division(dir, row.division) || row.division; row.directorate = dir; }
+              store.surveyUploadedResponses.push(row);
             });
           }
         }
@@ -315,10 +374,12 @@ function getStore() {
       } catch (err) {
         console.error('Error loading store.json, falling back to seed data:', err);
         store = loadInitialStore();
+        normalizeStoreDirectory(store);
         saveStore();
       }
     } else {
       store = loadInitialStore();
+      normalizeStoreDirectory(store);
       if (String(process.env.SEED_DEMO_DATA || 'true').toLowerCase() !== 'false') topUpStoreExitSeed(store);
       saveStore();
     }
@@ -334,6 +395,168 @@ function saveStore() {
     console.error('Failed to save store.json:', err);
   }
 }
+
+// ------------------------------------------------------------------ directory administration (v2.51.0)
+// Admin Parameters -> Directorates - same contract and rules as sqlStorage (names compared case-insensitively, every copy
+// of a name renamed, ESS rows of a merge pooled, scopes rewritten so access stays the same). store.json + auth.json are
+// changed in memory only after every check passed, then saved. The audit trail is never rewritten.
+const sameName = (a, b) => nameKey(a) === nameKey(b);
+const DIRECTORY_FLAG = 'directory_admin_managed';
+
+// Every collection holding a directorate (+ division) name. Survey rows: EMPLOYEE respondents only. Users = the legacy
+// v2.26.0 fields (scopes are handled separately).
+function directorySources(s, a) {
+  return [
+    { source: 'survey_responses', rows: (s.surveyUploadedResponses || []).filter(isEmployeeResponse), dir: 'directorate', div: 'division' },
+    { source: 'ess_results', rows: (s.essResults || []).filter(r => r.org_level === 'DIRECTORATE'), dir: 'directorate', div: null },
+    { source: 'exit_interviews', rows: s.exitInterviews || [], dir: 'directorate', div: 'division' },
+    { source: 'attendances', rows: s.attendances || [], dir: 'directorate', div: 'division' },
+    { source: 'users', rows: (a.users || []).filter(u => u.directorate), dir: 'directorate', div: 'division' },
+    { source: 'operational_records', rows: Object.values(s.operationalRecords || {}).flat().filter(r => r && r.unit !== undefined), dir: 'unit', div: null }
+  ];
+}
+
+function directoryUsageRowsOf(s, a) {
+  const rows = [];
+  directorySources(s, a).forEach(src => src.rows.forEach(r => rows.push({ source: src.source, directorate: r[src.dir], division: src.div ? (r[src.div] === undefined ? null : r[src.div]) : null, n: 1 })));
+  (a.users || []).forEach(u => normalizeScopes(u.scopes).forEach(sc => {
+    if (sc.divisions === null) rows.push({ source: 'user_scopes', directorate: sc.directorate, division: null, n: 1 });
+    else sc.divisions.forEach(div => rows.push({ source: 'user_scopes', directorate: sc.directorate, division: div, n: 1 }));
+  }));
+  DIRECTORATE_SETTING_KEYS.forEach(k => {
+    const list = ((s.appSettings || {})[k] || {}).value;
+    (Array.isArray(list) ? list : []).forEach(o => rows.push({ source: 'settings', directorate: o && typeof o === 'object' ? o.value : o, division: null, n: 1 }));
+  });
+  return rows;
+}
+
+const storeDirectorySummary = (s, a) => dirNames.summarizeUsage(storeDirectory(s), directoryUsageRowsOf(s, a), storeAliases(s));
+
+// id = the raw URL / body value: only a positive whole number or its exact digit string (dirNames.parseDirectoryId)
+function findStoreDirectorate(s, id) {
+  const n = dirNames.parseDirectoryId(id);
+  const d = n === null ? null : (s.directorates || []).find(x => x.directorate_id === n);
+  if (!d) throw directoryError(404, `Directorate ${String(id).slice(0, 40)} not found.`);
+  return d;
+}
+
+// #6: rows that already carry a name which is not in the master -> 409 requires_confirmation unless confirmAdopt
+function checkStoreOrphanAdoption(s, a, name, confirmAdopt) {
+  const orphans = dirNames.orphanUsage(directoryUsageRowsOf(s, a), name);
+  if (orphans && confirmAdopt !== true) {
+    throw directoryError(409, `Data rows that are not linked to any directorate already carry the name "${name}". Confirm to adopt them into this directorate.`,
+      { requires_confirmation: true, orphan_references: orphans });
+  }
+  return orphans;
+}
+
+// Source + target of a merge and the division plan (same rules as sqlStorage.mergePlan)
+function storeMergePlan(s, id, targetId) {
+  const src = findStoreDirectorate(s, id);
+  if (targetId === undefined || targetId === null || targetId === '') throw directoryError(400, 'target_id is required.');
+  const tgt = findStoreDirectorate(s, targetId);
+  if (src === tgt) throw directoryError(400, 'A directorate cannot be merged into itself.');
+  const divisionMap = {};
+  const moved = [];
+  const merged = [];
+  src.divisions.forEach(div => {
+    const same = tgt.divisions.find(x => sameName(x, div));
+    if (same) { divisionMap[nameKey(div)] = same; merged.push({ from: div, into: same }); } else moved.push(div);
+  });
+  return { src, tgt, divisionMap, moved, merged };
+}
+
+const scopedUsersOf = a => (a.users || []).map(u => ({ user_id: u.user_id, username: u.username, full_name: u.full_name, is_test_account: u.is_test_account === true, scopes: normalizeScopes(u.scopes) }));
+
+function findStoreDivision(d, division) {
+  const name = d.divisions.find(x => x === division) || d.divisions.find(x => sameName(x, division));
+  if (!name) throw directoryError(404, `Division "${division}" not found in ${d.directorate_name}.`);
+  return name;
+}
+
+function markStoreManaged(s) {
+  s.appSettings = s.appSettings || {};
+  const cur = s.appSettings[DIRECTORY_FLAG] || { description: ((initialAppSettings || {})[DIRECTORY_FLAG] || {}).description || '' };
+  s.appSettings[DIRECTORY_FLAG] = { ...cur, value: true };
+}
+
+function rewriteStoreScopes(a, rewrite) {
+  let users = 0;
+  let emptied = 0;
+  (a.users || []).forEach(u => {
+    const next = rewrite(normalizeScopes(u.scopes));
+    if (!next) return;
+    u.scopes = next;
+    users++;
+    if (!next.length) emptied++;
+  });
+  return { users, emptied };
+}
+
+// Directorate `from` -> `to` in every collection (rename, or merge into an existing `to`); see sqlStorage.cascadeDirectorate.
+function cascadeStoreDirectorate(s, a, from, to, merge = null) {
+  const counts = { survey_responses: 0, ess_results: 0, ess_results_pooled: 0, exit_interviews: 0, attendances: 0, user_scopes: 0, users: 0, operational_records: 0, settings: 0 };
+  directorySources(s, a).filter(x => x.source !== 'ess_results').forEach(src => src.rows.forEach(r => {
+    if (sameName(r[src.dir], from)) { r[src.dir] = to; counts[src.source]++; }
+  }));
+  const pooledAway = new Set();
+  const ess = s.essResults || [];
+  ess.filter(r => r.org_level === 'DIRECTORATE' && sameName(r.directorate, from)).forEach(r => {
+    const clash = sameName(from, to) ? null : ess.find(x => x !== r && !pooledAway.has(x) && x.org_level === 'DIRECTORATE' && sameName(x.directorate, to)
+      && Number(x.metric_id) === Number(r.metric_id) && Number(x.survey_year) === Number(r.survey_year) && Number(x.survey_month) === Number(r.survey_month));
+    if (clash) { Object.assign(clash, dirNames.poolEssResults([clash, r])); pooledAway.add(r); counts.ess_results_pooled++; } else r.directorate = to;
+    counts.ess_results++;
+  });
+  if (pooledAway.size) s.essResults = ess.filter(r => !pooledAway.has(r));
+  const scopes = rewriteStoreScopes(a, list => (merge
+    ? dirNames.mergeScopeDirectorate(list, from, to, merge.divisionMap)
+    : dirNames.renameScopeDirectorate(list, from, to)));
+  counts.user_scopes = scopes.users;
+  DIRECTORATE_SETTING_KEYS.forEach(k => {
+    const cur = s.appSettings && s.appSettings[k];
+    const next = cur && dirNames.renameDirectorateOption(cur.value, from, to);
+    if (next) { s.appSettings[k] = { ...cur, value: next }; counts.settings++; }
+  });
+  return counts;
+}
+
+// Former names after `from` became `to` (see sqlStorage.moveDirectorateAliases). Returns the directorate a released alias belonged to.
+function moveStoreAliases(s, from, to) {
+  const now = new Date().toISOString();
+  const released = s.directorateAliases.find(x => sameName(x.alias_name, to) && !sameName(x.directorate_name, from));
+  s.directorateAliases = s.directorateAliases.filter(x => !sameName(x.alias_name, to));
+  s.directorateAliases.forEach(x => { if (sameName(x.directorate_name, from)) x.directorate_name = to; });
+  if (!sameName(from, to)) {
+    s.directorateAliases.push({ alias_name: from, directorate_name: to, created_at: now });
+    const targetAliases = s.divisionAliases.filter(t => sameName(t.directorate_name, to));
+    s.divisionAliases = s.divisionAliases.filter(x => !(sameName(x.directorate_name, from) && targetAliases.some(t => sameName(t.alias_name, x.alias_name))));
+  }
+  s.divisionAliases.forEach(x => { if (sameName(x.directorate_name, from)) x.directorate_name = to; });
+  return released ? released.directorate_name : null;
+}
+
+// Adopted orphan rows take the MASTER spelling of the directorate and of its divisions (see sqlStorage.adoptOrphanSpelling).
+function adoptStoreOrphanSpelling(s, a, name, divisions = []) {
+  cascadeStoreDirectorate(s, a, name, name);
+  divisions.forEach(div => {
+    directorySources(s, a).filter(x => x.div).forEach(src => src.rows.forEach(r => {
+      if (sameName(r[src.dir], name) && sameName(r[src.div], div) && r[src.div] !== div) r[src.div] = div;
+    }));
+    rewriteStoreScopes(a, list => dirNames.respelledScopes(list, dirNames.renameScopeDivision(list, name, div, div)));
+  });
+}
+
+function saveDirectoryChange(s) {
+  markStoreManaged(s);
+  saveStore();
+  saveAuth();
+}
+
+// v2.51.0 configuration snapshot (same contract as sqlStorage.snapshotConfiguration / restoreConfiguration): everything an
+// Admin configures. Login accounts (auth.json) and the data collections are not part of it.
+const CONFIG_KEYS = ['journeys', 'checkpoints', 'metrics', 'weights', 'metricTargets', 'customSurveyQuestions', 'masterSurveyQuestions',
+  'actionLibrary', 'appSettings', 'directorates', 'directorateAliases', 'divisionAliases'];
+const deepCopy = v => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 
 // Database / Storage Adapter API
 // Login accounts, sessions and the audit trail live in their OWN file (server/data/auth.json,
@@ -913,7 +1136,7 @@ const storage = {
       weight: m.weight !== undefined ? m.weight : 1.0,
       metric_weight: m.weight !== undefined ? m.weight : 1.0
     }));
-    s.directorates = JSON.parse(JSON.stringify(initialDirectorates));
+    // v2.51.0: the directorate master is not part of "Reset Default" any more (managed in Admin Parameters -> Directorates)
     s.weights = initialMetrics.map(m => ({ metric_id: m.metric_id, weight: m.weight || 1.0 }));
     
     const defaultTargets = {};
@@ -936,7 +1159,7 @@ const storage = {
   },
 
   getDirectorates() {
-    const raw = getStore().directorates || initialDirectorates;
+    const raw = dirNames.sortDirectory(getStore().directorates || initialDirectorates);
     return raw.map(d => ({
       ...d,
       name: d.directorate_name || d.name,
@@ -944,6 +1167,262 @@ const storage = {
       sub_directorates: d.divisions || d.sub_directorates || [],
       divisions: d.divisions || d.sub_directorates || []
     }));
+  },
+
+  // ---- directory administration (v2.51.0, Admin Parameters -> Directorates) - same contract as sqlStorage
+  getDirectoryAliases() {
+    const s = getStore();
+    return JSON.parse(JSON.stringify(storeAliases(s)));
+  },
+  isDirectoryManaged() {
+    return storeManaged(getStore());
+  },
+  getDirectoryAdmin() {
+    const s = getStore();
+    return { directorates: storeDirectorySummary(s, getAuth()), managed: storeManaged(s) };
+  },
+  createDirectorate({ name, divisions, confirm_adopt } = {}) {
+    const s = getStore();
+    const v = dirNames.validateDirectorateName(name, storeDirectory(s));
+    if (v.error) throw directoryError(400, v.error);
+    if (divisions !== undefined && divisions !== null && !Array.isArray(divisions)) throw directoryError(400, 'divisions must be a list of division names.');
+    const divs = [];
+    for (const raw of divisions || []) {
+      const dv = dirNames.validateDivisionName(raw, divs);
+      if (dv.error) throw directoryError(400, dv.error);
+      divs.push(dv.name);
+    }
+    const adopted = checkStoreOrphanAdoption(s, getAuth(), v.name, confirm_adopt);
+    const released = s.directorateAliases.find(x => sameName(x.alias_name, v.name));
+    s.directorateAliases = s.directorateAliases.filter(x => !sameName(x.alias_name, v.name));
+    s.directorates.push({ directorate_name: v.name, divisions: divs });
+    normalizeStoreDirectory(s);
+    if (adopted) adoptStoreOrphanSpelling(s, getAuth(), v.name, divs);
+    saveDirectoryChange(s);
+    const created = storeDirectorySummary(s, getAuth()).find(d => sameName(d.name, v.name));
+    return { directorate: created, released_alias_of: released ? released.directorate_name : null, adopted_orphans: adopted };
+  },
+  renameDirectorate(id, name, { confirm_adopt } = {}) {
+    const s = getStore();
+    const a = getAuth();
+    const d = findStoreDirectorate(s, id);
+    const v = dirNames.validateDirectorateName(name, storeDirectory(s), d.directorate_name);
+    if (v.error) throw directoryError(400, v.error);
+    const from = d.directorate_name;
+    if (v.name === from) return { changed: false, from, to: v.name, counts: {} };
+    const adopted = sameName(v.name, from) ? null : checkStoreOrphanAdoption(s, a, v.name, confirm_adopt);
+    d.directorate_name = v.name;
+    const counts = cascadeStoreDirectorate(s, a, from, v.name);
+    if (adopted) adoptStoreOrphanSpelling(s, a, v.name, d.divisions);
+    const released = moveStoreAliases(s, from, v.name);
+    saveDirectoryChange(s);
+    return { changed: true, from, to: v.name, counts, released_alias_of: released, adopted_orphans: adopted };
+  },
+  deleteDirectorate(id) {
+    const s = getStore();
+    const d = findStoreDirectorate(s, id);
+    const entry = storeDirectorySummary(s, getAuth()).find(x => x.directorate_id === d.directorate_id);
+    if (entry.total_references > 0) {
+      throw directoryError(409, `"${d.directorate_name}" is still referenced by data, so it cannot be deleted. Merge it into another directorate instead.`,
+        { references: entry.usage, divisions_with_data: entry.divisions.filter(v => v.total_references > 0).map(v => v.name) });
+    }
+    s.directorates = s.directorates.filter(x => x !== d);
+    const before = s.directorateAliases.length;
+    s.directorateAliases = s.directorateAliases.filter(x => !sameName(x.directorate_name, d.directorate_name));
+    s.divisionAliases = s.divisionAliases.filter(x => !sameName(x.directorate_name, d.directorate_name));
+    saveDirectoryChange(s);
+    return { deleted: d.directorate_name, divisions: d.divisions.length, former_names_removed: before - s.directorateAliases.length };
+  },
+  previewMergeDirectorate(id, targetId) {
+    const s = getStore();
+    const a = getAuth();
+    const { src, tgt, divisionMap, moved, merged } = storeMergePlan(s, id, targetId);
+    const entry = storeDirectorySummary(s, a).find(x => x.directorate_id === src.directorate_id);
+    const ess = s.essResults || [];
+    const pooled = ess.filter(r => r.org_level === 'DIRECTORATE' && sameName(r.directorate, src.directorate_name) && ess.some(t => t.org_level === 'DIRECTORATE'
+      && sameName(t.directorate, tgt.directorate_name) && Number(t.metric_id) === Number(r.metric_id) && Number(t.survey_year) === Number(r.survey_year) && Number(t.survey_month) === Number(r.survey_month))).length;
+    return {
+      from: src.directorate_name, to: tgt.directorate_name, rows: entry.usage, total_references: entry.total_references,
+      ess_results_pooled: pooled, divisions_moved: moved, divisions_merged: merged,
+      accounts: dirNames.mergeScopeChanges(scopedUsersOf(a), src.directorate_name, tgt.directorate_name, divisionMap)
+    };
+  },
+  mergeDirectorate(id, targetId) {
+    const s = getStore();
+    const a = getAuth();
+    const { src, tgt, divisionMap, moved, merged } = storeMergePlan(s, id, targetId);
+    moved.forEach(div => tgt.divisions.push(div));
+    const sources = directorySources(s, a);
+    // data rows (and former division names) of a merged division take the target's spelling of it
+    merged.forEach(({ from, into: to }) => {
+      sources.filter(x => x.div).forEach(src2 => src2.rows.forEach(r => {
+        if (sameName(r[src2.dir], src.directorate_name) && sameName(r[src2.div], from)) r[src2.div] = to;
+      }));
+      s.divisionAliases.forEach(x => { if (sameName(x.directorate_name, src.directorate_name) && sameName(x.division_name, from)) x.division_name = to; });
+    });
+    const scopeChanges = dirNames.mergeScopeChanges(scopedUsersOf(a), src.directorate_name, tgt.directorate_name, divisionMap);
+    const counts = cascadeStoreDirectorate(s, a, src.directorate_name, tgt.directorate_name, { divisionMap });
+    s.directorates = s.directorates.filter(x => x !== src);
+    moveStoreAliases(s, src.directorate_name, tgt.directorate_name);
+    s.divisionAliases = s.divisionAliases.filter(x => !(sameName(x.directorate_name, tgt.directorate_name) && tgt.divisions.some(v => sameName(v, x.alias_name))));
+    saveDirectoryChange(s);
+    return { from: src.directorate_name, to: tgt.directorate_name, divisions_moved: moved.length, divisions_merged: merged.length, counts, scope_changes: scopeChanges };
+  },
+  addDivision(id, name) {
+    const s = getStore();
+    const d = findStoreDirectorate(s, id);
+    const v = dirNames.validateDivisionName(name, d.divisions);
+    if (v.error) throw directoryError(400, v.error);
+    s.divisionAliases = s.divisionAliases.filter(x => !(sameName(x.directorate_name, d.directorate_name) && sameName(x.alias_name, v.name)));
+    d.divisions.push(v.name);
+    saveDirectoryChange(s);
+    return { directorate: d.directorate_name, division: v.name };
+  },
+  renameDivision(id, division, name) {
+    const s = getStore();
+    const a = getAuth();
+    const d = findStoreDirectorate(s, id);
+    const from = findStoreDivision(d, division);
+    const v = dirNames.validateDivisionName(name, d.divisions, from);
+    if (v.error) throw directoryError(400, v.error);
+    if (v.name === from) return { changed: false, directorate: d.directorate_name, from, to: v.name, counts: {} };
+    d.divisions = d.divisions.map(x => (x === from ? v.name : x));
+    const counts = {};
+    directorySources(s, a).filter(x => x.div).forEach(src => {
+      counts[src.source] = 0;
+      src.rows.forEach(r => {
+        if (sameName(r[src.dir], d.directorate_name) && sameName(r[src.div], from)) { r[src.div] = v.name; counts[src.source]++; }
+      });
+    });
+    counts.user_scopes = rewriteStoreScopes(a, list => dirNames.renameScopeDivision(list, d.directorate_name, from, v.name)).users;
+    s.divisionAliases = s.divisionAliases.filter(x => !(sameName(x.directorate_name, d.directorate_name) && sameName(x.alias_name, v.name)));
+    s.divisionAliases.forEach(x => { if (sameName(x.directorate_name, d.directorate_name) && sameName(x.division_name, from)) x.division_name = v.name; });
+    if (!sameName(from, v.name)) s.divisionAliases.push({ directorate_name: d.directorate_name, alias_name: from, division_name: v.name, created_at: new Date().toISOString() });
+    saveDirectoryChange(s);
+    return { changed: true, directorate: d.directorate_name, from, to: v.name, counts };
+  },
+  deleteDivision(id, division) {
+    const s = getStore();
+    const d = findStoreDirectorate(s, id);
+    const name = findStoreDivision(d, division);
+    const entry = storeDirectorySummary(s, getAuth()).find(x => x.directorate_id === d.directorate_id);
+    const div = entry.divisions.find(x => x.name === name);
+    if (div.total_references > 0) {
+      throw directoryError(409, `Division "${name}" of ${d.directorate_name} is still referenced by data, so it cannot be deleted.`, { references: div.usage });
+    }
+    d.divisions = d.divisions.filter(x => x !== name);
+    s.divisionAliases = s.divisionAliases.filter(x => !(sameName(x.directorate_name, d.directorate_name) && sameName(x.division_name, name)));
+    saveDirectoryChange(s);
+    return { directorate: d.directorate_name, deleted: name };
+  },
+  // Former / alternative names added by hand (v2.51.0 #5) - same rules as sqlStorage.addDirectorateAlias & co.
+  addDirectorateAlias(id, name, { confirm_adopt } = {}) {
+    const s = getStore();
+    const a = getAuth();
+    const d = findStoreDirectorate(s, id);
+    const v = dirNames.validateDirectorateAlias(name, storeDirectory(s), storeAliases(s), d.directorate_name);
+    if (v.error) throw directoryError(v.status, v.error);
+    const adopted = checkStoreOrphanAdoption(s, a, v.name, confirm_adopt);
+    let counts = {};
+    if (adopted) {
+      counts = cascadeStoreDirectorate(s, a, v.name, d.directorate_name);
+      adoptStoreOrphanSpelling(s, a, d.directorate_name, d.divisions);
+    }
+    s.directorateAliases.push({ alias_name: v.name, directorate_name: d.directorate_name, created_at: new Date().toISOString() });
+    saveDirectoryChange(s);
+    return { directorate: d.directorate_name, alias: v.name, adopted_orphans: adopted, counts };
+  },
+  removeDirectorateAlias(id, name) {
+    const s = getStore();
+    const d = findStoreDirectorate(s, id);
+    if (typeof name !== 'string' || !dirNames.cleanName(name)) throw directoryError(400, 'name (the former name, ?name=) is required.');
+    const hit = s.directorateAliases.find(x => sameName(x.directorate_name, d.directorate_name) && sameName(x.alias_name, name));
+    if (!hit) throw directoryError(404, `"${dirNames.cleanName(name).slice(0, 80)}" is not a former name of ${d.directorate_name}.`);
+    s.directorateAliases = s.directorateAliases.filter(x => x !== hit);
+    saveDirectoryChange(s);
+    return { directorate: d.directorate_name, alias: hit.alias_name };
+  },
+  addDivisionAlias(id, division, name, { confirm_adopt } = {}) {
+    const s = getStore();
+    const a = getAuth();
+    const d = findStoreDirectorate(s, id);
+    const target = findStoreDivision(d, division);
+    const v = dirNames.validateDivisionAlias(name, d.directorate_name, d.divisions, storeAliases(s));
+    if (v.error) throw directoryError(v.status, v.error);
+    const orphans = dirNames.divisionOrphanUsage(directoryUsageRowsOf(s, a), d.directorate_name, v.name);
+    if (orphans && confirm_adopt !== true) {
+      throw directoryError(409, `Data rows of ${d.directorate_name} already carry the division name "${v.name}", which is no division of it. Confirm to adopt them into "${target}".`,
+        { requires_confirmation: true, orphan_references: orphans });
+    }
+    const counts = {};
+    if (orphans) {
+      directorySources(s, a).filter(x => x.div).forEach(src => {
+        counts[src.source] = 0;
+        src.rows.forEach(r => {
+          if (sameName(r[src.dir], d.directorate_name) && sameName(r[src.div], v.name)) { r[src.div] = target; counts[src.source]++; }
+        });
+      });
+      counts.user_scopes = rewriteStoreScopes(a, list => dirNames.respelledScopes(list, dirNames.renameScopeDivision(list, d.directorate_name, v.name, target))).users;
+    }
+    s.divisionAliases.push({ directorate_name: d.directorate_name, alias_name: v.name, division_name: target, created_at: new Date().toISOString() });
+    saveDirectoryChange(s);
+    return { directorate: d.directorate_name, division: target, alias: v.name, adopted_orphans: orphans, counts };
+  },
+  removeDivisionAlias(id, name) {
+    const s = getStore();
+    const d = findStoreDirectorate(s, id);
+    if (typeof name !== 'string' || !dirNames.cleanName(name)) throw directoryError(400, 'name (the former division name, ?name=) is required.');
+    const hit = s.divisionAliases.find(x => sameName(x.directorate_name, d.directorate_name) && sameName(x.alias_name, name));
+    if (!hit) throw directoryError(404, `"${dirNames.cleanName(name).slice(0, 80)}" is not a former division name in ${d.directorate_name}.`);
+    s.divisionAliases = s.divisionAliases.filter(x => x !== hit);
+    saveDirectoryChange(s);
+    return { directorate: d.directorate_name, division: hit.division_name, alias: hit.alias_name };
+  },
+  // ---- configuration snapshot (v2.51.0) - see sqlStorage.restoreConfiguration
+  snapshotConfiguration() {
+    const s = getStore();
+    const keys = {};
+    CONFIG_KEYS.forEach(k => { keys[k] = s[k] === undefined ? null : deepCopy(s[k]); });
+    return { kind: 'px-config-snapshot', version: 1, backend: 'json', file: DATA_FILE, taken_at: new Date().toISOString(), keys };
+  },
+  compareConfiguration(snap) {
+    if (!snap || snap.kind !== 'px-config-snapshot' || snap.backend !== 'json' || !snap.keys) throw new Error('Not a JSON store configuration snapshot.');
+    if (snap.file !== DATA_FILE) throw new Error(`The snapshot belongs to ${snap.file}, not to ${DATA_FILE}.`);
+    const s = getStore();
+    const snapMetrics = (snap.keys.metrics || []).map(m => ({ metric_id: m.metric_id, metric_name: m.metric_name }));
+    return {
+      differing_tables: CONFIG_KEYS.filter(k => JSON.stringify(s[k] === undefined ? null : s[k]) !== JSON.stringify(snap.keys[k] === undefined ? null : snap.keys[k])),
+      extra_metrics: (s.metrics || []).filter(m => !snapMetrics.some(x => x.metric_id === m.metric_id)).map(m => ({ metric_id: m.metric_id, metric_name: m.metric_name })),
+      missing_metrics: snapMetrics.filter(m => !(s.metrics || []).some(x => x.metric_id === m.metric_id))
+    };
+  },
+  restoreConfiguration(snap) {
+    const cmp = this.compareConfiguration(snap);   // validates the snapshot first - nothing changes on a bad one
+    const s = getStore();
+    const ids = new Set(cmp.extra_metrics.map(m => m.metric_id));
+    const essUploadIds = (s.surveyUploads || []).filter(u => ids.has(u.metric_id)).map(u => u.upload_id);
+    cmp.differing_tables.forEach(k => {
+      const want = snap.keys[k] === undefined ? null : snap.keys[k];
+      if (want === null) delete s[k]; else s[k] = deepCopy(want);
+    });
+    // then the data of the metrics created after the snapshot (the deleteMetric cascade), saved once together
+    if (ids.size) {
+      s.reminderLog = (s.reminderLog || []).filter(l => !ids.has(l.metric_id));
+      s.surveyUploadedResponses = (s.surveyUploadedResponses || []).filter(r => !ids.has(r.metric_id));
+      s.essResults = (s.essResults || []).filter(r => !ids.has(r.metric_id));
+      s.surveyUploads = (s.surveyUploads || []).filter(u => !ids.has(u.metric_id));
+    }
+    if (cmp.differing_tables.length || ids.size) saveStore();
+    const { essOriginalFilePath } = require('../services/essSummaryService');
+    essUploadIds.forEach(id => { const f = essOriginalFilePath(id); if (f) fs.unlink(f, () => {}); });
+    return { removed_metrics: cmp.extra_metrics, restored_tables: cmp.differing_tables, removed_ess_files: essUploadIds.length };
+  },
+  // boot top-up (runs by itself when store.json is loaded), exposed for the regression suite (optional seed list)
+  topUpDirectory(seedList) {
+    const s = getStore();
+    const added = topUpStoreDirectory(s, seedList || initialDirectorates);
+    if (added) saveStore();
+    return added;
   },
 
   updateMetricScore(metric_id, raw_value, normalized_score, notes = '') {

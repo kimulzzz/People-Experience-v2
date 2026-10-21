@@ -41,6 +41,9 @@ async function main() {
     checkpoints: await storage.getCheckpoints(),
     metrics,
     directorates: (await storage.getDirectorates()).map(d => ({ directorate_name: d.directorate_name, divisions: d.divisions })),
+    // former directorate / division names (v2.51.0)
+    directorateAliases: (await storage.getDirectoryAliases()).directorates,
+    divisionAliases: (await storage.getDirectoryAliases()).divisions,
     metricTargets: await storage.getMetricTargets(),
     weights: metrics.map(m => ({ metric_id: m.metric_id, weight: m.weight })),
     actionLibrary: await storage.getActionLibrary(),

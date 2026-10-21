@@ -17,6 +17,8 @@ const { normalizeScopes } = require('./scopeUtils');
 const { DEFAULT_USER_MENU_ACCESS, coversEventManagerDirectorate } = require('./menuAccess');
 const { isHistoricalTestRow } = require('./testAccounts');
 const { planDirectory, renamedDirectorate, migrateScopes, migrateDirectorateOptions, DIRECTORATE_SETTING_KEYS } = require('./directorateMigration');
+const dirNames = require('./directoryNames');
+const { nameKey, buildResolver, currentSeedName, directoryError } = dirNames;
 
 // ------------------------------------------------------------------ connection
 let poolPromise = null;
@@ -426,27 +428,37 @@ async function seedSurveyQuestions(tx) {
 
 // Adds any directorate / division of the seed directory that is missing (never removes or renames
 // anything an admin changed). Keeps the directory in step with the units respondents belong to.
-async function topUpDirectory() {
-  const have = await run(`SELECT d.directorate_name, v.division_name FROM dbo.px_directorates d
-                          LEFT JOIN dbo.px_divisions v ON v.directorate_id = d.directorate_id`);
-  const dirs = new Set(have.map(r => r.directorate_name));
-  const pairs = new Set(have.filter(r => r.division_name !== null).map(r => r.directorate_name + '|' + r.division_name));
+// v2.51.0: does nothing once the Admin manages the directory (Admin Parameters -> Directorates sets
+// directory_admin_managed), so a renamed / merged / deleted directorate or division never comes back; before that a
+// seed name is looked up through the resolver (former names + seed renames), so a database that still has the old
+// spelling (e.g. "Sharia Banking") does not get the new seed spelling added as a second directorate.
+// seedList is only passed by the regression suite. Returns the number of entries added.
+async function topUpDirectory(seedList = seed.initialDirectorates) {
+  if (await isDirectoryManaged()) return 0;
+  const resolver = await directoryResolver();
   const todo = [];
-  for (const d of seed.initialDirectorates) {
-    for (const div of d.divisions) if (!pairs.has(d.directorate_name + '|' + div)) todo.push([d.directorate_name, div]);
-    if (!dirs.has(d.directorate_name) && !d.divisions.length) todo.push([d.directorate_name, null]);
+  for (const d of seedList) {
+    const dir = resolver.directorate(d.directorate_name);
+    if (!dir) {
+      todo.push([d.directorate_name, null]);
+      for (const div of d.divisions) todo.push([d.directorate_name, div]);
+      continue;
+    }
+    for (const div of d.divisions) if (!resolver.division(dir, div)) todo.push([dir, div]);
   }
-  if (!todo.length) return;
+  if (!todo.length) return 0;
   await inTransaction(async tx => {
     for (const [name, division_name] of todo) {
       await run(`IF NOT EXISTS (SELECT 1 FROM dbo.px_directorates WHERE directorate_name = @name) INSERT INTO dbo.px_directorates (directorate_name) VALUES (@name)`, { name }, tx);
       if (division_name) {
         await run(`INSERT INTO dbo.px_divisions (directorate_id, division_name)
-                   SELECT directorate_id, @division_name FROM dbo.px_directorates WHERE directorate_name = @name`, { name, division_name }, tx);
+                   SELECT d.directorate_id, @division_name FROM dbo.px_directorates d WHERE d.directorate_name = @name
+                     AND NOT EXISTS (SELECT 1 FROM dbo.px_divisions v WHERE v.directorate_id = d.directorate_id AND v.division_name = @division_name)`, { name, division_name }, tx);
       }
     }
   });
   console.log(`[sqlStorage] Added ${todo.length} missing directory entries.`);
+  return todo.length;
 }
 
 // Fills px_metrics.unit where it is still NULL (a database created before v2.25.0): the seed's unit for
@@ -614,6 +626,8 @@ const BIN = 'COLLATE Latin1_General_100_BIN2';
 async function migrateDirectorates() {
   const counts = { directorates_removed: 0, divisions_moved: 0, survey_responses: 0, attendances: 0, user_scopes: 0, users: 0, app_settings: 0, operational_records: 0 };
   await inTransaction(async tx => {
+    // v2.51.0: once the Admin manages the directory the master is never rebuilt (an old demo name in it was created on purpose)
+    const managed = await isDirectoryManaged(tx);
     // Directory: rebuilt in seed order with every existing division re-parented.
     const dirRows = await run(`SELECT d.directorate_id, d.directorate_name, v.division_name FROM dbo.px_directorates d
                                LEFT JOIN dbo.px_divisions v ON v.directorate_id = d.directorate_id ORDER BY d.directorate_id, v.division_id`, {}, tx);
@@ -623,13 +637,18 @@ async function migrateDirectorates() {
       if (!d) { d = { id: r.directorate_id, directorate_name: r.directorate_name, divisions: [] }; current.push(d); }
       if (r.division_name !== null) d.divisions.push(r.division_name);
     });
-    const plan = planDirectory(current, seed.initialDirectorates);
+    const plan = managed ? null : planDirectory(current, seed.initialDirectorates, { mapTarget: currentSeedName });
     if (plan) {
       await run('DELETE FROM dbo.px_divisions; DELETE FROM dbo.px_directorates;', {}, tx);
       for (const d of plan.directorates) await insertDirectorate(tx, d);
       counts.directorates_removed = plan.removed;
       counts.divisions_moved = plan.moved;
     }
+
+    // v2.51.0: a v2.31.0 target is mapped to its CURRENT name (former-name aliases, seed renames) so a renamed directorate is
+    // never resurrected; a name that is a directorate of the master today is never treated as an old demo name.
+    const resolver = await directoryResolver(tx);
+    const opts = { isCurrent: resolver.isCurrent, mapTarget: name => resolver.directorate(name) || (managed ? null : currentSeedName(name)) };
 
     // Columns holding (directorate, division): renamed per distinct exact pair.
     const renamePairs = async (table, dirCol, divCol, where) => {
@@ -638,7 +657,7 @@ async function migrateDirectorates() {
                                GROUP BY ${dirCol} ${BIN}${divCol ? `, ${divCol} ${BIN}` : ''}`, {}, tx);
       let changed = 0;
       for (const p of pairs) {
-        const to = renamedDirectorate(p.dir, p.div);
+        const to = renamedDirectorate(p.dir, p.div, opts);
         if (!to) continue;
         await run(`UPDATE dbo.${table} SET ${dirCol} = @to WHERE ${dirCol} ${BIN} = @dir
                    ${divCol ? (p.div === null ? `AND ${divCol} IS NULL` : `AND ${divCol} ${BIN} = @div`) : ''} ${where ? `AND ${where}` : ''}`,
@@ -661,7 +680,7 @@ async function migrateDirectorates() {
       byUser.get(r.user_id).push({ directorate: r.directorate, divisions: r.division === null ? null : [r.division] });
     });
     for (const [user_id, list] of byUser) {
-      const next = migrateScopes(list);
+      const next = migrateScopes(list, opts);
       if (!next) continue;
       await writeUserScopes(tx, user_id, next);
       counts.user_scopes += list.length;
@@ -671,7 +690,7 @@ async function migrateDirectorates() {
     for (const k of DIRECTORATE_SETTING_KEYS) {
       const rows = await run('SELECT setting_value FROM dbo.px_app_settings WHERE setting_key = @k', { k }, tx);
       if (!rows.length) continue;
-      const next = migrateDirectorateOptions(parseJson(rows[0].setting_value, null));
+      const next = migrateDirectorateOptions(parseJson(rows[0].setting_value, null), opts);
       if (!next) continue;
       await run('UPDATE dbo.px_app_settings SET setting_value = @v, updated_at = SYSUTCDATETIME() WHERE setting_key = @k', { k, v: T.max(JSON.stringify(next)) }, tx);
       counts.app_settings++;
@@ -867,9 +886,10 @@ async function clearParameters(tx) {
              DELETE FROM dbo.px_survey_questions;
              DELETE FROM dbo.px_metrics;
              DELETE FROM dbo.px_checkpoints;
-             DELETE FROM dbo.px_journeys;
-             DELETE FROM dbo.px_divisions;
-             DELETE FROM dbo.px_directorates;`, {}, tx);
+             DELETE FROM dbo.px_journeys;`, {}, tx);
+  // v2.51.0: the directorate master is not part of "Reset Default" any more (it is managed in Admin Parameters ->
+  // Directorates; resetting it would undo the Admin's renames / merges and orphan the data that carries the names).
+
 }
 
 async function insertDefaultParameters(tx) {
@@ -879,7 +899,6 @@ async function insertDefaultParameters(tx) {
     await insertMetric(tx, m);
     await upsertTarget(tx, m.metric_id, { target_value: m.target_value, target_display: m.target_display, min_threshold: m.min_threshold });
   }
-  for (const d of seed.initialDirectorates) await insertDirectorate(tx, d);
   await seedSurveyQuestions(tx);
 }
 
@@ -913,6 +932,17 @@ async function importStore(store, log = () => {}) {
 
     for (const d of store.directorates || []) await insertDirectorate(tx, d);
     counts.directorates = (store.directorates || []).length;
+    // v2.51.0: former names of directorates / divisions (aliases)
+    for (const a of store.directorateAliases || []) {
+      await run('INSERT INTO dbo.px_directorate_aliases (alias_name, directorate_name, created_at) VALUES (@a, @d, @ts)',
+        { a: a.alias_name, d: a.directorate_name, ts: toDateObj(a.created_at) }, tx);
+    }
+    for (const a of store.divisionAliases || []) {
+      await run('INSERT INTO dbo.px_division_aliases (directorate_name, alias_name, division_name, created_at) VALUES (@d, @a, @v, @ts)',
+        { d: a.directorate_name, a: a.alias_name, v: a.division_name, ts: toDateObj(a.created_at) }, tx);
+    }
+    counts.directorate_aliases = (store.directorateAliases || []).length;
+    counts.division_aliases = (store.divisionAliases || []).length;
 
     for (const a of store.actionLibrary || []) {
       await run(`INSERT INTO dbo.px_action_library (metric_id, checkpoint_id, gap_condition, recommended_action, suggested_initiatives)
@@ -1127,6 +1157,15 @@ async function topUpSeedResponses() {
   const have = new Set(existing.map(r => `${r.metric_id}|${r.d}|${r.respondent_id}`));
   const missing = seedRows.map(normalizeResponse).filter(n => !have.has(`${n.metric_id}|${n.survey_date}|${n.respondent_id}`));
   if (!missing.length) return;
+  // v2.51.0: an EMPLOYEE seed row's directorate / division is mapped to the current name (former names, seed renames)
+  const resolver = await directoryResolver();
+  missing.forEach(n => {
+    if (n.respondent_type !== 'EMPLOYEE') return;
+    const dir = resolver.directorate(n.org_unit_1);
+    if (!dir) return;
+    n.org_unit_2 = resolver.division(dir, n.org_unit_2) || n.org_unit_2;
+    n.org_unit_1 = dir;
+  });
   await inTransaction(async tx => {
     await run(`IF NOT EXISTS (SELECT 1 FROM dbo.px_survey_uploads WHERE upload_id = @u)
                  INSERT INTO dbo.px_survey_uploads (upload_id, metric_id, file_name, total_rows, valid_rows, invalid_rows, calculated_avg_score, uploaded_by)
@@ -1196,6 +1235,8 @@ async function topUpEssSeed() {
   const have = new Set((await run('SELECT DISTINCT metric_id, survey_year, survey_month FROM dbo.px_ess_results')).map(periodKey));
   const todo = [...new Set(seedRows.filter(r => ess.has(r.metric_id) && !have.has(periodKey(r))).map(r => r.upload_id))];
   if (!todo.length) return [];
+  // v2.51.0: seed directorate names mapped to the current ones (a gone directorate dropped, a merged pair pooled)
+  const mappedRows = dirNames.mapEssSeedRows(seedRows.filter(r => todo.includes(r.upload_id)), await directoryResolver());
   await inTransaction(async tx => {
     for (const uploadId of todo) {
       const up = (seed.initialEssUploads || []).find(u => u.upload_id === uploadId);
@@ -1207,7 +1248,7 @@ async function topUpEssSeed() {
           invalid_rows: up.invalid_rows, avg: up.calculated_avg_score, uploaded_by: up.uploaded_by, uploaded_at: toDateObj(up.uploaded_at)
         }, tx);
       }
-      for (const r of seedRows.filter(x => x.upload_id === uploadId)) await insertEssResult(tx, r.upload_id, r);
+      for (const r of mappedRows.filter(x => x.upload_id === uploadId)) await insertEssResult(tx, r.upload_id, r);
     }
   });
   return todo;
@@ -1379,6 +1420,590 @@ async function selectResponses(extraWhere, params, filterOptions) {
   return rows.map(rowToResponse);
 }
 
+// ------------------------------------------------------------------ directory administration (v2.51.0)
+// Admin Parameters -> Directorates. Every change runs in ONE transaction and cascades the name into every table that
+// copies it; px_audit_log, the stored original upload files and old evidence CSVs are historical records and are never
+// rewritten. Names are compared with the database collation (case-insensitive), so a case-only rename also fixes the
+// spelling of every copy. Shared rules (validation, resolver, scope rewrites, usage summary) live in directoryNames.js.
+
+// Tables holding a directorate name (+ division name). Survey rows: EMPLOYEE respondents only (campus / candidate rows keep
+// a university / applied position in org_unit_1 - same rule as migrateDirectorates). px_users = legacy v2.26.0 columns.
+const DIRECTORY_SOURCES = [
+  { source: 'survey_responses', table: 'px_survey_uploaded_responses', dir: 'org_unit_1', div: 'org_unit_2', where: "respondent_type = 'EMPLOYEE'" },
+  { source: 'ess_results', table: 'px_ess_results', dir: 'directorate', div: null, where: "org_level = 'DIRECTORATE'" },
+  { source: 'exit_interviews', table: 'px_exit_interviews', dir: 'directorate', div: 'division' },
+  { source: 'attendances', table: 'px_attendances', dir: 'directorate', div: 'division' },
+  { source: 'user_scopes', table: 'px_user_scopes', dir: 'directorate', div: 'division' },
+  { source: 'users', table: 'px_users', dir: 'directorate', div: 'division', where: 'directorate IS NOT NULL' },
+  { source: 'operational_records', table: 'px_recruitment_sla_by_unit', dir: 'unit', div: null }
+];
+const DIRECTORY_FLAG = 'directory_admin_managed';
+
+// [{ directorate_id, directorate_name, divisions: [names] }] - alphabetical, divisions too (dirNames.sortDirectory)
+async function readDirectory(tx) {
+  const rows = await run(`SELECT d.directorate_id, d.directorate_name, v.division_name FROM dbo.px_directorates d
+                          LEFT JOIN dbo.px_divisions v ON v.directorate_id = d.directorate_id ORDER BY d.directorate_id, v.division_id`, {}, tx);
+  const byId = new Map();
+  rows.forEach(r => {
+    if (!byId.has(r.directorate_id)) byId.set(r.directorate_id, { directorate_id: r.directorate_id, directorate_name: r.directorate_name, divisions: [] });
+    if (r.division_name !== null) byId.get(r.directorate_id).divisions.push(r.division_name);
+  });
+  return dirNames.sortDirectory([...byId.values()]);
+}
+
+async function readDirectoryAliases(tx) {
+  const directorates = await run('SELECT alias_name, directorate_name, created_at FROM dbo.px_directorate_aliases ORDER BY alias_id', {}, tx);
+  const divisions = await run('SELECT directorate_name, alias_name, division_name, created_at FROM dbo.px_division_aliases ORDER BY alias_id', {}, tx);
+  return {
+    directorates: directorates.map(r => ({ alias_name: r.alias_name, directorate_name: r.directorate_name, created_at: iso(r.created_at) })),
+    divisions: divisions.map(r => ({ directorate_name: r.directorate_name, alias_name: r.alias_name, division_name: r.division_name, created_at: iso(r.created_at) }))
+  };
+}
+
+async function directoryResolver(tx) {
+  return buildResolver(await readDirectory(tx), await readDirectoryAliases(tx));
+}
+
+async function isDirectoryManaged(tx) {
+  const rows = await run('SELECT setting_value FROM dbo.px_app_settings WHERE setting_key = @k', { k: DIRECTORY_FLAG }, tx);
+  return rows.length > 0 && parseJson(rows[0].setting_value, false) === true;
+}
+
+// The first Admin change of the directory: from now on the boot never tops the master up from the seed.
+async function markDirectoryManaged(tx) {
+  const def = (seed.initialAppSettings || {})[DIRECTORY_FLAG] || {};
+  await run(`IF EXISTS (SELECT 1 FROM dbo.px_app_settings WHERE setting_key = @k)
+               UPDATE dbo.px_app_settings SET setting_value = N'true', updated_at = SYSUTCDATETIME() WHERE setting_key = @k AND setting_value <> N'true'
+             ELSE INSERT INTO dbo.px_app_settings (setting_key, setting_value, description) VALUES (@k, N'true', @d)`,
+  { k: DIRECTORY_FLAG, d: def.description || '' }, tx);
+}
+
+// [{ source, directorate, division, n }] for directoryNames.summarizeUsage (settings = one row per listed directorate)
+async function directoryUsageRows(tx) {
+  const parts = DIRECTORY_SOURCES.map(s => `SELECT '${s.source}' AS source, ${s.dir} AS directorate, ${s.div || 'CAST(NULL AS NVARCHAR(200))'} AS division, COUNT(*) AS n
+    FROM dbo.${s.table} ${s.where ? `WHERE ${s.where}` : ''} GROUP BY ${s.dir}${s.div ? `, ${s.div}` : ''}`);
+  const rows = await run(parts.join('\nUNION ALL\n'), {}, tx);
+  for (const k of DIRECTORATE_SETTING_KEYS) {
+    const r = await run('SELECT setting_value FROM dbo.px_app_settings WHERE setting_key = @k', { k }, tx);
+    const list = r.length ? parseJson(r[0].setting_value, []) : [];
+    (Array.isArray(list) ? list : []).forEach(o => rows.push({ source: 'settings', directorate: o && typeof o === 'object' ? o.value : o, division: null, n: 1 }));
+  }
+  return rows;
+}
+
+async function directorySummary(tx) {
+  const aliases = await readDirectoryAliases(tx);
+  return dirNames.summarizeUsage(await readDirectory(tx), await directoryUsageRows(tx), aliases);
+}
+
+// id = the raw URL / body value: only a positive whole number or its exact digit string (dirNames.parseDirectoryId)
+async function findDirectorate(tx, id) {
+  const n = dirNames.parseDirectoryId(id);
+  const d = n === null ? null : (await readDirectory(tx)).find(x => x.directorate_id === n);
+  if (!d) throw directoryError(404, `Directorate ${String(id).slice(0, 40)} not found.`);
+  return d;
+}
+
+// #3: every directory change runs in one transaction; a deadlock (1205) with a parallel change is retried once, a UNIQUE
+// violation (a parallel change took the name, or the database collation sees two names as equal) becomes a clean 409.
+async function directoryTx(work) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await inTransaction(work);
+    } catch (err) {
+      const n = err && (err.number || (err.originalError && err.originalError.info && err.originalError.info.number));
+      if (n === 1205 && attempt === 1) continue;
+      if (n === 1205) throw directoryError(409, 'Another directory change ran at the same time. Nothing was changed - reload and try again.');
+      if (isUniqueViolation(err)) throw directoryError(409, 'That name is already in use (possibly by a change made at the same time, or a name the database treats as equal). Nothing was changed - reload and try again.');
+      throw err;
+    }
+  }
+}
+
+// Login accounts with their scopes (for the merge preview / audit)
+async function readScopedUsers(tx) {
+  const users = (await run('SELECT user_id, username, full_name, is_test_account FROM dbo.px_users ORDER BY user_id', {}, tx))
+    .map(r => ({ user_id: r.user_id, username: r.username, full_name: r.full_name, is_test_account: !!r.is_test_account }));
+  return withScopes(users, tx);
+}
+
+// #6: rows that already carry a name which is not in the master -> 409 requires_confirmation unless confirmAdopt
+async function checkOrphanAdoption(tx, name, confirmAdopt) {
+  const orphans = dirNames.orphanUsage(await directoryUsageRows(tx), name);
+  if (orphans && confirmAdopt !== true) {
+    throw directoryError(409, `Data rows that are not linked to any directorate already carry the name "${name}". Confirm to adopt them into this directorate.`,
+      { requires_confirmation: true, orphan_references: orphans });
+  }
+  return orphans;
+}
+
+async function rowCount(tx, text, params) {
+  const r = await run(`${text}; SELECT @@ROWCOUNT AS n;`, params, tx);
+  return r.length ? r[0].n : 0;
+}
+
+// Rewrites the scope list of every login for which rewrite(list) returns a new list (null = unchanged).
+async function rewriteScopes(tx, rewrite) {
+  const rows = await run('SELECT user_id, directorate, division FROM dbo.px_user_scopes ORDER BY scope_id', {}, tx);
+  const byUser = new Map();
+  rows.forEach(r => {
+    if (!byUser.has(r.user_id)) byUser.set(r.user_id, []);
+    byUser.get(r.user_id).push({ directorate: r.directorate, divisions: r.division === null ? null : [r.division] });
+  });
+  let users = 0;
+  let emptied = 0;
+  for (const [user_id, list] of byUser) {
+    const next = rewrite(list);
+    if (!next) continue;
+    await writeUserScopes(tx, user_id, next);
+    users++;
+    if (!next.length) emptied++;
+  }
+  return { users, emptied };
+}
+
+// Directorate `from` -> `to` in every table that copies the name (rename, or merge into an existing `to`).
+// merge = { divisionMap } (source division key -> the target's spelling) for the scope rewrite of a merge.
+async function cascadeDirectorate(tx, from, to, merge = null) {
+  const counts = { survey_responses: 0, ess_results: 0, ess_results_pooled: 0, exit_interviews: 0, attendances: 0, user_scopes: 0, users: 0, operational_records: 0, settings: 0 };
+  for (const s of DIRECTORY_SOURCES.filter(x => !['ess_results', 'user_scopes'].includes(x.source))) {
+    counts[s.source] = await rowCount(tx, `UPDATE dbo.${s.table} SET ${s.dir} = @to WHERE ${s.dir} = @from${s.where ? ` AND ${s.where}` : ''}`, { from, to });
+  }
+  // ESS: one row per metric + period + directorate, so a row whose target row already exists (a merge) is pooled into it
+  const essRows = (await run("SELECT * FROM dbo.px_ess_results WHERE org_level = 'DIRECTORATE' AND directorate = @from", { from }, tx)).map(rowToEssResult);
+  for (const r of essRows) {
+    const clash = nameKey(from) === nameKey(to) ? null : (await run(`SELECT * FROM dbo.px_ess_results WHERE metric_id = @m AND survey_year = @y AND survey_month = @mo
+                                                                      AND org_level = 'DIRECTORATE' AND directorate = @to`, { m: r.metric_id, y: r.survey_year, mo: r.survey_month, to }, tx)).map(rowToEssResult)[0];
+    if (clash) {
+      const pooled = dirNames.poolEssResults([clash, r]);
+      await run('UPDATE dbo.px_ess_results SET participation = @p, index_score = @i, questions_json = @q WHERE ess_result_id = @id',
+        { id: clash.ess_result_id, p: pooled.participation, i: pooled.index_score, q: T.max(JSON.stringify(pooled.questions)) }, tx);
+      await run('DELETE FROM dbo.px_ess_results WHERE ess_result_id = @id', { id: r.ess_result_id }, tx);
+      counts.ess_results_pooled++;
+    } else {
+      await run('UPDATE dbo.px_ess_results SET directorate = @to WHERE ess_result_id = @id', { id: r.ess_result_id, to }, tx);
+    }
+    counts.ess_results++;
+  }
+  const scopes = await rewriteScopes(tx, list => (merge
+    ? dirNames.mergeScopeDirectorate(list, from, to, merge.divisionMap)
+    : dirNames.renameScopeDirectorate(list, from, to)));
+  counts.user_scopes = scopes.users;
+  for (const k of DIRECTORATE_SETTING_KEYS) {
+    const rows = await run('SELECT setting_value FROM dbo.px_app_settings WHERE setting_key = @k', { k }, tx);
+    const next = rows.length ? dirNames.renameDirectorateOption(parseJson(rows[0].setting_value, null), from, to) : null;
+    if (!next) continue;
+    await run('UPDATE dbo.px_app_settings SET setting_value = @v, updated_at = SYSUTCDATETIME() WHERE setting_key = @k', { k, v: T.max(JSON.stringify(next)) }, tx);
+    counts.settings++;
+  }
+  return counts;
+}
+
+// Former names after `from` became `to`: the new name stops being a former name (of this or - released - of another
+// directorate), every alias of `from` now points at `to`, and `from` itself becomes a former name (not for a case-only
+// rename). Division aliases follow their directorate. Returns the directorate a released alias belonged to (or null).
+async function moveDirectorateAliases(tx, from, to) {
+  const released = (await run('SELECT directorate_name FROM dbo.px_directorate_aliases WHERE alias_name = @to AND directorate_name <> @from', { from, to }, tx))[0];
+  await run('DELETE FROM dbo.px_directorate_aliases WHERE alias_name = @to', { to }, tx);
+  await run('UPDATE dbo.px_directorate_aliases SET directorate_name = @to WHERE directorate_name = @from', { from, to }, tx);
+  if (nameKey(from) !== nameKey(to)) {
+    await run('INSERT INTO dbo.px_directorate_aliases (alias_name, directorate_name) VALUES (@from, @to)', { from, to }, tx);
+    await run(`DELETE s FROM dbo.px_division_aliases s WHERE s.directorate_name = @from
+                 AND EXISTS (SELECT 1 FROM dbo.px_division_aliases t WHERE t.directorate_name = @to AND t.alias_name = s.alias_name)`, { from, to }, tx);
+  }
+  await run('UPDATE dbo.px_division_aliases SET directorate_name = @to WHERE directorate_name = @from', { from, to }, tx);
+  return released ? released.directorate_name : null;
+}
+
+// Adopted orphan rows (create / rename / former name with confirm_adopt) take the MASTER spelling of the directorate and of
+// its divisions - the same rewrite as a case-only rename. Without it rows carrying "QC Orphan X" stay spelled that way after
+// "qc orphan x" adopted them, and a User whose scope now says "qc orphan x" is refused the data.
+async function adoptOrphanSpelling(tx, name, divisions = []) {
+  await cascadeDirectorate(tx, name, name);
+  for (const div of divisions) {
+    for (const s of DIRECTORY_SOURCES.filter(x => x.div && x.source !== 'user_scopes')) {
+      await run(`UPDATE dbo.${s.table} SET ${s.div} = @div WHERE ${s.dir} = @dir AND ${s.div} = @div AND ${s.div} ${BIN} <> @div${s.where ? ` AND ${s.where}` : ''}`, { dir: name, div }, tx);
+    }
+    await rewriteScopes(tx, list => dirNames.respelledScopes(list, dirNames.renameScopeDivision(list, name, div, div)));
+  }
+}
+
+async function createDirectorate({ name, divisions, confirm_adopt } = {}) {
+  return directoryTx(async tx => {
+    const directory = await readDirectory(tx);
+    const v = dirNames.validateDirectorateName(name, directory);
+    if (v.error) throw directoryError(400, v.error);
+    if (divisions !== undefined && divisions !== null && !Array.isArray(divisions)) throw directoryError(400, 'divisions must be a list of division names.');
+    const divs = [];
+    for (const raw of divisions || []) {
+      const dv = dirNames.validateDivisionName(raw, divs);
+      if (dv.error) throw directoryError(400, dv.error);
+      divs.push(dv.name);
+    }
+    const adopted = await checkOrphanAdoption(tx, v.name, confirm_adopt);
+    const released = (await run('SELECT directorate_name FROM dbo.px_directorate_aliases WHERE alias_name = @n', { n: v.name }, tx))[0];
+    await run('DELETE FROM dbo.px_directorate_aliases WHERE alias_name = @n', { n: v.name }, tx);
+    await insertDirectorate(tx, { directorate_name: v.name, divisions: divs });
+    if (adopted) await adoptOrphanSpelling(tx, v.name, divs);
+    await markDirectoryManaged(tx);
+    const created = (await directorySummary(tx)).find(d => nameKey(d.name) === nameKey(v.name));
+    return { directorate: created, released_alias_of: released ? released.directorate_name : null, adopted_orphans: adopted };
+  });
+}
+
+async function renameDirectorate(id, name, { confirm_adopt } = {}) {
+  return directoryTx(async tx => {
+    const d = await findDirectorate(tx, id);
+    const v = dirNames.validateDirectorateName(name, await readDirectory(tx), d.directorate_name);
+    if (v.error) throw directoryError(400, v.error);
+    if (v.name === d.directorate_name) return { changed: false, from: d.directorate_name, to: v.name, counts: {} };
+    const adopted = nameKey(v.name) === nameKey(d.directorate_name) ? null : await checkOrphanAdoption(tx, v.name, confirm_adopt);
+    await run('UPDATE dbo.px_directorates SET directorate_name = @to WHERE directorate_id = @id', { id: d.directorate_id, to: v.name }, tx);
+    const counts = await cascadeDirectorate(tx, d.directorate_name, v.name);
+    if (adopted) await adoptOrphanSpelling(tx, v.name, d.divisions);
+    const released = await moveDirectorateAliases(tx, d.directorate_name, v.name);
+    await markDirectoryManaged(tx);
+    return { changed: true, from: d.directorate_name, to: v.name, counts, released_alias_of: released, adopted_orphans: adopted };
+  });
+}
+
+async function deleteDirectorate(id) {
+  return directoryTx(async tx => {
+    const d = await findDirectorate(tx, id);
+    const entry = (await directorySummary(tx)).find(x => x.directorate_id === d.directorate_id);
+    if (entry.total_references > 0) {
+      throw directoryError(409, `"${d.directorate_name}" is still referenced by data, so it cannot be deleted. Merge it into another directorate instead.`,
+        { references: entry.usage, divisions_with_data: entry.divisions.filter(v => v.total_references > 0).map(v => v.name) });
+    }
+    await run('DELETE FROM dbo.px_directorates WHERE directorate_id = @id', { id: d.directorate_id }, tx);   // divisions: ON DELETE CASCADE
+    const aliases = await rowCount(tx, 'DELETE FROM dbo.px_directorate_aliases WHERE directorate_name = @n', { n: d.directorate_name });
+    await run('DELETE FROM dbo.px_division_aliases WHERE directorate_name = @n', { n: d.directorate_name }, tx);
+    await markDirectoryManaged(tx);
+    return { deleted: d.directorate_name, divisions: d.divisions.length, former_names_removed: aliases };
+  });
+}
+
+// Source + target of a merge (400 without target, 404 unknown / malformed id, 400 into itself) and the division plan:
+// a same-named division (case-insensitive) merges into the target's, any other moves over.
+async function mergePlan(tx, id, targetId) {
+  const src = await findDirectorate(tx, id);
+  if (targetId === undefined || targetId === null || targetId === '') throw directoryError(400, 'target_id is required.');
+  const tgt = await findDirectorate(tx, targetId);
+  if (src.directorate_id === tgt.directorate_id) throw directoryError(400, 'A directorate cannot be merged into itself.');
+  const divisionMap = {};
+  const moved = [];
+  const merged = [];
+  src.divisions.forEach(div => {
+    const same = tgt.divisions.find(x => nameKey(x) === nameKey(div));
+    if (same) { divisionMap[nameKey(div)] = same; merged.push({ from: div, into: same }); } else moved.push(div);
+  });
+  return { src, tgt, divisionMap, moved, merged };
+}
+
+// What a merge would do, without changing anything (the confirm dialog): rows that move, ESS periods that would be pooled,
+// divisions moved / merged and every login whose scope changes (widened = had all of the source, gets all of the target).
+async function previewMergeDirectorate(id, targetId) {
+  const tx = null;
+  const { src, tgt, divisionMap, moved, merged } = await mergePlan(tx, id, targetId);
+  const entry = (await directorySummary(tx)).find(x => x.directorate_id === src.directorate_id);
+  const pooled = await run(`SELECT COUNT(*) AS n FROM dbo.px_ess_results s WHERE s.org_level = 'DIRECTORATE' AND s.directorate = @s
+                              AND EXISTS (SELECT 1 FROM dbo.px_ess_results t WHERE t.org_level = 'DIRECTORATE' AND t.directorate = @t
+                                          AND t.metric_id = s.metric_id AND t.survey_year = s.survey_year AND t.survey_month = s.survey_month)`,
+  { s: src.directorate_name, t: tgt.directorate_name });
+  return {
+    from: src.directorate_name, to: tgt.directorate_name, rows: entry.usage, total_references: entry.total_references,
+    ess_results_pooled: pooled[0].n, divisions_moved: moved, divisions_merged: merged,
+    accounts: dirNames.mergeScopeChanges(await readScopedUsers(tx), src.directorate_name, tgt.directorate_name, divisionMap)
+  };
+}
+
+// Moves every row and division of `id` into `targetId` (same-named divisions merge), then removes the source; its name
+// (and its former names) become former names of the target. Returns scope_changes (before / after per login) for the audit.
+async function mergeDirectorate(id, targetId) {
+  return directoryTx(async tx => {
+    const { src, tgt, divisionMap, moved, merged } = await mergePlan(tx, id, targetId);
+    for (const div of moved) {
+      await run('UPDATE dbo.px_divisions SET directorate_id = @t WHERE directorate_id = @s AND division_name = @div', { t: tgt.directorate_id, s: src.directorate_id, div }, tx);
+    }
+    // data rows (and former division names) of a merged division take the target's spelling of it
+    for (const { from, into: to } of merged) {
+      if (from === to) continue;
+      for (const s of DIRECTORY_SOURCES.filter(x => x.div && x.source !== 'user_scopes')) {
+        await run(`UPDATE dbo.${s.table} SET ${s.div} = @to WHERE ${s.dir} = @dir AND ${s.div} = @from${s.where ? ` AND ${s.where}` : ''}`, { dir: src.directorate_name, from, to }, tx);
+      }
+      await run('UPDATE dbo.px_division_aliases SET division_name = @to WHERE directorate_name = @dir AND division_name = @from', { dir: src.directorate_name, from, to }, tx);
+    }
+    const scopeChanges = dirNames.mergeScopeChanges(await readScopedUsers(tx), src.directorate_name, tgt.directorate_name, divisionMap);
+    const counts = await cascadeDirectorate(tx, src.directorate_name, tgt.directorate_name, { divisionMap });
+    await run('DELETE FROM dbo.px_directorates WHERE directorate_id = @id', { id: src.directorate_id }, tx);
+    await moveDirectorateAliases(tx, src.directorate_name, tgt.directorate_name);
+    // a former division name equal to a division the target has now is no longer a former name
+    await run(`DELETE a FROM dbo.px_division_aliases a JOIN dbo.px_divisions v ON v.division_name = a.alias_name AND v.directorate_id = @t
+               WHERE a.directorate_name = @tn`, { t: tgt.directorate_id, tn: tgt.directorate_name }, tx);
+    await markDirectoryManaged(tx);
+    return { from: src.directorate_name, to: tgt.directorate_name, divisions_moved: moved.length, divisions_merged: merged.length, counts, scope_changes: scopeChanges };
+  });
+}
+
+function findDivision(d, division) {
+  const name = d.divisions.find(x => x === division) || d.divisions.find(x => nameKey(x) === nameKey(division));
+  if (!name) throw directoryError(404, `Division "${division}" not found in ${d.directorate_name}.`);
+  return name;
+}
+
+async function addDivision(id, name) {
+  return directoryTx(async tx => {
+    const d = await findDirectorate(tx, id);
+    const v = dirNames.validateDivisionName(name, d.divisions);
+    if (v.error) throw directoryError(400, v.error);
+    await run('DELETE FROM dbo.px_division_aliases WHERE directorate_name = @dir AND alias_name = @n', { dir: d.directorate_name, n: v.name }, tx);
+    await run('INSERT INTO dbo.px_divisions (directorate_id, division_name) VALUES (@id, @n)', { id: d.directorate_id, n: v.name }, tx);
+    await markDirectoryManaged(tx);
+    return { directorate: d.directorate_name, division: v.name };
+  });
+}
+
+async function renameDivision(id, division, name) {
+  return directoryTx(async tx => {
+    const d = await findDirectorate(tx, id);
+    const from = findDivision(d, division);
+    const v = dirNames.validateDivisionName(name, d.divisions, from);
+    if (v.error) throw directoryError(400, v.error);
+    if (v.name === from) return { changed: false, directorate: d.directorate_name, from, to: v.name, counts: {} };
+    await run('UPDATE dbo.px_divisions SET division_name = @to WHERE directorate_id = @id AND division_name = @from', { id: d.directorate_id, from, to: v.name }, tx);
+    const counts = {};
+    for (const s of DIRECTORY_SOURCES.filter(x => x.div && x.source !== 'user_scopes')) {
+      counts[s.source] = await rowCount(tx, `UPDATE dbo.${s.table} SET ${s.div} = @to WHERE ${s.dir} = @dir AND ${s.div} = @from${s.where ? ` AND ${s.where}` : ''}`,
+        { dir: d.directorate_name, from, to: v.name });
+    }
+    counts.user_scopes = (await rewriteScopes(tx, list => dirNames.renameScopeDivision(list, d.directorate_name, from, v.name))).users;
+    await run('DELETE FROM dbo.px_division_aliases WHERE directorate_name = @dir AND alias_name = @to', { dir: d.directorate_name, to: v.name }, tx);
+    await run('UPDATE dbo.px_division_aliases SET division_name = @to WHERE directorate_name = @dir AND division_name = @from', { dir: d.directorate_name, from, to: v.name }, tx);
+    if (nameKey(from) !== nameKey(v.name)) {
+      await run('INSERT INTO dbo.px_division_aliases (directorate_name, alias_name, division_name) VALUES (@dir, @from, @to)', { dir: d.directorate_name, from, to: v.name }, tx);
+    }
+    await markDirectoryManaged(tx);
+    return { changed: true, directorate: d.directorate_name, from, to: v.name, counts };
+  });
+}
+
+async function deleteDivision(id, division) {
+  return directoryTx(async tx => {
+    const d = await findDirectorate(tx, id);
+    const name = findDivision(d, division);
+    const entry = (await directorySummary(tx)).find(x => x.directorate_id === d.directorate_id);
+    const div = entry.divisions.find(x => x.name === name);
+    if (div.total_references > 0) {
+      throw directoryError(409, `Division "${name}" of ${d.directorate_name} is still referenced by data, so it cannot be deleted.`, { references: div.usage });
+    }
+    await run('DELETE FROM dbo.px_divisions WHERE directorate_id = @id AND division_name = @n', { id: d.directorate_id, n: name }, tx);
+    await run('DELETE FROM dbo.px_division_aliases WHERE directorate_name = @dir AND division_name = @n', { dir: d.directorate_name, n: name }, tx);
+    await markDirectoryManaged(tx);
+    return { directorate: d.directorate_name, deleted: name };
+  });
+}
+
+// Former / alternative names added by hand (v2.51.0 #5), e.g. the spelling an ESS file uses. Rows that already carry the
+// name are orphans (it is no directorate) and are adopted only with confirm_adopt - they are then renamed to the directorate
+// (ESS results of a period it already has are pooled, as in a rename / merge) in its master spelling.
+async function addDirectorateAlias(id, name, { confirm_adopt } = {}) {
+  return directoryTx(async tx => {
+    const d = await findDirectorate(tx, id);
+    const v = dirNames.validateDirectorateAlias(name, await readDirectory(tx), await readDirectoryAliases(tx), d.directorate_name);
+    if (v.error) throw directoryError(v.status, v.error);
+    const adopted = await checkOrphanAdoption(tx, v.name, confirm_adopt);
+    let counts = {};
+    if (adopted) {
+      counts = await cascadeDirectorate(tx, v.name, d.directorate_name);
+      await adoptOrphanSpelling(tx, d.directorate_name, d.divisions);
+    }
+    await run('INSERT INTO dbo.px_directorate_aliases (alias_name, directorate_name) VALUES (@a, @d)', { a: v.name, d: d.directorate_name }, tx);
+    await markDirectoryManaged(tx);
+    return { directorate: d.directorate_name, alias: v.name, adopted_orphans: adopted, counts };
+  });
+}
+
+async function removeDirectorateAlias(id, name) {
+  return directoryTx(async tx => {
+    const d = await findDirectorate(tx, id);
+    if (typeof name !== 'string' || !dirNames.cleanName(name)) throw directoryError(400, 'name (the former name, ?name=) is required.');
+    const hit = (await readDirectoryAliases(tx)).directorates.find(a => nameKey(a.directorate_name) === nameKey(d.directorate_name) && nameKey(a.alias_name) === nameKey(name));
+    if (!hit) throw directoryError(404, `"${dirNames.cleanName(name).slice(0, 80)}" is not a former name of ${d.directorate_name}.`);
+    await run('DELETE FROM dbo.px_directorate_aliases WHERE alias_name = @a AND directorate_name = @d', { a: hit.alias_name, d: d.directorate_name }, tx);
+    await markDirectoryManaged(tx);
+    return { directorate: d.directorate_name, alias: hit.alias_name };
+  });
+}
+
+async function addDivisionAlias(id, division, name, { confirm_adopt } = {}) {
+  return directoryTx(async tx => {
+    const d = await findDirectorate(tx, id);
+    const target = findDivision(d, division);
+    const v = dirNames.validateDivisionAlias(name, d.directorate_name, d.divisions, await readDirectoryAliases(tx));
+    if (v.error) throw directoryError(v.status, v.error);
+    const orphans = dirNames.divisionOrphanUsage(await directoryUsageRows(tx), d.directorate_name, v.name);
+    if (orphans && confirm_adopt !== true) {
+      throw directoryError(409, `Data rows of ${d.directorate_name} already carry the division name "${v.name}", which is no division of it. Confirm to adopt them into "${target}".`,
+        { requires_confirmation: true, orphan_references: orphans });
+    }
+    const counts = {};
+    if (orphans) {
+      for (const s of DIRECTORY_SOURCES.filter(x => x.div && x.source !== 'user_scopes')) {
+        counts[s.source] = await rowCount(tx, `UPDATE dbo.${s.table} SET ${s.div} = @to WHERE ${s.dir} = @dir AND ${s.div} = @from${s.where ? ` AND ${s.where}` : ''}`,
+          { dir: d.directorate_name, from: v.name, to: target });
+      }
+      counts.user_scopes = (await rewriteScopes(tx, list => dirNames.respelledScopes(list, dirNames.renameScopeDivision(list, d.directorate_name, v.name, target)))).users;
+    }
+    await run('INSERT INTO dbo.px_division_aliases (directorate_name, alias_name, division_name) VALUES (@d, @a, @v)', { d: d.directorate_name, a: v.name, v: target }, tx);
+    await markDirectoryManaged(tx);
+    return { directorate: d.directorate_name, division: target, alias: v.name, adopted_orphans: orphans, counts };
+  });
+}
+
+async function removeDivisionAlias(id, name) {
+  return directoryTx(async tx => {
+    const d = await findDirectorate(tx, id);
+    if (typeof name !== 'string' || !dirNames.cleanName(name)) throw directoryError(400, 'name (the former division name, ?name=) is required.');
+    const hit = (await readDirectoryAliases(tx)).divisions.find(a => nameKey(a.directorate_name) === nameKey(d.directorate_name) && nameKey(a.alias_name) === nameKey(name));
+    if (!hit) throw directoryError(404, `"${dirNames.cleanName(name).slice(0, 80)}" is not a former division name in ${d.directorate_name}.`);
+    await run('DELETE FROM dbo.px_division_aliases WHERE directorate_name = @d AND alias_name = @a', { d: d.directorate_name, a: hit.alias_name }, tx);
+    await markDirectoryManaged(tx);
+    return { directorate: d.directorate_name, division: hit.division_name, alias: hit.alias_name };
+  });
+}
+
+// ------------------------------------------------------------------ configuration snapshot (v2.51.0)
+// Everything an Admin configures, as the raw rows of its tables, so the regression suite (which runs against the SAME
+// database as the live app) can put it back exactly - every column, every id - after it reset or edited parameters.
+// Survey / ESS / exit / event data is not part of it. Parents first (px_divisions references px_directorates).
+const CONFIG_TABLES = ['px_journeys', 'px_checkpoints', 'px_metrics', 'px_metric_targets', 'px_survey_questions', 'px_master_survey_questions',
+  'px_action_library', 'px_app_settings', 'px_directorates', 'px_divisions', 'px_directorate_aliases', 'px_division_aliases'];
+// Tables restored together (deleting a directorate deletes its divisions)
+const CONFIG_GROUPS = { px_divisions: 'px_directorates', px_directorates: 'px_directorates' };
+
+async function configColumns(tx, table) {
+  return run(`SELECT c.name, t.name AS type_name, c.max_length, c.precision, c.scale, c.is_identity
+              FROM sys.columns c JOIN sys.types t ON t.user_type_id = c.user_type_id
+              WHERE c.object_id = OBJECT_ID(@t) AND c.is_computed = 0 ORDER BY c.column_id`, { t: `dbo.${table}` }, tx);
+}
+
+// A cell as JSON (a date keeps its exact instant) and back
+const encodeConfigCell = v => (v instanceof Date ? { $date: v.toISOString() } : v);
+const decodeConfigCell = v => (v && typeof v === 'object' && typeof v.$date === 'string' ? new Date(v.$date) : v);
+
+function configSqlType(c) {
+  const len = c.max_length === -1 ? sql.MAX : null;
+  switch (c.type_name) {
+    case 'int': return sql.Int;
+    case 'bigint': return sql.BigInt;
+    case 'smallint': return sql.SmallInt;
+    case 'tinyint': return sql.TinyInt;
+    case 'bit': return sql.Bit;
+    case 'float': return sql.Float;
+    case 'real': return sql.Real;
+    case 'decimal': case 'numeric': return sql.Decimal(c.precision, c.scale);
+    case 'date': return sql.Date;
+    case 'datetime2': return sql.DateTime2(c.scale);
+    case 'datetime': return sql.DateTime;
+    case 'varchar': return sql.VarChar(len || c.max_length);
+    case 'char': return sql.Char(c.max_length);
+    case 'nchar': return sql.NChar(c.max_length / 2);
+    default: return sql.NVarChar(len || Math.max(1, c.max_length / 2));
+  }
+}
+
+async function readConfigTable(tx, table) {
+  const columns = await configColumns(tx, table);
+  const rows = await run(`SELECT * FROM dbo.${table}`, {}, tx);
+  return { columns: columns.map(c => c.name), rows: rows.map(r => columns.map(c => encodeConfigCell(r[c.name]))) };
+}
+
+// Order-independent comparison of two { columns, rows } on the columns both have
+function sameConfigTable(a, b) {
+  const cols = a.columns.filter(c => b.columns.includes(c));
+  const key = t => t.rows.map(r => JSON.stringify(cols.map(c => r[t.columns.indexOf(c)]))).sort().join('\n');
+  return key(a) === key(b);
+}
+
+async function snapshotConfiguration() {
+  const tables = {};
+  for (const t of CONFIG_TABLES) tables[t] = await readConfigTable(null, t);
+  const cfg = connectionConfig();
+  return { kind: 'px-config-snapshot', version: 1, backend: 'sql', server: cfg.server, database: cfg.database, taken_at: new Date().toISOString(), tables };
+}
+
+function checkConfigSnapshot(snap) {
+  const cfg = connectionConfig();
+  if (!snap || snap.kind !== 'px-config-snapshot' || snap.backend !== 'sql' || !snap.tables) throw new Error('Not a SQL Server configuration snapshot.');
+  if (snap.database !== cfg.database || snap.server !== cfg.server) throw new Error(`The snapshot belongs to ${snap.server}/${snap.database}, not to ${cfg.server}/${cfg.database}.`);
+  const missing = CONFIG_TABLES.filter(t => !snap.tables[t]);
+  if (missing.length) throw new Error(`The snapshot has no rows for ${missing.join(', ')}.`);
+}
+
+// What a restore of `snap` would change, without changing anything: the tables that differ (directorates + divisions count
+// as one group), the live metrics the snapshot does not have (a restore deletes them with their data) and the snapshot
+// metrics that are missing live (a restore brings their configuration back).
+async function compareConfiguration(snap, tx = null) {
+  checkConfigSnapshot(snap);
+  const differing = [];
+  for (const t of CONFIG_TABLES) {
+    if (!sameConfigTable(await readConfigTable(tx, t), snap.tables[t])) differing.push(t);
+  }
+  const at = snap.tables.px_metrics.columns;
+  const snapMetrics = snap.tables.px_metrics.rows.map(r => ({ metric_id: r[at.indexOf('metric_id')], metric_name: r[at.indexOf('metric_name')] }));
+  const live = await run('SELECT metric_id, metric_name FROM dbo.px_metrics ORDER BY metric_id', {}, tx);
+  return {
+    differing_tables: differing,
+    extra_metrics: live.filter(m => !snapMetrics.some(x => x.metric_id === m.metric_id)).map(m => ({ metric_id: m.metric_id, metric_name: m.metric_name })),
+    missing_metrics: snapMetrics.filter(m => !live.some(x => x.metric_id === m.metric_id))
+  };
+}
+
+// Puts the configuration of `snap` back in ONE transaction: every table that differs is replaced by the snapshot rows (ids
+// kept, IDENTITY_INSERT for identity tables; equal tables are not touched), then the metrics that are not in the snapshot
+// (created after it) lose their data too - survey rows, ESS results, uploads, reminder log: the documented metric-delete
+// cascade. Nothing is changed when any step fails. The original files of their ESS uploads are removed after the commit
+// (as DELETE /api/admin/metrics does).
+async function restoreConfiguration(snap) {
+  checkConfigSnapshot(snap);
+  const { restored, extra, essUploadIds } = await inTransaction(async tx => {
+    const cmp = await compareConfiguration(snap, tx);
+    const ids = cmp.extra_metrics.map(m => m.metric_id);
+    const essIds = [];
+    for (const id of ids) {
+      (await run("SELECT upload_id FROM dbo.px_survey_uploads WHERE metric_id = @id", { id }, tx)).forEach(r => essIds.push(r.upload_id));
+    }
+    const groups = new Set(cmp.differing_tables.map(t => (CONFIG_GROUPS[t] ? 'px_directorates' : t)));
+    const todo = CONFIG_TABLES.filter(t => groups.has(CONFIG_GROUPS[t] ? 'px_directorates' : t));
+    for (const t of [...todo].reverse()) await run(`DELETE FROM dbo.${t}`, {}, tx);
+    for (const t of todo) {
+      const columns = await configColumns(tx, t);
+      const snapCols = snap.tables[t].columns;
+      const cols = columns.filter(c => snapCols.includes(c.name));
+      const identity = columns.some(c => c.is_identity);
+      const text = `${identity ? `SET IDENTITY_INSERT dbo.${t} ON; ` : ''}INSERT INTO dbo.${t} (${cols.map(c => `[${c.name}]`).join(', ')})
+                    VALUES (${cols.map((c, i) => `@p${i}`).join(', ')});${identity ? ` SET IDENTITY_INSERT dbo.${t} OFF;` : ''}`;
+      for (const row of snap.tables[t].rows) {
+        const request = new sql.Request(tx);
+        cols.forEach((c, i) => request.input(`p${i}`, configSqlType(c), decodeConfigCell(row[snapCols.indexOf(c.name)])));
+        await request.query(text);
+      }
+    }
+    // only after the configuration is back: the data of the metrics created after the snapshot (same statements as deleteMetric)
+    for (const id of ids) {
+      await run(`DELETE FROM dbo.px_metric_targets WHERE metric_id = @id; DELETE FROM dbo.px_survey_questions WHERE metric_id = @id; DELETE FROM dbo.px_reminder_log WHERE metric_id = @id;
+        DELETE FROM dbo.px_survey_uploaded_responses WHERE metric_id = @id;
+        DELETE FROM dbo.px_ess_results WHERE metric_id = @id;
+        DELETE FROM dbo.px_survey_uploads WHERE metric_id = @id;
+        DELETE FROM dbo.px_metrics WHERE metric_id = @id;`, { id }, tx);
+    }
+    return { restored: todo, extra: cmp.extra_metrics, essUploadIds: essIds };
+  });
+  const { essOriginalFilePath } = require('../services/essSummaryService');   // lazy: that service requires the storage
+  essUploadIds.forEach(id => { const f = essOriginalFilePath(id); if (f) fs.unlink(f, () => {}); });
+  return { removed_metrics: extra, restored_tables: restored, removed_ess_files: essUploadIds.length };
+}
+
 // ------------------------------------------------------------------ the storage API
 const storage = {
   // ---- lifecycle / health
@@ -1453,7 +2078,7 @@ const storage = {
     const tables = ['px_recruitment_sla_by_unit', 'px_approval_stage_compliance', 'px_hiring_channel_mix',
       'px_recognition_categories', 'px_attrition_by_tenure', 'px_acknowledged_alerts', 'px_ess_results', 'px_exit_interviews', 'px_exit_interview_uploads', 'px_survey_uploaded_responses',
       'px_survey_uploads', 'px_media', 'px_feedback_responses', 'px_attendances', 'px_event_questions', 'px_events',
-      'px_reminder_log', 'px_email_settings', 'px_app_settings', 'px_survey_questions', 'px_custom_survey_questions', 'px_master_survey_questions', 'px_divisions', 'px_directorates', 'px_action_library',
+      'px_reminder_log', 'px_email_settings', 'px_app_settings', 'px_survey_questions', 'px_custom_survey_questions', 'px_master_survey_questions', 'px_division_aliases', 'px_directorate_aliases', 'px_divisions', 'px_directorates', 'px_action_library',
       'px_metric_targets', 'px_metrics', 'px_checkpoints', 'px_journeys'];
     for (const t of tables) await run(`IF OBJECT_ID(N'dbo.${t}', N'U') IS NOT NULL DROP TABLE dbo.${t}`);
   },
@@ -1868,22 +2493,40 @@ const storage = {
   },
 
   async getDirectorates() {
-    const rows = await run(`SELECT d.directorate_id, d.directorate_name, v.division_name
-                            FROM dbo.px_directorates d
-                            LEFT JOIN dbo.px_divisions v ON v.directorate_id = d.directorate_id
-                            ORDER BY d.directorate_id, v.division_id`);
-    const byId = new Map();
-    rows.forEach(r => {
-      if (!byId.has(r.directorate_id)) byId.set(r.directorate_id, { name: r.directorate_name, divisions: [] });
-      if (r.division_name !== null) byId.get(r.directorate_id).divisions.push(r.division_name);
-    });
-    return [...byId.values()].map(d => ({
-      directorate_name: d.name,
-      name: d.name,
+    return (await readDirectory()).map(d => ({
+      directorate_id: d.directorate_id,
+      directorate_name: d.directorate_name,
+      name: d.directorate_name,
       divisions: d.divisions,
       sub_directorates: d.divisions
     }));
   },
+
+  // ---- directory administration (v2.51.0, Admin Parameters -> Directorates). Errors carry .status (400 / 404 / 409).
+  // Former names: { directorates: [{ alias_name, directorate_name }], divisions: [{ directorate_name, alias_name, division_name }] }
+  getDirectoryAliases: () => readDirectoryAliases(),
+  isDirectoryManaged: () => isDirectoryManaged(),
+  // The Admin list: every directorate with its divisions, usage counts per source and former names
+  async getDirectoryAdmin() {
+    return { directorates: await directorySummary(), managed: await isDirectoryManaged() };
+  },
+  createDirectorate,
+  renameDirectorate,
+  deleteDirectorate,
+  mergeDirectorate,
+  previewMergeDirectorate,
+  addDivision,
+  renameDivision,
+  deleteDivision,
+  addDirectorateAlias,
+  removeDirectorateAlias,
+  addDivisionAlias,
+  removeDivisionAlias,
+  // ---- configuration snapshot (v2.51.0): used by the regression suite so a run never changes the live Admin configuration
+  snapshotConfiguration,
+  compareConfiguration: snap => compareConfiguration(snap),
+  restoreConfiguration,
+  topUpDirectory,         // boot top-up, exposed for the regression suite (optional seed list)
 
   async updateMetricScore(metric_id, raw_value, normalized_score, notes = '') {
     const id = parseInt(metric_id, 10);

@@ -9,6 +9,7 @@ const path = require('path');
 const storage = require('../db/storage');
 const { periodWindow, CURRENT_YEAR } = require('../db/filterUtils');
 const { rowInScopes } = require('../db/scopeUtils');
+const { buildResolver } = require('../db/directoryNames');
 const { initialAppSettings } = require('../db/seedData');
 const { colLetter, readFirstSheet, buildXlsx } = require('./xlsxUtils');
 
@@ -283,14 +284,17 @@ function validateExitSheet(sheetRows, directorates, options = {}) {
     if (dirCol >= 0) {
       const dirText = cellText(cellAt(r, dirCol));
       const divText = divCol >= 0 ? cellText(cellAt(r, divCol)) : '';
-      const d = dirByKey.get(canonical(dirText));
+      // v2.51.0: a former name (renamed / merged directorate or division, seed rename) maps to the current one
+      const resolved = !dirByKey.has(canonical(dirText)) && options.resolver ? options.resolver.directorate(dirText) : null;
+      const d = dirByKey.get(canonical(dirText)) || (resolved ? dirByKey.get(canonical(resolved)) : null);
       if (!dirText) err(n, colLetter(dirCol), 'Directorate is empty.');
       else if (!d) err(n, colLetter(dirCol), `Directorate "${dirText.slice(0, 80)}" is not in the directorate master.`);
       else {
         row.directorate = d.directorate_name;
         row.division = null;
         if (divText && divText !== '-') {
-          const div = (d.divisions || []).find(x => canonical(x) === canonical(divText));
+          const viaAlias = options.resolver ? options.resolver.division(d.directorate_name, divText) : null;
+          const div = (d.divisions || []).find(x => canonical(x) === canonical(divText)) || viaAlias;
           if (!div) err(n, colLetter(divCol), `Division "${divText.slice(0, 80)}" does not belong to directorate ${d.directorate_name}.`);
           else row.division = div;
         }
@@ -326,7 +330,7 @@ async function importExitInterviews(buffer, fileName, options = {}) {
     return { success: false, status: 400, error: e.message, errors: [{ row_number: null, column: null, reason: e.message }] };
   }
   const directorates = await storage.getDirectorates();
-  const v = validateExitSheet(sheetRows, directorates, options);
+  const v = validateExitSheet(sheetRows, directorates, { ...options, resolver: buildResolver(directorates, await storage.getDirectoryAliases()) });
   if (v.errors.length) {
     return {
       success: false,

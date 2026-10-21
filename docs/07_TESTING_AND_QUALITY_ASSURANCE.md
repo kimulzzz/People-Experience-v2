@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    52 MODUL PENGUJIAN    │     355 AUTOMATED TESTS     │       100% PASS RATE          │
+│    54 MODUL PENGUJIAN    │     398 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -75,7 +75,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 33. **ESS Metric #25 (Meaningful Contribution Index)**: Dimensi *Purpose & Meaningful Contribution*, 3 questions.
 34. **ESS Metric #27 (Intent to Stay Index)**: Dimensi *Employee Commitment*, 3 questions.
 
-Sejak v2.50.0 setiap tes Modul 11 juga memastikan `questions_breakdown` (key + teks) = pertanyaan terkonfigurasi di Manage Questions (`GET /api/admin/survey-questions/:id`) dan semua bertipe `PERCENTAGE` (lihat §39).
+Sejak v2.50.0 setiap tes Modul 11 juga memastikan `questions_breakdown` (key + teks) = pertanyaan terkonfigurasi di Manage Questions (`GET /api/admin/survey-questions/:id`) dan semua bertipe `PERCENTAGE` (lihat §39). Sejak v2.51.0 jumlah dan dimensi pertanyaan di atas tidak lagi angka tetap: tes membacanya dari konfigurasi Manage Questions (template default kini mengikuti file ESS, lihat §40).
 
 ### 📦 Modul 12: Date Normalization & Canonical ISO YYYY-MM-DD Format (2 Test Cases)
 35. **Standardized ISO Dates in Calculated Metrics**: Memvalidasi seluruh tanggal metrik (`last_survey_date`, `last_data_date`) mematuhi format ISO standar `YYYY-MM-DD`.
@@ -1123,3 +1123,93 @@ Tidak diuji otomatis: tampilan Header, fallback tab, pesan tanpa menu dan form M
 **Hasil** (developer, SQL, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): run 1 268/269 - fixture Modul 39 (sel pertanyaan kosong), diperbaiki; run 2 **269/269 lulus, 0 gagal, 16 dilewati** (blok 8, 24, 27, 32, 38, 41, 42, 43 tidak dijalankan). JSON: hanya cek in-process pada salinan sementara; suite JSON penuh tidak dijalankan. Ukuran suite penuh SQL kini 355 (346 + 9); hitungan statis `await runTest(` 342 (333 + 9), selisih 13 sama seperti sebelumnya. Data setelah run: 27 metrik, 1 user, 172 upload, 2.788 baris respons, 143 baris ESS, 1.818 baris exit.
 
 **Tidak diuji otomatis / tidak terverifikasi**: suite JSON penuh; modul 8, 24, 27, 32, 38, 41, 42, 43 (dilewati); tampilan UI (catatan amber, baris "At upload", tombol yang dihapus di Explore Metrics, dropdown tipe terkunci) - tidak ada tes render; pengecekan browser dilakukan main session.
+
+
+## 40. v2.51.0 - Admin direktori, config guard, audit parameter, template ESS
+
+### Config guard (suite tidak lagi mengubah konfigurasi live)
+
+Suite berjalan terhadap database yang sama dengan aplikasi; Modul 16 (reset parameter) dan tes lain dulu mereset konfigurasi Admin live pada setiap run penuh (`CHANGELOG.md` [2.51.0]). Kini (`tests/regressionTest.js`, bagian "CONFIGURATION GUARD"):
+
+| Langkah | Perilaku |
+| :--- | :--- |
+| `startConfigGuard()` (setelah login suite, sebelum modul pertama) | SQL saja. Bila `server/data/backups/regression-config-snapshot.json` masih ada (run sebelumnya dimatikan) -> dipulihkan dulu lalu dihapus. Lalu `storage.snapshotConfiguration()` (12 tabel konfigurasi, `docs/04` "Catatan v2.51.0") ditulis atomik ke file itu (folder `server/data/backups/` di `.gitignore`). Log "Configuration guard ON". JSON: log "Configuration guard OFF" - backup `store.json` manual |
+| `restoreConfigGuard()` | Dipanggil tepat setelah tes reset Modul 16 dan di akhir Modul 54; `restoreConfiguration()` menulis ulang tabel yang berbeda dan menghapus metrik buatan tes beserta datanya |
+| `finishConfigGuard()` | Di `finally` run dan pada SIGINT/SIGTERM: restore terakhir lalu hapus file snapshot. Gagal -> dihitung sebagai tes gagal dan file dibiarkan untuk run berikutnya |
+
+Batasan: edit Admin di aplikasi live **selama** suite berjalan tertimpa restore akhir. Bukti (developer): 5 nilai live diubah, dua run suite penuh, kelima nilai identik sesudahnya.
+
+### Modul 53 - Admin direktori (25 tes di SQL, 23 di JSON)
+
+Bekerja pada direktorat sementara "RT53 ..." dengan metrik, user, absensi dan fixture sementara; semuanya dihapus di `finally`, setting yang disentuh dipulihkan. Fixture Exit Interview, kolom legacy user, baris SLA dan tes boot hanya SQL.
+
+| # | Jenis | Yang diuji |
+| :---: | :---: | :--- |
+| 1 | Positif | `GET /api/admin/directorates`: semua direktorat `/api/directorates` dengan id, divisi, jumlah pemakaian per sumber, total, former names; batas 200; nilai cadangan |
+| 2 | Negatif | Nama tidak valid -> 400, tidak ada yang dibuat (kosong, spasi, `ALL`/`Bankwide`/`General`/`-`, "PT Bank CIMB Niaga ...", 201 karakter, nama ada dengan huruf lain, divisi bukan list, divisi duplikat) |
+| 3 | Negatif | Nama hanya titik, karakter tak terlihat (zero-width, BOM, bidi) dan ejaan NFD nama yang ada ditolak; spasi aneh dinormalkan, disimpan NFC |
+| 4 | Negatif | Paralel: enam POST nama baru yang sama -> dibuat sekali (lainnya 400/409, tidak pernah 500); dua rename paralel ke satu nama -> berhasil sekali |
+| 5 | Positif | Tambah direktorat + divisi: 201, langsung ada di `/api/directorates`, `directory_admin_managed` aktif, audit `DIRECTORATE_CREATE` |
+| 6 | Negatif | Id hanya bilangan bulat positif persis: `" <id>"`, `"<id> "`, `"0<id>"`, `"+<id>"`, `"<id>.0"` di URL dan sebagai `target_id` merge -> 404, tidak ada yang berubah |
+| 7 | Positif | Jumlah pemakaian per sumber dan per divisi |
+| 8 | Negatif | Hapus direktorat yang dirujuk -> 409 + jumlah per sumber |
+| 9 | Positif | Rename cascade: baris survei, ESS, absensi, dua cakupan user, setting `event_manager_directorates` (SQL: kolom legacy, unit SLA); nama lama hilang, jadi former name |
+| 10 | Positif | Rename ke nama sama = no-op 200; rename beda huruf saja mengubah ejaan tanpa former name |
+| 11 | Positif | Former name tetap dikenali impor ESS, CSV survei dan check-in |
+| 12 | Positif | Rantai rename A -> B -> C: file ESS dengan A masuk ke C |
+| 13 | Positif | Divisi: tambah, rename (cascade + former name divisi), hapus yang tidak dipakai, rename ke nama sama no-op |
+| 14 | Negatif | Divisi duplikat/cadangan 400, hapus divisi dirujuk 409, divisi tak dikenal 404 |
+| 15 | Positif, SQL | Impor Exit Interview memetakan former name direktorat DAN divisi |
+| 16 | Negatif/Positif | Create/rename ke nama yang dibawa data orphan: 409 `requires_confirmation`; dengan `confirm_adopt` data diadopsi |
+| 17 | Positif | Merge preview (baca saja): baris, ESS yang digabung, divisi, akun yang berubah (cakupan semua divisi ditandai `widened`); request salah 400/404 |
+| 18 | Negatif | Merge ke diri sendiri 400, tanpa target 400, sumber/tujuan tak dikenal 404 |
+| 19 | Positif | Merge A ke B: divisi pindah/gabung, semua baris pindah, ESS periode sama digabung berbobot partisipasi, cakupan semua divisi A jadi semua divisi B (audit `USER_SCOPE_CHANGE`) |
+| 20 | Positif | Merge direktorat tanpa divisi: akun semua divisi mendapat semua divisi tujuan, tidak pernah cakupan kosong/"General" |
+| 21 | Positif | `by-directorate`: direktorat tanpa data sendiri -> `has_own_data` false, skor `null` |
+| 22 | Positif | Former name bisa diberikan ke direktorat baru (`released_alias_of`); hapus direktorat kosong menghapusnya lagi |
+| 23 | Negatif | User 403 di semua route direktori; `directory_admin_managed` tidak bisa di-PUT (400) |
+| 24 | Positif | Resolver (murni): nama saat ini, former name, former name divisi, rename seed dua arah, target demo v2.31.0 ke nama saat ini |
+| 25 | Positif, SQL | Proteksi boot: setelah dikelola Admin top-up seed tidak menambah apa pun; sebelumnya nama seed dicari lewat former name |
+
+### Modul 54 - Config guard, audit parameter, ejaan adopsi orphan, former name manual, template ESS (15 tes di SQL)
+
+Tes guard (3) dan orphan (2) di-skip di JSON.
+
+| # | Jenis | Yang diuji |
+| :---: | :---: | :--- |
+| 1 | Positif | Guard menyimpan konfigurasi sebelum modul pertama dan reset Modul 16 dibatalkan: nama, bobot, e-mail PIC metrik dan `px_index_weights` = nilai sebelum run |
+| 2 | Positif | `restoreConfiguration` mengembalikan persis (nama metrik, target, e-mail PIC, teks pertanyaan metrik 9, `px_index_weights`, set pertanyaan yang di-reset) dan menghapus metrik yang dibuat setelahnya beserta baris survei |
+| 3 | Positif/Negatif | Snapshot dari run yang dimatikan dipulihkan run berikutnya lalu dihapus; snapshot backend/database lain atau rusak ditolak tanpa perubahan |
+| 4 | Positif | Audit metrik create/update/delete, journey, pertanyaan survei save/reset, target dan reset Modul 16, ditandai baris tes |
+| 5 | Negatif | Perubahan yang ditolak (User 403, id metrik tak dikenal 400/404) tidak menulis audit dan metrik tidak berubah |
+| 6 | Positif/Negatif | Create "rt54 orphan x" di atas baris + cakupan "RT54 ORPHAN X": 409 tanpa `confirm_adopt`; dengan konfirmasi absensi dan cakupan memakai ejaan master direktorat dan divisi |
+| 7 | Positif | Rename ke nama orphan beda huruf (dikonfirmasi) menulis ulang baris ke ejaan master |
+| 8 | Positif | Tambah former name: 201, ada di `former_names`, audit `DIRECTORATE_ALIAS_ADD`, direktori jadi dikelola Admin; check-in dengan nama itu masuk ke direktorat |
+| 9 | Negatif | Validasi former name: nama direktorat aktif 400, sama lagi / milik direktorat lain 409, kosong/cadangan/titik/tak terlihat/terlalu panjang/"PT Bank CIMB Niaga ..." 400, direktorat tak dikenal 404 |
+| 10 | Positif/Negatif | Former name yang dibawa baris orphan perlu `confirm_adopt`; dikonfirmasi -> baris di-rename ke ejaan master |
+| 11 | Positif/Negatif | Upload ESS dengan kolom A = former name manual tersimpan di direktorat; setelah former name dihapus (audit) file yang sama ditolak; hapus lagi 404 |
+| 12 | Positif/Negatif | Former name divisi: tambah (check-in masuk ke divisi), divisi aktif 400, sama lagi 409, divisi tak dikenal 404; hapus 200 / lagi 404 |
+| 13 | Positif | Set pertanyaan default 11 metrik ESS = kolom template ESS, urut kolom, semua `PERCENTAGE`, key `q<n>_<slug>`; metrik 9 sama dengan file asli di `docs/` kolom per kolom |
+| 14 | Positif | Konsistensi instalasi baru: setiap baris ESS seed memuat persis pertanyaan template; "Reset to default" metrik ESS memberi template |
+| 15 | Negatif | Template non-ESS tidak berubah (metrik 8 tetap pertanyaan 1-5/ya-tidak, metrik 12 pertanyaan teks bebas); tidak ada template ESS dengan `FREE_TEXT` atau 1-5 |
+
+### Modul lama disesuaikan (jumlah tes tidak berubah)
+
+| Modul | Perubahan |
+| :--- | :--- |
+| 1 | Bobot yang diharapkan = bobot terkonfigurasi (suite tidak lagi mereset bobot Admin; 70/30 diuji Modul 50) |
+| 3 | Nama metrik 8 = nama terkonfigurasi (mis. "Day 90 Onboarding Satisfaction Index") |
+| 11 | Jumlah dan dimensi pertanyaan dibaca dari Manage Questions, bukan angka tetap (angka di §2 Modul 11 hanya riwayat) |
+| 16 | Tes reset memeriksa audit `PARAMETERS_RESET` dan `METRIC_UPDATE` (lama -> baru); konfigurasi live langsung dipulihkan setelahnya |
+| 44, 45, 46 | Nama direktorat riil dibaca lewat resolver (nama saat ini setelah rename Admin, mis. "Special Asset" -> "SLC ...") |
+| 50 | Menyetel 70/30 bila bobot tersimpan berbeda dan memulihkan bobot Admin sesudahnya |
+
+### Hasil
+
+Run suite penuh SQL terakhir (developer, modul media 27/32/38/41/42/43 di-skip, modul 8 dan 24 dijalankan): **319/319 lulus, 0 gagal, 9 tes dilewati** (run akhir sebelum commit). Suite JSON penuh tidak dijalankan (hanya cek in-process). Ukuran suite penuh SQL kini **398** (319 lulus + 9 dilewati + 70 tes modul media; 355 + 25 Modul 53 + 18 Modul 54) - hitungan, bukan angka cetakan suite. QC ronde 1 dan 2: LULUS DENGAN CATATAN (ronde 1 menemukan insiden id `"%20853"` yang sempat me-rename Business Banking - dipulihkan, penyebab diperbaiki dengan parsing id ketat, kini tes Modul 53 #6); ronde 3: LULUS DENGAN CATATAN (data live dan UI diverifikasi; temuan snapshot basi diperbaiki).
+
+**Putaran akhir Modul 54** (+3 tes, kini 18 di SQL): snapshot sisa ditolak tanpa pilihan (edit live tetap, file tidak berubah), ditolak bila kedua env diisi, `TEST_DISCARD_STALE_SNAPSHOT=1` mengganti nama file, `TEST_RESTORE_STALE_SNAPSHOT=1` memulihkan dan menghapusnya, snapshot database lain tidak bisa dipulihkan; suite sebagai child process di atas file snapshot aktif keluar dengan **exit code 2** tanpa menjalankan modul atau membuat akun; restore atomik (snapshot rusak gagal di tengah tanpa mengubah apa pun, metrik ESS ekstra dan filenya tetap; restore yang benar menghapusnya); urutan abjad `/api/directorates`, tab Directorates, `/api/admin/parameters` (termasuk divisi dan nama beda huruf besar/kecil) dan template ESS (Bankwide pertama). Modul 53: satu assertion kini mengharapkan divisi urut abjad.
+
+**Cara menangani snapshot sisa**: bila run sebelumnya mati keras, suite berikutnya berhenti (exit code 2) dan menampilkan selisihnya. Jalankan ulang dengan `TEST_DISCARD_STALE_SNAPSHOT=1` bila konfigurasi live sekarang yang benar (umumnya), atau `TEST_RESTORE_STALE_SNAPSHOT=1` bila run yang mati memang meninggalkan konfigurasi rusak.
+
+**Tidak diuji otomatis / tidak terverifikasi**: suite JSON penuh; modul media; render tab Directorates, dialog merge/adopt dan urutan panel PX by directorate (tidak ada tes render).

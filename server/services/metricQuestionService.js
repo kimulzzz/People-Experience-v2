@@ -27,6 +27,9 @@ const QUESTION_TYPE_LABELS = {
 /**
  * Default structured question templates for all 20 survey metrics in CIMB Niaga PX Framework.
  * For ESS metrics, questions and dimensions are aligned with official Employee Sentiment Survey items.
+ * v2.51.0: the question set of each of the 11 ESS metrics = the question columns (G, H, ...) of its ESS result template
+ * ("(ESS 2025 Result) <metric>.xlsx", sheet Dimensions; metric 9 = "ESS 2025 Result_Role Clarity & DS Support.xlsx"), in
+ * column order - an ESS upload maps its columns to these questions BY POSITION. They are the seed and "Reset to default".
  */
 const DEFAULT_METRIC_QUESTIONS = {
   // METRIC 2: CIMB Niaga Goes to Campus — event evaluation / rating
@@ -174,44 +177,35 @@ const DEFAULT_METRIC_QUESTIONS = {
 
   // METRIC 9: Role Clarity & DS Support Score Index (ESS)
   9: [
-    { 
-      key: 'q1_role_expectation', 
-      label: 'Understanding Expectations', 
-      text: 'Employees clearly understand what is expected of them.', 
-      type: 'PERCENTAGE', 
+    {
+      key: 'q1_role_contribution',
+      label: 'Purposeful Role Contribution',
+      text: 'I understand how my current job role contributes to a positive impact on customers and society.',
+      type: 'PERCENTAGE',
       mandatory: true,
       dimension: 'Employee Commitment',
       visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 90,
-      percent_neutral: 9,
-      percent_unfavorable: 1
+      required_based_on: 'Always'
     },
-    { 
-      key: 'q2_role_contribution', 
-      label: 'Purposeful Role Contribution', 
-      text: 'I understand how my current job role contributes to a positive impact on customers and society.', 
-      type: 'PERCENTAGE', 
+    {
+      key: 'q2_role_expectation',
+      label: 'Understanding Expectations',
+      text: 'Employees clearly understand what is expected of them.',
+      type: 'PERCENTAGE',
       mandatory: true,
       dimension: 'Employee Commitment',
       visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 96,
-      percent_neutral: 3,
-      percent_unfavorable: 1
+      required_based_on: 'Always'
     },
-    { 
-      key: 'q3_manager_support', 
-      label: 'Manager Support & Enablement', 
-      text: 'My immediate manager provides me with the support I need to complete my work.', 
-      type: 'PERCENTAGE', 
+    {
+      key: 'q3_manager_feedback',
+      label: 'Manager Feedback for Improvement',
+      text: 'My immediate manager gives me feedback that helps me improve my performance.',
+      type: 'PERCENTAGE',
       mandatory: true,
       dimension: 'Employee Commitment',
       visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 91,
-      percent_neutral: 8,
-      percent_unfavorable: 1
+      required_based_on: 'Always'
     }
   ],
 
@@ -234,281 +228,121 @@ const DEFAULT_METRIC_QUESTIONS = {
 
   // METRIC 13: Pride & Work Environment Index (ESS)
   13: [
-    { 
-      key: 'q1_company_pride', 
-      label: 'Pride to Work in CIMB', 
-      text: 'I am proud to work at CIMB.', 
-      type: 'PERCENTAGE', 
+    {
+      key: 'q1_company_pride',
+      label: 'Pride to Work at CIMB',
+      text: 'I am proud to work at CIMB.',
+      type: 'PERCENTAGE',
       mandatory: true,
       dimension: 'Pride & Work Environment',
       visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 96,
-      percent_neutral: 3,
-      percent_unfavorable: 1
+      required_based_on: 'Always'
     },
-    { 
-      key: 'q2_work_culture', 
-      label: 'Culture & Workplace Attraction', 
-      text: 'People want to work here because of the culture and work environment.', 
-      type: 'PERCENTAGE', 
+    {
+      key: 'q2_work_culture',
+      label: 'Culture & Workplace Attraction',
+      text: 'People want to work here because of the culture and work environment.',
+      type: 'PERCENTAGE',
       mandatory: true,
       dimension: 'Pride & Work Environment',
       visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 86,
-      percent_neutral: 12,
-      percent_unfavorable: 2
+      required_based_on: 'Always'
     },
-    { 
-      key: 'q3_implement_better_ways', 
-      label: 'Implement Better Ways of Doing Things', 
-      text: 'CIMB consistently implements new and better ways of doing things.', 
-      type: 'PERCENTAGE', 
+    {
+      key: 'q3_energized_by_work',
+      label: 'Energized by Work',
+      text: 'I feel energized by my work.',
+      type: 'PERCENTAGE',
       mandatory: true,
       dimension: 'Pride & Work Environment',
       visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 91,
-      percent_neutral: 8,
-      percent_unfavorable: 1
-    },
-    { 
-      key: 'q4_stay_competitive', 
-      label: 'Adapts to Stay Competitive', 
-      text: 'CIMB changes and adapts to stay competitive.', 
-      type: 'PERCENTAGE', 
-      mandatory: true,
-      dimension: 'Pride & Work Environment',
-      visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 92,
-      percent_neutral: 7,
-      percent_unfavorable: 1
+      required_based_on: 'Always'
     }
   ],
 
   // METRIC 15: Manager Recognition Index (ESS)
   15: [
-    { 
-      key: 'q1_recognition_appreciation', 
-      label: 'Manager Recognition & Appreciation', 
-      text: 'My immediate manager recognizes me when I do a good job.', 
-      type: 'PERCENTAGE', 
+    {
+      key: 'q1_manager_recognition',
+      label: 'Manager Recognition',
+      text: 'My immediate manager recognizes me when I do a good job.',
+      type: 'PERCENTAGE',
       mandatory: true,
       dimension: 'Recognition & Appreciation',
       visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 88,
-      percent_neutral: 10,
-      percent_unfavorable: 2
-    },
-    { 
-      key: 'q2_accountability', 
-      label: 'Accountability for Results', 
-      text: 'Employees are held accountable for the results they are expected to deliver.', 
-      type: 'PERCENTAGE', 
-      mandatory: true,
-      dimension: 'Recognition & Appreciation',
-      visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 91,
-      percent_neutral: 9,
-      percent_unfavorable: 0
-    },
-    { 
-      key: 'q3_valued_contributions', 
-      label: 'Valued Contributions & Dedication', 
-      text: 'My personal contributions and dedication are recognized and valued by leadership.', 
-      type: 'PERCENTAGE', 
-      mandatory: true,
-      dimension: 'Recognition & Appreciation',
-      visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 89,
-      percent_neutral: 9,
-      percent_unfavorable: 2
+      required_based_on: 'Always'
     }
   ],
 
   // METRIC 16: Wellbeing Index (ESS)
   16: [
-    { 
-      key: 'q1_wellbeing_care', 
-      label: 'Company Cares for Wellbeing', 
-      text: 'CIMB cares about my well-being.', 
-      type: 'PERCENTAGE', 
+    {
+      key: 'q1_company_cares_wellbeing',
+      label: 'CIMB Cares About Well-being',
+      text: 'CIMB cares about my well-being.',
+      type: 'PERCENTAGE',
       mandatory: true,
       dimension: 'Employee Wellbeing',
       visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 86,
-      percent_neutral: 11,
-      percent_unfavorable: 3
+      required_based_on: 'Always'
     },
-    { 
-      key: 'q2_work_life_balance', 
-      label: 'Healthy Work-Life Balance', 
-      text: 'I can manage my job responsibilities in a way that enables healthy work-life balance.', 
-      type: 'PERCENTAGE', 
+    {
+      key: 'q2_work_life_balance',
+      label: 'Healthy Work-Life Balance',
+      text: 'I can manage my job responsibilities in a way that enables healthy work-life balance.',
+      type: 'PERCENTAGE',
       mandatory: true,
       dimension: 'Employee Wellbeing',
       visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 87,
-      percent_neutral: 10,
-      percent_unfavorable: 3
-    },
-    { 
-      key: 'q3_wellness_support', 
-      label: 'Holistic Wellness Support', 
-      text: 'The bank provides sufficient support, wellness resources, and flexibility to manage workplace stress.', 
-      type: 'PERCENTAGE', 
-      mandatory: true,
-      dimension: 'Employee Wellbeing',
-      visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 88,
-      percent_neutral: 9,
-      percent_unfavorable: 3
+      required_based_on: 'Always'
     }
   ],
 
   // METRIC 17: Psychological Safety Index (ESS)
   17: [
-    { 
-      key: 'q1_speak_up_ideas', 
-      label: 'Speaking Up with Ideas & Suggestions', 
-      text: 'At work, I can speak up with ideas or suggestions, even if others have different opinions.', 
-      type: 'PERCENTAGE', 
+    {
+      key: 'q1_speak_up',
+      label: 'Speak Up with Ideas',
+      text: 'At work, I can speak up with ideas or suggestions, even if others have different opinions.',
+      type: 'PERCENTAGE',
       mandatory: true,
       dimension: 'Psychological Safety & Risk Mindset',
       visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 90,
-      percent_neutral: 8,
-      percent_unfavorable: 2
+      required_based_on: 'Always'
     },
-    { 
-      key: 'q2_escalate_outside_resp', 
-      label: 'Escalate Issues Outside Direct Resp', 
-      text: 'Colleagues escalate issues even when these are outside their direct responsibilities.', 
-      type: 'PERCENTAGE', 
+    {
+      key: 'q2_escalate_issues',
+      label: 'Escalate Issues Beyond Own Role',
+      text: 'Colleagues escalate issues even when these are outside their direct responsibilities.',
+      type: 'PERCENTAGE',
       mandatory: true,
       dimension: 'Psychological Safety & Risk Mindset',
       visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 91,
-      percent_neutral: 7,
-      percent_unfavorable: 2
-    },
-    { 
-      key: 'q3_escalate_root_cause', 
-      label: 'Escalating Ensures Root Cause Addressed', 
-      text: 'Escalating an issue helps ensure it is investigated and the root cause is addressed.', 
-      type: 'PERCENTAGE', 
-      mandatory: true,
-      dimension: 'Psychological Safety & Risk Mindset',
-      visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 98,
-      percent_neutral: 1,
-      percent_unfavorable: 1
-    },
-    { 
-      key: 'q4_know_when_to_escalate', 
-      label: 'Know When Issue is Serious', 
-      text: 'I know when an issue is serious enough to require me escalating it.', 
-      type: 'PERCENTAGE', 
-      mandatory: true,
-      dimension: 'Psychological Safety & Risk Mindset',
-      visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 99,
-      percent_neutral: 1,
-      percent_unfavorable: 0
+      required_based_on: 'Always'
     }
   ],
 
   // METRIC 18: Leadership Connection Score (ESS)
   18: [
-    { 
-      key: 'q1_handle_changes_effective', 
-      label: 'Equipped to Handle Changes', 
-      text: 'In CIMB, we are well equipped to handle changes effectively.', 
-      type: 'PERCENTAGE', 
+    {
+      key: 'q1_leaders_navigate_change',
+      label: 'Leaders Navigate Change',
+      text: 'Leaders help us understand and navigate changes happening in CIMB.',
+      type: 'PERCENTAGE',
       mandatory: true,
       dimension: 'Agility & Decision Making',
       visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 88,
-      percent_neutral: 11,
-      percent_unfavorable: 1
+      required_based_on: 'Always'
     },
-    { 
-      key: 'q2_decisions_without_delay', 
-      label: 'Decisions Made Without Undue Delay', 
-      text: 'In CIMB, decisions get made without undue delay.', 
-      type: 'PERCENTAGE', 
+    {
+      key: 'q2_leaders_seek_input',
+      label: 'Leaders Seek Employee Input',
+      text: 'Leaders makes an effort to get input, ideas, and opinions from employees.',
+      type: 'PERCENTAGE',
       mandatory: true,
       dimension: 'Agility & Decision Making',
       visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 81,
-      percent_neutral: 16,
-      percent_unfavorable: 3
-    },
-    { 
-      key: 'q3_adapts_to_external_env', 
-      label: 'Adapts to External Environment', 
-      text: 'CIMB effectively adapts to changes in its external environment.', 
-      type: 'PERCENTAGE', 
-      mandatory: true,
-      dimension: 'Agility & Decision Making',
-      visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 90,
-      percent_neutral: 9,
-      percent_unfavorable: 1
-    },
-    { 
-      key: 'q4_implements_better_ways', 
-      label: 'Implements Better Ways of Doing Things', 
-      text: 'CIMB consistently implements new and better ways of doing things.', 
-      type: 'PERCENTAGE', 
-      mandatory: true,
-      dimension: 'Agility & Decision Making',
-      visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 91,
-      percent_neutral: 8,
-      percent_unfavorable: 1
-    },
-    { 
-      key: 'q5_adapts_to_stay_competitive', 
-      label: 'Changes & Adapts to Stay Competitive', 
-      text: 'CIMB changes and adapts to stay competitive.', 
-      type: 'PERCENTAGE', 
-      mandatory: true,
-      dimension: 'Agility & Decision Making',
-      visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 92,
-      percent_neutral: 7,
-      percent_unfavorable: 1
-    },
-    { 
-      key: 'q6_leaders_navigate_change', 
-      label: 'Leaders Help Navigate Changes', 
-      text: 'Leaders help us understand and navigate changes happening in CIMB.', 
-      type: 'PERCENTAGE', 
-      mandatory: true,
-      dimension: 'Agility & Decision Making',
-      visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 89,
-      percent_neutral: 9,
-      percent_unfavorable: 2
+      required_based_on: 'Always'
     }
   ],
 
@@ -527,87 +361,39 @@ const DEFAULT_METRIC_QUESTIONS = {
 
   // METRIC 21: Career Growth & Learning Index (ESS)
   21: [
-    { 
-      key: 'q1_continual_learn_grow', 
-      label: 'Opportunity to Continually Learn & Grow', 
-      text: 'I have the opportunity to continually learn and grow.', 
-      type: 'PERCENTAGE', 
+    {
+      key: 'q1_learn_and_grow',
+      label: 'Continuous Learning & Growth',
+      text: 'I have the opportunity to continually learn and grow.',
+      type: 'PERCENTAGE',
       mandatory: true,
       dimension: 'Career Growth & Learning',
       visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 89,
-      percent_neutral: 10,
-      percent_unfavorable: 1
-    },
-    { 
-      key: 'q2_right_skills_strategy', 
-      label: 'Employees Have Right Skills for Strategy', 
-      text: 'CIMB has employees with the right skills to deliver its strategy.', 
-      type: 'PERCENTAGE', 
-      mandatory: true,
-      dimension: 'Career Growth & Learning',
-      visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 89,
-      percent_neutral: 10,
-      percent_unfavorable: 1
-    },
-    { 
-      key: 'q3_capability_knowledge_goals', 
-      label: 'Capability & Knowledge to Achieve Goals', 
-      text: 'CIMB has the capability and knowledge to achieve its goals.', 
-      type: 'PERCENTAGE', 
-      mandatory: true,
-      dimension: 'Career Growth & Learning',
-      visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 94,
-      percent_neutral: 5,
-      percent_unfavorable: 1
+      required_based_on: 'Always'
     }
   ],
 
   // METRIC 22: Capability & Enablement Index (ESS)
   22: [
-    { 
-      key: 'q1_authority_to_decide', 
-      label: 'Sufficient Authority to Make Decisions', 
-      text: 'Employees have sufficient authority to make decisions.', 
-      type: 'PERCENTAGE', 
+    {
+      key: 'q1_right_skills',
+      label: 'Right Skills to Deliver Strategy',
+      text: 'CIMB has employees with the right skills to deliver its strategy.',
+      type: 'PERCENTAGE',
       mandatory: true,
       dimension: 'Capability & Enablement',
       visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 84,
-      percent_neutral: 14,
-      percent_unfavorable: 2
+      required_based_on: 'Always'
     },
-    { 
-      key: 'q2_understand_expectations', 
-      label: 'Clearly Understand What is Expected', 
-      text: 'Employees clearly understand what is expected of them.', 
-      type: 'PERCENTAGE', 
+    {
+      key: 'q2_decision_authority',
+      label: 'Decision-Making Authority',
+      text: 'Employees have sufficient authority to make decisions.',
+      type: 'PERCENTAGE',
       mandatory: true,
       dimension: 'Capability & Enablement',
       visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 90,
-      percent_neutral: 9,
-      percent_unfavorable: 1
-    },
-    { 
-      key: 'q3_enablement_resources', 
-      label: 'Tools & Enablement Resources', 
-      text: 'Employees have the tools, resources, and enablement to perform their duties effectively.', 
-      type: 'PERCENTAGE', 
-      mandatory: true,
-      dimension: 'Capability & Enablement',
-      visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 89,
-      percent_neutral: 9,
-      percent_unfavorable: 2
+      required_based_on: 'Always'
     }
   ],
 
@@ -620,87 +406,29 @@ const DEFAULT_METRIC_QUESTIONS = {
 
   // METRIC 24: Performance Feedback Quality Index (ESS)
   24: [
-    { 
-      key: 'q1_manager_performance_feedback', 
-      label: 'Manager Feedback Improves Performance', 
-      text: 'My immediate manager gives me feedback that helps me improve my performance.', 
-      type: 'PERCENTAGE', 
+    {
+      key: 'q1_manager_feedback',
+      label: 'Manager Feedback for Improvement',
+      text: 'My immediate manager gives me feedback that helps me improve my performance.',
+      type: 'PERCENTAGE',
       mandatory: true,
       dimension: 'Performance Feedback & Development',
       visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 91,
-      percent_neutral: 8,
-      percent_unfavorable: 1
-    },
-    { 
-      key: 'q2_accountability_results', 
-      label: 'Accountability for Results', 
-      text: 'Employees are held accountable for the results they are expected to deliver.', 
-      type: 'PERCENTAGE', 
-      mandatory: true,
-      dimension: 'Performance Feedback & Development',
-      visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 91,
-      percent_neutral: 9,
-      percent_unfavorable: 0
-    },
-    { 
-      key: 'q3_performance_dialogue', 
-      label: 'Open Performance & Growth Conversations', 
-      text: 'My direct supervisor conducts regular, open performance conversations focused on continuous development.', 
-      type: 'PERCENTAGE', 
-      mandatory: true,
-      dimension: 'Performance Feedback & Development',
-      visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 89,
-      percent_neutral: 9,
-      percent_unfavorable: 2
+      required_based_on: 'Always'
     }
   ],
 
   // METRIC 25: Meaningful Contribution Index (ESS)
   25: [
-    { 
-      key: 'q1_personal_accomplishment', 
-      label: 'Feeling of Personal Accomplishment', 
-      text: 'My work gives me a feeling of personal accomplishment.', 
-      type: 'PERCENTAGE', 
+    {
+      key: 'q1_personal_accomplishment',
+      label: 'Personal Accomplishment',
+      text: 'My work gives me a feeling of personal accomplishment.',
+      type: 'PERCENTAGE',
       mandatory: true,
       dimension: 'Purpose & Meaningful Contribution',
       visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 90,
-      percent_neutral: 8,
-      percent_unfavorable: 2
-    },
-    { 
-      key: 'q2_contribution_impact', 
-      label: 'Impact on Bank Purpose & Strategy', 
-      text: 'I understand how my work contributes to the success and purpose of CIMB.', 
-      type: 'PERCENTAGE', 
-      mandatory: true,
-      dimension: 'Purpose & Meaningful Contribution',
-      visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 94,
-      percent_neutral: 5,
-      percent_unfavorable: 1
-    },
-    { 
-      key: 'q3_energized_by_work', 
-      label: 'Energized by Work Responsibilities', 
-      text: 'I feel motivated and energized by the meaningful work I do.', 
-      type: 'PERCENTAGE', 
-      mandatory: true,
-      dimension: 'Purpose & Meaningful Contribution',
-      visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 88,
-      percent_neutral: 10,
-      percent_unfavorable: 2
+      required_based_on: 'Always'
     }
   ],
 
@@ -714,44 +442,15 @@ const DEFAULT_METRIC_QUESTIONS = {
 
   // METRIC 27: Intent to Stay Index (ESS)
   27: [
-    { 
-      key: 'q1_stay_commitment', 
-      label: 'Choose to Stay at CIMB', 
-      text: 'Even if offered a comparable role and compensation package at another company, I would choose to stay at CIMB.', 
-      type: 'PERCENTAGE', 
+    {
+      key: 'q1_intent_to_stay',
+      label: 'Intent to Stay',
+      text: 'Even if offered a comparable role and compensation package at another company, I would choose to stay at CIMB.',
+      type: 'PERCENTAGE',
       mandatory: true,
       dimension: 'Employee Commitment',
       visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 77,
-      percent_neutral: 18,
-      percent_unfavorable: 5
-    },
-    { 
-      key: 'q2_promising_future', 
-      label: 'Promising Long-Term Future', 
-      text: 'I see a promising long-term future and career growth for myself at CIMB.', 
-      type: 'PERCENTAGE', 
-      mandatory: true,
-      dimension: 'Employee Commitment',
-      visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 79,
-      percent_neutral: 16,
-      percent_unfavorable: 5
-    },
-    { 
-      key: 'q3_recommend_company', 
-      label: 'Recommend CIMB as Great Employer', 
-      text: 'I would recommend CIMB as a great place to work to prospective candidates.', 
-      type: 'PERCENTAGE', 
-      mandatory: true,
-      dimension: 'Employee Commitment',
-      visible_based_on: 'Always',
-      required_based_on: 'Always',
-      percent_favorable: 84,
-      percent_neutral: 12,
-      percent_unfavorable: 4
+      required_based_on: 'Always'
     }
   ]
 };

@@ -35,6 +35,16 @@ function skipModuleBlock(n) {
 // One CSV cell: quoted when it holds a comma / quote (real directorate names such as "Strategy, Finance & SPAPM" do).
 const csvCell = v => (/[",\r\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
 
+// v2.51.0: the Admin can rename / merge directorates (Admin Parameters -> Directorates). Modules that name a real directorate
+// map it through the CURRENT directory + its former names, so they keep working after e.g. "Special Asset" became "SLC ASG Satyaguna Langgeng Capital".
+async function currentDirectorateName() {
+  const dirs = await (await fetch(`${BASE_URL}/api/directorates`)).json();
+  const admin = await (await fetch(`${BASE_URL}/api/admin/directorates`)).json();
+  const aliases = (admin.directorates || []).flatMap(d => (d.former_names || []).map(alias_name => ({ alias_name, directorate_name: d.name })));
+  const resolver = require('../server/db/directoryNames').buildResolver(dirs, { directorates: aliases });
+  return name => resolver.directorate(name) || name;
+}
+
 // ESS summary workbook (v2.32.0) built in-test: rows = arrays of cell values (row 1 = header). Uses the app's own minimal
 // .xlsx writer (required lazily, after the suite has loaded .env); parsing in the tests goes through jszip directly.
 const essXlsx = rows => require('../server/services/essSummaryService').buildXlsx(rows);
@@ -135,13 +145,155 @@ async function teardownSuiteLogin() {
   }
 }
 
+// --- CONFIGURATION GUARD (v2.51.0) ---
+// The suite runs against the SAME database as the live app, and some modules reset or edit what an Admin configures
+// (Module 16 resets every journey / checkpoint / metric, others PUT metric parameters, reset survey questions or change
+// settings) - an Admin's own edits used to be lost that way. So, on SQL Server, the suite takes a snapshot of the whole
+// Admin configuration (storage.snapshotConfiguration: journeys, checkpoints, metrics + targets, survey questions, master
+// questions, action library, app settings, directorate master + former names) before the first module and puts it back
+// exactly (ids kept; metrics created by tests are deleted with their data) right after the Module 16 reset and at the end
+// of the run - also after a failed assertion or a fatal error. The snapshot is written to a gitignored file first. If a run
+// is killed, that file stays behind and the NEXT run stops before it does anything: the file may be days old and restoring
+// it would undo real Admin edits since then, so it is never restored (or thrown away) without an explicit choice:
+//   TEST_RESTORE_STALE_SNAPSHOT=1  restore it, delete the file, then run the suite as usual (with a fresh snapshot)
+//   TEST_DISCARD_STALE_SNAPSHOT=1  keep the live configuration, rename the file to *.discarded-<stamp>.json, run the suite
+// JSON backend: the server keeps store.json in memory, so the suite cannot put it back - back the file up and restore it.
+const CONFIG_SNAPSHOT_FILE = require('path').join(__dirname, '..', 'server', 'data', 'backups', 'regression-config-snapshot.json');
+let configGuard = null; // { storage, snapshot } while the guard is active
+
+const describeRestore = r => [
+  r.restored_tables.length ? `tables put back: ${r.restored_tables.join(', ')}` : 'nothing had changed',
+  ...(r.removed_metrics.length ? [`test metrics removed: ${r.removed_metrics.map(m => `#${m.metric_id} "${m.metric_name}"`).join(', ')}`] : [])
+].join('; ');
+
+// A snapshot file left behind by a run that was killed. choice = { restore, discard } (default: the env variables above).
+// No choice -> throws (err.staleSnapshot) with the file's age and what differs from the live configuration; nothing changes.
+// restore -> restores it and deletes the file; discard -> renames it to *.discarded-<stamp>.json. Returns null without a file.
+const staleChoiceFromEnv = () => ({ restore: process.env.TEST_RESTORE_STALE_SNAPSHOT === '1', discard: process.env.TEST_DISCARD_STALE_SNAPSHOT === '1' });
+async function handleStaleConfigSnapshot(storage, file, choice = staleChoiceFromEnv()) {
+  const fs = require('fs');
+  if (!fs.existsSync(file)) return null;
+  const stale = err => Object.assign(new Error(err), { staleSnapshot: true });
+  let left = null;
+  let summary;
+  try {
+    left = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const ageH = (Date.now() - new Date(left.taken_at).getTime()) / 3600000;
+    const cmp = await storage.compareConfiguration(left);
+    summary = [`taken ${left.taken_at} (${ageH < 48 ? `${ageH.toFixed(1)} hours` : `${(ageH / 24).toFixed(1)} days`} ago)`,
+      cmp.differing_tables.length ? `differs from the live configuration in: ${cmp.differing_tables.join(', ')}` : 'equal to the live configuration',
+      ...(cmp.extra_metrics.length ? [`live metrics a restore would DELETE with their data: ${cmp.extra_metrics.map(m => `#${m.metric_id} "${m.metric_name}"`).join(', ')}`] : []),
+      ...(cmp.missing_metrics.length ? [`metrics a restore would bring back: ${cmp.missing_metrics.map(m => `#${m.metric_id} "${m.metric_name}"`).join(', ')}`] : [])];
+  } catch (err) {
+    left = null;
+    summary = [`cannot be used for a restore: ${err.message}`];
+  }
+  if (choice.restore && choice.discard) throw stale('Set only ONE of TEST_RESTORE_STALE_SNAPSHOT / TEST_DISCARD_STALE_SNAPSHOT.');
+  if (choice.restore) {
+    if (!left) throw stale(`Configuration guard: the leftover snapshot ${file} ${summary[0]} - discard it instead (TEST_DISCARD_STALE_SNAPSHOT=1).`);
+    console.log(`  ⚠️  Configuration guard: restoring the leftover snapshot (TEST_RESTORE_STALE_SNAPSHOT=1) - ${summary.join('; ')}`);
+    const r = await storage.restoreConfiguration(left);
+    console.log(`     restored: ${describeRestore(r)}`);
+    fs.unlinkSync(file);
+    return { action: 'restored', result: r };
+  }
+  if (choice.discard) {
+    const kept = file.replace(/\.json$/, `.discarded-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+    fs.renameSync(file, kept);
+    console.log(`  ⚠️  Configuration guard: leftover snapshot NOT restored (TEST_DISCARD_STALE_SNAPSHOT=1), kept as ${kept} - ${summary.join('; ')}`);
+    return { action: 'discarded', file: kept };
+  }
+  throw stale(['', '  ⛔ Configuration guard: a configuration snapshot from an earlier run that did not finish was found:', `     ${file}`,
+    ...summary.map(x => `     - ${x}`),
+    '     It is NOT restored automatically (it may undo Admin edits made since then). Nothing was changed and no test ran. Choose:',
+    '       TEST_RESTORE_STALE_SNAPSHOT=1  put that configuration back, then run the suite',
+    '       TEST_DISCARD_STALE_SNAPSHOT=1  keep the live configuration (the file is renamed to *.discarded-<stamp>.json), then run the suite', ''].join('\n'));
+}
+
+// Before anything else (login included): a leftover snapshot stops the run unless the env variables say what to do with it.
+async function checkStaleConfigSnapshot() {
+  require('dotenv').config({ path: require('path').join(__dirname, '..', '.env'), quiet: true });
+  const storage = require('../server/db/storage');
+  if (storage.backend !== 'sql') return;
+  await handleStaleConfigSnapshot(storage, CONFIG_SNAPSHOT_FILE);
+}
+
+async function startConfigGuard() {
+  const fs = require('fs');
+  require('dotenv').config({ path: require('path').join(__dirname, '..', '.env'), quiet: true });
+  const storage = require('../server/db/storage');
+  if (storage.backend !== 'sql') {
+    console.log('  ⚠️  Configuration guard OFF: JSON backend (the server keeps store.json in memory) - back up server/data/store.json before the run and restore it afterwards.\n');
+    return;
+  }
+  const snapshot = await storage.snapshotConfiguration();
+  fs.mkdirSync(require('path').dirname(CONFIG_SNAPSHOT_FILE), { recursive: true });
+  fs.writeFileSync(`${CONFIG_SNAPSHOT_FILE}.tmp`, JSON.stringify(snapshot), 'utf8');
+  fs.renameSync(`${CONFIG_SNAPSHOT_FILE}.tmp`, CONFIG_SNAPSHOT_FILE);
+  configGuard = { storage, snapshot };
+  console.log(`  🛡️  Configuration guard ON: Admin configuration saved (${Object.entries(snapshot.tables).map(([t, v]) => `${t.replace(/^px_/, '')} ${v.rows.length}`).join(', ')}); it is put back after the run.\n`);
+}
+
+// Puts the saved configuration back now (the guard stays active). Returns the restore result, or null without a guard.
+async function restoreConfigGuard(reason) {
+  if (!configGuard) return null;
+  const r = await configGuard.storage.restoreConfiguration(configGuard.snapshot);
+  console.log(`  🛡️  Configuration restored (${reason}): ${describeRestore(r)}`);
+  return r;
+}
+
+async function finishConfigGuard(reason = 'end of run') {
+  if (!configGuard) return;
+  try {
+    await restoreConfigGuard(reason);
+    require('fs').unlinkSync(CONFIG_SNAPSHOT_FILE);
+    configGuard = null;
+  } catch (err) {
+    failedTests++;
+    console.error(`  ❌ Configuration guard: restoring the Admin configuration FAILED (${err.message}). The snapshot stays in ${CONFIG_SNAPSHOT_FILE}; the next run restores it first.`);
+  }
+}
+
+// Ctrl+C / kill: put the configuration back before leaving (if that fails too, the next run does it from the file)
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.once(sig, () => {
+    console.error(`\n  ⚠️  ${sig}: restoring the Admin configuration before exiting ...`);
+    finishConfigGuard(`interrupted by ${sig}`).finally(() => process.exit(130));
+  });
+}
+
 async function runRegressionSuite() {
   console.log('\n================================================================');
   console.log('🧪 CIMB NIAGA PEOPLE EXPERIENCE (PX) - REGRESSION TESTING SUITE');
   console.log('================================================================\n');
 
+  try {
+    await checkStaleConfigSnapshot();
+  } catch (err) {
+    if (!err.staleSnapshot) throw err;
+    console.error(err.message);
+    process.exit(2);
+  }
   await setupSuiteLogin();
+  await startConfigGuard();
+  try {
+    await runAllModules();
+  } finally {
+    await finishConfigGuard();
+  }
 
+  // --- SUMMARY ---
+  console.log('\n================================================================');
+  console.log(`📊 REGRESSION TEST SUMMARY: ${passedTests}/${totalTests} Tests Passed (${failedTests} Failed)${SKIP_MODULES.size ? `, ${skippedTests} test(s) SKIPPED + whole module block(s) skipped: modules ${[...SKIP_MODULES].join(', ')}` : ''}`);
+  console.log('================================================================\n');
+
+  await teardownSuiteLogin();
+  if (failedTests > 0) {
+    process.exit(1);
+  }
+}
+
+async function runAllModules() {
   // --- 1. SYSTEM HEALTH & METRICS CALCULATION (YTD & PERIOD FILTER) ---
   console.log('📦 MODULE 1: Calculation Engine & Period Filtering');
   await runTest('System health endpoint is online', async () => {
@@ -152,7 +304,7 @@ async function runRegressionSuite() {
     assert.strictEqual(data.system, 'CIMB Niaga People Experience Integrated System');
   });
 
-  await runTest('PX Index Year-to-Date (Default) calculation formula (70% Survey + 30% Outcome)', async () => {
+  await runTest('PX Index Year-to-Date (Default) calculation formula (configured weights, default 70% Survey + 30% Outcome)', async () => {
     const res = await fetch(`${BASE_URL}/api/metrics/calculate?period=YTD`);
     assert.strictEqual(res.status, 200);
     const data = await res.json();
@@ -164,9 +316,11 @@ async function runRegressionSuite() {
     assert.strictEqual(data.journeys.length, 5, 'Total journeys must be 5');
     assert.strictEqual(data.checkpoints.length, 17, 'Total checkpoints must be 17');
     
-    // Formula verification: survey weight * survey + outcome weight * outcome (px_index_weights, default 70/30 - v2.48.0)
-    assert.deepStrictEqual(data.px_weights, { survey: 70, outcome: 30 }, 'default PX Index weights');
-    const expectedPx = Math.round((0.70 * data.survey_index + 0.30 * data.outcome_index) * 100) / 100;
+    // Formula verification: survey weight * survey + outcome weight * outcome (px_index_weights, default 70/30 - v2.48.0;
+    // v2.51.0: the weights the Admin configured - the suite no longer resets the live configuration, Module 50 tests 70/30)
+    const configuredWeights = (await (await fetch(`${BASE_URL}/api/settings`)).json()).px_index_weights;
+    assert.deepStrictEqual(data.px_weights, configuredWeights, 'the configured PX Index weights');
+    const expectedPx = Math.round((data.px_weights.survey / 100 * data.survey_index + data.px_weights.outcome / 100 * data.outcome_index) * 100) / 100;
     const diff = Math.abs(pxIndex - expectedPx);
     assert(diff < 0.1, `Calculated PX Index ${pxIndex} does not match formula ${expectedPx}`);
   });
@@ -210,7 +364,9 @@ async function runRegressionSuite() {
     assert.strictEqual(res.status, 200);
     const data = await res.json();
     assert.strictEqual(data.metric_id, 8);
-    assert.strictEqual(data.metric_name, 'Onboarding 30/60/90 Satisfaction Index');
+    // v2.51.0: the name the Admin configured (e.g. renamed to "Day 90 Onboarding Satisfaction Index")
+    const configured8 = (await (await fetch(`${BASE_URL}/api/admin/parameters`)).json()).metrics.find(m => m.metric_id === 8);
+    assert.strictEqual(data.metric_name, configured8.metric_name);
     
     // Check questions breakdown
     const questions = data.questions || data.questions_breakdown;
@@ -535,18 +691,20 @@ async function runRegressionSuite() {
   // --- 11. ESS SURVEY DIMENSIONS & % FAVORABLE SUMMARY BREAKDOWN (ALL 11 METRICS) ---
   console.log('\n📦 MODULE 11: ESS (Employee Sentiment Survey) Dimensions & Summary Scores for all 11 Metrics');
 
+  // v2.51.0: the question sets (and their count) are whatever the Admin configured in Manage Questions - the default
+  // template follows the ESS result files (Module 54) - so the count and dimension are read from the configuration.
   const essMetricsToTest = [
-    { id: 9, name: 'Role Clarity & DS Support Score Index', dim: 'Employee Commitment', qCount: 3, minScore: 85 },
-    { id: 13, name: 'Pride & Work Environment Index', dim: 'Pride & Work Environment', qCount: 4, minScore: 88 },
-    { id: 15, name: 'Manager Recognition Index', dim: 'Recognition & Appreciation', qCount: 3, minScore: 85 },
-    { id: 16, name: 'Wellbeing Index', dim: 'Employee Wellbeing', qCount: 3, minScore: 80 },
-    { id: 17, name: 'Psychological Safety Index', dim: 'Psychological Safety & Risk Mindset', qCount: 4, minScore: 90 },
-    { id: 18, name: 'Leadership Connection Score', dim: 'Agility & Decision Making', qCount: 6, minScore: 85 },
-    { id: 21, name: 'Career Growth & Learning Index', dim: 'Career Growth & Learning', qCount: 3, minScore: 85 },
-    { id: 22, name: 'Capability & Enablement Index', dim: 'Capability & Enablement', qCount: 3, minScore: 85 },
-    { id: 24, name: 'Performance Feedback Quality Index', dim: 'Performance Feedback & Development', qCount: 3, minScore: 85 },
-    { id: 25, name: 'Meaningful Contribution Index', dim: 'Purpose & Meaningful Contribution', qCount: 3, minScore: 85 },
-    { id: 27, name: 'Intent to Stay Index', dim: 'Employee Commitment', qCount: 3, minScore: 75 }
+    { id: 9, name: 'Role Clarity & DS Support Score Index', minScore: 85 },
+    { id: 13, name: 'Pride & Work Environment Index', minScore: 88 },
+    { id: 15, name: 'Manager Recognition Index', minScore: 85 },
+    { id: 16, name: 'Wellbeing Index', minScore: 80 },
+    { id: 17, name: 'Psychological Safety Index', minScore: 90 },
+    { id: 18, name: 'Leadership Connection Score', minScore: 85 },
+    { id: 21, name: 'Career Growth & Learning Index', minScore: 85 },
+    { id: 22, name: 'Capability & Enablement Index', minScore: 85 },
+    { id: 24, name: 'Performance Feedback Quality Index', minScore: 85 },
+    { id: 25, name: 'Meaningful Contribution Index', minScore: 85 },
+    { id: 27, name: 'Intent to Stay Index', minScore: 75 }
   ];
 
   for (const item of essMetricsToTest) {
@@ -557,9 +715,12 @@ async function runRegressionSuite() {
       const data = await res.json();
       assert.strictEqual(data.is_ess, true, `Metric #${item.id} must be recognized as ESS`);
       assert(data.ess_summary !== null, `Metric #${item.id} must have ess_summary`);
-      assert.strictEqual(data.ess_summary.dimension_name, item.dim, `Metric #${item.id} dimension must match ${item.dim}`);
+      const configured = (await (await fetch(`${BASE_URL}/api/admin/survey-questions/${item.id}`)).json()).questions;
+      assert.ok(configured.length >= 1, `Metric #${item.id} has configured questions`);
+      const dim = (configured.find(q => q.dimension) || {}).dimension || data.metric_name.replace(/\s*\(ESS\)\s*$/i, '');
+      assert.strictEqual(data.ess_summary.dimension_name, dim, `Metric #${item.id} dimension must match ${dim}`);
       assert(data.ess_summary.summary_score >= item.minScore, `Metric #${item.id} summary score (${data.ess_summary.summary_score}) should be >= ${item.minScore}`);
-      assert.strictEqual(data.questions_breakdown.length, item.qCount, `Metric #${item.id} should have ${item.qCount} questions`);
+      assert.strictEqual(data.questions_breakdown.length, configured.length, `Metric #${item.id} should have ${configured.length} questions`);
       
       // v2.32.0: an ESS metric reads its uploaded ESS summary (seed: 2025-11; v2.36.0: only inside a window containing it)
       assert.strictEqual(data.is_ess_summary, true, `Metric #${item.id} must be read from its ESS summary`);
@@ -574,7 +735,6 @@ async function runRegressionSuite() {
       assert.strictEqual(q1.visible_based_on, 'Always', `Q1 visible_based_on must be 'Always'`);
       assert.strictEqual(q1.required_based_on, 'Always', `Q1 required_based_on must be 'Always'`);
       // v2.50.0: the questions shown are the ones configured in Manage Questions, all of type PERCENTAGE
-      const configured = (await (await fetch(`${BASE_URL}/api/admin/survey-questions/${item.id}`)).json()).questions;
       assert.deepStrictEqual(data.questions_breakdown.map(q => [q.key, q.text]), configured.map(q => [q.key, q.text || q.label]));
       assert.ok(configured.every(q => q.type === 'PERCENTAGE') && data.questions_breakdown.every(q => q.type === 'PERCENTAGE'), 'ESS questions are PERCENTAGE');
     });
@@ -836,7 +996,7 @@ async function runRegressionSuite() {
     assert.strictEqual(updated.target_value, 90);
   });
 
-  await runTest('Reset parameters to defaults via POST /api/admin/parameters/reset', async () => {
+  await runTest('Reset parameters to defaults via POST /api/admin/parameters/reset (audited as PARAMETERS_RESET)', async () => {
     const res = await fetch(`${BASE_URL}/api/admin/parameters/reset`, {
       method: 'POST'
     });
@@ -850,7 +1010,13 @@ async function runRegressionSuite() {
     const m18 = params.metrics.find(m => m.metric_id === 18);
     assert.strictEqual(m18.metric_name, 'Leadership Connection Score (ESS)');
     assert.strictEqual(m18.metric_weight, 1.0);
+    // v2.51.0: the reset and the edit before it are in the audit trail (test-run rows)
+    const audit = await (await fetch(`${BASE_URL}/api/admin/audit-log?limit=50&include_test=1`)).json();
+    assert.ok(audit.some(e => e.action === 'PARAMETERS_RESET' && e.is_test === true && /reset to the defaults \(5 journeys, 17 checkpoints, 27 metrics\)/.test(e.target)), 'PARAMETERS_RESET audited');
+    assert.ok(audit.some(e => e.action === 'METRIC_UPDATE' && e.target.startsWith('#18:') && e.target.includes('-> ESS Overall Engagement Index (Updated Test)')), 'METRIC_UPDATE audited with old -> new');
   });
+  // v2.51.0: the reset above changed the LIVE Admin configuration (shared database) - put it back at once
+  await restoreConfigGuard('after the Module 16 reset test');
 
   // --- 17. OLLAMA-POWERED SCORE DEFICIT ALERT NARRATIVES ---
   console.log('\n📦 MODULE 17: Ollama-Powered Score Deficit Alert Narratives');
@@ -5324,13 +5490,15 @@ async function runRegressionSuite() {
         .filter(r => ![2, 5].includes(parseInt(r.metric_id, 10)) && !r.participant_id && !r.university && !r.candidate_id && !r.applied_position)
         .map(r => ({ directorate: r.directorate, division: r.division, n: 1 }));
     };
+    // v2.51.0: the names as the Admin may have renamed them since (former names resolve to the current one)
+    const cur44 = await currentDirectorateName();
     try {
       await runTest('[POSITIVE] GET /api/directorates returns exactly the 12 real directorates (no demo name, no "PT Bank CIMB Niaga Tbk" Bankwide row)', async () => {
         const dirs = await (await fetch(`${BASE_URL}/api/directorates`)).json();
-        assert.deepStrictEqual(dirs.map(d => d.name).sort(), [...REAL44].sort());
+        assert.deepStrictEqual(dirs.map(d => d.name).sort(), REAL44.map(cur44).sort());
         assert.ok(!dirs.some(d => /PT Bank CIMB Niaga/i.test(d.name)), 'the Bankwide row is not a directorate');
         // re-parented divisions (overrides) sit under their new directorate
-        const divsOf = n => dirs.find(d => d.name === n).divisions;
+        const divsOf = n => dirs.find(d => d.name === cur44(n)).divisions;
         assert.ok(divsOf('Treasury & Capital Market').includes('Treasury Operations') && divsOf('Treasury & Capital Market').includes('Investment Banking & Markets'));
         assert.ok(divsOf('Corporate Assurance').includes('Internal Audit Group'));
         assert.ok(divsOf('Operations, Technology, Analytics & AI').includes('Central Operations & Services'));
@@ -5419,11 +5587,11 @@ async function runRegressionSuite() {
             const rows = (await pool44.request().input('u', sql44.NVarChar, tag44)
               .query('SELECT respondent_type, org_unit_1, org_unit_2 FROM dbo.px_survey_uploaded_responses WHERE upload_id = @u ORDER BY response_id')).recordset;
             assert.deepStrictEqual(rows.map(r => `${r.respondent_type}|${r.org_unit_1}|${r.org_unit_2}`), [
-              'EMPLOYEE|Treasury & Capital Market|Treasury Operations', 'EMPLOYEE|Consumer & EBB|Wealth Management', 'CAMPUS_STUDENT|Information Technology|Teknik Informatika']);
+              `EMPLOYEE|${cur44('Treasury & Capital Market')}|Treasury Operations`, `EMPLOYEE|${cur44('Consumer & EBB')}|Wealth Management`, 'CAMPUS_STUDENT|Information Technology|Teknik Informatika']);
             assert.deepStrictEqual((await storage44.getUserById(userId)).scopes, [
-              { directorate: 'Strategy, Finance & SPAPM', divisions: null },
-              { directorate: 'Treasury & Capital Market', divisions: ['Treasury Operations'] },
-              { directorate: 'Operations, Technology, Analytics & AI', divisions: ['Central Operations & Services'] }]);
+              { directorate: cur44('Strategy, Finance & SPAPM'), divisions: null },
+              { directorate: cur44('Treasury & Capital Market'), divisions: ['Treasury Operations'] },
+              { directorate: cur44('Operations, Technology, Analytics & AI'), divisions: ['Central Operations & Services'] }]);
             const again = await storage44.migrateDirectorates();
             assert.deepStrictEqual(Object.values(again).filter(v => v !== 0), [], JSON.stringify(again));
           } finally {
@@ -5584,15 +5752,16 @@ async function runRegressionSuite() {
       });
 
       await runTest('[POSITIVE] A User scoped to two directorates (one with a division subset) gets the participation-weighted mean of both directorate rows, never the Bankwide row', async () => {
-        const u = await mkUser45('s', [{ directorate: 'Business Banking', divisions: null }, { directorate: 'Special Asset', divisions: null }]);
+        const SA = (await currentDirectorateName())('Special Asset');   // v2.51.0: "SLC ASG Satyaguna Langgeng Capital" once the Admin renamed it
+        const u = await mkUser45('s', [{ directorate: 'Business Banking', divisions: null }, { directorate: SA, divisions: null }]);
         const calc = await asUj45(u, '/api/metrics/calculate?mode=YTD&year=2025'); // v2.36.0: strict period
         const m = calc.metrics.find(x => x.metric_id === RC);
         assert.strictEqual(m.sample_size, 449 + 39);
         assert.strictEqual(m.normalized_score, parseFloat(((91 * 449 + 98 * 39) / 488).toFixed(2)));
         const d = await asUj45(u, `/api/metrics/${RC}/detail?mode=YTD&year=2025`);
-        assert.deepStrictEqual(d.ess_results_by_directorate.map(r => r.directorate).sort(), ['Business Banking', 'Special Asset']);
+        assert.deepStrictEqual(d.ess_results_by_directorate.map(r => r.directorate).sort(), ['Business Banking', SA].sort());
         assert.ok(d.ess_results_by_directorate.every(r => r.org_level === 'DIRECTORATE'), 'no Bankwide row for a User');
-        const one = await asUj45(u, `/api/metrics/calculate?mode=YTD&year=2025&directorate=${encodeURIComponent('Special Asset')}`);
+        const one = await asUj45(u, `/api/metrics/calculate?mode=YTD&year=2025&directorate=${encodeURIComponent(SA)}`);
         assert.strictEqual(one.metrics.find(x => x.metric_id === RC).normalized_score, 98);
         // an employee directorate row the user may not see stays a 403
         assert.strictEqual((await rawFetch(`${BASE_URL}/api/metrics/${RC}/detail?period=YTD&directorate=${encodeURIComponent('Human Resources')}`, asUser(u.cookie))).status, 403);
@@ -5739,8 +5908,9 @@ async function runRegressionSuite() {
             await pool.request().input('m', sql.Int, RC).input('u', sql.NVarChar, `seed-ess-${RC}-2025-11`)
               .query('UPDATE dbo.px_ess_results SET upload_id = @u WHERE metric_id = @m AND survey_year = 2025 AND survey_month = 11');
             // v2.50.0: an upload stores a question snapshot per row; the seed rows hold only the file's header text
+            const cur45 = await currentDirectorateName();   // v2.51.0: the seed spells the four renamed directorates the new way
             for (const r of require('../server/db/seedData').initialEssResults.filter(x => x.metric_id === RC && x.survey_year === 2025 && x.survey_month === 11)) {
-              await pool.request().input('m', sql.Int, RC).input('q', sql.NVarChar(sql.MAX), JSON.stringify(r.questions)).input('d', sql.NVarChar, r.directorate)
+              await pool.request().input('m', sql.Int, RC).input('q', sql.NVarChar(sql.MAX), JSON.stringify(r.questions)).input('d', sql.NVarChar, r.directorate ? cur45(r.directorate) : r.directorate)
                 .query(`UPDATE dbo.px_ess_results SET questions_json = @q WHERE metric_id = @m AND survey_year = 2025 AND survey_month = 11
                         AND ${r.org_level === 'BANKWIDE' ? "org_level = 'BANKWIDE'" : "org_level = 'DIRECTORATE' AND directorate = @d"}`);
             }
@@ -5873,8 +6043,9 @@ async function runRegressionSuite() {
       const d = await aj46(`/api/metrics/${RC46}/detail?mode=MTD&year=2025&month=11`);
       const seedRows = essSeed46.filter(r => r.metric_id === RC46 && r.survey_year === 2025 && r.survey_month === 11);
       assert.strictEqual(d.ess_results_by_directorate.length, 13);
+      const cur46 = await currentDirectorateName();   // v2.51.0: the seed spells the four renamed directorates the new way
       for (const r of seedRows) {
-        const got = d.ess_results_by_directorate.find(x => (r.org_level === 'BANKWIDE' ? x.org_level === 'BANKWIDE' : x.directorate === r.directorate));
+        const got = d.ess_results_by_directorate.find(x => (r.org_level === 'BANKWIDE' ? x.org_level === 'BANKWIDE' : x.directorate === cur46(r.directorate)));
         assert.ok(got, r.directorate || 'Bankwide');
         assert.deepStrictEqual([got.index_score, got.participation, got.questions.map(q => q.score)],
           [parseFloat(r.index_score.toFixed(2)), r.participation, r.questions.map(q => q.score)], r.directorate || 'Bankwide');
@@ -5951,7 +6122,7 @@ async function runRegressionSuite() {
       assert.strictEqual(a.outcome_index, c.outcome_index);
     });
 
-    await runTest('[POSITIVE] Survey Index = weighted mean of the survey metrics WITH data only; PX = 70/30 with basis BOTH; journeys / checkpoints only roll up metrics with data', async () => {
+    await runTest('[POSITIVE] Survey Index = weighted mean of the survey metrics WITH data only; PX = the configured weights (default 70/30) with basis BOTH; journeys / checkpoints only roll up metrics with data', async () => {
       const c = await calc46('mode=MTD&year=2025&month=10'); // SYSTEM surveys have October 2025 rows, ESS has no result on or before it (v2.50.0)
       const live = c.metrics.filter(m => !m.is_disabled && !m.excluded_from_index);
       const noData = live.filter(m => m.status === 'NO_DATA');
@@ -5963,7 +6134,8 @@ async function runRegressionSuite() {
       assert.ok(Math.abs(c.survey_index - expected) < 0.02, `survey_index ${c.survey_index} vs ${expected.toFixed(2)}`);
       assert.strictEqual(c.survey_metrics_count, surveys.length);
       assert.strictEqual(c.px_index_basis, 'BOTH');
-      assert.ok(Math.abs(c.px_index - (0.7 * c.survey_index + 0.3 * c.outcome_index)) < 0.02);
+      // v2.51.0: the configured weights (70/30 by default; the suite no longer resets an Admin's own weights)
+      assert.ok(Math.abs(c.px_index - (c.px_weights.survey / 100 * c.survey_index + c.px_weights.outcome / 100 * c.outcome_index)) < 0.02);
       for (const j of c.journeys) {
         const jm = j.metrics.filter(m => !m.is_disabled && !m.excluded_from_index && m.has_data && m.metric_type === 'SURVEY');
         if (!jm.length) assert.strictEqual(j.survey_score, null, `journey ${j.journey_id}`);
@@ -6680,6 +6852,9 @@ async function runRegressionSuite() {
       return cookie;
     };
     const userGet = async (cookie, p) => { const r = await json50('GET', p, undefined, cookie); assert.strictEqual(r.status, 200, p); return r.json(); };
+    // v2.51.0: the module needs the default 70/30; an Admin's own weights are put back afterwards
+    const weights50 = await weightsSetting();
+    if (!weights50 || weights50.survey !== 70 || weights50.outcome !== 30) await putWeights({ survey: 70, outcome: 30 });
 
     try {
       await runTest('[POSITIVE] PX Index weights default to 70/30 and are exposed by /api/metrics/calculate (px_weights, weights_formula)', async () => {
@@ -6816,7 +6991,7 @@ async function runRegressionSuite() {
       });
     } finally {
       const w = await weightsSetting();
-      if (!w || w.survey !== 70 || w.outcome !== 30) await putWeights({ survey: 70, outcome: 30 });
+      if (JSON.stringify(w) !== JSON.stringify(weights50)) await putWeights(weights50);
       for (const id of users50) await adminJson('DELETE', `/api/admin/users/${id}`);
     }
   }
@@ -7209,14 +7384,1080 @@ async function runRegressionSuite() {
     }
   }
 
-  // --- SUMMARY ---
-  console.log('\n================================================================');
-  console.log(`📊 REGRESSION TEST SUMMARY: ${passedTests}/${totalTests} Tests Passed (${failedTests} Failed)${SKIP_MODULES.size ? `, ${skippedTests} test(s) SKIPPED + whole module block(s) skipped: modules ${[...SKIP_MODULES].join(', ')}` : ''}`);
-  console.log('================================================================\n');
+  // --- MODULE 53 (v2.51.0): DIRECTORATE MASTER ADMINISTRATION (ADMIN PARAMETERS -> DIRECTORATES) ---
+  // Add / rename / delete / merge directorates and add / rename / delete divisions (Admin only, 403 for a User). A rename or
+  // merge cascades the name into every table that copies it and records the former name (alias), which the ESS / Exit
+  // Interview / survey CSV imports and the check-in keep recognising (chains included); delete only when nothing references
+  // the directorate / division (409 + counts). Works on temporary "RT53 ..." directorates only, with its own temp metrics
+  // (their survey + ESS rows go with them), users, attendances and fixtures, all removed in finally; the settings it touches
+  // are restored. Exit Interview fixtures, legacy user columns, recruitment SLA rows and the boot checks are SQL Server only.
+  console.log('\n📦 MODULE 53: Directorate master - add / rename / delete / merge directorates and divisions, cascade, former names, boot protection (Positive & Negative Testing)');
+  if (!skipModuleBlock(53)) {
+    const st53 = require('../server/db/storage');
+    const isSql53 = st53.backend === 'sql';
+    const dn53 = require('../server/db/directoryNames');
+    const dm53 = require('../server/db/directorateMigration');
+    const seed53 = require('../server/db/seedData');
+    const stamp53 = Date.now().toString(36);
+    const N = s => `RT53 ${s} ${stamp53}`;
+    const A0 = N('Alpha');
+    const A1 = N('Beta');
+    const A2 = N('Gamma');
+    const B0 = N('Delta');
+    const EV = 'ev-perspektif-2024-q1';
+    const call53 = (method, p, body, cookie) => nativeFetch(`${BASE_URL}${p}`, jsonBody(method, body, cookie));
+    const aj53 = async (method, p, body) => { const r = await adminJson(method, p, body); return { status: r.status, body: await r.json().catch(() => ({})) }; };
+    const list53 = async () => (await aj53('GET', '/api/admin/directorates')).body.directorates;
+    const find53 = async name => (await list53()).find(d => d.name === name);
+    const idOf = async name => (await find53(name)).directorate_id;
+    const metrics53 = [];
+    const users53 = [];
+    const nips53 = [];
+    const essUploads53 = [];
+    const exitUploads53 = [];
+    const settings0 = await (await fetch(`${BASE_URL}/api/settings`)).json();
+    const managers0 = settings0.event_manager_directorates;
+    const flag0 = settings0.directory_admin_managed;
+    const pool53 = isSql53 ? await new (require('mssql').ConnectionPool)({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
+      user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect() : null;
+    const q53 = async (text, params = {}) => {
+      const r = pool53.request();
+      Object.entries(params).forEach(([k, v]) => r.input(k, v));
+      return (await r.query(text)).recordset;
+    };
+    const createDir53 = async (name, divisions) => {
+      const r = await aj53('POST', '/api/admin/directorates', { name, divisions });
+      assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+      return r.body.directorate;
+    };
+    const mkMetric53 = async (name, extra) => {
+      const res = await adminJson('POST', '/api/admin/metrics', { metric_name: name, metric_type: 'SURVEY', journey_id: 2, checkpoint_id: 5, target_value: 85, min_threshold: 80, ...extra });
+      assert.strictEqual(res.status, 201);
+      const id = (await res.json()).metric.metric_id;
+      metrics53.push(id);
+      return id;
+    };
+    const makeUser53 = async (suffix, scopes) => {
+      const username = `rt53${suffix}${stamp53}`;
+      const res = await adminJson('POST', '/api/admin/users', { username, full_name: `Regression 53 ${suffix}`, role: 'USER', scopes });
+      assert.strictEqual(res.status, 201, `create user ${suffix}: ${res.status}`);
+      const body = await res.json();
+      users53.push(body.user.user_id);
+      const first = await loginAs(username, body.temporary_password);
+      const password = require('crypto').randomBytes(9).toString('hex') + 'Ee5';
+      assert.strictEqual((await call53('POST', '/api/auth/change-password', { current_password: body.temporary_password, new_password: password }, first.cookie)).status, 200);
+      const { cookie } = await loginAs(username, password);
+      return { id: body.user.user_id, cookie, username };
+    };
+    // v2.51.0 fix: a division is named in the body (PUT) / query string (DELETE), never in the URL path
+    const divUrl = (id, division) => `/api/admin/directorates/${id}/divisions${division === undefined ? '' : `?${new URLSearchParams({ division })}`}`;
+    const scopesOf53 = async userId => (await (await adminJson('GET', '/api/admin/users')).json()).find(u => u.user_id === userId).scopes;
+    const scopeStatus = async (u, dir, div) => (await call53('GET', `/api/metrics/calculate?mode=YTD&directorate=${encodeURIComponent(dir)}${div ? `&sub_directorate=${encodeURIComponent(div)}` : ''}`, undefined, u.cookie)).status;
+    const checkIn53 = async (tag, directorate, division) => {
+      const nip = `RT53${tag}${stamp53}`.slice(0, 15);
+      const r = await aj53('POST', `/api/events/${EV}/attendance`, { nip, employee_name: `Regression 53 ${tag}`, cimb_email: `${nip.toLowerCase()}@example.test`, directorate, division });
+      assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+      nips53.push(nip);
+      return r.body.attendance;
+    };
+    const day53 = new Date().toISOString().slice(0, 10);
+    const csv53 = rows => ['nip,employee_name,cimb_email,directorate,division,survey_date,q1_overall', ...rows].join('\r\n');
+    const csvRow53 = (nip, dir, div, score) => `${nip},Regression 53,${nip}@example.test,${csvCell(dir)},${csvCell(div)},${day53},${score}`;
+    const uploadCsv53 = async (metricId, rows) => {
+      const res = await adminJson('POST', '/api/surveys/upload', { csvText: csv53(rows), fileName: 'rt53.csv', metric_id: metricId });
+      assert.strictEqual(res.status, 200);
+      return res.json();
+    };
+    const essFile53 = (year, month, rows) => essXlsx([ESS_HEAD('RT53 Index', ['RT53 question']), ...rows.map(([dir, part, idx, q]) => [dir, 'Directorate', year, month, part, idx, q])]);
+    const postEss53 = async (metricId, buf) => {
+      const res = await postEssFile(metricId, buf, 'rt53_ess.xlsx');
+      const body = await res.json();
+      if (body.upload_id) essUploads53.push(body.upload_id);
+      return { status: res.status, body };
+    };
+    const essDirs53 = async (metricId, period) => (await aj53('GET', `/api/metrics/${metricId}/detail?period=${period}`)).body.ess_results_by_directorate
+      .filter(r => r.org_level === 'DIRECTORATE');
+    const attendance53 = async () => (await aj53('GET', `/api/events/${EV}`)).body.attendances.filter(a => nips53.includes(a.nip));
+    // Exit Interview fixtures (SQL only): one Termination Report row; NIK prefix RT53-, month 2098-05 (no other data)
+    const exitSvc53 = require('../server/services/exitInterviewService');
+    const exitRow53 = (nik, dir, div) => [nik, `Regression Exit ${nik}`, '2098-05-10', 'NORMAL_RESIGNATION', 'FAMILY', 'U7', '70', '-', '-', 'Officer', '-', '-', '-', '-',
+      ...Array.from({ length: 15 }, () => '-'), 'Yes', 'Yes', '-', '-', dir, div || ''];
+    const postExit53 = async rows => {
+      const buf = await require('../server/services/xlsxUtils').buildXlsx([['Report Exit Interview (regression 53)'], [...exitSvc53.TEMPLATE_COLUMNS.map(c => c.title), 'Directorate', 'Division'], ...rows], { headerRow: 1 });
+      const fd = new FormData();
+      fd.append('file', new Blob([buf]), 'module53_exit.xlsx');
+      const res = await fetch(`${BASE_URL}/api/exit-interview/upload`, { method: 'POST', body: fd });
+      const body = await res.json();
+      if (body.upload_id) exitUploads53.push(body.upload_id);
+      return { status: res.status, body };
+    };
 
-  await teardownSuiteLogin();
-  if (failedTests > 0) {
-    process.exit(1);
+    let SYS53 = null;   // temp SYSTEM survey metric (CSV rows)
+    let ESS53 = null;   // temp ESS metric (ESS summary rows)
+    let U1 = null;      // USER, all divisions of A
+    let U2 = null;      // USER, division "RT53 Div One" of A
+    try {
+      await runTest('[POSITIVE] GET /api/admin/directorates: every directorate of /api/directorates with its id, divisions, usage counts per source, total and former names; name limit 200; reserved values listed', async () => {
+        const r = await aj53('GET', '/api/admin/directorates');
+        assert.strictEqual(r.status, 200);
+        const pub = await (await fetch(`${BASE_URL}/api/directorates`)).json();
+        assert.deepStrictEqual(r.body.directorates.map(d => d.name), pub.map(d => d.name));
+        assert.deepStrictEqual(r.body.directorates.map(d => d.directorate_id), pub.map(d => d.directorate_id), 'the public list carries the same ids');
+        const d = r.body.directorates[0];
+        assert.ok(Number.isInteger(d.directorate_id) && Array.isArray(d.divisions) && Array.isArray(d.former_names));
+        assert.deepStrictEqual(Object.keys(d.usage).sort(), ['attendances', 'ess_results', 'exit_interviews', 'operational_records', 'settings', 'survey_responses', 'user_scopes', 'users']);
+        assert.strictEqual(d.total_references, Object.values(d.usage).reduce((a, b) => a + b, 0));
+        assert.strictEqual(r.body.max_length, 200);
+        assert.ok(['ALL', 'Bankwide', 'General'].every(x => r.body.reserved_directorate_names.includes(x)));
+        assert.ok(r.body.directorates.some(x => x.total_references > 0), 'the real directorates are referenced by data');
+      });
+
+      await runTest('[NEGATIVE] Invalid names are refused with 400 and nothing is created: empty, blanks, reserved ALL / Bankwide / General / "-", "PT Bank CIMB Niaga ...", 201 characters, an existing name in another letter case, divisions not a list, duplicate divisions, a reserved division', async () => {
+        const before = (await list53()).length;
+        const existing = (await list53())[0].name;
+        const bad = [{}, { name: '' }, { name: '   ' }, { name: 42 }, { name: 'all' }, { name: 'BANKWIDE' }, { name: 'General' }, { name: '-' }, { name: 'PT Bank CIMB Niaga Syariah' },
+          { name: 'x'.repeat(201) }, { name: ` ${existing.toUpperCase()} ` }, { name: N('Bad'), divisions: 'one' }, { name: N('Bad'), divisions: ['D1', ' d1 '] }, { name: N('Bad'), divisions: ['ALL'] }];
+        for (const body of bad) {
+          const r = await aj53('POST', '/api/admin/directorates', body);
+          assert.strictEqual(r.status, 400, `${JSON.stringify(body).slice(0, 60)} -> ${r.status}`);
+          assert.ok(r.body.error);
+        }
+        assert.strictEqual((await list53()).length, before);
+        assert.ok(!(await find53(N('Bad'))));
+      });
+
+      await runTest('[NEGATIVE] (fix #1/#3/#4) Names made of dots, invisible characters (zero-width space / joiner, BOM, bidi marks) and an NFD spelling of an existing name are refused; non-breaking / odd spaces become ordinary spaces and names are stored in NFC', async () => {
+        for (const name of ['.', '..', ' ... ', N('ZW') + '\u200b', `RT53\u200dJ ${stamp53}`, `\ufeff${N('BOM')}`, `RT53 \u202eBidi ${stamp53}`]) {
+          const r = await aj53('POST', '/api/admin/directorates', { name });
+          assert.strictEqual(r.status, 400, `${JSON.stringify(name)} -> ${r.status}`);
+        }
+        const cafe = await createDir53(`RT53 Caf\u00e9 ${stamp53}`);
+        const nfd = await aj53('POST', '/api/admin/directorates', { name: `RT53 Cafe\u0301 ${stamp53}` });
+        assert.strictEqual(nfd.status, 400, 'the decomposed spelling is the same name');
+        const nfdOnly = await createDir53(`RT53 Sole\u0301 ${stamp53}`);
+        assert.strictEqual(nfdOnly.name, `RT53 Sol\u00e9 ${stamp53}`, 'stored in NFC');
+        const nb = await createDir53(`RT53\u00a0Space\u3000${stamp53}`);
+        assert.strictEqual(nb.name, `RT53 Space ${stamp53}`);
+        assert.strictEqual((await aj53('PUT', `/api/admin/directorates/${nb.directorate_id}`, { name: `RT53 Space${'\u200b'} ${stamp53}` })).status, 400);
+        for (const d of [cafe, nfdOnly, nb]) assert.strictEqual((await aj53('DELETE', `/api/admin/directorates/${d.directorate_id}`)).status, 200);
+      });
+
+      await runTest('[NEGATIVE] (fix #3) Parallel requests: six POSTs of one new name create it once (others 400 / 409, never 500); two parallel renames to one name succeed once', async () => {
+        const race = N('Race');
+        const rs = await Promise.all(Array.from({ length: 6 }, () => aj53('POST', '/api/admin/directorates', { name: race })));
+        assert.strictEqual(rs.filter(r => r.status === 201).length, 1, rs.map(r => r.status).join(','));
+        assert.ok(rs.every(r => [201, 400, 409].includes(r.status) && !/SQL|Violation|deadlock|constraint/i.test(r.body.error || '')), JSON.stringify(rs.map(r => [r.status, r.body.error])));
+        const one = await createDir53(N('Race one'));
+        const two = await createDir53(N('Race two'));
+        const rn = await Promise.all([one, two].map(d => aj53('PUT', `/api/admin/directorates/${d.directorate_id}`, { name: N('Race final') })));
+        assert.strictEqual(rn.filter(r => r.status === 200).length, 1, rn.map(r => r.status).join(','));
+        assert.ok(rn.every(r => [200, 400, 409].includes(r.status)), JSON.stringify(rn.map(r => [r.status, r.body.error])));
+        for (const d of (await list53()).filter(x => x.name.startsWith('RT53 Race'))) await aj53('DELETE', `/api/admin/directorates/${d.directorate_id}`);
+        assert.ok(!(await list53()).some(x => x.name.startsWith('RT53 Race')));
+      });
+
+      await runTest('[POSITIVE] Admin adds directorates with divisions (blanks trimmed / collapsed, 200 characters accepted): 201, listed in /api/directorates at once, the boot top-up is switched off (directory_admin_managed), audited DIRECTORATE_CREATE', async () => {
+        const a = await createDir53(`  RT53   Alpha ${stamp53} `, ['RT53 Div One', '  RT53   Div  Two ']);
+        assert.strictEqual(a.name, A0);
+        assert.deepStrictEqual(a.divisions.map(v => v.name), ['RT53 Div One', 'RT53 Div Two']);
+        assert.strictEqual(a.total_references, 0);
+        const b = await createDir53(B0, ['rt53 div uno', 'RT53 Div Four']);
+        assert.strictEqual(b.name, B0);
+        const long = await createDir53(`RT53 ${stamp53} ${'L'.repeat(200 - 6 - stamp53.length)}`);
+        assert.strictEqual(long.name.length, 200);
+        assert.strictEqual((await aj53('DELETE', `/api/admin/directorates/${long.directorate_id}`)).status, 200);
+        const pub = await (await fetch(`${BASE_URL}/api/directorates`)).json();
+        assert.deepStrictEqual(pub.find(d => d.name === A0).divisions, ['RT53 Div One', 'RT53 Div Two']);
+        assert.strictEqual((await (await fetch(`${BASE_URL}/api/settings`)).json()).directory_admin_managed, true);
+        const audit = await (await fetch(`${BASE_URL}/api/admin/audit-log?limit=50&include_test=1`)).json();
+        assert.ok(audit.some(e => e.action === 'DIRECTORATE_CREATE' && String(e.target).includes(A0)), 'DIRECTORATE_CREATE audited');
+      });
+
+      await runTest('[NEGATIVE] (fix #5) An id is only an exact positive whole number: " <id>", "<id> ", "0<id>", "+<id>", "<id>.0" in the URL and such target_id values in a merge are 404 - nothing changes', async () => {
+        const id = await idOf(A0);
+        const bid = await idOf(B0);
+        for (const raw of [`%20${id}`, `${id}%20`, `0${id}`, `%2B${id}`, `${id}.0`, `${id}abc`, '-1', '0']) {
+          assert.strictEqual((await aj53('PUT', `/api/admin/directorates/${raw}`, { name: N('Hijack') })).status, 404, `PUT ${raw}`);
+          assert.strictEqual((await aj53('DELETE', `/api/admin/directorates/${raw}`)).status, 404, `DELETE ${raw}`);
+          assert.strictEqual((await aj53('POST', `/api/admin/directorates/${raw}/merge`, { target_id: bid })).status, 404, `merge ${raw}`);
+          assert.strictEqual((await aj53('POST', `/api/admin/directorates/${raw}/divisions`, { name: 'RT53 X' })).status, 404, `division ${raw}`);
+        }
+        for (const target of [` ${id}`, `${id} `, `0${id}`, `${id}.0`, 1.5, true, [id], { id }, -id]) {
+          assert.strictEqual((await aj53('POST', `/api/admin/directorates/${bid}/merge`, { target_id: target })).status, 404, `target_id ${JSON.stringify(target)}`);
+          if (!/^[1-9]\d*$/.test(String(target))) assert.strictEqual((await aj53('GET', `/api/admin/directorates/${bid}/merge-preview?target_id=${encodeURIComponent(String(target))}`)).status, 404, `preview ${JSON.stringify(target)}`);
+        }
+        assert.ok(await find53(A0) && await find53(B0) && !(await find53(N('Hijack'))), 'nothing renamed, merged or deleted');
+        assert.strictEqual((await aj53('POST', `/api/admin/directorates/${bid}/merge`, { target_id: String(bid) })).status, 400, 'a digit string id is accepted (here: into itself = 400)');
+      });
+
+      // data that references A0: EMPLOYEE CSV rows, ESS rows (A0 + B0, period 2024-01), attendance, two scoped users, a setting
+      SYS53 = await mkMetric53(`REGRESSION RT53 System ${stamp53}`, { scale_type: 'RATING_5', survey_source: 'SYSTEM', requires_manual_upload: false });
+      ESS53 = await mkMetric53(`REGRESSION RT53 ESS ${stamp53}`, { scale_type: 'PERCENTAGE', survey_source: 'ESS' });
+      assert.strictEqual((await adminJson('POST', `/api/admin/survey-questions/${ESS53}`, { questions: [{ key: 'q1_rt53', label: 'RT53', text: 'RT53 question', type: 'PERCENTAGE', mandatory: true }] })).status, 200);
+      await uploadCsv53(SYS53, [csvRow53(`9${stamp53}01`, A0, 'RT53 Div One', 4), csvRow53(`9${stamp53}02`, A0, 'RT53 Div One', 5), csvRow53(`9${stamp53}03`, A0, 'RT53 Div Two', 3)]);
+      const ess0 = await postEss53(ESS53, await essFile53(2024, 'January', [[A0, 100, 0.8, 0.7], [B0, 300, 0.6, 0.5]]));
+      assert.strictEqual(ess0.status, 200, JSON.stringify(ess0.body).slice(0, 300));
+      await checkIn53('a', A0, 'RT53 Div Two');
+      U1 = await makeUser53('a', [{ directorate: A0, divisions: null }]);
+      U2 = await makeUser53('b', [{ directorate: A0, divisions: ['RT53 Div One'] }]);
+      assert.strictEqual((await aj53('PUT', '/api/admin/settings/event_manager_directorates', { value: [...managers0, { value: A0, label: A0 }] })).status, 200);
+      if (isSql53) {
+        await q53('UPDATE dbo.px_users SET directorate = @d, division = @v WHERE user_id = @id', { d: A0, v: 'RT53 Div One', id: U1.id });   // legacy v2.26.0 columns
+        await q53("INSERT INTO dbo.px_recruitment_sla_by_unit (metric_id, unit, target_headcount, fulfilled, sla_achievement, status) VALUES (1, @u, 1, 1, '100%', 'Achieved')", { u: A0 });
+      }
+
+      await runTest('[POSITIVE] The usage counts show what references the directorate (survey 3, ESS 1, attendance 1, user scopes 2, setting 1; SQL also legacy user 1 + SLA 1) and per division', async () => {
+        const a = await find53(A0);
+        assert.deepStrictEqual([a.usage.survey_responses, a.usage.ess_results, a.usage.attendances, a.usage.user_scopes, a.usage.settings], [3, 1, 1, 2, 1]);
+        if (isSql53) assert.deepStrictEqual([a.usage.users, a.usage.operational_records], [1, 1]);
+        const one = a.divisions.find(v => v.name === 'RT53 Div One');
+        assert.deepStrictEqual([one.usage.survey_responses, one.usage.user_scopes], [2, 1]);
+        assert.strictEqual(a.divisions.find(v => v.name === 'RT53 Div Two').usage.attendances, 1);
+      });
+
+      await runTest('[NEGATIVE] Deleting a referenced directorate is refused with 409 and the per-source counts; nothing is removed', async () => {
+        const r = await aj53('DELETE', `/api/admin/directorates/${await idOf(A0)}`);
+        assert.strictEqual(r.status, 409);
+        assert.ok(/still referenced/i.test(r.body.error));
+        assert.deepStrictEqual([r.body.references.survey_responses, r.body.references.ess_results, r.body.references.attendances, r.body.references.user_scopes, r.body.references.settings], [3, 1, 1, 2, 1]);
+        assert.ok(r.body.divisions_with_data.includes('RT53 Div One'));
+        assert.ok(await find53(A0), 'still there');
+      });
+
+      await runTest('[POSITIVE] Rename cascades in one go: survey rows, ESS row, attendance, both user scopes (all / one division), the event_manager_directorates setting (SQL: legacy user columns, SLA unit); old name gone everywhere, kept as a former name; scoped Users read the new name at once (old name 403); audited DIRECTORATE_RENAME', async () => {
+        const r = await aj53('PUT', `/api/admin/directorates/${await idOf(A0)}`, { name: A1 });
+        assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+        assert.deepStrictEqual([r.body.changed, r.body.from, r.body.to], [true, A0, A1]);
+        assert.deepStrictEqual([r.body.counts.survey_responses, r.body.counts.ess_results, r.body.counts.attendances, r.body.counts.user_scopes, r.body.counts.settings], [3, 1, 1, 2, 1]);
+        const a = await find53(A1);
+        assert.deepStrictEqual([a.usage.survey_responses, a.usage.ess_results, a.usage.attendances, a.usage.user_scopes, a.usage.settings], [3, 1, 1, 2, 1]);
+        assert.deepStrictEqual(a.former_names, [A0]);
+        assert.ok(!(await find53(A0)));
+        assert.deepStrictEqual((await essDirs53(ESS53, '2024-01')).map(x => x.directorate).sort(), [A1, B0].sort());
+        assert.deepStrictEqual((await attendance53()).map(x => x.directorate), [A1]);
+        const mgr = (await (await fetch(`${BASE_URL}/api/settings`)).json()).event_manager_directorates;
+        assert.ok(mgr.some(o => o.value === A1 && o.label === A1) && !mgr.some(o => o.value === A0));
+        assert.strictEqual(await scopeStatus(U1, A1), 200);
+        assert.strictEqual(await scopeStatus(U1, A0), 403);
+        assert.strictEqual(await scopeStatus(U2, A1, 'RT53 Div One'), 200);
+        assert.strictEqual(await scopeStatus(U2, A1, 'RT53 Div Two'), 403, 'a restricted scope stays restricted');
+        if (isSql53) {
+          assert.deepStrictEqual((await q53('SELECT directorate FROM dbo.px_users WHERE user_id = @id', { id: U1.id }))[0].directorate, A1);
+          assert.strictEqual((await q53('SELECT COUNT(*) AS n FROM dbo.px_recruitment_sla_by_unit WHERE unit = @u', { u: A1 }))[0].n, 1);
+          assert.strictEqual((await q53('SELECT COUNT(*) AS n FROM dbo.px_survey_uploaded_responses WHERE org_unit_1 = @u', { u: A0 }))[0].n, 0, 'no row keeps the old name');
+        }
+        const audit = await (await fetch(`${BASE_URL}/api/admin/audit-log?limit=50&include_test=1`)).json();
+        assert.ok(audit.some(e => e.action === 'DIRECTORATE_RENAME' && String(e.target).includes(`"${A0}" -> "${A1}"`)));
+      });
+
+      await runTest('[POSITIVE] Renaming to the same name is a 200 no-op; a case-only rename changes the spelling everywhere without adding a former name', async () => {
+        const id = await idOf(A1);
+        const same = await aj53('PUT', `/api/admin/directorates/${id}`, { name: ` ${A1} ` });
+        assert.deepStrictEqual([same.status, same.body.changed], [200, false]);
+        const up = await aj53('PUT', `/api/admin/directorates/${id}`, { name: A1.toUpperCase() });
+        assert.deepStrictEqual([up.status, up.body.changed, up.body.counts.survey_responses], [200, true, 3]);
+        assert.strictEqual((await scopeStatus(U1, A1.toUpperCase())), 200);
+        const back = await aj53('PUT', `/api/admin/directorates/${id}`, { name: A1 });
+        assert.strictEqual(back.status, 200);
+        assert.deepStrictEqual((await find53(A1)).former_names, [A0], 'no former name for a case-only change');
+      });
+
+      await runTest('[POSITIVE] Former names keep working in imports: an ESS summary, a survey CSV and a check-in that still use the old name are stored under the current one', async () => {
+        const e = await postEss53(ESS53, await essFile53(2024, 'February', [[A0, 50, 0.9, 0.9]]));
+        assert.strictEqual(e.status, 200, JSON.stringify(e.body).slice(0, 300));
+        assert.deepStrictEqual((await essDirs53(ESS53, '2024-02')).map(x => x.directorate), [A1]);
+        await uploadCsv53(SYS53, [csvRow53(`9${stamp53}04`, A0.toLowerCase(), 'RT53 Div Two', 4)]);
+        const att = await checkIn53('b', A0, 'rt53 div two');
+        assert.deepStrictEqual([att.directorate, att.division], [A1, 'RT53 Div Two']);
+        const a = await find53(A1);
+        assert.deepStrictEqual([a.usage.survey_responses, a.usage.ess_results, a.usage.attendances], [4, 2, 2]);
+        assert.strictEqual(a.divisions.find(v => v.name === 'RT53 Div Two').usage.survey_responses, 2);
+      });
+
+      await runTest('[POSITIVE] A chain of renames resolves: A -> B -> C, an ESS file with A lands on C; former names A and B both point at C', async () => {
+        const r = await aj53('PUT', `/api/admin/directorates/${await idOf(A1)}`, { name: A2 });
+        assert.strictEqual(r.status, 200);
+        assert.deepStrictEqual((await find53(A2)).former_names.sort(), [A0, A1].sort());
+        const e = await postEss53(ESS53, await essFile53(2024, 'March', [[A0, 10, 0.5, 0.5]]));
+        assert.strictEqual(e.status, 200);
+        assert.deepStrictEqual((await essDirs53(ESS53, '2024-03')).map(x => x.directorate), [A2]);
+        const unknown = await postEss53(ESS53, await essFile53(2024, 'March', [[N('Never existed'), 10, 0.5, 0.5]]));
+        assert.strictEqual(unknown.status, 400, 'an unknown name is still refused');
+      });
+
+      await runTest('[POSITIVE] Divisions: add (201), rename cascades to survey rows and division scopes (old division 403, kept as a former division name), delete an unused one (200); rename to the same name = no-op', async () => {
+        const id = await idOf(A2);
+        const add = await aj53('POST', `/api/admin/directorates/${id}/divisions`, { name: ' RT53  Div Three ' });
+        assert.deepStrictEqual([add.status, add.body.division], [201, 'RT53 Div Three']);
+        const ren = await aj53('PUT', divUrl(id), { division: 'RT53 Div One', name: 'RT53 Div Uno' });
+        assert.strictEqual(ren.status, 200, JSON.stringify(ren.body));
+        assert.deepStrictEqual([ren.body.counts.survey_responses, ren.body.counts.user_scopes], [2, 1]);
+        assert.strictEqual(await scopeStatus(U2, A2, 'RT53 Div Uno'), 200);
+        assert.strictEqual(await scopeStatus(U2, A2, 'RT53 Div One'), 403);
+        const a = await find53(A2);
+        assert.deepStrictEqual(a.divisions.map(v => v.name), ['RT53 Div Three', 'RT53 Div Two', 'RT53 Div Uno'], 'listed alphabetically (v2.51.0)');
+        assert.strictEqual(a.divisions.find(v => v.name === 'RT53 Div Uno').usage.survey_responses, 2);
+        assert.deepStrictEqual(a.former_division_names, [{ alias_name: 'RT53 Div One', division_name: 'RT53 Div Uno' }]);
+        const same = await aj53('PUT', divUrl(id), { division: 'RT53 Div Three', name: 'RT53 Div Three' });
+        assert.deepStrictEqual([same.status, same.body.changed], [200, false]);
+        const del = await aj53('DELETE', divUrl(id, 'RT53 Div Three'));
+        assert.strictEqual(del.status, 200);
+        assert.ok(!(await find53(A2)).divisions.some(v => v.name === 'RT53 Div Three'));
+        const audit = await (await fetch(`${BASE_URL}/api/admin/audit-log?limit=50&include_test=1`)).json();
+        assert.ok(['DIVISION_CREATE', 'DIVISION_RENAME', 'DIVISION_DELETE'].every(act => audit.some(e => e.action === act && String(e.target).includes(A2))));
+      });
+
+      await runTest('[NEGATIVE] Divisions: a duplicate (other letter case) or reserved name 400, deleting a referenced division 409 with counts, an unknown division 404', async () => {
+        const id = await idOf(A2);
+        assert.strictEqual((await aj53('POST', `/api/admin/directorates/${id}/divisions`, { name: 'rt53 div two' })).status, 400);
+        assert.strictEqual((await aj53('POST', `/api/admin/directorates/${id}/divisions`, { name: 'General' })).status, 400);
+        assert.strictEqual((await aj53('PUT', divUrl(id), { division: 'RT53 Div Uno', name: 'RT53 DIV TWO' })).status, 400);
+        const ref = await aj53('DELETE', divUrl(id, 'RT53 Div Uno'));
+        assert.strictEqual(ref.status, 409);
+        assert.deepStrictEqual([ref.body.references.survey_responses, ref.body.references.user_scopes], [2, 1]);
+        assert.strictEqual((await aj53('DELETE', divUrl(id, 'RT53 No Such'))).status, 404);
+        assert.strictEqual((await aj53('PUT', divUrl(id), { division: 'RT53 No Such', name: 'X' })).status, 404);
+        // fix #1: "." / ".." are refused as names and, sent in the body / query string, can never reach the directorate itself
+        for (const dots of ['.', '..', ' ... ']) {
+          assert.strictEqual((await aj53('POST', divUrl(id), { name: dots })).status, 400, `add "${dots}"`);
+          assert.strictEqual((await aj53('PUT', divUrl(id), { division: 'RT53 Div Two', name: dots })).status, 400, `rename to "${dots}"`);
+        }
+        assert.strictEqual((await aj53('DELETE', divUrl(id, '..'))).status, 404);
+        assert.strictEqual((await aj53('PUT', divUrl(id), { division: '..', name: 'X' })).status, 404);
+        assert.strictEqual((await aj53('PUT', divUrl(id), { name: 'X' })).status, 400, 'division missing');
+        assert.strictEqual((await aj53('DELETE', divUrl(id))).status, 400, 'division missing');
+        const still = await find53(A2);
+        assert.ok(still && still.divisions.some(v => v.name === 'RT53 Div Two'), 'the directorate and its divisions are untouched');
+        assert.strictEqual((await aj53('POST', '/api/admin/directorates/99999999/divisions', { name: 'X' })).status, 404);
+      });
+
+      if (isSql53) {
+        await runTest('[POSITIVE] (SQL Server) The Exit Interview import maps a former directorate AND a former division name to the current ones', async () => {
+          const r = await postExit53([exitRow53('RT53-001', A0, 'RT53 Div One'), exitRow53('RT53-002', A1.toUpperCase(), '')]);
+          assert.strictEqual(r.status, 200, JSON.stringify(r.body).slice(0, 300));
+          const rows = await q53("SELECT nik, directorate, division FROM dbo.px_exit_interviews WHERE nik LIKE 'RT53-%' ORDER BY nik");
+          assert.deepStrictEqual(rows.map(x => [x.nik, x.directorate, x.division]), [['RT53-001', A2, 'RT53 Div Uno'], ['RT53-002', A2, null]]);
+          assert.strictEqual((await find53(A2)).usage.exit_interviews, 2);
+        });
+      }
+
+      await runTest('[NEGATIVE/POSITIVE] (fix #6) Creating or renaming to a name that unlinked data rows already carry needs confirm_adopt: 409 requires_confirmation with the counts and nothing changed; confirmed -> the rows belong to it', async () => {
+        await checkIn53('o', N('Orphan'), 'RT53 Free Div');
+        const r = await aj53('POST', '/api/admin/directorates', { name: N('Orphan') });
+        assert.strictEqual(r.status, 409);
+        assert.deepStrictEqual([r.body.requires_confirmation, r.body.orphan_references.attendances], [true, 1]);
+        assert.ok(!(await find53(N('Orphan'))), 'not created');
+        const ok = await aj53('POST', '/api/admin/directorates', { name: N('Orphan'), confirm_adopt: true });
+        assert.strictEqual(ok.status, 201);
+        assert.deepStrictEqual([ok.body.adopted_orphans.attendances, ok.body.directorate.usage.attendances], [1, 1]);
+        await checkIn53('p', N('Orphan two'), '');
+        const ren = await aj53('PUT', `/api/admin/directorates/${ok.body.directorate.directorate_id}`, { name: N('Orphan two') });
+        assert.deepStrictEqual([ren.status, ren.body.requires_confirmation, ren.body.orphan_references.attendances], [409, true, 1]);
+        assert.ok(await find53(N('Orphan')), 'not renamed');
+        const ren2 = await aj53('PUT', `/api/admin/directorates/${ok.body.directorate.directorate_id}`, { name: N('Orphan two'), confirm_adopt: true });
+        assert.strictEqual(ren2.status, 200);
+        assert.strictEqual((await find53(N('Orphan two'))).usage.attendances, 2);
+        const audit = await (await fetch(`${BASE_URL}/api/admin/audit-log?limit=50&include_test=1`)).json();
+        assert.ok(audit.some(e => e.action === 'DIRECTORATE_CREATE' && String(e.target).includes('adopted')));
+      });
+
+      await runTest('[POSITIVE] (fix #2) Merge preview (read only): rows that move, pooled ESS periods, divisions moved / merged and every account whose scope changes - the all-divisions account is flagged as widened; bad requests 400 / 404', async () => {
+        const src = await idOf(A2);
+        const tgt = await idOf(B0);
+        const p = await aj53('GET', `/api/admin/directorates/${src}/merge-preview?target_id=${tgt}`);
+        assert.strictEqual(p.status, 200, JSON.stringify(p.body));
+        assert.deepStrictEqual([p.body.from, p.body.to, p.body.rows.survey_responses, p.body.rows.attendances, p.body.ess_results_pooled], [A2, B0, 4, 2, 1]);
+        assert.deepStrictEqual(p.body.divisions_moved, ['RT53 Div Two']);
+        assert.deepStrictEqual(p.body.divisions_merged, [{ from: 'RT53 Div Uno', into: 'rt53 div uno' }]);
+        const a1 = p.body.accounts.find(a => a.user_id === U1.id);
+        const a2 = p.body.accounts.find(a => a.user_id === U2.id);
+        assert.deepStrictEqual([a1.widened, a1.after], [true, [{ directorate: B0, divisions: null }]]);
+        assert.deepStrictEqual([a2.widened, a2.after], [false, [{ directorate: B0, divisions: ['rt53 div uno'] }]]);
+        assert.ok(await find53(A2), 'nothing changed');
+        assert.strictEqual((await aj53('GET', `/api/admin/directorates/${src}/merge-preview`)).status, 400);
+        assert.strictEqual((await aj53('GET', `/api/admin/directorates/${src}/merge-preview?target_id=${src}`)).status, 400);
+        assert.strictEqual((await aj53('GET', `/api/admin/directorates/${src}/merge-preview?target_id=99999999`)).status, 404);
+      });
+
+      await runTest('[NEGATIVE] Merge: into itself 400, without target 400, unknown source or target 404; nothing changes', async () => {
+        const id = await idOf(A2);
+        assert.strictEqual((await aj53('POST', `/api/admin/directorates/${id}/merge`, { target_id: id })).status, 400);
+        assert.strictEqual((await aj53('POST', `/api/admin/directorates/${id}/merge`, {})).status, 400);
+        assert.strictEqual((await aj53('POST', `/api/admin/directorates/${id}/merge`, { target_id: 99999999 })).status, 404);
+        assert.strictEqual((await aj53('POST', `/api/admin/directorates/99999999/merge`, { target_id: id })).status, 404);
+        assert.strictEqual((await aj53('PUT', '/api/admin/directorates/abc', { name: N('X') })).status, 404);
+        assert.strictEqual((await aj53('DELETE', '/api/admin/directorates/99999999')).status, 404);
+        assert.ok(await find53(A2));
+      });
+
+      await runTest('[POSITIVE] Merge A into B: divisions move (same-named one merges into B\'s spelling), every row moves, ESS rows of the same period are pooled (participation-weighted), an all-divisions scope of A becomes all of B (fix #2, audited as USER_SCOPE_CHANGE), a division scope keeps its division; A and its former names become former names of B; a file with the oldest name lands on B', async () => {
+        const src = await find53(A2);
+        const r = await aj53('POST', `/api/admin/directorates/${src.directorate_id}/merge`, { target_id: await idOf(B0) });
+        assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+        assert.deepStrictEqual([r.body.from, r.body.to, r.body.divisions_moved, r.body.divisions_merged], [A2, B0, 1, 1]);
+        assert.deepStrictEqual([r.body.counts.ess_results, r.body.counts.ess_results_pooled], [3, 1]);
+        assert.ok(!(await find53(A2)));
+        const b = await find53(B0);
+        assert.deepStrictEqual(b.divisions.map(v => v.name).sort(), ['rt53 div uno', 'RT53 Div Four', 'RT53 Div Two'].sort());
+        assert.deepStrictEqual(b.former_division_names, [{ alias_name: 'RT53 Div One', division_name: 'rt53 div uno' }], 'a former division name follows the merge');
+        assert.deepStrictEqual(b.former_names.sort(), [A0, A1, A2].sort());
+        assert.deepStrictEqual([b.usage.survey_responses, b.usage.attendances, b.usage.user_scopes > 0, b.usage.settings], [4, 2, true, 1]);
+        assert.strictEqual(b.divisions.find(v => v.name === 'rt53 div uno').usage.survey_responses, 2, 'rows of the merged division take B\'s spelling');
+        const pooled = (await essDirs53(ESS53, '2024-01'));
+        assert.deepStrictEqual(pooled.map(x => [x.directorate, x.participation, x.index_score, x.questions[0].score]), [[B0, 400, 65, 55]]);
+        assert.strictEqual(await scopeStatus(U1, B0), 200);
+        assert.strictEqual(await scopeStatus(U1, B0, 'rt53 div uno'), 200);
+        assert.strictEqual(await scopeStatus(U1, B0, 'RT53 Div Two'), 200);
+        assert.strictEqual(await scopeStatus(U1, B0, 'RT53 Div Four'), 200, 'all divisions of A -> all divisions of B');
+        assert.deepStrictEqual(await scopesOf53(U1.id), [{ directorate: B0, divisions: null }]);
+        assert.deepStrictEqual(await scopesOf53(U2.id), [{ directorate: B0, divisions: ['rt53 div uno'] }]);
+        assert.strictEqual(await scopeStatus(U2, B0, 'rt53 div uno'), 200);
+        assert.strictEqual(await scopeStatus(U2, B0, 'RT53 Div Four'), 403, 'a division scope stays that division');
+        assert.deepStrictEqual(r.body.scope_changes.map(c => [c.user_id, c.widened]).sort(), [[U1.id, true], [U2.id, false]].sort());
+        const audit53 = await (await fetch(`${BASE_URL}/api/admin/audit-log?limit=80&include_test=1`)).json();
+        for (const u of [U1, U2]) assert.ok(audit53.some(e => e.action === 'USER_SCOPE_CHANGE' && String(e.target).startsWith(`${u.username}:`) && String(e.target).includes(`(merge "${A2}")`)), `scope change of ${u.username} audited`);
+        assert.deepStrictEqual((await attendance53()).filter(x => [A0, A1, A2, B0].includes(x.directorate)).map(x => x.directorate), [B0, B0]);
+        const e = await postEss53(ESS53, await essFile53(2024, 'April', [[A0, 10, 0.5, 0.5]]));
+        assert.strictEqual(e.status, 200);
+        assert.deepStrictEqual((await essDirs53(ESS53, '2024-04')).map(x => x.directorate), [B0]);
+        if (isSql53) {
+          const rows = await q53("SELECT directorate, division FROM dbo.px_exit_interviews WHERE nik LIKE 'RT53-%' ORDER BY nik");
+          assert.deepStrictEqual(rows.map(x => [x.directorate, x.division]), [[B0, 'rt53 div uno'], [B0, null]]);
+          // the exit row WITHOUT a division stays readable for the all-divisions account (fix #2)
+          const ex = await call53('GET', `/api/exit-interview/summary?mode=MTD&year=2098&month=05&directorate=${encodeURIComponent(B0)}`, undefined, U1.cookie);
+          assert.strictEqual(ex.status, 200);
+          assert.strictEqual((await ex.json()).counts.total_records, 2);
+          assert.strictEqual((await q53('SELECT directorate FROM dbo.px_users WHERE user_id = @id', { id: U1.id }))[0].directorate, B0);
+          assert.strictEqual((await q53("SELECT COUNT(*) AS n FROM dbo.px_survey_uploaded_responses WHERE org_unit_1 = @d AND org_unit_2 COLLATE Latin1_General_100_BIN2 = N'rt53 div uno'", { d: B0 }))[0].n, 2, 'exact spelling');
+        }
+        const audit = await (await fetch(`${BASE_URL}/api/admin/audit-log?limit=50&include_test=1`)).json();
+        assert.ok(audit.some(e2 => e2.action === 'DIRECTORATE_MERGE' && String(e2.target).includes(`"${A2}" -> "${B0}"`)));
+      });
+
+      await runTest('[POSITIVE] (fix #2) Merging a directorate WITHOUT divisions (like Sharia Banking / Special Asset): its all-divisions account gets all of the target - never an empty scope, never "General"; its rows without a division move along', async () => {
+        const z = await createDir53(N('Zero'));
+        await checkIn53('z', N('Zero'), '');
+        const u3 = await makeUser53('c', [{ directorate: N('Zero'), divisions: null }]);
+        const p = await aj53('GET', `/api/admin/directorates/${z.directorate_id}/merge-preview?target_id=${await idOf(B0)}`);
+        assert.deepStrictEqual(p.body.accounts.map(a => [a.user_id, a.widened, a.after]), [[u3.id, true, [{ directorate: B0, divisions: null }]]]);
+        const r = await aj53('POST', `/api/admin/directorates/${z.directorate_id}/merge`, { target_id: await idOf(B0) });
+        assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+        assert.deepStrictEqual(await scopesOf53(u3.id), [{ directorate: B0, divisions: null }]);
+        assert.strictEqual(await scopeStatus(u3, B0), 200);
+        assert.ok((await attendance53()).filter(a => a.directorate === B0 && a.division === 'General').length >= 1, 'the attendance without a division moved');
+      });
+
+      await runTest('[POSITIVE] (fix #9) PX Index by directorate: a directorate without data of its own (only the bankwide metrics #1-#5 and the directorate-independent OUTCOME snapshot) comes back with has_own_data false and null scores and is listed after every ranked one; a directorate with own data keeps its score; calculate?directorate= is unchanged', async () => {
+        const e = await createDir53(N('Empty PX'));
+        const year = String(new Date().getFullYear());
+        const r = await aj53('GET', `/api/metrics/by-directorate?mode=YTD&year=${year}`);
+        assert.strictEqual(r.status, 200);
+        const list = r.body.directorates;
+        const empty = list.find(x => x.directorate === e.name);
+        assert.deepStrictEqual([empty.has_own_data, empty.px_index, empty.survey_index, empty.outcome_index, empty.px_index_basis], [false, null, null, null, 'NONE']);
+        const own = list.find(x => x.directorate === B0);
+        assert.deepStrictEqual([own.has_own_data, typeof own.px_index], [true, 'number']);
+        assert.ok(list.indexOf(empty) > list.filter(x => x.px_index !== null).length - 1, 'listed after every directorate with a score');
+        const calc = await aj53('GET', `/api/metrics/calculate?mode=YTD&year=${year}&directorate=${encodeURIComponent(e.name)}`);
+        assert.strictEqual(typeof calc.body.px_index, 'number', 'calculate itself still counts the bankwide metrics');
+        assert.strictEqual((await aj53('DELETE', `/api/admin/directorates/${e.directorate_id}`)).status, 200);
+      });
+
+      await runTest('[POSITIVE] A former name can be given to a new directorate: the alias moves to it (released_alias_of) and imports with that name land there; deleting the empty directorate removes it again', async () => {
+        const r = await aj53('POST', '/api/admin/directorates', { name: A1 });
+        assert.strictEqual(r.status, 201);
+        assert.strictEqual(r.body.released_alias_of, B0);
+        const fn = (await find53(B0)).former_names;
+        assert.ok(fn.includes(A0) && fn.includes(A2) && !fn.includes(A1), fn.join(' | '));
+        const del = await aj53('DELETE', `/api/admin/directorates/${r.body.directorate.directorate_id}`);
+        assert.deepStrictEqual([del.status, del.body.deleted], [200, A1]);
+        assert.ok(!(await (await fetch(`${BASE_URL}/api/directorates`)).json()).some(d => d.name === A1));
+        const audit = await (await fetch(`${BASE_URL}/api/admin/audit-log?limit=50&include_test=1`)).json();
+        assert.ok(audit.some(e => e.action === 'DIRECTORATE_DELETE' && String(e.target).includes(A1)));
+      });
+
+      await runTest('[NEGATIVE] A User gets 403 on every directory route (list, add, rename, delete, merge, divisions) and nothing changes; the directory_admin_managed setting cannot be edited (400)', async () => {
+        const id = await idOf(B0);
+        const tries = [['GET', '/api/admin/directorates'], ['POST', '/api/admin/directorates', { name: N('ByUser') }], ['PUT', `/api/admin/directorates/${id}`, { name: N('ByUser') }],
+          ['DELETE', `/api/admin/directorates/${id}`], ['POST', `/api/admin/directorates/${id}/merge`, { target_id: id }], ['POST', `/api/admin/directorates/${id}/divisions`, { name: 'X' }],
+          ['PUT', divUrl(id), { division: 'RT53 Div Four', name: 'X' }], ['DELETE', divUrl(id, 'RT53 Div Four')], ['GET', `/api/admin/directorates/${id}/merge-preview?target_id=${id}`]];
+        for (const [m, p, b] of tries) assert.strictEqual((await call53(m, p, b, U1.cookie)).status, 403, `${m} ${p}`);
+        assert.ok(await find53(B0) && !(await find53(N('ByUser'))));
+        assert.ok((await find53(B0)).divisions.some(v => v.name === 'RT53 Div Four'));
+        const put = await aj53('PUT', '/api/admin/settings/directory_admin_managed', { value: false });
+        assert.strictEqual(put.status, 400);
+        assert.strictEqual((await (await fetch(`${BASE_URL}/api/settings`)).json()).directory_admin_managed, true);
+      });
+
+      await runTest('[POSITIVE] Name resolver (pure): current name, former name (any case / spacing), division former name, seed renames both ways (Sharia Banking <-> Syariah Banking) and through an Admin alias; v2.31.0 demo targets map to the CURRENT name and never resurrect a renamed one', async () => {
+        const res = dn53.buildResolver([{ directorate_name: 'Dir X', divisions: ['Div 1'] }, { directorate_name: 'Sharia Banking', divisions: [] }],
+          { directorates: [{ alias_name: 'Old X', directorate_name: 'Dir X' }], divisions: [{ directorate_name: 'Dir X', alias_name: 'Old 1', division_name: 'Div 1' }] });
+        assert.strictEqual(res.directorate(' old   X '), 'Dir X');
+        assert.strictEqual(res.division('OLD X', 'old 1'), 'Div 1');
+        assert.strictEqual(res.directorate('Syariah Banking'), 'Sharia Banking', 'a database that has not renamed yet');
+        assert.strictEqual(res.directorate('Nope'), null);
+        const fresh = dn53.buildResolver([{ directorate_name: 'Syariah Banking', divisions: [] }, { directorate_name: 'Strategy & Finance', divisions: [] }], {});
+        assert.strictEqual(fresh.directorate('Sharia Banking'), 'Syariah Banking', 'the real ESS 2025 file on a fresh install');
+        assert.strictEqual(fresh.directorate('Strategy, Finance & SPAPM'), 'Strategy & Finance');
+        const renamed = dn53.buildResolver([{ directorate_name: 'Islamic Banking', divisions: [] }], { directorates: [{ alias_name: 'Syariah Banking', directorate_name: 'Islamic Banking' }] });
+        assert.strictEqual(renamed.directorate('Sharia Banking'), 'Islamic Banking', 'seed rename + Admin alias chain');
+        const opts = r2 => ({ isCurrent: r2.isCurrent, mapTarget: n => r2.directorate(n) });
+        assert.strictEqual(dm53.renamedDirectorate('Finance & Operations', 'Financial Planning & Analysis', opts(fresh)), 'Strategy & Finance');
+        const old = dn53.buildResolver([{ directorate_name: 'Strategy, Finance & SPAPM', divisions: [] }], {});
+        assert.strictEqual(dm53.renamedDirectorate('Finance & Operations', 'X', opts(old)), 'Strategy, Finance & SPAPM');
+        const live = dn53.buildResolver([{ directorate_name: 'Consumer Banking', divisions: [] }, { directorate_name: 'Consumer & EBB', divisions: [] }], {});
+        assert.strictEqual(dm53.renamedDirectorate('Consumer Banking', null, opts(live)), null, 'a directorate the Admin created with an old demo name is left alone');
+        const plan = dm53.planDirectory([{ directorate_name: 'Finance & Operations', divisions: ['Financial Planning & Analysis', 'Treasury Operations'] }], seed53.initialDirectorates, { mapTarget: dn53.currentSeedName });
+        const names = plan.directorates.map(d => d.directorate_name);
+        assert.ok(!names.includes('Strategy, Finance & SPAPM') && !names.includes('Treasury & Capital Market'), names.join(' | '));
+        assert.strictEqual(names.length, seed53.initialDirectorates.length);
+        assert.ok(plan.directorates.find(d => d.directorate_name === 'Treasury & Financial Institutions').divisions.includes('Treasury Operations'));
+        assert.deepStrictEqual(seed53.initialDirectorates.filter(d => ['Syariah Banking', 'SLC ASG Satyaguna Langgeng Capital', 'Strategy & Finance', 'Treasury & Financial Institutions'].includes(d.directorate_name)).length, 4, 'the seed uses the new names');
+        const pooled = dn53.mapEssSeedRows([{ upload_id: 'u', metric_id: 9, survey_year: 2025, survey_month: 11, org_level: 'DIRECTORATE', directorate: 'Special Asset', participation: 100, index_score: 80, questions: [{ score: 70 }] },
+          { upload_id: 'u', metric_id: 9, survey_year: 2025, survey_month: 11, org_level: 'DIRECTORATE', directorate: 'Risk Management', participation: 300, index_score: 60, questions: [{ score: 50 }] },
+          { upload_id: 'u', metric_id: 9, survey_year: 2025, survey_month: 11, org_level: 'DIRECTORATE', directorate: 'Gone', participation: 1, index_score: 1, questions: [] }],
+        dn53.buildResolver([{ directorate_name: 'Risk Management', divisions: [] }], { directorates: [{ alias_name: 'SLC', directorate_name: 'Risk Management' }] }));
+        assert.deepStrictEqual(pooled.map(x => [x.directorate, x.participation, x.index_score, x.questions[0].score]), [['Risk Management', 400, 65, 55]]);
+      });
+
+      if (isSql53) {
+        await runTest('[POSITIVE] (SQL Server) Boot protection: once the Admin manages the directory the seed top-up adds nothing (not a deleted / renamed name, not a division); before that a seed name is looked up through former names; the v2.31.0 boot rename changes 0 rows', async () => {
+          const b = await find53(B0);
+          assert.strictEqual(await st53.isDirectoryManaged(), true);
+          assert.strictEqual(await st53.topUpDirectory([{ directorate_name: A1, divisions: ['RT53 Div Three'] }, { directorate_name: A0, divisions: ['RT53 Div One', 'RT53 Div Five'] }]), 0);
+          assert.ok(!(await find53(A1)) && !(await find53(A0)));
+          // unmanaged (pre-v2.51.0 behaviour): a seed entry under a FORMER name is the current directorate - no second directorate
+          await st53.setSetting('directory_admin_managed', false);
+          try {
+            assert.strictEqual(await st53.topUpDirectory([{ directorate_name: A0, divisions: ['RT53 Div One', 'rt53 div two'] }]), 0, 'former names (directorate + division) resolve');
+          } finally {
+            await st53.setSetting('directory_admin_managed', true);
+          }
+          const counts = await st53.migrateDirectorates();
+          assert.strictEqual(Object.values(counts).reduce((x, y) => x + y, 0), 0, JSON.stringify(counts));
+          assert.deepStrictEqual((await find53(B0)).divisions, b.divisions);
+          const after = await (await fetch(`${BASE_URL}/api/directorates`)).json();
+          assert.ok(!after.some(d => /^RT53 (Alpha|Beta|Gamma) /.test(d.name)));
+        });
+      }
+    } finally {
+      for (const id of metrics53) await adminJson('DELETE', `/api/admin/metrics/${id}`);   // their survey + ESS rows go with them
+      for (const id of essUploads53) {
+        const f = require('path').join(require('../server/services/essSummaryService').ESS_UPLOAD_DIR, `${id}.xlsx`);
+        if (require('fs').existsSync(f)) require('fs').unlinkSync(f);
+      }
+      for (const nip of nips53) await adminJson('DELETE', `/api/events/${EV}/attendance/${nip}`);
+      for (const id of users53) await adminJson('DELETE', `/api/admin/users/${id}`);
+      await adminJson('PUT', '/api/admin/settings/event_manager_directorates', { value: managers0 });
+      if (pool53) {
+        try {
+          await q53("DELETE FROM dbo.px_exit_interviews WHERE nik LIKE 'RT53-%'");
+          for (const id of exitUploads53) {
+            await q53('DELETE FROM dbo.px_exit_interviews WHERE upload_id = @u; DELETE FROM dbo.px_exit_interview_uploads WHERE upload_id = @u', { u: id });
+            const f = require('path').join(exitSvc53.EXIT_UPLOAD_DIR, `${id}.xlsx`);
+            if (require('fs').existsSync(f)) require('fs').unlinkSync(f);
+          }
+          await q53("DELETE FROM dbo.px_recruitment_sla_by_unit WHERE unit LIKE 'RT53 %' + @s", { s: stamp53 });
+        } catch (err) {
+          console.error('     Module 53 SQL cleanup:', err.message);
+        }
+      }
+      // the temporary directorates (now unreferenced) and with them their former names
+      for (const d of (await list53()).filter(x => x.name.startsWith('RT53 ') && x.name.includes(stamp53))) {
+        const r = await aj53('DELETE', `/api/admin/directorates/${d.directorate_id}`);
+        if (r.status !== 200) console.error(`     Module 53 cleanup: could not delete "${d.name}" (${r.status}: ${JSON.stringify(r.body.references || r.body.error)})`);
+      }
+      if (pool53) {
+        try {
+          await q53("DELETE FROM dbo.px_directorate_aliases WHERE alias_name LIKE 'RT53 %' + @s OR directorate_name LIKE 'RT53 %' + @s; DELETE FROM dbo.px_division_aliases WHERE directorate_name LIKE 'RT53 %' + @s", { s: stamp53 });
+          if (flag0 !== true) await st53.setSetting('directory_admin_managed', flag0 === undefined ? false : flag0);   // the suite does not leave the flag behind
+        } finally {
+          await pool53.close();
+        }
+      }
+    }
+  }
+  // --- MODULE 54 (v2.51.0): CONFIGURATION GUARD, PARAMETER AUDIT, ORPHAN SPELLING, MANUAL FORMER NAMES, ESS TEMPLATES ---
+  // (2) a suite run never changes the live Admin configuration (snapshot / restore through the storage layer, a killed run
+  // is restored by the next one); (3) Admin parameter changes are audited; (4) adopted orphan rows take the master spelling;
+  // (5) former / alternative names can be added and removed by hand and imports resolve them; (6) the default question
+  // sets of the 11 ESS metrics = the columns of the ESS result templates.
+  console.log('\n📦 MODULE 54: Configuration guard, parameter audit trail, orphan spelling on adopt, manual former names, ESS question templates (Positive & Negative Testing)');
+  if (!skipModuleBlock(54)) {
+    const st54 = require('../server/db/storage');
+    const isSql54 = st54.backend === 'sql';
+    const stamp54 = Date.now().toString(36);
+    const N54 = x => `RT54 ${x} ${stamp54}`;
+    const EV54 = 'ev-perspektif-2024-q1';
+    const aj54 = async (method, p, body) => { const r = await adminJson(method, p, body); return { status: r.status, body: await r.json().catch(() => ({})) }; };
+    const call54 = (method, p, body, cookie) => nativeFetch(`${BASE_URL}${p}`, jsonBody(method, body, cookie));
+    const list54 = async () => (await aj54('GET', '/api/admin/directorates')).body.directorates;
+    const find54 = async name => (await list54()).find(d => d.name === name);
+    const audit54 = async action => (await (await fetch(`${BASE_URL}/api/admin/audit-log?limit=300&include_test=1`)).json()).filter(e => !action || e.action === action);
+    const me54 = (await (await adminJson('GET', '/api/auth/me')).json()).user.username;
+    const metrics54 = [];
+    const journeys54 = [];
+    const users54 = [];
+    const nips54 = [];
+    const essUploads54 = [];
+    const flag54 = (await (await fetch(`${BASE_URL}/api/settings`)).json()).directory_admin_managed;
+    const mkMetric54 = async (name, extra) => {
+      const res = await adminJson('POST', '/api/admin/metrics', { metric_name: name, metric_type: 'SURVEY', journey_id: 2, checkpoint_id: 5, target_value: 85, min_threshold: 80, ...extra });
+      assert.strictEqual(res.status, 201);
+      const id = (await res.json()).metric.metric_id;
+      metrics54.push(id);
+      return id;
+    };
+    const checkIn54 = async (tag, directorate, division) => {
+      const nip = `RT54${tag}${stamp54}`.slice(0, 15);
+      const r = await aj54('POST', `/api/events/${EV54}/attendance`, { nip, employee_name: `Regression 54 ${tag}`, cimb_email: `${nip.toLowerCase()}@example.test`, directorate, division });
+      assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+      nips54.push(nip);
+      return r.body.attendance;
+    };
+    const attendance54 = async nip => (await aj54('GET', `/api/events/${EV54}`)).body.attendances.find(a => a.nip === nip);
+    const nipOf = tag => `RT54${tag}${stamp54}`.slice(0, 15);
+    // a USER whose scope names a directorate that is not (yet) in the master - only possible in the database itself
+    const scopedUser54 = async (suffix, scopes) => {
+      const auth54 = require('../server/services/authService');
+      const username = `rt54${suffix}${stamp54}`;
+      const password = require('crypto').randomBytes(9).toString('hex') + 'Gg7';
+      const u = await st54.createUser({ is_test_account: true, username, full_name: `Regression 54 ${suffix}`, email: '', role: 'USER', password_hash: await auth54.hashPassword(password), must_change_password: false, scopes });
+      users54.push(u.user_id);
+      const { cookie } = await loginAs(username, password);
+      return { id: u.user_id, cookie };
+    };
+    const calcStatus54 = async (cookie, dir, div) => (await call54('GET', `/api/metrics/calculate?mode=YTD&directorate=${encodeURIComponent(dir)}${div ? `&sub_directorate=${encodeURIComponent(div)}` : ''}`, undefined, cookie)).status;
+
+    try {
+      // ---------------------------------------------------------------- (2) configuration guard
+      if (!isSql54 || !configGuard) {
+        console.log('  ⏭️  SKIP: Module 54 configuration-guard tests need the SQL backend with the guard active (JSON: the server keeps the store in memory)');
+      } else {
+        const fs54 = require('fs');
+        const metricRow = (snap, id, col) => {
+          const t = snap.tables.px_metrics;
+          const row = t.rows.find(r => r[t.columns.indexOf('metric_id')] === id);
+          return row ? row[t.columns.indexOf(col)] : undefined;
+        };
+        await runTest('[POSITIVE] (2) The guard saved the configuration before the first module (gitignored file) and the Module 16 reset was undone: every metric name, weight and PIC e-mail and the px_index_weights are the values from BEFORE the run', async () => {
+          assert.ok(fs54.existsSync(CONFIG_SNAPSHOT_FILE), 'snapshot file exists while the run is going');
+          assert.ok(/server[\\/]data[\\/]backups[\\/]/.test(CONFIG_SNAPSHOT_FILE), 'kept in server/data/backups (gitignored)');
+          const onDisk = JSON.parse(fs54.readFileSync(CONFIG_SNAPSHOT_FILE, 'utf8'));
+          assert.strictEqual(onDisk.taken_at, configGuard.snapshot.taken_at);
+          const snap = configGuard.snapshot;
+          const metrics = await st54.getMetrics();
+          const ids = snap.tables.px_metrics.rows.map(r => r[snap.tables.px_metrics.columns.indexOf('metric_id')]);
+          for (const id of ids) {
+            const m = metrics.find(x => x.metric_id === id);
+            assert.ok(m, `metric #${id} still there`);
+            assert.strictEqual(m.metric_name, metricRow(snap, id, 'metric_name'), `metric #${id} name`);
+            assert.strictEqual(m.weight, metricRow(snap, id, 'weight'), `metric #${id} weight`);
+            assert.strictEqual(m.pic_email, metricRow(snap, id, 'pic_email'), `metric #${id} pic_email`);
+          }
+          const t = snap.tables.px_app_settings;
+          const w = t.rows.find(r => r[t.columns.indexOf('setting_key')] === 'px_index_weights');
+          assert.deepStrictEqual((await st54.getSettings()).px_index_weights, JSON.parse(w[t.columns.indexOf('setting_value')]));
+        });
+
+        await runTest('[POSITIVE] (2) restoreConfiguration puts back exactly what was saved (metric name, target, PIC e-mail, a metric-9 question text, px_index_weights, a reset question set) and deletes a metric created afterwards WITH its survey rows; a second restore changes nothing', async () => {
+          const snap = await st54.snapshotConfiguration();
+          const m8 = await st54.getMetricById(8);
+          const q9 = await st54.getSurveyQuestions(9);
+          const w0 = (await st54.getSettings()).px_index_weights;
+          await st54.updateMetric(8, { metric_name: `${m8.metric_name} RT54`, target_value: 4.37, pic_email: `rt54${stamp54}@example.test` });
+          await st54.saveSurveyQuestions(9, q9.map((q, i) => (i === 0 ? { ...q, text: `${q.text} RT54` } : q)));
+          await st54.setSetting('px_index_weights', { survey: 55, outcome: 45 });
+          await st54.resetSurveyQuestions(13);
+          const temp = await st54.addMetric({ metric_name: N54('Temp metric'), metric_type: 'SURVEY', journey_id: 1, checkpoint_id: 1 });
+          const csv = ['nip,employee_name,cimb_email,directorate,division,survey_date,q1_overall', `5${stamp54}9,Regression 54,r54@example.test,Human Resources,People Experience & Culture,2026-01-05,4`].join('\r\n');
+          const up = await adminJson('POST', '/api/surveys/upload', { csvText: csv, fileName: 'rt54.csv', metric_id: temp.metric_id });
+          assert.strictEqual(up.status, 200);
+          assert.strictEqual((await st54.getResponsesByMetricAndPeriod(temp.metric_id, { mode: 'YTD', year: '2026' })).length, 1, 'guard: the temp metric has a survey row');
+          const r = await st54.restoreConfiguration(JSON.parse(JSON.stringify(snap)));
+          assert.deepStrictEqual(r.removed_metrics.map(m => m.metric_id), [temp.metric_id]);
+          assert.ok(['px_metrics', 'px_metric_targets', 'px_survey_questions', 'px_app_settings'].every(x => r.restored_tables.includes(x)), JSON.stringify(r.restored_tables));
+          const back = await st54.getMetricById(8);
+          assert.deepStrictEqual([back.metric_name, back.target_value, back.pic_email], [m8.metric_name, m8.target_value, m8.pic_email]);
+          assert.deepStrictEqual(await st54.getSurveyQuestions(9), q9);
+          assert.deepStrictEqual((await st54.getSettings()).px_index_weights, w0);
+          assert.strictEqual(await st54.getMetricById(temp.metric_id), undefined, 'the metric made after the snapshot is gone');
+          assert.strictEqual((await st54.getResponsesByMetricAndPeriod(temp.metric_id, { mode: 'YTD', year: '2026' })).length, 0, 'with its survey rows');
+          assert.deepStrictEqual((await st54.restoreConfiguration(snap)).restored_tables, [], 'nothing left to restore');
+        });
+
+        await runTest('[NEGATIVE/POSITIVE] (2) A snapshot file left by a killed run is NEVER used silently: without a choice the run stops (age + which tables / metrics differ) and nothing changes; TEST_DISCARD keeps the live configuration and renames the file; TEST_RESTORE restores it and deletes the file; both at once / a foreign snapshot refused', async () => {
+          const file = CONFIG_SNAPSHOT_FILE.replace(/\.json$/, `.rt54-${stamp54}.json`);
+          const snap = await st54.snapshotConfiguration();
+          const m8 = await st54.getMetricById(8);
+          const discarded = [];
+          try {
+            await st54.updateMetric(8, { metric_name: `${m8.metric_name} RT54 later edit` });   // an Admin edit made after the killed run
+            fs54.writeFileSync(file, JSON.stringify(snap), 'utf8');
+            await assert.rejects(() => handleStaleConfigSnapshot(st54, file, {}), err => err.staleSnapshot && err.message.includes('px_metrics')
+              && err.message.includes('TEST_RESTORE_STALE_SNAPSHOT=1') && err.message.includes('TEST_DISCARD_STALE_SNAPSHOT=1') && /ago\)/.test(err.message));
+            assert.ok(fs54.existsSync(file), 'the file is left alone');
+            assert.strictEqual((await st54.getMetricById(8)).metric_name, `${m8.metric_name} RT54 later edit`, 'the live edit is kept');
+            await assert.rejects(() => handleStaleConfigSnapshot(st54, file, { restore: true, discard: true }), err => err.staleSnapshot);
+            assert.ok(fs54.existsSync(file));
+            const d = await handleStaleConfigSnapshot(st54, file, { discard: true });
+            discarded.push(d.file);
+            assert.strictEqual(d.action, 'discarded');
+            assert.ok(!fs54.existsSync(file) && fs54.existsSync(d.file) && /\.discarded-[0-9TZ-]+\.json$/.test(d.file));
+            assert.strictEqual((await st54.getMetricById(8)).metric_name, `${m8.metric_name} RT54 later edit`, 'discard changes nothing live');
+            fs54.writeFileSync(file, JSON.stringify(snap), 'utf8');
+            const r = await handleStaleConfigSnapshot(st54, file, { restore: true });
+            assert.ok(r.action === 'restored' && r.result.restored_tables.includes('px_metrics'));
+            assert.strictEqual((await st54.getMetricById(8)).metric_name, m8.metric_name);
+            assert.ok(!fs54.existsSync(file), 'the file is deleted after the restore');
+            assert.strictEqual(await handleStaleConfigSnapshot(st54, file, {}), null, 'no file -> nothing to do');
+            fs54.writeFileSync(file, JSON.stringify({ ...snap, database: 'SomeOtherDb' }), 'utf8');
+            await assert.rejects(() => handleStaleConfigSnapshot(st54, file, { restore: true }), err => err.staleSnapshot && /discard it instead/.test(err.message));
+            assert.ok(fs54.existsSync(file));
+          } finally {
+            for (const f of [file, ...discarded]) if (fs54.existsSync(f)) fs54.unlinkSync(f);
+            if ((await st54.getMetricById(8)).metric_name !== m8.metric_name) await st54.updateMetric(8, { metric_name: m8.metric_name });
+          }
+          for (const bad of [{ ...snap, database: 'SomeOtherDb' }, { ...snap, backend: 'json' }, { ...snap, kind: 'x' }, { ...snap, tables: { px_metrics: snap.tables.px_metrics } }, null]) {
+            await assert.rejects(() => st54.restoreConfiguration(bad));
+          }
+          assert.strictEqual((await st54.getMetricById(8)).metric_name, m8.metric_name);
+        });
+
+        await runTest('[NEGATIVE] (2) The suite itself refuses to start over a leftover snapshot (here: this run\'s own, still active file): exit code 2, the message names the choices, no login account is created and the file is untouched', async () => {
+          const before = fs54.readFileSync(CONFIG_SNAPSHOT_FILE);
+          const users0 = (await st54.listUsers()).length;
+          const env = { ...process.env };
+          delete env.TEST_RESTORE_STALE_SNAPSHOT;
+          delete env.TEST_DISCARD_STALE_SNAPSHOT;
+          const out = require('child_process').spawnSync(process.execPath, [__filename], { env, encoding: 'utf8', timeout: 120000 });
+          assert.strictEqual(out.status, 2, `exit code (${(out.stdout + out.stderr).slice(-400)})`);
+          assert.ok(/TEST_RESTORE_STALE_SNAPSHOT=1/.test(out.stderr) && /TEST_DISCARD_STALE_SNAPSHOT=1/.test(out.stderr) && /no test ran/.test(out.stderr), out.stderr.slice(0, 400));
+          assert.ok(!/MODULE 1:/.test(out.stdout), 'no module ran');
+          assert.ok(fs54.readFileSync(CONFIG_SNAPSHOT_FILE).equals(before), 'the snapshot file is untouched');
+          assert.strictEqual((await st54.listUsers()).length, users0, 'no suite admin was created');
+        });
+
+        await runTest('[NEGATIVE/POSITIVE] (2) Restore is one transaction: a snapshot that fails half-way changes nothing (the metric created after it keeps its data); a good restore deletes that metric with its survey rows, ESS results and the original ESS file', async () => {
+          const snap = await st54.snapshotConfiguration();
+          const essId = await mkMetric54(N54('Restore order ESS'), { scale_type: 'PERCENTAGE', survey_source: 'ESS' });
+          assert.strictEqual((await adminJson('POST', `/api/admin/survey-questions/${essId}`, { questions: [{ key: 'q1_rt54', label: 'RT54', text: 'RT54 question', type: 'PERCENTAGE', mandatory: true }] })).status, 200);
+          const dir = (await list54())[0].name;
+          const up = await postEssFile(essId, await essXlsx([ESS_HEAD('RT54 Index', ['RT54 question']), [dir, 'Directorate', 2024, 'June', 50, 0.7, 0.7]]), 'rt54_order.xlsx');
+          const upBody = await up.json();
+          assert.strictEqual(up.status, 200, JSON.stringify(upBody).slice(0, 200));
+          essUploads54.push(upBody.upload_id);
+          const essFile = require('../server/services/essSummaryService').essOriginalFilePath(upBody.upload_id);
+          assert.ok(essFile, 'guard: the original ESS file was kept');
+          const rows = async () => (await st54.getEssResults(essId)).length;   // straight from the database (the detail of a deleted metric is a 404)
+          assert.ok(await rows() > 0);
+          // a snapshot whose px_metrics rows cannot be inserted (NOT NULL metric_name): the transaction fails at the table step
+          const broken = JSON.parse(JSON.stringify(snap));
+          broken.tables.px_metrics.rows[0][broken.tables.px_metrics.columns.indexOf('metric_name')] = null;
+          const cmp0 = await st54.compareConfiguration(snap);
+          await assert.rejects(() => st54.restoreConfiguration(broken));
+          assert.ok(await st54.getMetricById(essId), 'the metric is still there');
+          assert.ok(await rows() > 0, 'its ESS results are still there');
+          assert.ok(require('fs').existsSync(essFile), 'its original file is still there');
+          assert.deepStrictEqual(await st54.compareConfiguration(snap), cmp0, 'nothing of the configuration changed');
+          assert.deepStrictEqual(cmp0.extra_metrics.map(m => m.metric_id), [essId]);
+          const r = await st54.restoreConfiguration(snap);
+          assert.deepStrictEqual([r.removed_metrics.map(m => m.metric_id), r.removed_ess_files], [[essId], 1]);
+          metrics54.splice(metrics54.indexOf(essId), 1);
+          assert.strictEqual(await st54.getMetricById(essId), undefined);
+          assert.strictEqual(await rows(), 0, 'ESS results gone');
+          await new Promise(res => setTimeout(res, 300));   // the file is unlinked after the commit
+          assert.ok(!require('fs').existsSync(essFile), 'the original ESS file is removed');
+          assert.deepStrictEqual(await st54.compareConfiguration(snap), { differing_tables: [], extra_metrics: [], missing_metrics: [] });
+        });
+      }
+
+      // ---------------------------------------------------------------- (3) audit trail of parameter changes
+      await runTest('[POSITIVE] (3) Metric create / update (changed fields old -> new) / delete, journey create / update / delete, survey questions save / reset, targets save and the Module 16 parameter reset are in the audit trail, marked as test-run rows', async () => {
+        const id = await mkMetric54(N54('Audit metric'), { scale_type: 'RATING_5', survey_source: 'SYSTEM', requires_manual_upload: false, pic_email: 'old54@example.test' });
+        assert.strictEqual((await aj54('PUT', `/api/admin/metrics/${id}`, { metric_name: N54('Audit metric renamed'), target_value: 4.2, pic_email: 'new54@example.test' })).status, 200);
+        assert.strictEqual((await aj54('POST', `/api/admin/survey-questions/${id}`, { questions: [{ key: 'q1_rt54', label: 'RT54', text: 'RT54 question', type: 'SCALE_1_5', mandatory: true }] })).status, 200);
+        assert.strictEqual((await aj54('POST', `/api/admin/survey-questions/${id}/reset`)).status, 200);
+        const targets = (await aj54('GET', '/api/admin/targets')).body.targets;
+        assert.strictEqual((await aj54('POST', '/api/admin/targets', { targets: { [id]: { ...targets[id], target_value: 4.4 } } })).status, 200);
+        const j = await aj54('POST', '/api/admin/journeys', { journey_code: `RT54_${stamp54}`, journey_name: N54('Journey') });
+        assert.strictEqual(j.status, 201);
+        journeys54.push(j.body.journey.journey_id);
+        assert.strictEqual((await aj54('PUT', `/api/admin/journeys/${j.body.journey.journey_id}`, { journey_name: N54('Journey renamed') })).status, 200);
+        assert.strictEqual((await aj54('DELETE', `/api/admin/journeys/${j.body.journey.journey_id}`)).status, 200);
+        journeys54.pop();
+        assert.strictEqual((await aj54('DELETE', `/api/admin/metrics/${id}`)).status, 200);
+        metrics54.splice(metrics54.indexOf(id), 1);
+        const rows = (await audit54()).filter(e => e.username === me54);
+        const one = (action, test) => {
+          const hit = rows.find(e => e.action === action && test(String(e.target)));
+          assert.ok(hit, `${action} row (${rows.filter(e => e.action === action).map(e => e.target).slice(0, 3).join(' | ')})`);
+          assert.strictEqual(hit.is_test, true, `${action} is a test-run row`);
+          return hit;
+        };
+        one('METRIC_CREATE', t => t.startsWith(`#${id} "${N54('Audit metric')}"`));
+        const upd = one('METRIC_UPDATE', t => t.startsWith(`#${id}:`) && t.includes('metric_name'));
+        assert.ok(upd.target.includes(`metric_name ${N54('Audit metric')} -> ${N54('Audit metric renamed')}`), upd.target);
+        assert.ok(upd.target.length <= 190, 'cut at the audit target limit');
+        assert.ok(rows.some(e => e.action === 'METRIC_UPDATE' && e.target.startsWith(`#${id}:`) && e.target.includes('pic_email old54@example.test -> new54@example.test')) || upd.target.length === 190, 'PIC e-mail change listed (unless cut off)');
+        one('SURVEY_QUESTIONS_UPDATE', t => t.startsWith(`#${id}:`) && t.includes('1 questions'));
+        one('SURVEY_QUESTIONS_RESET', t => t.startsWith(`#${id} reset to the default template`));
+        one('METRIC_TARGETS_UPDATE', t => t.includes(`#${id} target_value 4.2 -> 4.4`));
+        one('JOURNEY_CREATE', t => t.includes(N54('Journey')));
+        one('JOURNEY_UPDATE', t => t.includes(`journey_name ${N54('Journey')} -> ${N54('Journey renamed')}`));
+        one('JOURNEY_DELETE', t => t.includes(N54('Journey renamed')));
+        one('METRIC_DELETE', t => t.startsWith(`#${id} "${N54('Audit metric renamed')}"`));
+        const visible = await (await fetch(`${BASE_URL}/api/admin/audit-log?limit=300`)).json();
+        assert.ok(!visible.some(e => e.username === me54), 'test-run rows are hidden from the default Audit Trail');
+      });
+
+      await runTest('[NEGATIVE] (3) A refused parameter change writes no audit row: a User gets 403 on PUT metric / reset / survey questions, an unknown metric id 400 / 404 - and the metric is unchanged', async () => {
+        const u = await scopedUser54('aud', [{ directorate: (await list54())[0].name, divisions: null }]);
+        const before = await audit54();
+        const m8 = await st54.getMetricById(8);
+        assert.strictEqual((await call54('PUT', '/api/admin/metrics/8', { metric_name: 'Hacked' }, u.cookie)).status, 403);
+        assert.strictEqual((await call54('POST', '/api/admin/parameters/reset', {}, u.cookie)).status, 403);
+        assert.strictEqual((await call54('POST', '/api/admin/survey-questions/9/reset', {}, u.cookie)).status, 403);
+        assert.strictEqual((await aj54('PUT', '/api/admin/metrics/999999', { metric_name: 'x' })).status, 400);
+        assert.strictEqual((await aj54('POST', '/api/admin/survey-questions/999999/reset')).status, 404);
+        assert.strictEqual((await st54.getMetricById(8)).metric_name, m8.metric_name);
+        const after = await audit54();
+        const fresh = after.filter(e => !before.some(b => b.audit_id === e.audit_id));
+        assert.ok(!fresh.some(e => /^(METRIC_|PARAMETERS_|SURVEY_QUESTIONS_)/.test(e.action)), JSON.stringify(fresh.map(e => e.action)));
+      });
+
+      // ---------------------------------------------------------------- (4) adopting orphan rows takes the master spelling
+      if (!isSql54) {
+        console.log('  ⏭️  SKIP: Module 54 orphan-spelling tests need the SQL backend (the orphan login scope is written to the database directly)');
+      } else {
+        await runTest('[POSITIVE/NEGATIVE] (4) Creating "rt54 orphan x" over rows and a login scope spelled "RT54 ORPHAN X" (division "RT54 DIV A"): 409 without confirm_adopt; confirmed -> the attendance and the scope take the master spelling of the directorate AND the division, and the User reads it with the master name (no 403)', async () => {
+          const upper = N54('ORPHAN X').toUpperCase();
+          const master = upper.toLowerCase();
+          await checkIn54('ox', upper, 'RT54 DIV A');
+          const u = await scopedUser54('ox', [{ directorate: upper, divisions: ['RT54 DIV A'] }]);
+          const r = await aj54('POST', '/api/admin/directorates', { name: master, divisions: ['rt54 div a'] });
+          assert.deepStrictEqual([r.status, r.body.requires_confirmation], [409, true]);
+          assert.deepStrictEqual([r.body.orphan_references.attendances, r.body.orphan_references.user_scopes], [1, 1]);
+          const ok = await aj54('POST', '/api/admin/directorates', { name: master, divisions: ['rt54 div a'], confirm_adopt: true });
+          assert.strictEqual(ok.status, 201, JSON.stringify(ok.body));
+          const a = await attendance54(nipOf('ox'));
+          assert.deepStrictEqual([a.directorate, a.division], [master, 'rt54 div a']);
+          assert.deepStrictEqual(await (async () => (await st54.getUserById(u.id)).scopes)(), [{ directorate: master, divisions: ['rt54 div a'] }]);
+          assert.strictEqual(await calcStatus54(u.cookie, master, 'rt54 div a'), 200, 'the master spelling is in scope');
+          assert.strictEqual(await calcStatus54(u.cookie, upper, 'RT54 DIV A'), 403, 'the old spelling is gone from the scope');
+          const d = await find54(master);
+          assert.deepStrictEqual([d.usage.attendances, d.usage.user_scopes, d.divisions[0].usage.attendances], [1, 1, 1]);
+        });
+
+        await runTest('[POSITIVE] (4) Renaming a directorate to a name orphan rows carry in another letter case ("RT54 ORPHAN Y" -> "rt54 orphan y", confirmed) rewrites those rows to the master spelling too', async () => {
+          const upper = N54('ORPHAN Y').toUpperCase();
+          const master = upper.toLowerCase();
+          const made = await aj54('POST', '/api/admin/directorates', { name: N54('Rename source') });
+          assert.strictEqual(made.status, 201);
+          await checkIn54('oy', upper, '');
+          const u = await scopedUser54('oy', [{ directorate: upper, divisions: null }]);
+          const ren = await aj54('PUT', `/api/admin/directorates/${made.body.directorate.directorate_id}`, { name: master, confirm_adopt: true });
+          assert.strictEqual(ren.status, 200, JSON.stringify(ren.body));
+          assert.strictEqual((await attendance54(nipOf('oy'))).directorate, master);
+          assert.deepStrictEqual((await st54.getUserById(u.id)).scopes, [{ directorate: master, divisions: null }]);
+          assert.strictEqual(await calcStatus54(u.cookie, master), 200);
+        });
+      }
+
+      // ---------------------------------------------------------------- (5) manual former / alternative names
+      const D54 = N54('Consumer');
+      const ALIAS54 = N54('Consumer & Emerging Business Banking');
+      let d54 = null;
+      await runTest('[POSITIVE] (5) Add a former / alternative name to a directorate: 201, listed under former_names, audited DIRECTORATE_ALIAS_ADD, directory marked as Admin-managed; a check-in with that name lands on the directorate', async () => {
+        const made = await aj54('POST', '/api/admin/directorates', { name: D54, divisions: ['RT54 Div One'] });
+        assert.strictEqual(made.status, 201);
+        d54 = made.body.directorate;
+        const r = await aj54('POST', `/api/admin/directorates/${d54.directorate_id}/aliases`, { name: `  ${ALIAS54.replace(/ /g, '\u00a0')}  ` });
+        assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+        assert.deepStrictEqual([r.body.directorate, r.body.alias, r.body.adopted_orphans], [D54, ALIAS54, null]);
+        assert.ok((await find54(D54)).former_names.includes(ALIAS54));
+        assert.strictEqual((await (await fetch(`${BASE_URL}/api/settings`)).json()).directory_admin_managed, true);
+        const a = await checkIn54('al', ALIAS54, 'RT54 Div One');
+        assert.deepStrictEqual([a.directorate, a.division], [D54, 'RT54 Div One']);
+        assert.ok((await audit54('DIRECTORATE_ALIAS_ADD')).some(e => e.target === `"${ALIAS54}" -> "${D54}"` && e.is_test === true));
+      });
+
+      await runTest('[NEGATIVE] (5) Former-name validation: a live directorate name 400, the same name again / another directorate\'s former name 409, empty / reserved / dots only / invisible characters / too long / "PT Bank CIMB Niaga ..." 400, unknown directorate 404, a User 403 - nothing stored', async () => {
+        const other = await aj54('POST', '/api/admin/directorates', { name: N54('Other') });
+        assert.strictEqual(other.status, 201);
+        const url = `/api/admin/directorates/${d54.directorate_id}/aliases`;
+        assert.strictEqual((await aj54('POST', url, { name: N54('Other') })).status, 400, 'a live directorate');
+        assert.strictEqual((await aj54('POST', url, { name: D54.toUpperCase() })).status, 400, 'its own name');
+        assert.strictEqual((await aj54('POST', url, { name: ALIAS54.toLowerCase() })).status, 409, 'already its former name');
+        assert.strictEqual((await aj54('POST', `/api/admin/directorates/${other.body.directorate.directorate_id}/aliases`, { name: ALIAS54 })).status, 409, 'former name of another directorate');
+        for (const name of ['', '   ', 'ALL', 'bankwide', '..', `RT54\u200b${stamp54}`, 'x'.repeat(201), 'PT Bank CIMB Niaga Tbk', 42, null]) {
+          assert.strictEqual((await aj54('POST', url, { name })).status, 400, JSON.stringify(name));
+        }
+        assert.strictEqual((await aj54('POST', '/api/admin/directorates/99999999/aliases', { name: N54('Nope') })).status, 404);
+        assert.strictEqual((await aj54('POST', '/api/admin/directorates/abc/aliases', { name: N54('Nope') })).status, 404);
+        const u = await scopedUser54('al', [{ directorate: D54, divisions: null }]);
+        assert.strictEqual((await call54('POST', url, { name: N54('By user') }, u.cookie)).status, 403);
+        assert.strictEqual((await call54('DELETE', `${url}?${new URLSearchParams({ name: ALIAS54 })}`, undefined, u.cookie)).status, 403);
+        assert.deepStrictEqual((await find54(D54)).former_names, [ALIAS54]);
+        assert.deepStrictEqual((await find54(N54('Other'))).former_names, []);
+      });
+
+      await runTest('[POSITIVE/NEGATIVE] (5) A former name that orphan rows already carry needs confirm_adopt (409 requires_confirmation, nothing stored); confirmed -> the rows are renamed to the directorate in its master spelling', async () => {
+        const legacy = N54('Legacy Spelling');
+        await checkIn54('lg', legacy.toUpperCase(), 'rt54 div one');
+        const url = `/api/admin/directorates/${d54.directorate_id}/aliases`;
+        const r = await aj54('POST', url, { name: legacy });
+        assert.deepStrictEqual([r.status, r.body.requires_confirmation, r.body.orphan_references.attendances], [409, true, 1]);
+        assert.ok(!(await find54(D54)).former_names.includes(legacy));
+        const ok = await aj54('POST', url, { name: legacy, confirm_adopt: true });
+        assert.strictEqual(ok.status, 201, JSON.stringify(ok.body));
+        assert.strictEqual(ok.body.adopted_orphans.attendances, 1);
+        const a = await attendance54(nipOf('lg'));
+        assert.deepStrictEqual([a.directorate, a.division], [D54, 'RT54 Div One'], 'directorate AND division in the master spelling');
+        assert.ok((await audit54('DIRECTORATE_ALIAS_ADD')).some(e => e.target.startsWith(`"${legacy}" -> "${D54}"; adopted`)));
+      });
+
+      await runTest('[POSITIVE/NEGATIVE] (5) An ESS upload whose column A uses a manual former name is stored under the directorate; after removing the former name (DELETE, audited) the same file is refused as an unknown directorate; removing it again 404, without a name 400', async () => {
+        const essId = await mkMetric54(N54('ESS metric'), { scale_type: 'PERCENTAGE', survey_source: 'ESS' });
+        assert.strictEqual((await adminJson('POST', `/api/admin/survey-questions/${essId}`, { questions: [{ key: 'q1_rt54', label: 'RT54', text: 'RT54 question', type: 'PERCENTAGE', mandatory: true }] })).status, 200);
+        const file = await essXlsx([ESS_HEAD('RT54 Index', ['RT54 question']), [ALIAS54, 'Directorate', 2024, 'May', 120, 0.81, 0.79]]);
+        const up = await postEssFile(essId, file, 'rt54_ess.xlsx');
+        const body = await up.json();
+        if (body.upload_id) essUploads54.push(body.upload_id);
+        assert.strictEqual(up.status, 200, JSON.stringify(body).slice(0, 300));
+        const rows = (await aj54('GET', `/api/metrics/${essId}/detail?period=2024-05`)).body.ess_results_by_directorate.filter(x => x.org_level === 'DIRECTORATE');
+        assert.deepStrictEqual(rows.map(x => [x.directorate, x.participation]), [[D54, 120]]);
+        const del = await aj54('DELETE', `/api/admin/directorates/${d54.directorate_id}/aliases?${new URLSearchParams({ name: ALIAS54.toUpperCase() })}`);
+        assert.strictEqual(del.status, 200, JSON.stringify(del.body));
+        assert.strictEqual(del.body.alias, ALIAS54);
+        assert.ok(!(await find54(D54)).former_names.includes(ALIAS54));
+        assert.ok((await audit54('DIRECTORATE_ALIAS_REMOVE')).some(e => e.target.startsWith(`"${ALIAS54}"`)));
+        const again = await postEssFile(essId, file, 'rt54_ess.xlsx');
+        const againBody = await again.json();
+        if (againBody.upload_id) essUploads54.push(againBody.upload_id);
+        assert.strictEqual(again.status, 400, 'unknown directorate once the former name is gone');
+        assert.strictEqual((await aj54('DELETE', `/api/admin/directorates/${d54.directorate_id}/aliases?${new URLSearchParams({ name: ALIAS54 })}`)).status, 404);
+        assert.strictEqual((await aj54('DELETE', `/api/admin/directorates/${d54.directorate_id}/aliases`)).status, 400);
+      });
+
+      await runTest('[POSITIVE/NEGATIVE] (5) Former division names: add (201, listed, a check-in with it lands on the division), a live division 400, the same again 409, an unknown division 404; remove (200) / remove again 404', async () => {
+        const url = `/api/admin/directorates/${d54.directorate_id}/divisions/aliases`;
+        const r = await aj54('POST', url, { division: 'rt54 div one', name: 'RT54 Division 1' });
+        assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+        assert.deepStrictEqual([r.body.division, r.body.alias], ['RT54 Div One', 'RT54 Division 1']);
+        assert.deepStrictEqual((await find54(D54)).former_division_names, [{ alias_name: 'RT54 Division 1', division_name: 'RT54 Div One' }]);
+        const a = await checkIn54('dv', D54, 'RT54 Division 1');
+        assert.strictEqual(a.division, 'RT54 Div One');
+        assert.strictEqual((await aj54('POST', url, { division: 'RT54 Div One', name: 'rt54 div one' })).status, 400);
+        assert.strictEqual((await aj54('POST', url, { division: 'RT54 Div One', name: 'rt54 division 1' })).status, 409);
+        assert.strictEqual((await aj54('POST', url, { division: 'No Such Division', name: 'RT54 Division 2' })).status, 404);
+        assert.strictEqual((await aj54('POST', url, { name: 'RT54 Division 2' })).status, 400);
+        assert.ok((await audit54('DIVISION_ALIAS_ADD')).some(e => e.target === `"${D54}": "RT54 Division 1" -> "RT54 Div One"`));
+        assert.strictEqual((await aj54('DELETE', `${url}?${new URLSearchParams({ name: 'RT54 Division 1' })}`)).status, 200);
+        assert.deepStrictEqual((await find54(D54)).former_division_names, []);
+        assert.strictEqual((await aj54('DELETE', `${url}?${new URLSearchParams({ name: 'RT54 Division 1' })}`)).status, 404);
+        assert.ok((await audit54('DIVISION_ALIAS_REMOVE')).some(e => e.target.startsWith(`"${D54}": "RT54 Division 1"`)));
+      });
+
+      // ---------------------------------------------------------------- uniform directorate order (alphabetical)
+      await runTest('[POSITIVE] Directorates are listed alphabetically everywhere (locale-aware, case-insensitive) with their divisions alphabetical too: /api/directorates, the Directorates tab list, /api/admin/parameters and the ESS template rows (Bankwide row first) - also after adding "aaa ..." / "zzz ..." names in another letter case', async () => {
+        const cmp = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' });
+        const sorted = list => list.every((x, i) => i === 0 || cmp(list[i - 1], x) <= 0);
+        const lo = await aj54('POST', '/api/admin/directorates', { name: N54('zzz Last'), divisions: ['RT54 b div', 'RT54 A div', 'RT54 c div'] });
+        const hi = await aj54('POST', '/api/admin/directorates', { name: N54('AAA first').replace('RT54', 'rt54') });
+        assert.ok(lo.status === 201 && hi.status === 201);
+        const pub = await (await fetch(`${BASE_URL}/api/directorates`)).json();
+        assert.ok(sorted(pub.map(d => d.name)), pub.map(d => d.name).join(' | '));
+        pub.forEach(d => assert.ok(sorted(d.divisions) && sorted(d.sub_directorates), `divisions of ${d.name}: ${d.divisions.join(' | ')}`));
+        assert.deepStrictEqual(pub.find(d => d.name === N54('zzz Last')).divisions, ['RT54 A div', 'RT54 b div', 'RT54 c div']);
+        assert.ok(pub.findIndex(d => d.name === N54('AAA first').replace('RT54', 'rt54')) < pub.findIndex(d => d.name === N54('zzz Last')), 'case-insensitive');
+        const admin = await list54();
+        assert.deepStrictEqual(admin.map(d => d.name), pub.map(d => d.name), 'the Directorates tab: same order');
+        admin.forEach(d => assert.ok(sorted(d.divisions.map(v => v.name))));
+        const params = (await aj54('GET', '/api/admin/parameters')).body;
+        assert.deepStrictEqual(params.directorates.map(d => d.directorate_name || d.name), pub.map(d => d.name));
+        const tpl = await fetch(`${BASE_URL}/api/surveys/template?metric_id=9`);
+        assert.strictEqual(tpl.status, 200);
+        const rows = (await require('../server/services/xlsxUtils').readFirstSheet(Buffer.from(await tpl.arrayBuffer()))).map(r => r.cells.map(c => c.value));
+        assert.deepStrictEqual(rows[1].slice(0, 2), ['PT Bank CIMB Niaga Tbk', 'Bankwide'], 'the Bankwide row first');
+        assert.deepStrictEqual(rows.slice(2).map(r => r[0]), pub.map(d => d.name), 'then the directorates alphabetically');
+        for (const r of [lo, hi]) assert.strictEqual((await aj54('DELETE', `/api/admin/directorates/${r.body.directorate.directorate_id}`)).status, 200);
+      });
+
+      // ---------------------------------------------------------------- (6) ESS question templates
+      const ESS_TEMPLATE54 = {
+        9: ['I understand how my current job role contributes to a positive impact on customers and society.', 'Employees clearly understand what is expected of them.', 'My immediate manager gives me feedback that helps me improve my performance.'],
+        13: ['I am proud to work at CIMB.', 'People want to work here because of the culture and work environment.', 'I feel energized by my work.'],
+        15: ['My immediate manager recognizes me when I do a good job.'],
+        16: ['CIMB cares about my well-being.', 'I can manage my job responsibilities in a way that enables healthy work-life balance.'],
+        17: ['At work, I can speak up with ideas or suggestions, even if others have different opinions.', 'Colleagues escalate issues even when these are outside their direct responsibilities.'],
+        18: ['Leaders help us understand and navigate changes happening in CIMB.', 'Leaders makes an effort to get input, ideas, and opinions from employees.'],
+        21: ['I have the opportunity to continually learn and grow.'],
+        22: ['CIMB has employees with the right skills to deliver its strategy.', 'Employees have sufficient authority to make decisions.'],
+        24: ['My immediate manager gives me feedback that helps me improve my performance.'],
+        25: ['My work gives me a feeling of personal accomplishment.'],
+        27: ['Even if offered a comparable role and compensation package at another company, I would choose to stay at CIMB.']
+      };
+      await runTest('[POSITIVE] (6) The default question set of each of the 11 ESS metrics = the question columns of its ESS result template, in column order, all PERCENTAGE with stable keys q<n>_<slug>; metric 9 equals the real file in docs/ column by column', async () => {
+        const { DEFAULT_METRIC_QUESTIONS } = require('../server/services/metricQuestionService');
+        const seed54 = require('../server/db/seedData');
+        const essIds = seed54.initialMetrics.filter(m => m.survey_source === 'ESS').map(m => m.metric_id).sort((a, b) => a - b);
+        assert.deepStrictEqual(essIds, Object.keys(ESS_TEMPLATE54).map(Number));
+        for (const id of essIds) {
+          const qs = DEFAULT_METRIC_QUESTIONS[id];
+          assert.deepStrictEqual(qs.map(q => q.text), ESS_TEMPLATE54[id], `metric ${id} texts`);
+          qs.forEach((q, i) => {
+            assert.ok(new RegExp(`^q${i + 1}_[a-z0-9_]+$`).test(q.key), `metric ${id} key ${q.key}`);
+            assert.strictEqual(q.type, 'PERCENTAGE');
+            assert.ok(q.label && q.dimension, `metric ${id} label + dimension`);
+          });
+        }
+        const { readFirstSheet } = require('../server/services/xlsxUtils');
+        const sheet = await readFirstSheet(require('fs').readFileSync(require('path').join(__dirname, '..', 'docs', 'ESS 2025 Result_Role Clarity & DS Support.xlsx')));
+        const head = sheet[0].cells.map(c => String(c.value === null || c.value === undefined ? '' : c.value).replace(/\s+/g, ' ').trim());
+        assert.deepStrictEqual(head.slice(6), DEFAULT_METRIC_QUESTIONS[9].map(q => q.text));
+      });
+
+      await runTest('[POSITIVE] (6) Fresh-install consistency: every seed ESS result row carries exactly the template questions (same count and order) and "Reset to default" of an ESS metric gives the template', async () => {
+        const { DEFAULT_METRIC_QUESTIONS } = require('../server/services/metricQuestionService');
+        const seed54 = require('../server/db/seedData');
+        for (const r of seed54.initialEssResults) {
+          assert.deepStrictEqual(r.questions.map(q => q.label), ESS_TEMPLATE54[r.metric_id], `seed row ${r.upload_id} ${r.directorate || 'Bankwide'}`);
+          assert.ok(r.questions.every(q => typeof q.score === 'number'), 'every question has a score');
+        }
+        const before = (await aj54('GET', '/api/admin/survey-questions/15')).body.questions;
+        try {
+          const reset = await aj54('POST', '/api/admin/survey-questions/15/reset');
+          assert.strictEqual(reset.status, 200);
+          assert.deepStrictEqual(reset.body.questions.map(q => [q.key, q.text, q.type]), DEFAULT_METRIC_QUESTIONS[15].map(q => [q.key, q.text, 'PERCENTAGE']));
+        } finally {
+          assert.strictEqual((await aj54('POST', '/api/admin/survey-questions/15', { questions: before })).status, 200);
+        }
+      });
+
+      await runTest('[NEGATIVE] (6) Non-ESS templates are unchanged by the ESS update (metric 8 keeps its 1-5 / yes-no questions, metric 12 its free-text question) and no ESS template has a FREE_TEXT or 1-5 question', async () => {
+        const { DEFAULT_METRIC_QUESTIONS } = require('../server/services/metricQuestionService');
+        assert.ok(DEFAULT_METRIC_QUESTIONS[8].some(q => q.type === 'SCALE_1_5') && DEFAULT_METRIC_QUESTIONS[8].every(q => q.type !== 'PERCENTAGE'));
+        assert.ok(DEFAULT_METRIC_QUESTIONS[12].some(q => q.type === 'FREE_TEXT'));
+        for (const id of Object.keys(ESS_TEMPLATE54)) assert.ok(DEFAULT_METRIC_QUESTIONS[id].every(q => q.type === 'PERCENTAGE'), `metric ${id}`);
+      });
+    } finally {
+      for (const id of metrics54) await adminJson('DELETE', `/api/admin/metrics/${id}`);
+      for (const id of journeys54) await adminJson('DELETE', `/api/admin/journeys/${id}`);
+      for (const id of essUploads54) {
+        const f = require('path').join(require('../server/services/essSummaryService').ESS_UPLOAD_DIR, `${id}.xlsx`);
+        if (require('fs').existsSync(f)) require('fs').unlinkSync(f);
+      }
+      for (const nip of nips54) await adminJson('DELETE', `/api/events/${EV54}/attendance/${nip}`);
+      for (const id of users54) { try { await st54.deleteUser(id); } catch (_) { /* gone */ } }
+      for (const d of (await list54()).filter(x => x.name.toLowerCase().startsWith('rt54 ') && x.name.toLowerCase().endsWith(stamp54))) {
+        const r = await aj54('DELETE', `/api/admin/directorates/${d.directorate_id}`);
+        if (r.status !== 200) console.error(`     Module 54 cleanup: could not delete "${d.name}" (${r.status}: ${JSON.stringify(r.body.references || r.body.error)})`);
+      }
+      // the flag and anything else of the configuration: the guard puts the whole snapshot back (SQL); JSON: only the flag
+      if (configGuard) await restoreConfigGuard('end of Module 54');
+      else if (flag54 !== true && typeof st54.setSetting === 'function' && isSql54) await st54.setSetting('directory_admin_managed', flag54 === undefined ? false : flag54);
+    }
   }
 }
 

@@ -22,7 +22,8 @@ import {
   Mail,
   Bell,
   Send,
-  UserCog
+  UserCog,
+  Building2
 } from 'lucide-react';
 import { formatMetricValue, defaultUnitForScale } from '../utils/formatMetricValue';
 import { SURVEY_SOURCE_OPTIONS, surveySourceLabel, surveySourceBadgeClass } from '../utils/surveySource';
@@ -30,6 +31,7 @@ import { SURVEY_SOURCE_OPTIONS, surveySourceLabel, surveySourceBadgeClass } from
 import { MONTH_NAMES } from '../utils/months';
 import EmailSettingsModal from './EmailSettingsModal';
 import UserManagementModal from './UserManagementModal';
+import DirectoryManager from './DirectoryManager';
 
 // Converts a metric's raw Target Nilai (stored in its own native scale — e.g. 4.00 on a
 // RATING_5 1-5 scale) into the same 0-100 % scale as Min Threshold, mirroring the backend's
@@ -127,8 +129,8 @@ function IndexWeightsCard({ initial, onSaved, onError }) {
   );
 }
 
-export default function AdminParametersModal({ isOpen, onClose, onParametersUpdated, currentUserId }) {
-  const [activeTab, setActiveTab] = useState('metrics'); // 'journeys' | 'metrics' | 'email' | 'users' (v2.42.0)
+export default function AdminParametersModal({ isOpen, onClose, onParametersUpdated, onDirectoryChanged, currentUserId }) {
+  const [activeTab, setActiveTab] = useState('metrics'); // 'journeys' | 'metrics' | 'directorates' (v2.51.0) | 'email' | 'users' (v2.42.0)
   const [loading, setLoading] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -601,6 +603,20 @@ All survey data (responses) and question settings of this metric will also be de
               <span>Journey Parameters ({journeys.length})</span>
             </button>
 
+            {/* Directorate master (v2.51.0): add / rename / delete / merge directorates and their divisions */}
+            <button
+              onClick={() => setActiveTab('directorates')}
+              className={`py-3 text-xs sm:text-sm font-bold border-b-2 flex items-center space-x-2 transition ${
+                activeTab === 'directorates'
+                  ? 'border-white text-white'
+                  : 'border-transparent text-red-100 hover:text-white'
+              }`}
+              title="Directorates and divisions: add, rename, delete or merge (renames cascade to all data)"
+            >
+              <Building2 className="w-4 h-4" />
+              <span>Directorates</span>
+            </button>
+
             {/* Email Settings and Manage Users are tabs of Admin Parameters (moved from the Header in v2.41.0, shown in place since v2.42.0) */}
             <button
               onClick={() => setActiveTab('email')}
@@ -658,6 +674,7 @@ All survey data (responses) and question settings of this metric will also be de
           {/* TABS 3-4: EMAIL SETTINGS / MANAGE USERS (same components as before, embedded, v2.42.0) */}
           {activeTab === 'email' && <EmailSettingsModal isOpen embedded />}
           {activeTab === 'users' && <UserManagementModal isOpen embedded currentUserId={currentUserId} />}
+          {activeTab === 'directorates' && <DirectoryManager onDirectoryChanged={onDirectoryChanged} />}
 
           {/* ============================================================ */}
           {/* TAB 1: PARAMETER JOURNEY                                      */}

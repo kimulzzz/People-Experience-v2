@@ -24,6 +24,8 @@ const jsonCounts = s => ({
   checkpoints: (s.checkpoints || []).length,
   metrics: (s.metrics || []).length,
   directorates: (s.directorates || []).length,
+  directorate_aliases: (s.directorateAliases || []).length,
+  division_aliases: (s.divisionAliases || []).length,
   action_library: (s.actionLibrary || []).length,
   master_questions: (s.masterSurveyQuestions || []).length,
   events: (s.events || []).length,

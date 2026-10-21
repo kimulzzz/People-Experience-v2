@@ -172,15 +172,31 @@ function AppContent() {
   const [publicCheckinCode, setPublicCheckinCode] = useState(() => getPublicCodes().checkin);
   const [publicSurveyCode, setPublicSurveyCode] = useState(() => getPublicCodes().survey);
 
+  // Directorates list: fetched on mount and again after a change in Admin Parameters -> Directorates (v2.51.0)
+  const refreshDirectorates = () => fetchWithRetry('/api/directorates')
+    .then(res => res.json())
+    .then(data => {
+      if (Array.isArray(data)) setDirectoratesList(data);
+    })
+    .catch(err => console.error('Error fetching directorates:', err));
+
   useEffect(() => {
-    // Fetch directorates list once on mount
-    fetchWithRetry('/api/directorates')
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) setDirectoratesList(data);
-      })
-      .catch(err => console.error('Error fetching directorates:', err));
+    refreshDirectorates();
   }, []);
+
+  // After a directory change: new lists for the Header filter, and the filter follows a renamed / merged directorate or
+  // division (a deleted one falls back to all); the dashboard (incl. the PX-by-directorate panel) reloads.
+  const handleDirectoryChanged = (change) => {
+    refreshDirectorates();
+    const f = filterOptions;
+    let next = f;
+    if (change && (change.type === 'rename' || change.type === 'merge') && f.directorate === change.from) next = { ...f, directorate: change.to };
+    else if (change && change.type === 'delete' && f.directorate === change.name) next = { ...f, directorate: 'ALL', sub_directorate: 'ALL' };
+    else if (change && change.type === 'rename-division' && f.directorate === change.directorate && f.sub_directorate === change.from) next = { ...f, sub_directorate: change.to };
+    else if (change && change.type === 'delete-division' && f.directorate === change.directorate && f.sub_directorate === change.name) next = { ...f, sub_directorate: 'ALL' };
+    if (next !== f) setFilterOptions(next);
+    else if (user) fetchAllData(f);
+  };
 
   useEffect(() => {
     if (user) fetchAllData(filterOptions); // public forms (no login) have no dashboard data to load
@@ -510,6 +526,7 @@ function AppContent() {
         isOpen={isAdminParametersOpen}
         onClose={() => setIsAdminParametersOpen(false)}
         onParametersUpdated={() => fetchAllData(filterOptions)}
+        onDirectoryChanged={handleDirectoryChanged}
         currentUserId={user?.user_id}
       />
 

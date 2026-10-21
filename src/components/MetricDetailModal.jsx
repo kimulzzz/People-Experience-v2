@@ -175,7 +175,7 @@ export default function MetricDetailModal({
   const isNonEmployee = isCampus || isCandidate || detailData?.is_employee_metric === false;
 
   const responses = detailData?.responses || [];
-  const directorates = ['ALL', ...new Set(responses.map(r => r.directorate).filter(Boolean))];
+  const directorates = ['ALL', ...[...new Set(responses.map(r => r.directorate).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))];
 
   const filteredResponses = responses.filter(r => {
     if (selectedDirectorate !== 'ALL' && r.directorate && r.directorate !== selectedDirectorate) {

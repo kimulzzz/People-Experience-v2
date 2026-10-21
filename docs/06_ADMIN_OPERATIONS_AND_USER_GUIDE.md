@@ -373,6 +373,8 @@ Setelah mengubah `.env`, restart backend. Bila batas ringkasan habis, kartu vide
 - **Perlu dicek: metrik 9 (Role Clarity & DS Support)**: pertanyaan metrik 9 di Manage Questions tidak sama urutannya dengan file asli `docs/ESS 2025 Result_Role Clarity & DS Support.xlsx` (kolom G dan H tertukar, kolom I pertanyaan lain). Karena kolom dipetakan menurut posisi, skor kolom G (96) kini tampil di bawah pertanyaan 1 "Employees clearly understand what is expected of them.". Susun ulang/ubah pertanyaan metrik 9 di Manage Questions agar urutan dan teksnya sama dengan file.
 
 > **Update 2026-10-20:** pertanyaan metrik 9 sudah disamakan dengan file Excel (Q1 contributes, Q2 expectations, Q3 feedback) - lihat CHANGELOG [2.50.0].
+
+> **Update 2026-10-21 (v2.51.0):** pertanyaan default ke-11 metrik ESS kini = file template ESS (lihat "Pertanyaan template ESS (v2.51.0)" di akhir dokumen) dan Manage Questions database utama di-reset ke template itu (metrik 9: key `q1_role_contribution`, `q2_role_expectation`, `q3_manager_feedback`). Hasil ESS 2025 asli untuk metrik 13, 15, 16, 17, 18, 21, 22, 24, 25, 27 diunggah untuk November 2025 (13 baris per metrik), menggantikan dummy; metrik 9 tetap data seed (= nilai file asli). Kolom A boleh memakai nama lama/alternatif direktorat yang terdaftar sebagai former name (mis. "Consumer & Emerging Business Banking", "Sharia Banking").
 - **Pengingat e-mail**: metrik ESS bersifat tahunan dengan batas 25 November; mulai 25 November 2026 PIC akan menerima pengingat bila hasil ESS 2026 belum diunggah. Hasil ESS dianggap data bulan periodenya.
 
 ---
@@ -429,8 +431,8 @@ Catatan: bobot berlaku untuk PX Index dan skor journey (default 70/30). Bila dal
 **PX Index by Directorate (Dashboard)**
 
 - Di bawah panel PX Index ada **PX Index by Directorate**; klik judulnya untuk membuka. Periode sama dengan filter Header (YTD/MTD, tahun, bulan).
-- Admin melihat ke-12 direktorat; User hanya direktorat dalam cakupannya (User dengan sebagian divisi melihat angka divisi itu saja, tertulis "Your divisions: ...").
-- Urutan: PX Index tertinggi dulu; direktorat tanpa data paling bawah.
+- Admin melihat semua direktorat master (12 saat ini; bisa diubah di tab Directorates sejak v2.51.0); User hanya direktorat dalam cakupannya (User dengan sebagian divisi melihat angka divisi itu saja, tertulis "Your divisions: ...").
+- Urutan (sejak v2.51.0): abjad nama direktorat. Angka di kiri = peringkat PX (PX tertinggi = 1); direktorat tanpa data sendiri (mis. direktorat baru) tampil "—", tanpa angka PX, dan tidak diperingkat. (v2.48.0-v2.50.0: PX tertinggi dulu.)
 - Klik satu direktorat = memilihnya di filter Direktorat Header, seluruh web mengikuti. Kembali ke bankwide lewat filter Header.
 
 **Metrik non-karyawan di filter direktorat**
@@ -464,3 +466,59 @@ Setiap akun **User** punya daftar menu yang boleh dibuka; **Admin** selalu bisa 
 - Setting lama `event_manager_directorates` (direktorat pengelola event, default Human Resources) tidak memberi hak apa pun lagi. Saat upgrade, User yang dulu menjadi pengelola event lewat setting itu otomatis mendapat menu Signature Program Events (database utama: 0 akun, karena hanya ada akun admin).
 - Mematikan Dashboard, Explore Metrics atau About hanya menyembunyikan menunya; angka skor tetap bisa diambil lewat API oleh user login dalam cakupannya. Jangan memakainya sebagai batas kerahasiaan data.
 - User yang semua menunya dimatikan melihat pesan "Your account has no menu access yet. Contact an Admin."
+
+
+### Mengelola Direktorat & Divisi (v2.51.0)
+
+**Siapa**: Admin. Menu: **Admin Parameters** -> tab **Directorates**. Master direktorat ini dipakai filter Header, cakupan User, impor (ESS, Exit Interview, CSV survei) dan form check-in.
+
+**Mengganti nama direktorat**
+1. Klik ikon Rename pada direktorat, ketik nama baru, **Save**.
+2. Dialog menyebut berapa baris data yang membawa nama itu; klik **Rename**. Nama berubah sekaligus di data survei karyawan, hasil ESS, Exit Interview, absensi event, cakupan User, unit SLA rekrutmen dan setting `event_manager_directorates` (satu transaksi). Audit Trail, file upload asli dan CSV evidence lama **tidak** diubah.
+3. Nama lama otomatis menjadi **former name**: file ESS/Exit Interview/CSV dan check-in yang masih memakai nama lama tetap masuk ke direktorat ini.
+4. Filter Header yang sedang memilih direktorat itu ikut pindah ke nama baru.
+
+**Menambah direktorat / divisi**: **Add Directorate** (nama + divisi opsional, satu per baris) atau **Add Division** di bawah daftar divisi. Divisi juga bisa di-rename (data dan cakupan divisi ikut) dan dihapus.
+
+**Menghapus & menggabungkan (merge)**
+- Hapus direktorat/divisi hanya bisa bila tidak ada data yang merujuk. Bila masih ada, muncul pesan dengan jumlah data per sumber dan tombol **Merge into another directorate**.
+- **Merge**: pilih direktorat tujuan -> **Merge ...**. Dialog pratinjau menampilkan data yang pindah dan setiap akun yang cakupannya berubah. Semua data dan divisi pindah ke tujuan (divisi bernama sama digabung), hasil ESS periode yang sama digabung (rata-rata berbobot partisipasi), lalu direktorat asal dihapus dan namanya menjadi former name tujuan.
+- **Perhatian cakupan User**: akun yang punya "semua divisi" direktorat asal setelah merge mendapat **semua divisi direktorat tujuan** (melihat lebih banyak data dari sebelumnya; ditandai "will now see ALL of ..." di dialog). Tinjau akun itu di Manage Users setelah merge. Setiap perubahan cakupan tercatat `USER_SCOPE_CHANGE`.
+
+**Former name manual**: ketik di input "Former or alternative name" pada direktorat (atau pilih divisi untuk former name divisi) lalu simpan. Contoh yang sudah dipasang: "Consumer & Emerging Business Banking" -> Consumer & EBB (ejaan di file ESS), "SLC" -> SLC ASG Satyaguna Langgeng Capital. Menghapus former name tidak mengubah data, tetapi impor yang masih memakai nama itu akan ditolak sebagai direktorat tak dikenal.
+
+**Aturan nama**: maks. 200 karakter; spasi ganda/aneh dirapikan; tidak boleh kosong, hanya titik, berisi karakter tak terlihat, `ALL`, `Bankwide`, `General`, `-`, atau diawali "PT Bank CIMB Niaga" (baris Bankwide file ESS/Exit Interview); tidak boleh sama dengan direktorat lain (huruf besar/kecil tidak dibedakan). Bila nama sudah dibawa data yang tidak terhubung ke direktorat mana pun, muncul dialog **Adopt existing data?**; setelah dikonfirmasi data itu ikut direktorat ini dan ditulis dengan ejaan master.
+
+**Yang perlu diketahui**
+- Perubahan pertama di tab ini membuat setting `directory_admin_managed` = true: sejak itu server tidak lagi menambahkan direktorat/divisi seed saat start (yang di-rename, di-merge atau dihapus tidak muncul kembali). Setting ini tidak bisa diubah lewat API setting.
+- **Reset Default** Admin Parameters tidak lagi mereset daftar direktorat.
+- Instalasi baru (seed) memakai nama Syariah Banking, **SLC**, Strategy & Finance, Treasury & Financial Institutions; database utama memakai nama lengkap "SLC ASG Satyaguna Langgeng Capital" (di-rename lewat menu ini).
+- Semua perubahan tercatat di Audit Trail: `DIRECTORATE_CREATE`/`RENAME`/`DELETE`/`MERGE`, `DIVISION_CREATE`/`RENAME`/`DELETE`, `DIRECTORATE_ALIAS_ADD`/`REMOVE`, `DIVISION_ALIAS_ADD`/`REMOVE`.
+
+### Pertanyaan template ESS (v2.51.0)
+
+Pertanyaan default 11 metrik ESS (seed dan tombol **Reset to default** di Manage Questions) kini sama dengan kolom pertanyaan file template ESS (`docs/Template Survey.zip`, file `(ESS 2025 Result) <metrik>.xlsx`; metrik 9 = `docs/ESS 2025 Result_Role Clarity & DS Support.xlsx`), urut kolom G, H, I, semua bertipe Percentage. Pada 2026-10-21 Manage Questions ke-11 metrik di database utama di-reset ke template ini.
+
+| Metrik | Pertanyaan (urut kolom) |
+| :--- | :--- |
+| 9 Role Clarity & DS Support | (G) I understand how my current job role contributes to a positive impact on customers and society. (H) Employees clearly understand what is expected of them. (I) My immediate manager gives me feedback that helps me improve my performance. |
+| 13 Pride & Work Environment | (G) I am proud to work at CIMB. (H) People want to work here because of the culture and work environment. (I) I feel energized by my work. |
+| 15 Manager Recognition | (G) My immediate manager recognizes me when I do a good job. |
+| 16 Wellbeing | (G) CIMB cares about my well-being. (H) I can manage my job responsibilities in a way that enables healthy work-life balance. |
+| 17 Psychological Safety | (G) At work, I can speak up with ideas or suggestions, even if others have different opinions. (H) Colleagues escalate issues even when these are outside their direct responsibilities. |
+| 18 Leadership Connection | (G) Leaders help us understand and navigate changes happening in CIMB. (H) Leaders makes an effort to get input, ideas, and opinions from employees. |
+| 21 Career Growth & Learning | (G) I have the opportunity to continually learn and grow. |
+| 22 Capability & Enablement | (G) CIMB has employees with the right skills to deliver its strategy. (H) Employees have sufficient authority to make decisions. |
+| 24 Performance Feedback Quality | (G) My immediate manager gives me feedback that helps me improve my performance. |
+| 25 Meaningful Contribution | (G) My work gives me a feeling of personal accomplishment. |
+| 27 Intent to Stay | (G) Even if offered a comparable role and compensation package at another company, I would choose to stay at CIMB. |
+
+Template non-ESS di zip yang sama (Onboarding Day 1 Survey, Mandatory & Non Mandatory Learning) **belum** diterapkan - ditunda user sampai dikonfirmasi dengan penggunanya.
+
+### Regression test tidak lagi mereset konfigurasi Admin & audit parameter (v2.51.0)
+
+- **Masalah lama**: suite regression berjalan di database SQL yang sama dengan aplikasi; tes "Reset parameters to defaults" (Modul 16) dan tes lain mereset journey, checkpoint, metrik dan pertanyaan survei pada setiap run penuh. Itulah sebab nama metrik 8 dan pertanyaan ESS metrik 9 "kembali sendiri" - bukan karena sesi habis.
+- **Sejak v2.51.0** suite menyimpan seluruh konfigurasi Admin (journey, checkpoint, metrik, target, pertanyaan survei, master questions, action library, app settings, direktorat + former names) sebelum modul pertama dan mengembalikannya persis setelah Modul 16, di akhir run, dan saat dihentikan (Ctrl+C). Run yang dimatikan paksa dipulihkan oleh run berikutnya dari `server/data/backups/regression-config-snapshot.json`.
+- **Jangan mengedit Admin Parameters selama suite berjalan**: edit itu tertimpa saat konfigurasi dikembalikan di akhir run. Pengaman ini hanya untuk backend SQL; di backend JSON backup `server/data/store.json` sendiri sebelum menjalankan suite.
+- **Audit**: perubahan metrik (field lama -> baru), journey, reset parameter, target, pertanyaan survei dan Email Settings (tanpa password) kini tercatat di Audit Trail (`METRIC_UPDATE`, `JOURNEY_UPDATE`, `PARAMETERS_RESET`, `METRIC_TARGETS_UPDATE`, `SURVEY_QUESTIONS_UPDATE`, `SETTINGS_CHANGE`, dst.). Action library dan master questions belum diaudit.
+- **Perlu dicek**: edit Admin Parameters lain yang dibuat sebelum 2026-10-21 bisa sudah tereset oleh run suite sebelumnya dan saat itu tidak tercatat di audit. Periksa nilai yang pernah Anda ubah (nama/target/PIC metrik, pertanyaan, bobot) dan setel ulang bila perlu.

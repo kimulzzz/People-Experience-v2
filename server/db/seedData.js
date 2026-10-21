@@ -2,6 +2,7 @@
 // Master Data for CIMB Niaga People Experience Framework
 
 const { defaultUnitForScale } = require('./metricUnit');
+const { seedNamesMatch } = require('./directoryNames');
 
 const initialJourneys = [
   {
@@ -908,6 +909,10 @@ const sampleFeedbackResponses = [
 // The bank's 12 real directorates (ESS 2025 result file; v2.31.0 replaced the 8 demo directorates - old
 // names in existing data are renamed at boot by directorateMigration.js). Divisions of the old demo
 // directory were re-parented, never invented: a directorate may have no division yet.
+// v2.51.0: the bank's reorganisation renamed four of them (Sharia Banking -> Syariah Banking, Special Asset -> SLC,
+// Strategy, Finance & SPAPM -> Strategy & Finance, Treasury & Capital Market -> Treasury & Financial Institutions;
+// directoryNames.SEED_DIRECTORATE_RENAMES). Only a FRESH database gets these names from the seed; an existing one keeps
+// its names until the Admin renames them in Admin Parameters -> Directorates (the boot never renames the master).
 const initialDirectorates = [
   {
     directorate_name: 'Business Banking',
@@ -973,21 +978,21 @@ const initialDirectorates = [
     ]
   },
   {
-    directorate_name: 'Sharia Banking',
+    directorate_name: 'Syariah Banking',
     divisions: []
   },
   {
-    directorate_name: 'Special Asset',
+    directorate_name: 'SLC ASG Satyaguna Langgeng Capital',
     divisions: []
   },
   {
-    directorate_name: 'Strategy, Finance & SPAPM',
+    directorate_name: 'Strategy & Finance',
     divisions: [
       'Financial Planning & Control'
     ]
   },
   {
-    directorate_name: 'Treasury & Capital Market',
+    directorate_name: 'Treasury & Financial Institutions',
     divisions: [
       'Investment Banking & Markets',
       'Treasury Operations'
@@ -1003,7 +1008,7 @@ const respondentOrgUnits = [
   ['Business Banking', 'Corporate Banking'],
   ['Consumer & EBB', 'Branch Banking Region 1'],
   ['Consumer & EBB', 'Branch Banking Region 2'],
-  ['Strategy, Finance & SPAPM', 'Financial Planning & Analysis'],
+  ['Strategy & Finance', 'Financial Planning & Analysis'],
   ['Human Resources', 'Talent Acquisition'],
   ['Human Resources', 'People Experience & Culture'],
   ['Operations, Technology, Analytics & AI', 'Core Banking Solution'],
@@ -1034,14 +1039,14 @@ function generateInitialSurveyResponses() {
     { nip: '8805629', name: 'Fajar Nugroho', email: 'fajar.nugroho@cimbniaga.co.id', dir: 'Operations, Technology, Analytics & AI', div: 'Application Development' },
     { nip: '8806781', name: 'Lestari Wulandari', email: 'lestari.w@cimbniaga.co.id', dir: 'Business Banking', div: 'Commercial Banking SME' },
     { nip: '8807894', name: 'Bambang Kusuma', email: 'bambang.k@cimbniaga.co.id', dir: 'Corporate Assurance', div: 'Internal Audit Group' },
-    { nip: '8808935', name: 'Mega Anggraini', email: 'mega.a@cimbniaga.co.id', dir: 'Treasury & Capital Market', div: 'Treasury Operations' },
+    { nip: '8808935', name: 'Mega Anggraini', email: 'mega.a@cimbniaga.co.id', dir: 'Treasury & Financial Institutions', div: 'Treasury Operations' },
     { nip: '8810127', name: 'Yoga Prasetyo', email: 'yoga.prasetyo@cimbniaga.co.id', dir: 'Consumer & EBB', div: 'Branch Banking Region 2' },
     { nip: '8811284', name: 'Putri Handayani', email: 'putri.handayani@cimbniaga.co.id', dir: 'Network & Digital Banking', div: 'OCTO Mobile Product' },
     { nip: '8812356', name: 'Arief Budiman', email: 'arief.budiman@cimbniaga.co.id', dir: 'Risk Management', div: 'Market Risk' },
     { nip: '8813492', name: 'Sri Wahyuni', email: 'sri.wahyuni@cimbniaga.co.id', dir: 'Human Resources', div: 'Talent Acquisition' },
     { nip: '8814518', name: 'Bayu Firmansyah', email: 'bayu.firmansyah@cimbniaga.co.id', dir: 'Operations, Technology, Analytics & AI', div: 'IT Infrastructure & Security' },
     { nip: '8815673', name: 'Indah Permatasari', email: 'indah.permatasari@cimbniaga.co.id', dir: 'Business Banking', div: 'Corporate Banking' },
-    { nip: '8816729', name: 'Rendy Saputra', email: 'rendy.saputra@cimbniaga.co.id', dir: 'Strategy, Finance & SPAPM', div: 'Financial Planning & Analysis' },
+    { nip: '8816729', name: 'Rendy Saputra', email: 'rendy.saputra@cimbniaga.co.id', dir: 'Strategy & Finance', div: 'Financial Planning & Analysis' },
     { nip: '8817845', name: 'Melati Kusumawardhani', email: 'melati.k@cimbniaga.co.id', dir: 'Compliance, Corporate Affairs & Legal', div: 'Legal & Compliance' }
   ];
 
@@ -1337,10 +1342,10 @@ const ESS_SEED_PARTICIPATION = [
   ['Network & Digital Banking', 2579],
   ['Operations, Technology, Analytics & AI', 1494],
   ['Risk Management', 192],
-  ['Sharia Banking', 365],
-  ['Special Asset', 39],
-  ['Strategy, Finance & SPAPM', 274],
-  ['Treasury & Capital Market', 88]
+  ['Syariah Banking', 365],
+  ['SLC ASG Satyaguna Langgeng Capital', 39],
+  ['Strategy & Finance', 274],
+  ['Treasury & Financial Institutions', 88]
 ];
 const ESS_SEED_BANKWIDE_PARTICIPATION = 7756;
 // Real file, metric Role Clarity & DS Support: [index, q1, q2, q3] per row (Bankwide first, then the 12 directorates above).
@@ -1495,7 +1500,7 @@ function generateExitInterviewDummy(directorates = initialDirectorates) {
   const rows = [];
   let seq = 0;
   const dirWeights = (directorates || []).map(d => {
-    const ess = ESS_SEED_PARTICIPATION.find(([name]) => name === d.directorate_name);
+    const ess = ESS_SEED_PARTICIPATION.find(([name]) => seedNamesMatch(name, d.directorate_name));
     return [d, (ess ? ess[1] : 100) + EXIT_DIRECTORATE_FLOOR];
   });
   EXIT_SEED_MONTHS.forEach(({ year, month }) => {
@@ -1573,7 +1578,7 @@ const initialExitInterviews = generateExitInterviewDummy();
 // has no directorate column (scripts/import-exit-template.js). Same weights as the demo rows above.
 function exitDummyOrgUnit(directorates, key) {
   const list = (directorates && directorates.length ? directorates : initialDirectorates).map(d => {
-    const ess = ESS_SEED_PARTICIPATION.find(([name]) => name === d.directorate_name);
+    const ess = ESS_SEED_PARTICIPATION.find(([name]) => seedNamesMatch(name, d.directorate_name));
     return [d, (ess ? ess[1] : 100) + EXIT_DIRECTORATE_FLOOR];
   });
   const rnd = mulberry32((parseInt(key, 10) || 0) * 7919 + 104729);
@@ -1676,6 +1681,10 @@ const initialAppSettings = {
   login_rate_limit_per_minute: { value: 20, description: 'Batas percobaan login GAGAL per alamat IP per menit' },
   // v2.44.0: sesi diakhiri otomatis bila tidak ada aktivitas pengguna selama N menit (1-120)
   session_idle_timeout_minutes: { value: 5, description: 'Logout otomatis setelah N menit tanpa aktivitas pengguna (1-120)' },
+  // v2.51.0: set to true by the first change in Admin Parameters -> Directorates. From then on the Admin owns the
+  // directorate master and the boot never adds seed directorates / divisions again (a renamed, merged or deleted one
+  // would otherwise come back). Not editable through PUT /api/admin/settings.
+  directory_admin_managed: { value: false, description: 'Direktori direktorat dikelola Admin (Admin Parameters -> Directorates): boot tidak lagi menambah direktorat/divisi seed' },
   event_manager_directorates: {
     value: [{ value: 'Human Resources', label: 'Human Resources' }],
     description: 'Direktorat yang pengguna (role User)-nya boleh mengelola Signature Event (Admin selalu boleh)'

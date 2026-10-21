@@ -33,6 +33,8 @@ function buildInitialStore() {
     checkpoints: JSON.parse(JSON.stringify(initialCheckpoints)),
     metrics: JSON.parse(JSON.stringify(initialMetrics)),
     directorates: JSON.parse(JSON.stringify(initialDirectorates)),
+    directorateAliases: [],   // former directorate / division names (v2.51.0, Admin Parameters -> Directorates)
+    divisionAliases: [],
     metricTargets: defaultTargets,
     weights: initialMetrics.map(m => ({ metric_id: m.metric_id, weight: m.weight || 1.0 })),
     actionLibrary: initialActionLibrary,

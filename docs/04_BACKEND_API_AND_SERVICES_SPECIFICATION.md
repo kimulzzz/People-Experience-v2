@@ -605,6 +605,75 @@ Pengujian: `docs/07` §31 (Modul 46).
 
 ---
 
+## Catatan v2.51.0 - Admin Direktorat, `has_own_data`, Audit Parameter & Snapshot Konfigurasi
+
+**Ringkasan**: (1) master direktorat dikelola Admin (Admin Parameters -> Directorates): tambah/rename/hapus/merge direktorat, tambah/rename/hapus divisi, *former name* manual; rename/merge ikut mengubah nama di semua data; (2) `GET /api/metrics/by-directorate` mengirim `has_own_data`; (3) perubahan parameter Admin masuk Audit Trail; (4) `storage.snapshotConfiguration()` / `restoreConfiguration()` untuk config guard suite; (5) template pertanyaan default 11 metrik ESS = file template ESS. Tabel baru `px_directorate_aliases`, `px_division_aliases` dan setting `directory_admin_managed` (`docs/08` §24). Tidak ada env baru. `/api/health` `version` = `2.51.0`. Pengujian: `docs/07` §40 (Modul 53, 54).
+
+**Endpoint baru** (semua di bawah `/api/admin` = Admin saja; User 403, tanpa sesi 401). Divisi selalu disebut di body / query string, tidak pernah di path URL.
+
+| Endpoint | Body / query | Respons sukses | Audit |
+| :--- | :--- | :--- | :--- |
+| `GET /api/admin/directorates` | - | `{ directorates: [{ directorate_id, name, usage, total_references, divisions: [{ name, usage, total_references }], former_names, former_division_names }], managed, max_length: 200, reserved_directorate_names, reserved_division_names }` | - |
+| `POST /api/admin/directorates` | `{ name, divisions?: [..], confirm_adopt? }` | 201 `{ directorate, released_alias_of, adopted_orphans }` | `DIRECTORATE_CREATE` |
+| `PUT /api/admin/directorates/:id` | `{ name, confirm_adopt? }` | `{ changed, from, to, counts, released_alias_of, adopted_orphans }`; nama sama persis = `changed: false` | `DIRECTORATE_RENAME` (bila berubah) |
+| `DELETE /api/admin/directorates/:id` | - | `{ deleted, divisions, former_names_removed }` | `DIRECTORATE_DELETE` |
+| `GET /api/admin/directorates/:id/merge-preview?target_id=` | - | `{ from, to, rows, total_references, ess_results_pooled, divisions_moved, divisions_merged: [{ from, into }], accounts: [{ user_id, username, before, after, widened, ... }] }` (baca saja) | - |
+| `POST /api/admin/directorates/:id/merge` | `{ target_id }` | `{ from, to, divisions_moved, divisions_merged, counts, scope_changes }` | `DIRECTORATE_MERGE` + satu `USER_SCOPE_CHANGE` per akun yang cakupannya berubah |
+| `POST /api/admin/directorates/:id/divisions` | `{ name }` | 201 `{ directorate, division }` | `DIVISION_CREATE` |
+| `PUT /api/admin/directorates/:id/divisions` | `{ division, name }` | `{ changed, directorate, from, to, counts }` | `DIVISION_RENAME` (bila berubah) |
+| `DELETE /api/admin/directorates/:id/divisions?division=` | (atau `division` di body) | `{ directorate, deleted }` | `DIVISION_DELETE` |
+| `POST /api/admin/directorates/:id/aliases` | `{ name, confirm_adopt? }` | 201 `{ directorate, alias, adopted_orphans, counts }` | `DIRECTORATE_ALIAS_ADD` |
+| `DELETE /api/admin/directorates/:id/aliases?name=` | (atau `name` di body) | `{ directorate, alias }` | `DIRECTORATE_ALIAS_REMOVE` |
+| `POST /api/admin/directorates/:id/divisions/aliases` | `{ division, name, confirm_adopt? }` | 201 `{ directorate, division, alias, adopted_orphans, counts }` | `DIVISION_ALIAS_ADD` |
+| `DELETE /api/admin/directorates/:id/divisions/aliases?name=` | (atau `name` di body) | `{ directorate, division, alias }` | `DIVISION_ALIAS_REMOVE` |
+
+`usage` / `counts` per sumber: `survey_responses` (baris EMPLOYEE), `ess_results` (baris direktorat; `ess_results_pooled` = yang digabung), `exit_interviews`, `attendances`, `user_scopes` (jumlah akun), `users` (kolom legacy), `operational_records` (`px_recruitment_sla_by_unit.unit`), `settings` (`event_manager_directorates`). Divisi: `survey_responses`, `exit_interviews`, `attendances`, `user_scopes`, `users`.
+
+**Kode error**
+
+| Status | Kapan |
+| :--- | :--- |
+| 400 | Nama tidak valid (lihat aturan), `divisions` bukan list, `division`/`name` wajib tidak ada, `target_id` kosong, merge ke diri sendiri, *former name* = nama direktorat/divisi aktif |
+| 404 | Id tidak dikenal atau bukan bilangan bulat positif persis (`dirNames.parseDirectoryId`: `" 853"`, `"853 "`, `"0853"`, `"+853"`, `"853.0"` -> 404), divisi / former name tidak ada |
+| 409 | Masih dirujuk data saat hapus (`references` per sumber, `divisions_with_data`); nama sudah jadi former name (di direktorat ini atau lain); orphan perlu konfirmasi (`requires_confirmation: true`, `orphan_references`); bentrok perubahan paralel / UNIQUE ("That name is already in use ..."); deadlock dicoba ulang sekali, kedua kalinya 409 |
+| 500 | Error database lain: dicatat di log server, klien hanya menerima "The directory change failed on the server; nothing was changed. ..." |
+
+**Aturan nama** (`server/db/directoryNames.js`, dipakai kedua backend dan service impor): `cleanName` = Unicode NFC + setiap rangkaian spasi (termasuk non-breaking / ideografik) jadi satu spasi + trim; ditolak bila kosong, berisi karakter format tak terlihat (`\p{Cf}`) atau kontrol, hanya titik, lebih dari `NAME_MAX_LENGTH` = 200, sama dengan nilai cadangan (`RESERVED_DIRECTORATE_NAMES` = `ALL`, `Bankwide`, `General`, `-`; divisi: `ALL`, `General`, `-`), direktorat diawali "PT Bank CIMB Niaga" (`BANKWIDE_PATTERN`), atau sudah dipakai (tanpa membedakan huruf besar/kecil; rename ke ejaan lain dari nama sendiri boleh). Rename yang hanya mengubah huruf besar/kecil mengubah ejaan di semua data tanpa menambah former name.
+
+**Cascade** (`cascadeDirectorate`, satu transaksi): `px_survey_uploaded_responses.org_unit_1` (hanya `respondent_type = 'EMPLOYEE'`), `px_ess_results.directorate` (`org_level = 'DIRECTORATE'`; bila tujuan sudah punya baris metrik+periode yang sama -> `poolEssResults`: index dan skor pertanyaan berbobot partisipasi, partisipasi dijumlah), `px_exit_interviews.directorate`, `px_attendances.directorate`, `px_users.directorate` (legacy), `px_recruitment_sla_by_unit.unit`, `px_user_scopes` (ditulis ulang per akun), setting `event_manager_directorates`. Rename divisi: kolom divisi tabel yang sama (`org_unit_2`, `division`) + cakupan divisi. Tidak diubah: `px_audit_log`, file upload asli, CSV evidence. Former name: nama lama -> nama saat ini, alias lama ikut dipindah ke nama baru (rantai selalu satu langkah); nama yang dipakai lagi oleh direktorat baru dilepas dari alias (`released_alias_of`). Hapus direktorat menghapus divisinya (FK cascade) dan former name-nya. Merge: divisi bernama sama (tanpa membedakan huruf) digabung ke ejaan tujuan, divisi lain dipindah; cakupan "semua divisi" sumber menjadi "semua divisi" tujuan (`widened: true` di pratinjau), daftar divisi tetap daftar itu.
+
+**Orphan**: create / rename / former name ke nama yang sudah dibawa baris data tapi bukan direktorat master -> 409 `requires_confirmation` (tidak ada yang berubah); `confirm_adopt: true` -> baris itu diadopsi dan ditulis ulang ke ejaan master direktorat dan divisinya (`adoptOrphanSpelling`).
+
+**Resolver nama lama** (`buildResolver` / `loadResolver(storage)`): nama saat ini, former name (huruf/spasi bebas), former name divisi, dan pengetahuan rename seed `SEED_DIRECTORATE_RENAMES` dua arah (database yang belum di-rename tetap cocok dengan ejaan baru seed dan sebaliknya). Dipakai: `essSummaryService` (kolom A), `exitInterviewService` (direktorat + divisi), `surveyImportService` (respons EMPLOYEE; metrik 2 dan 5 tidak), `POST /api/events/:id/attendance` (check-in publik), top-up seed, dan `migrateDirectorates()` v2.31.0 (`opts.mapTarget` / `opts.isCurrent`: target lama dipetakan ke nama saat ini, nama yang masih ada di master tidak pernah dianggap nama demo lama).
+
+**`directory_admin_managed`** (`px_app_settings`, seed `false`): diset `true` oleh setiap perubahan lewat endpoint di atas (`markDirectoryManaged`); sejak itu `topUpDirectory()` tidak menambah apa pun. `PUT /api/admin/settings/directory_admin_managed` -> 400. "Reset Default" (`POST /api/admin/parameters/reset`) tidak lagi menghapus / mengisi ulang `px_directorates` / `px_divisions`.
+
+**`GET /api/directorates`**: setiap entri kini juga memuat `directorate_id` (selain `directorate_name`, `name`, `divisions`, `sub_directorates`).
+
+**`GET /api/metrics/by-directorate`**: field baru `has_own_data` = ada metrik SURVEY berdata yang bukan nilai bankwide (baris SYSTEM atau hasil ESS direktorat itu). `false` -> `px_index`, `survey_index`, `outcome_index` `null`, `px_index_basis` `NONE`, `critical_count`/`warning_count` 0. Server tetap mengurutkan PX tertinggi dulu (null di bawah); UI mengurutkan abjad. **Urutan daftar direktori (putaran akhir v2.51.0)**: `GET /api/directorates`, `GET /api/admin/directorates`, `GET /api/admin/parameters` dan template ESS mengirim direktorat dan divisinya urut abjad (`localeCompare`, `sensitivity: 'base'`; template ESS: baris Bankwide pertama). Storage baru `compareConfiguration(snap)` (read-only, `{ differing_tables, extra_metrics, missing_metrics }`) dipakai suite untuk snapshot sisa; `restoreConfiguration` satu transaksi + `removed_ess_files` (`docs/05` "Catatan v2.51.0"). `GET /api/metrics/calculate?directorate=` tidak berubah.
+
+**Audit parameter (baru)**
+
+| Endpoint | Aksi | Isi `target` |
+| :--- | :--- | :--- |
+| `POST /api/admin/metrics` | `METRIC_CREATE` | `#<id> "<nama>" (<tipe> / <survey_source>)` |
+| `PUT /api/admin/metrics/:id` | `METRIC_UPDATE` | `#<id>: <field> <lama> -> <baru>; ...` (tanpa `metric_weight`, `target_value_normalized`; nilai dipotong 60 karakter) |
+| `POST /api/metrics/weights` | `METRIC_UPDATE` | `#<id> weight <lama> -> <baru>; ...` |
+| `DELETE /api/admin/metrics/:id` | `METRIC_DELETE` | `#<id> "<nama>" (with its survey data, ESS results and uploads)` |
+| `POST`/`PUT`/`DELETE /api/admin/journeys[/:id]` | `JOURNEY_CREATE`/`UPDATE`/`DELETE` | sama (field lama -> baru untuk update) |
+| `POST /api/admin/parameters/reset` | `PARAMETERS_RESET` | jumlah journey / checkpoint / metrik |
+| `POST /api/admin/targets`, `/targets/reset` | `METRIC_TARGETS_UPDATE` / `METRIC_TARGETS_RESET` | per metrik field lama -> baru / jumlah metrik |
+| `POST /api/admin/survey-questions/:metric_id[/reset]` | `SURVEY_QUESTIONS_UPDATE` / `SURVEY_QUESTIONS_RESET` | jumlah pertanyaan lama -> baru, key yang berubah / ditambah / dihapus, "order changed" |
+| `PUT /api/admin/email-settings` | `SETTINGS_CHANGE` | `email_settings: <field> <lama> -> <baru>; ...` dari nilai publik; password hanya "password replaced" / "password cleared" |
+
+Teks dipotong `auth.audit` di batas 190 karakter. Penolakan (403/400/404) tidak menulis audit. Tidak diaudit: action library, master questions (`POST /api/questions/master`), `/api/metrics/score`; tidak ada route checkpoint.
+
+**Snapshot konfigurasi (storage, untuk config guard suite)**: `snapshotConfiguration()` -> `{ kind: 'px-config-snapshot', version: 1, backend, server, database, taken_at, tables }` (SQL: baris mentah 12 tabel `CONFIG_TABLES` = `px_journeys`, `px_checkpoints`, `px_metrics`, `px_metric_targets`, `px_survey_questions`, `px_master_survey_questions`, `px_action_library`, `px_app_settings`, `px_directorates`, `px_divisions`, `px_directorate_aliases`, `px_division_aliases`; JSON: key `CONFIG_KEYS` yang setara). `restoreConfiguration(snap)`: menolak snapshot backend/server/database lain; menghapus metrik yang tidak ada di snapshot beserta datanya (cascade hapus metrik); dalam satu transaksi menulis ulang hanya tabel yang berbeda (id dipertahankan, `IDENTITY_INSERT`); mengembalikan `{ removed_metrics, restored_tables }`. Tidak ada endpoint untuk ini.
+
+**Template pertanyaan ESS**: `metricQuestionService.DEFAULT_METRIC_QUESTIONS` untuk metrik 9, 13, 15, 16, 17, 18, 21, 22, 24, 25, 27 = kolom pertanyaan file `(ESS 2025 Result) <metrik>.xlsx` (metrik 9: `ESS 2025 Result_Role Clarity & DS Support.xlsx`), urut kolom, tipe `PERCENTAGE`, key `q<n>_<slug>`. Dipakai seed dan `POST /api/admin/survey-questions/:metric_id/reset`; pertanyaan yang sudah tersimpan tidak diubah otomatis. Daftar teks: `docs/06` bagian "Pertanyaan template ESS (v2.51.0)".
+
+---
+
 ## Catatan v2.50.0 - Pertanyaan ESS dari Manage Questions, Tipe PERCENTAGE, ESS Carry-Forward & Snapshot Pertanyaan
 
 **Ringkasan**: (1) pertanyaan ESS di template dan web = pertanyaan Manage Questions, kolom file dipetakan menurut posisi; (2) tipe pertanyaan baru `PERCENTAGE` (semua pertanyaan ESS); (3) nilai ESS = hasil terakhir pada/sebelum akhir periode (*carry-forward*, menggantikan aturan bulan-template v2.37.0); (4) setiap upload menyimpan set pertanyaannya, dan detail/evidence memakai teks yang berlaku saat data dikirim. Tidak ada endpoint atau env baru; kolom baru `px_survey_uploads.questions_snapshot_json` (`docs/08` §23); opsi baru `PERCENTAGE` di setting `question_types`. `/api/health` `version` = `2.50.0`. Angka sebelum/sesudah: `CHANGELOG.md` [2.50.0]. Pengujian: `docs/07` §39 (Modul 52).

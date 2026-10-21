@@ -23,7 +23,7 @@ nip,employee_name,cimb_email,directorate,division,metric_id,metric_name,rating_s
 | **`nip`** | **Wajib** | String | `8801245` | Nomor Induk Pegawai responden (4–15 karakter alfanumerik). Tidak boleh kosong. |
 | **`employee_name`** | Opsional | String | `Dimas Setiawan` | Nama lengkap karyawan responden. |
 | **`cimb_email`** | Opsional | Email | `dimas.setiawan@cimbniaga.co.id` | Alamat email resmi CIMB Niaga. |
-| **`directorate`** | Opsional | String | `Operations, Technology, Analytics & AI` | Nama direktorat tempat karyawan bertugas (salah satu dari 12 direktorat riil sejak v2.31.0). Nama yang mengandung koma wajib diapit tanda kutip ganda di CSV, mis. `"Strategy, Finance & SPAPM"`. |
+| **`directorate`** | Opsional | String | `Operations, Technology, Analytics & AI` | Nama direktorat tempat karyawan bertugas (salah satu dari 12 direktorat riil sejak v2.31.0). Nama yang mengandung koma wajib diapit tanda kutip ganda di CSV, mis. `"Operations, Technology, Analytics & AI"`. Sejak v2.51.0 nama lama/alternatif yang terdaftar sebagai former name (mis. `"Strategy, Finance & SPAPM"` -> Strategy & Finance) disimpan di bawah nama saat ini; berlaku juga untuk `division`. |
 | **`division`** | Opsional | String | `Application Development` | Nama divisi atau unit kerja. |
 | **`metric_id`** | **Wajib** | Integer | `8` | ID Metrik survei (1–27) yang diukur. |
 | **`metric_name`** | Opsional | String | `New Joiner Onboarding Journey` | Nama deskriptif metrik. |
@@ -97,7 +97,7 @@ Metrik ESS diisi dari **ringkasan hasil survei**, bukan jawaban per responden. S
 
 | Kolom | Header baris 1 | Isi per baris | Aturan |
 | :---: | :--- | :--- | :--- |
-| **A** | `Directorate` (atau `Direktorat`) | Nama unit | Baris yang diawali "PT Bank CIMB Niaga" (mis. `PT Bank CIMB Niaga Tbk`) = baris **Bankwide**. Baris lain harus nama direktorat dari master (12 direktorat sejak v2.31.0); spasi ganda dan huruf besar/kecil tidak berpengaruh. Divisi tidak didukung. |
+| **A** | `Directorate` (atau `Direktorat`) | Nama unit | Baris yang diawali "PT Bank CIMB Niaga" (mis. `PT Bank CIMB Niaga Tbk`) = baris **Bankwide**. Baris lain harus nama direktorat dari master (12 direktorat sejak v2.31.0; dikelola Admin di Admin Parameters -> Directorates sejak v2.51.0) **atau former name-nya** (sejak v2.51.0, mis. `Sharia Banking` -> Syariah Banking, `Consumer & Emerging Business Banking` -> Consumer & EBB); hasil disimpan di bawah nama saat ini. Spasi ganda dan huruf besar/kecil tidak berpengaruh. Divisi tidak didukung. |
 | **B** | `Level` | `Bankwide` / `Directorate` / kosong | Nilai lain ditolak. Perhatian: baris ber-Level `Bankwide` diperlakukan sebagai baris Bankwide apa pun isi kolom A. |
 | **C** | `Year` (atau `Tahun`) | mis. `2025` | Bilangan bulat 2000-2100. |
 | **D** | `Month` (atau `Bulan`) | mis. `November` | Nama bulan Inggris/Indonesia, singkatan 3 huruf, atau angka 1-12. |
@@ -121,7 +121,7 @@ Contoh (nilai dari file user):
 
 ### Daftar validasi (alasan penolakan)
 - Header A-E tidak sesuai, atau header F kosong.
-- Direktorat tidak ada di master; direktorat atau baris Bankwide muncul lebih dari sekali.
+- Direktorat tidak ada di master dan bukan former name yang terdaftar; direktorat atau baris Bankwide muncul lebih dari sekali.
 - Level selain `Bankwide` / `Directorate` / kosong.
 - Year bukan 2000-2100; Month tidak dikenali; Year/Month berbeda antar baris.
 - Participation bukan bilangan bulat >= 0.

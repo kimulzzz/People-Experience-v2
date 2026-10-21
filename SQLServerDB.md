@@ -76,7 +76,7 @@ Lalu set `STORAGE_BACKEND=sql` di `.env` dan restart server.
 | **Windows Authentication** | di SSMS pilih *Windows Authentication* (akun Windows administrator) — akses penuh ke seluruh server |
 | **Cek dari aplikasi** | `http://localhost:5000/api/health` → bagian `database` (server, edisi, jumlah baris tabel kunci) |
 
-Tabel aplikasi berawalan `px_` (32 tabel sejak v2.38.0). Yang paling sering dilihat: `px_metrics`, `px_metric_targets`, `px_survey_uploaded_responses`, `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` (kolom `file_path` + `transcript`).
+Tabel aplikasi berawalan `px_` (34 tabel sejak v2.51.0). Yang paling sering dilihat: `px_metrics`, `px_metric_targets`, `px_survey_uploaded_responses`, `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` (kolom `file_path` + `transcript`).
 
 > Jangan mengubah data langsung lewat SSMS tanpa alasan kuat — validasi dan perhitungan skor berjalan di aplikasi.
 
@@ -135,7 +135,7 @@ File foto/video Signature Event **tidak disimpan di database**. File tetap di di
 | :--- | :--- | :--- |
 | Pertanyaan survei tiap metric | `px_survey_questions` | menu Survey Templates / Question Settings (tombol "Reset" mengembalikan template default) |
 | Target PX Index (garis chart), opsi kategori & format event | `px_app_settings` | `PUT /api/admin/settings/:key` (mis. `{"value": 90}`) atau langsung di tabel |
-| Direktorat & divisi (filter Header, form check-in) | `px_directorates`, `px_divisions` | langsung di tabel; entri seed yang hilang ditambahkan otomatis saat server start |
+| Direktorat & divisi (filter Header, form check-in) | `px_directorates`, `px_divisions` (+ former name: `px_directorate_aliases`, `px_division_aliases`) | sejak v2.51.0 lewat Admin Parameters -> Directorates (rename/merge ikut mengubah semua data, lihat §23); entri seed yang hilang hanya ditambahkan saat start selama `directory_admin_managed` belum `true` |
 | Jadwal reminder otomatis (jam kirim, ulangi tiap N hari) | `px_app_settings` (`reminder_send_hour`, `reminder_repeat_days`) | menu **Email Settings** |
 | Riwayat email reminder yang terkirim | `px_reminder_log` | otomatis; ditampilkan di menu Email Settings |
 | Akun pengirim email reminder PIC (password terenkripsi) | `px_email_settings` | menu **Email Settings** di Header |
@@ -239,3 +239,14 @@ Kolom `px_users.menu_access` (`NVARCHAR(400) NULL`, JSON berisi 6 menu `true`/`f
 - **Setiap start**: opsi `PERCENTAGE` ditambahkan ke setting `question_types` bila belum ada; pertanyaan metrik ESS yang belum bertipe `PERCENTAGE` diubah ke `PERCENTAGE` (database utama: 38 baris pada start pertama; perubahan langsung di database ke tipe lain akan dikembalikan).
 - **Sekali**: upload seed dummy ESS 2026-03/06/09 (`seed-ess-<metric>-2026-MM`, `uploaded_by` "Seed (dummy)") dan barisnya dihapus (database utama: 33 upload, 429 baris). Upload Admin tidak disentuh. Data ESS kini hanya November 2025 (143 baris) sampai hasil asli diunggah; Dashboard memakai hasil terakhir itu untuk periode sesudahnya (carry-forward).
 - Pemeriksaan: `SELECT COUNT(*) AS with_snapshot FROM dbo.px_survey_uploads WHERE questions_snapshot_json IS NOT NULL;` dan `SELECT question_type, COUNT(*) FROM dbo.px_survey_questions q JOIN dbo.px_metrics m ON m.metric_id = q.metric_id WHERE m.survey_source = 'ESS' GROUP BY question_type;` (hanya `PERCENTAGE`).
+
+
+## 23. Master Direktorat dikelola Admin & Former Name (v2.51.0)
+
+- Tabel baru `px_directorate_aliases` (former name direktorat -> nama saat ini, `alias_name` unik) dan `px_division_aliases` (per direktorat: nama divisi lama -> nama saat ini, unik `(directorate_name, alias_name)`), dibuat otomatis saat server start. Jumlah tabel kini **34**. Rincian kolom: `docs/08` §24.
+- Direktorat/divisi diubah lewat **Admin Parameters -> Directorates** (tambah, rename, hapus, merge, former name), bukan langsung di tabel: rename/merge ikut mengubah nama di semua tabel data dalam satu transaksi dan mencatat former name; edit langsung di `px_directorates` tidak melakukan itu.
+- Setting baru `directory_admin_managed` di `px_app_settings`: `true` setelah perubahan pertama di menu itu; sejak itu server tidak menambahkan direktorat/divisi seed saat start. Tidak bisa diubah lewat `PUT /api/admin/settings`.
+- **Database utama (2026-10-21)**: 4 direktorat di-rename (Sharia Banking -> Syariah Banking, Special Asset -> SLC ASG Satyaguna Langgeng Capital, "Strategy, Finance & SPAPM" -> Strategy & Finance, Treasury & Capital Market -> Treasury & Financial Institutions) + former name manual "SLC" dan "Consumer & Emerging Business Banking"; `directory_admin_managed` = true. `px_audit_log` tetap memuat nama lama.
+- **Regression suite**: sejak v2.51.0 suite menyimpan konfigurasi Admin (12 tabel: journey, checkpoint, metrik, target, pertanyaan, master questions, action library, app settings, direktorat, divisi, dua tabel alias) sebelum run dan mengembalikannya sesudahnya; file sementara `server/data/backups/regression-config-snapshot.json` (gitignored, tanpa password). Jangan mengedit Admin Parameters selama suite berjalan - tertimpa saat restore akhir.
+- Ikut `.bak`, `npm run db:export` dan import `migrate.js`; `migrate --reset` menghapus keduanya lalu memuat ulang dari `store.json` - rename dan former name yang dibuat di menu hanya kembali bila `store.json` sudah diekspor ulang (`npm run db:export -- --replace`, server dihentikan dulu).
+- Pemeriksaan: `SELECT alias_name, directorate_name FROM dbo.px_directorate_aliases ORDER BY alias_id;` dan `SELECT setting_value FROM dbo.px_app_settings WHERE setting_key = 'directory_admin_managed';`

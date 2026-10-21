@@ -13,6 +13,7 @@ const storage = require('./db/storage');
 const { calculatePEIndex, getMetricDetail, computeMonthlyTrends, getLastCompleteMonth, normalizeTarget, syncLiveEventMetrics,
   pxWeightsError, clearPxWeightsCache } = require('./services/calculationEngine');
 const { normalizeScopes } = require('./db/scopeUtils');
+const { loadResolver, NAME_MAX_LENGTH, RESERVED_DIRECTORATE_NAMES, RESERVED_DIVISION_NAMES } = require('./db/directoryNames');
 const { getAlertsAndRecommendations } = require('./services/alertEngine');
 const { generateEventPPT } = require('./services/pptGenerator');
 const { isOllamaAvailable, generateEventSummary } = require('./services/localAiService');
@@ -134,12 +135,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.50.0' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.51.0' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.50.0',
+    version: '2.51.0',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',
@@ -176,6 +177,8 @@ app.put('/api/admin/settings/:key', async (req, res) => {
     const { value } = req.body || {};
     const current = (await storage.getSettings())[key];
     if (current === undefined) return res.status(404).json({ error: `Setting "${key}" not found.` });
+    // v2.51.0: set by Admin Parameters -> Directorates only (it stops the boot from topping the directory up again)
+    if (key === 'directory_admin_managed') return res.status(400).json({ error: 'This setting is maintained by Admin Parameters -> Directorates and cannot be edited directly.' });
     if (key === 'px_index_weights') {
       // v2.48.0: { survey, outcome } whole percentages adding up to 100
       const invalid = pxWeightsError(value);
@@ -225,7 +228,15 @@ app.get('/api/admin/email-settings', async (req, res) => {
 
 app.put('/api/admin/email-settings', async (req, res) => {
   try {
-    res.json(await emailSettingsService.updateSettings(req.body || {}));
+    const before = await emailSettingsService.getPublicSettings();
+    const saved = await emailSettingsService.updateSettings(req.body || {});
+    // v2.51.0: audited like every other setting - field names and public values only, never the password
+    const changes = changedFields(before, saved, new Set(['updated_at', 'password_readable', 'has_password', 'env_fallback_available']));
+    const body = req.body || {};
+    if (body.clear_password) changes.push('password cleared');
+    else if (typeof body.smtp_password === 'string' && body.smtp_password) changes.push('password replaced');
+    await auth.audit(req, 'SETTINGS_CHANGE', { target: `email_settings: ${changes.join('; ') || 'no changes'}` });
+    res.json(saved);
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }
@@ -250,6 +261,125 @@ app.get('/api/directorates', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// 1c. Directorate master administration (v2.51.0, Admin Parameters -> Directorates; everything under /api/admin is Admin
+// only). Every change runs in one transaction, cascades the name into all data that copies it (EMPLOYEE survey rows, ESS
+// results, exit interviews, attendances, login scopes, legacy user fields, recruitment SLA units, directorate settings)
+// and records the former name as an alias that imports keep recognising. Errors: 400 invalid, 404 unknown id (only a
+// positive whole number is an id - " 853" is not), 409 still referenced / name taken / adopting orphan data needs
+// confirm_adopt. A database error is logged and answered with a generic 500 (its text never reaches the client).
+// A division is named in the body / query string, never in the URL path ("." / ".." would be normalised away).
+const directoryCounts = c => Object.entries(c || {}).filter(([, n]) => n).map(([k, n]) => `${k} ${n}`).join(', ') || 'no data rows';
+async function directoryRoute(res, work, status = 200) {
+  try {
+    res.status(status).json(await work());
+  } catch (err) {
+    if (!err.status) {
+      console.error('[directories] change failed:', err);
+      return res.status(500).json({ error: 'The directory change failed on the server; nothing was changed. Try again or check the server log.' });
+    }
+    res.status(err.status).json({
+      error: err.message,
+      ...(err.references ? { references: err.references } : {}),
+      ...(err.divisions_with_data ? { divisions_with_data: err.divisions_with_data } : {}),
+      ...(err.requires_confirmation ? { requires_confirmation: true, orphan_references: err.orphan_references } : {})
+    });
+  }
+}
+
+app.get('/api/admin/directorates', (req, res) => directoryRoute(res, async () => ({
+  ...(await storage.getDirectoryAdmin()),
+  max_length: NAME_MAX_LENGTH,
+  reserved_directorate_names: RESERVED_DIRECTORATE_NAMES,
+  reserved_division_names: RESERVED_DIVISION_NAMES
+})));
+
+app.post('/api/admin/directorates', (req, res) => directoryRoute(res, async () => {
+  const { name, divisions, confirm_adopt } = req.body || {};
+  const out = await storage.createDirectorate({ name, divisions, confirm_adopt });
+  await auth.audit(req, 'DIRECTORATE_CREATE', { target: `"${out.directorate.name}" (${out.directorate.divisions.length} divisions)${out.released_alias_of ? `; was a former name of "${out.released_alias_of}"` : ''}${out.adopted_orphans ? `; adopted ${directoryCounts(out.adopted_orphans)}` : ''}` });
+  return out;
+}, 201));
+
+app.put('/api/admin/directorates/:id', (req, res) => directoryRoute(res, async () => {
+  const { name, confirm_adopt } = req.body || {};
+  const out = await storage.renameDirectorate(req.params.id, name, { confirm_adopt });
+  if (out.changed) await auth.audit(req, 'DIRECTORATE_RENAME', { target: `"${out.from}" -> "${out.to}"; ${directoryCounts(out.counts)}${out.adopted_orphans ? `; adopted ${directoryCounts(out.adopted_orphans)}` : ''}` });
+  return out;
+}));
+
+app.delete('/api/admin/directorates/:id', (req, res) => directoryRoute(res, async () => {
+  const out = await storage.deleteDirectorate(req.params.id);
+  await auth.audit(req, 'DIRECTORATE_DELETE', { target: `"${out.deleted}" (${out.divisions} divisions, ${out.former_names_removed} former names)` });
+  return out;
+}));
+
+// What a merge would do (rows, pooled ESS periods, divisions, every login whose scope changes) - read only
+app.get('/api/admin/directorates/:id/merge-preview', (req, res) => directoryRoute(res, () => storage.previewMergeDirectorate(req.params.id, req.query.target_id)));
+
+app.post('/api/admin/directorates/:id/merge', (req, res) => directoryRoute(res, async () => {
+  const out = await storage.mergeDirectorate(req.params.id, (req.body || {}).target_id);
+  await auth.audit(req, 'DIRECTORATE_MERGE', { target: `"${out.from}" -> "${out.to}"; divisions moved ${out.divisions_moved}, merged ${out.divisions_merged}; ${directoryCounts(out.counts)}` });
+  // every login whose data scope the merge changed gets its own scope-change entry (same action as Manage Users)
+  for (const c of out.scope_changes || []) {
+    await auth.audit(req, 'USER_SCOPE_CHANGE', { subject: c, target: `${c.username}: ${auth.describeScopes(c.before)} -> ${auth.describeScopes(c.after)} (merge "${out.from}")` });
+  }
+  return out;
+}));
+
+app.post('/api/admin/directorates/:id/divisions', (req, res) => directoryRoute(res, async () => {
+  const out = await storage.addDivision(req.params.id, (req.body || {}).name);
+  await auth.audit(req, 'DIVISION_CREATE', { target: `"${out.directorate}" / "${out.division}"` });
+  return out;
+}, 201));
+
+app.put('/api/admin/directorates/:id/divisions', (req, res) => directoryRoute(res, async () => {
+  const { division, name } = req.body || {};
+  if (typeof division !== 'string' || !division) throw Object.assign(new Error('division (the current division name) is required.'), { status: 400 });
+  const out = await storage.renameDivision(req.params.id, division, name);
+  if (out.changed) await auth.audit(req, 'DIVISION_RENAME', { target: `"${out.directorate}": "${out.from}" -> "${out.to}"; ${directoryCounts(out.counts)}` });
+  return out;
+}));
+
+app.delete('/api/admin/directorates/:id/divisions', (req, res) => directoryRoute(res, async () => {
+  const division = typeof req.query.division === 'string' ? req.query.division : (req.body || {}).division;
+  if (typeof division !== 'string' || !division) throw Object.assign(new Error('division (the division name, ?division=) is required.'), { status: 400 });
+  const out = await storage.deleteDivision(req.params.id, division);
+  await auth.audit(req, 'DIVISION_DELETE', { target: `"${out.directorate}" / "${out.deleted}"` });
+  return out;
+}));
+
+// Former / alternative names added by hand (v2.51.0), e.g. the spelling an ESS file uses for a directorate. Same name rules
+// as a directorate / division; 400 = the name of a live directorate / division, 409 = already a former name (here or of
+// another directorate) or rows already carry it (requires_confirmation - send confirm_adopt: true to adopt them).
+app.post('/api/admin/directorates/:id/aliases', (req, res) => directoryRoute(res, async () => {
+  const { name, confirm_adopt } = req.body || {};
+  const out = await storage.addDirectorateAlias(req.params.id, name, { confirm_adopt });
+  await auth.audit(req, 'DIRECTORATE_ALIAS_ADD', { target: `"${out.alias}" -> "${out.directorate}"${out.adopted_orphans ? `; adopted ${directoryCounts(out.adopted_orphans)}` : ''}` });
+  return out;
+}, 201));
+
+app.delete('/api/admin/directorates/:id/aliases', (req, res) => directoryRoute(res, async () => {
+  const name = typeof req.query.name === 'string' ? req.query.name : (req.body || {}).name;
+  const out = await storage.removeDirectorateAlias(req.params.id, name);
+  await auth.audit(req, 'DIRECTORATE_ALIAS_REMOVE', { target: `"${out.alias}" (was -> "${out.directorate}")` });
+  return out;
+}));
+
+app.post('/api/admin/directorates/:id/divisions/aliases', (req, res) => directoryRoute(res, async () => {
+  const { division, name, confirm_adopt } = req.body || {};
+  if (typeof division !== 'string' || !division) throw Object.assign(new Error('division (the division the former name belongs to) is required.'), { status: 400 });
+  const out = await storage.addDivisionAlias(req.params.id, division, name, { confirm_adopt });
+  await auth.audit(req, 'DIVISION_ALIAS_ADD', { target: `"${out.directorate}": "${out.alias}" -> "${out.division}"${out.adopted_orphans ? `; adopted ${directoryCounts(out.adopted_orphans)}` : ''}` });
+  return out;
+}, 201));
+
+app.delete('/api/admin/directorates/:id/divisions/aliases', (req, res) => directoryRoute(res, async () => {
+  const name = typeof req.query.name === 'string' ? req.query.name : (req.body || {}).name;
+  const out = await storage.removeDivisionAlias(req.params.id, name);
+  await auth.audit(req, 'DIVISION_ALIAS_REMOVE', { target: `"${out.directorate}": "${out.alias}" (was -> "${out.division}")` });
+  return out;
+}));
 
 // 2. Metrics & PE Index Calculation (Supports ?mode=YTD|MTD&year=2026&month=03&directorate=...&sub_directorate=...)
 app.get('/api/metrics/calculate', async (req, res) => {
@@ -382,17 +512,23 @@ app.get('/api/metrics/by-directorate', async (req, res) => {
       const calc = await calculatePEIndex({ ...period, directorate: scope.directorate, sub_directorate: scope.sub_directorate, scopes: scope.scopes },
         { skipTrends: true });
       const own = scope.scopes ? scope.scopes.find(s => s.directorate === name) : null;
+      // v2.51.0: a directorate without data of its own (e.g. a brand-new one) has no PX Index of its own: null scores,
+      // has_own_data false, not ranked (calculate?directorate= itself is unchanged). Own data = a SURVEY metric (SYSTEM rows
+      // or an ESS result) with data that is not a bankwide value; the bankwide metrics #1-#5 and the OUTCOME metrics
+      // (an unfiltered snapshot, the same for every directorate since v2.36.0) do not count.
+      const hasOwnData = calc.metrics.some(m => m.has_data && m.metric_type === 'SURVEY' && !m.is_bankwide_value);
       return {
         directorate: name,
         divisions: own ? own.divisions : null, // USER with a subset of divisions: the divisions the number covers
-        px_index: calc.px_index,
-        survey_index: calc.survey_index,
-        outcome_index: calc.outcome_index,
-        px_index_basis: calc.px_index_basis,
+        has_own_data: hasOwnData,
+        px_index: hasOwnData ? calc.px_index : null,
+        survey_index: hasOwnData ? calc.survey_index : null,
+        outcome_index: hasOwnData ? calc.outcome_index : null,
+        px_index_basis: hasOwnData ? calc.px_index_basis : 'NONE',
         active_metrics_count: calc.active_metrics_count,
         no_data_metrics_count: calc.no_data_metrics_count,
-        critical_count: calc.metrics.filter(m => m.status === 'CRITICAL').length,
-        warning_count: calc.metrics.filter(m => m.status === 'WARNING').length,
+        critical_count: hasOwnData ? calc.metrics.filter(m => m.status === 'CRITICAL').length : 0,
+        warning_count: hasOwnData ? calc.metrics.filter(m => m.status === 'WARNING').length : 0,
         px_weights: calc.px_weights
       };
     }));
@@ -436,10 +572,37 @@ app.get('/api/admin/parameters', async (req, res) => {
   }
 });
 
+// v2.51.0: every Admin parameter change is written to the audit trail (Manage Users -> Audit Trail), so an edit that later
+// disappears can be traced: the fields that changed, old -> new (auth.audit cuts the text at its 190-character limit).
+const auditValue = v => (v === null || v === undefined || v === '' ? '-' : typeof v === 'object' ? JSON.stringify(v) : String(v)).slice(0, 60);
+const DERIVED_METRIC_FIELDS = new Set(['metric_weight', 'target_value_normalized']);
+function changedFields(before, after, skip = new Set()) {
+  const b = before || {};
+  const a = after || {};
+  return [...new Set([...Object.keys(b), ...Object.keys(a)])]
+    .filter(k => !skip.has(k) && JSON.stringify(b[k] === undefined ? null : b[k]) !== JSON.stringify(a[k] === undefined ? null : a[k]))
+    .map(k => `${k} ${auditValue(b[k])} -> ${auditValue(a[k])}`);
+}
+// Survey questions before / after a save: changed, added and removed question keys
+function questionChanges(before, after) {
+  const byKey = list => new Map((list || []).map(q => [q.key || q.question_key || q.id, q]));
+  const b = byKey(before);
+  const a = byKey(after);
+  const sig = q => JSON.stringify([q.text || q.question_text || '', q.type || q.question_type || '', q.label || '', q.options || null, q.mandatory || false]);
+  const changed = [...a.keys()].filter(k => b.has(k) && sig(a.get(k)) !== sig(b.get(k)));
+  const added = [...a.keys()].filter(k => !b.has(k));
+  const removed = [...b.keys()].filter(k => !a.has(k));
+  const order = [...a.keys()].filter(k => b.has(k)).join('|') !== [...b.keys()].filter(k => a.has(k)).join('|');
+  return [`${(before || []).length} -> ${(after || []).length} questions`,
+    ...(changed.length ? [`changed ${changed.join(', ')}`] : []), ...(added.length ? [`added ${added.join(', ')}`] : []),
+    ...(removed.length ? [`removed ${removed.join(', ')}`] : []), ...(order ? ['order changed'] : [])].join('; ');
+}
+
 // Add Journey
 app.post('/api/admin/journeys', async (req, res) => {
   try {
     const journey = await storage.addJourney(req.body);
+    await auth.audit(req, 'JOURNEY_CREATE', { target: `#${journey.journey_id} "${journey.journey_name}"` });
     const calculation = await calculatePEIndex();
     res.status(201).json({ success: true, journey, calculation });
   } catch (err) {
@@ -450,7 +613,9 @@ app.post('/api/admin/journeys', async (req, res) => {
 // Update Journey
 app.put('/api/admin/journeys/:id', async (req, res) => {
   try {
+    const before = await storage.getJourneyById(req.params.id);
     const journey = await storage.updateJourney(req.params.id, req.body);
+    await auth.audit(req, 'JOURNEY_UPDATE', { target: `#${journey.journey_id}: ${changedFields(before, journey).join('; ') || 'no changes'}` });
     const calculation = await calculatePEIndex();
     res.json({ success: true, journey, calculation });
   } catch (err) {
@@ -461,7 +626,9 @@ app.put('/api/admin/journeys/:id', async (req, res) => {
 // Delete Journey
 app.delete('/api/admin/journeys/:id', async (req, res) => {
   try {
+    const before = await storage.getJourneyById(req.params.id);
     const result = await storage.deleteJourney(req.params.id);
+    await auth.audit(req, 'JOURNEY_DELETE', { target: before ? `#${before.journey_id} "${before.journey_name}"` : `#${req.params.id}` });
     const calculation = await calculatePEIndex();
     res.json({ success: true, ...result, calculation });
   } catch (err) {
@@ -473,6 +640,7 @@ app.delete('/api/admin/journeys/:id', async (req, res) => {
 app.post('/api/admin/metrics', async (req, res) => {
   try {
     const metric = await storage.addMetric(req.body);
+    await auth.audit(req, 'METRIC_CREATE', { target: `#${metric.metric_id} "${metric.metric_name}" (${metric.metric_type}${metric.survey_source ? ` / ${metric.survey_source}` : ''})` });
     const calculation = await calculatePEIndex();
     res.status(201).json({ success: true, metric, calculation, ...metric });
   } catch (err) {
@@ -483,7 +651,10 @@ app.post('/api/admin/metrics', async (req, res) => {
 // Update Metric (Parameters: Name, Journey, Checkpoint, Weight, Target, Threshold, Audience, etc.)
 app.put('/api/admin/metrics/:id', async (req, res) => {
   try {
+    const before = await storage.getMetricById(req.params.id);
     const metric = await storage.updateMetric(req.params.id, req.body);
+    const after = await storage.getMetricById(metric.metric_id);
+    await auth.audit(req, 'METRIC_UPDATE', { target: `#${metric.metric_id}: ${changedFields(before, after, DERIVED_METRIC_FIELDS).join('; ') || 'no changes'}` });
     const calculation = await calculatePEIndex();
     res.json({ success: true, metric, calculation, ...metric });
   } catch (err) {
@@ -497,6 +668,7 @@ app.delete('/api/admin/metrics/:id', async (req, res) => {
     // its ESS uploads go with it (documented cascade), so their original files are removed too (v2.32.0)
     const essUploadIds = (await storage.getSurveyUploads()).filter(u => String(u.metric_id) === String(parseInt(req.params.id, 10))).map(u => u.upload_id);
     const result = await storage.deleteMetric(req.params.id);
+    await auth.audit(req, 'METRIC_DELETE', { target: `#${result.metric_id} "${result.metric_name}" (with its survey data, ESS results and uploads)` });
     essUploadIds.forEach(id => { const f = essOriginalFilePath(id); if (f) fs.unlink(f, () => {}); });
     const calculation = await calculatePEIndex();
     res.json({ success: true, ...result, calculation });
@@ -509,6 +681,7 @@ app.delete('/api/admin/metrics/:id', async (req, res) => {
 app.post('/api/admin/parameters/reset', async (req, res) => {
   try {
     const resetData = await storage.resetParametersToDefault();
+    await auth.audit(req, 'PARAMETERS_RESET', { target: `journeys, checkpoints, metrics, targets and survey questions reset to the defaults (${resetData.journeys.length} journeys, ${resetData.checkpoints.length} checkpoints, ${resetData.metrics.length} metrics)` });
     const calculation = await calculatePEIndex('YTD');
     res.json({
       success: true,
@@ -535,7 +708,10 @@ app.post('/api/admin/targets', async (req, res) => {
   try {
     const { targets } = req.body;
     if (!targets) return res.status(400).json({ error: 'targets is required' });
+    const before = await storage.getMetricTargets();
     const saved = await storage.saveMetricTargets(targets);
+    const diffs = Object.keys({ ...before, ...saved }).map(id => ({ id, f: changedFields(before[id], saved[id]) })).filter(x => x.f.length);
+    await auth.audit(req, 'METRIC_TARGETS_UPDATE', { target: diffs.map(x => `#${x.id} ${x.f.join(', ')}`).join('; ') || 'no changes' });
     const period = req.query.period || 'YTD';
     const newCalculation = await calculatePEIndex(period);
     res.json({ success: true, targets: saved, calculation: newCalculation });
@@ -547,6 +723,7 @@ app.post('/api/admin/targets', async (req, res) => {
 app.post('/api/admin/targets/reset', async (req, res) => {
   try {
     const reset = await storage.resetMetricTargets();
+    await auth.audit(req, 'METRIC_TARGETS_RESET', { target: `targets and thresholds of ${Object.keys(reset || {}).length} metrics reset to the defaults` });
     const newCalculation = await calculatePEIndex('YTD');
     res.json({ success: true, targets: reset, calculation: newCalculation });
   } catch (err) {
@@ -596,7 +773,9 @@ app.post('/api/admin/survey-questions/:metric_id', async (req, res) => {
     if (!metric) return res.status(404).json({ error: `Metric #${metric_id} not found.` });
     // v2.50.0: an ESS summary reports every question as a percentage, so the questions of an ESS metric are always PERCENTAGE
     const isEss = metric.metric_type === 'SURVEY' && isEssMetric(metric);
+    const before = await storage.getSurveyQuestions(metric_id);
     const saved = await storage.saveSurveyQuestions(metric_id, isEss ? questions.map(q => ({ ...(q || {}), type: 'PERCENTAGE' })) : questions);
+    await auth.audit(req, 'SURVEY_QUESTIONS_UPDATE', { target: `#${metric_id}: ${questionChanges(before, saved)}` });
     res.json({
       success: true,
       message: `Survey questions for Metric ID ${metric_id} saved successfully`,
@@ -611,7 +790,9 @@ app.post('/api/admin/survey-questions/:metric_id/reset', async (req, res) => {
   try {
     const metric_id = parseInt(req.params.metric_id);
     if (!(await storage.getMetricById(metric_id))) return res.status(404).json({ error: `Metric #${metric_id} not found.` });
+    const before = await storage.getSurveyQuestions(metric_id);
     const reset = await storage.resetSurveyQuestions(metric_id);
+    await auth.audit(req, 'SURVEY_QUESTIONS_RESET', { target: `#${metric_id} reset to the default template: ${questionChanges(before, reset)}` });
     res.json({
       success: true,
       message: `Survey questions for Metric ID ${metric_id} reset to the default template`,
@@ -671,7 +852,11 @@ app.post('/api/metrics/weights', ADMIN_ONLY, async (req, res) => {
     const { weights } = req.body; // Array of { metric_id, weight }
     if (!Array.isArray(weights)) return res.status(400).json({ error: 'weights must be an array' });
 
+    const before = new Map((await storage.getMetrics()).map(m => [m.metric_id, m.weight]));
     await storage.updateMetricWeights(weights);
+    const after = new Map((await storage.getMetrics()).map(m => [m.metric_id, m.weight]));
+    const diffs = [...after.keys()].filter(id => before.get(id) !== after.get(id)).map(id => `#${id} weight ${auditValue(before.get(id))} -> ${auditValue(after.get(id))}`);
+    await auth.audit(req, 'METRIC_UPDATE', { target: diffs.join('; ') || 'weights: no changes' });
     const newCalculation = await calculatePEIndex();
     res.json({ success: true, calculation: newCalculation });
   } catch (err) {
@@ -1147,13 +1332,16 @@ app.post('/api/events/:id/attendance', async (req, res) => {
       return res.status(400).json({ error: 'Invalid email format.' });
     }
 
+    // v2.51.0: a former directorate / division name (renamed or merged) is stored under the current one
+    const resolver = await loadResolver(storage);
+    const currentDir = directorate ? resolver.directorate(directorate) : null;
     const record = await storage.addAttendance({
       event_id: req.params.id,
       nip,
       employee_name,
       cimb_email,
-      directorate,
-      division
+      directorate: currentDir || directorate,
+      division: (currentDir && division && resolver.division(currentDir, division)) || division
     });
 
     // Auto-recalculate PE Index in real-time

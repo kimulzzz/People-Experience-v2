@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(355-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(398-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,8 +75,8 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (355 cases on SQL; v2.50.0 run 269/269, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
-| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (32 `px_*` tables), JSON→SQL migration, rollback |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (398 cases on SQL; v2.51.0 run 319/319, 9 skipped, media modules 27/32/38/41/42/43 skipped, 8/24 ran; full JSON suite not re-run since v2.30.1) |
+| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (34 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
 ## Compliance constraints (do not violate)
@@ -713,8 +713,26 @@ domain model, not just descriptive:
   New question type `PERCENTAGE` (all ESS questions, enforced at every boot + on save). ESS = latest result <= period end, any year (`basis LATEST_RESULT`, `ess_carried_forward`; SUPERSEDES the
   v2.37.0 exact-month rule); 2026 dummy ESS quarters deleted at boot (33 uploads/429 rows). Uploads store `px_survey_uploads.questions_snapshot_json`; detail flags `questions_changed_since_upload`
   + "At upload:" lines; evidence = .zip (one CSV per question-set version + README) when versions differ. Explore Metrics: Detail/View Data/FIXED removed (row click opens detail). YTD 2026
-  PX 85.27 -> 84.43. OPEN: metric 9's configured questions don't match the real file's column order (G/H swapped, I differs) - fix in Manage Questions. Old uploads have no snapshot (no backfill).
+  PX 85.27 -> 84.43. Metric 9's questions were aligned with the real file afterwards (2026-10-20, commit `0346bb1`) and are the default template since v2.51.0 (no longer open). Old uploads have no snapshot (no backfill).
   Module 52 (9), Modules 11/39/45/46 adjusted -> SQL 269/269, 16 skipped (suite 355); JSON full suite not run.
+
+- **v2.51.0** (2026-10-21, see `CHANGELOG.md` [2.51.0], `docs/01` §6.1, `docs/04`/`05` "Catatan v2.51.0", `docs/06`, `docs/07` §40, `docs/08` §24, `SQLServerDB.md` §23): user asked to rename 4 directorates
+  (Sharia Banking -> Syariah Banking, Special Asset -> "SLC ASG Satyaguna Langgeng Capital", "Strategy, Finance & SPAPM" -> Strategy & Finance, Treasury & Capital Market -> Treasury & Financial Institutions) + an
+  Admin menu for directorates, PX-by-directorate panel in alphabetical order, ESS questions = the ESS template files (`docs/Template Survey.zip`; non-ESS Onboarding Day 1/Learning templates POSTPONED by the
+  user), and reported an Admin edit (metric 8 name) "reverting after the session expired". New Admin Parameters -> **Directorates** tab (`DirectoryManager.jsx`, rules in `server/db/directoryNames.js`,
+  `/api/admin/directorates*`): add/rename/delete/merge directorates, add/rename/delete divisions, manual former names. Rename/merge cascade in one transaction to EMPLOYEE survey rows, `px_ess_results`,
+  `px_exit_interviews`, `px_attendances`, `px_user_scopes`, legacy `px_users` columns, SLA units, `event_manager_directorates` (NOT `px_audit_log`/files); delete only when unreferenced (409) -> merge
+  ("all divisions" scopes of the source WIDEN to all of the target - shown in the merge preview). New `px_directorate_aliases`/`px_division_aliases` (34 tables) - imports (ESS col A, Exit Interview, survey
+  CSV, check-in, seed top-ups) resolve former names; setting `directory_admin_managed` (first change -> boot never re-adds seed directorates; not PUT-able). Strict ids (QC round 1 incident: probe id `"%20853"`
+  briefly renamed Business Banking - restored). `by-directorate` entries carry `has_own_data` (none -> null indexes, unranked). ROOT CAUSE of the revert: the suite's Module 16 reset (and other config tests)
+  ran on the SHARED live SQL DB; now `storage.snapshotConfiguration/restoreConfiguration` (12 config tables) + suite `startConfigGuard` (snapshot file `server/data/backups/regression-config-snapshot.json`,
+  restored after Module 16, at the end, on SIGINT, and by the next run if killed). Gotchas: an Admin edit made DURING a suite run is overwritten; guard is SQL-only; seed uses the full SLC name like the live DB.
+  Parameter changes are now audited (METRIC_*, JOURNEY_*, PARAMETERS_RESET, METRIC_TARGETS_*, SURVEY_QUESTIONS_*, email SETTINGS_CHANGE without password). Live data changed by the main
+  session via the Admin API (temp admin `claude-maint`, deleted): 4 renames, former names "SLC" + "Consumer & Emerging Business Banking", metric 8 name restored, 11 ESS question sets reset to the template,
+  10 real ESS 2025-11 files uploaded (metrics 13,15,16,17,18,21,22,24,25,27). Ask the user to re-check older Admin edits (may have been reset by earlier suite runs, unaudited then). Tests: Module 53 (25 SQL / 23 JSON), Module 54
+  (15 SQL), Modules 1/3/11/16/44/45/46/50 adjusted -> SQL 319/319, 9 skipped, media modules skipped, 8/24 ran (developer, final pre-commit run; suite 398 by count); JSON full suite not run. QC rounds 1-3 LULUS DENGAN CATATAN.
+  Final round: a leftover config snapshot (killed run) is NEVER auto-restored - the suite exits with code 2 and shows the diff; choose `TEST_DISCARD_STALE_SNAPSHOT=1` (keep live config,
+  usual) or `TEST_RESTORE_STALE_SNAPSHOT=1`; restore is one transaction. All directorate/division lists are alphabetical at the source (`sortDirectory`), per user request.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

@@ -3,6 +3,7 @@ const storage = require('../db/storage');
 const { calculatePEIndex } = require('./calculationEngine');
 const { getQuestionsForMetric, snapshotQuestions } = require('./metricQuestionService');
 const { isEssMetric } = require('../db/surveySource');
+const { loadResolver } = require('../db/directoryNames');
 
 function normalizeDateString(dateVal) {
   if (!dateVal) return null;
@@ -157,6 +158,8 @@ async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetM
   // Fetched once per metric up front (the per-row loop below is synchronous).
   const questionsByMetric = {};
   for (const m of surveyMetrics) questionsByMetric[m.metric_id] = await storage.getSurveyQuestions(m.metric_id);
+  // v2.51.0: an employee's directorate / division written with a former name (renamed / merged) is stored under the current one
+  const resolver = await loadResolver(storage);
 
   const validRows = [];
   const invalidRows = [];
@@ -356,8 +359,11 @@ async function processSurveyCsv(csvText, fileName = 'survey_upload.csv', targetM
 
     const empName = colName !== -1 && row[colName] ? row[colName].trim() : defaultName;
     const empEmail = colEmail !== -1 && row[colEmail] ? row[colEmail].trim().toLowerCase() : defaultEmail;
-    const dirVal = colDir !== -1 && row[colDir] ? row[colDir].trim() : defaultDir;
-    const divVal = colDiv !== -1 && row[colDiv] ? row[colDiv].trim() : defaultDiv;
+    const rawDir = colDir !== -1 && row[colDir] ? row[colDir].trim() : defaultDir;
+    const rawDiv = colDiv !== -1 && row[colDiv] ? row[colDiv].trim() : defaultDiv;
+    const currentDir = !isMetric2 && !isMetric5 ? resolver.directorate(rawDir) : null;
+    const dirVal = currentDir || rawDir;
+    const divVal = (currentDir && resolver.division(currentDir, rawDiv)) || rawDiv;
 
     validRows.push({
       row_number: rowNum,
