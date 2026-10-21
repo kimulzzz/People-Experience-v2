@@ -61,6 +61,9 @@ async function main() {
     // social media statistics of metric 1 (v2.52.0)
     socialMediaStats: await storage.getSocialMediaStats(),
     socialMediaUploads: (await storage.getSocialMediaUploads()).reverse(),
+    // monthly values of OUTCOME metrics (v2.54.0)
+    outcomeValues: await storage.getOutcomeValues(),
+    outcomeUploads: (await storage.getOutcomeUploads()).reverse(),
     media: await storage.getAllMedia(),
     customSurveyQuestions,
     acknowledgedAlerts: await storage.getAcknowledgedAlerts(),
@@ -87,7 +90,7 @@ async function main() {
   console.log(`  journeys ${store.journeys.length}, metrics ${store.metrics.length}, events ${store.events.length}, ` +
     `attendances ${store.attendances.length}, feedback ${store.feedbackResponses.length}, media ${store.media.length}, ` +
     `survey responses ${store.surveyUploadedResponses.length}, ESS results ${store.essResults.length}, ` +
-    `exit interviews ${store.exitInterviews.length}, social media rows ${store.socialMediaStats.length}`);
+    `exit interviews ${store.exitInterviews.length}, social media rows ${store.socialMediaStats.length}, outcome values ${store.outcomeValues.length}`);
   console.log(replace
     ? 'EXPORT_OK. Now set STORAGE_BACKEND=json in .env and restart the server.'
     : 'EXPORT_OK. To roll back to the JSON store with this data: rerun with --replace (server stopped), then set STORAGE_BACKEND=json.');

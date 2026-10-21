@@ -111,13 +111,15 @@ const initialMetrics = [
     metric_name: 'Career website & social media follower, reach & engagement growth',
     metric_type: 'OUTCOME',
     scale_type: 'NUMERIC',
+    // v2.54.0: social media engagement rate (%) scored by tiers: <= 1% / > 1% / > 2% / > 2.5% / > 3.5%
+    score_tiers: { unit: 'percent', bounds: [{ min: 1, op: '>' }, { min: 2, op: '>' }, { min: 2.5, op: '>' }, { min: 3.5, op: '>' }] },
     source_of_data: 'Website & Social Media Analytics',
     experience_owner: 'Talent Partnership',
-    target_value: 85.00,
-    target_display: '> 85',
+    target_value: 2.00,
+    target_display: '2%',
     min_threshold: 80.00,
-    raw_value: 85.00,
-    normalized_score: 85.00,
+    raw_value: 0.66,
+    normalized_score: 13.20,
     weight: 1.0,
     is_indicative: true,
     is_employee_metric: false,
@@ -131,6 +133,8 @@ const initialMetrics = [
     metric_name: 'CIMB Niaga Goes to Campus — event evaluation / rating',
     metric_type: 'SURVEY',
     scale_type: 'RATING_5',
+    // v2.54.0: scored by tiers once the Admin sets them; until then (bounds null) the value is N/A and out of the index
+    score_tiers: { unit: 'number', bounds: null },
     source_of_data: 'Event Evaluation Form (Talent Partnership)',
     experience_owner: 'Talent Partnership',
     target_value: 4.00,
@@ -151,13 +155,15 @@ const initialMetrics = [
     metric_name: 'Success ratio candidate from targeted university',
     metric_type: 'OUTCOME',
     scale_type: 'PERCENTAGE',
+    // v2.54.0: scored by tiers: < 30% / >= 30% / >= 45% / >= 60% / > 75%
+    score_tiers: { unit: 'percent', bounds: [{ min: 30, op: '>=' }, { min: 45, op: '>=' }, { min: 60, op: '>=' }, { min: 75, op: '>' }] },
     source_of_data: 'Internal Report (Talent Partnership)',
     experience_owner: 'Talent Partnership',
-    target_value: 80.00,
-    target_display: 'Target TBC (80%)',
+    target_value: 70.00,
+    target_display: '> 70%',
     min_threshold: 70.00,
-    raw_value: 80.00,
-    normalized_score: 80.00,
+    raw_value: 75.04,
+    normalized_score: 100.00,
     weight: 1.0,
     is_indicative: true,
     is_employee_metric: false,
@@ -397,13 +403,15 @@ const initialMetrics = [
     metric_name: '% employees receiving recognition / year',
     metric_type: 'OUTCOME',
     scale_type: 'QUOTA_COUNT',
+    // v2.54.0: scored by count tiers (tier 1 < 4,000; 2 from 4,000; 3 from 5,000; 4 from 6,000; 5 from 7,500)
+    score_tiers: { unit: 'number', bounds: [{ min: 4000, op: '>=' }, { min: 5000, op: '>=' }, { min: 6000, op: '>=' }, { min: 7500, op: '>=' }] },
     source_of_data: 'Arjuna (Recognition Module)',
     experience_owner: 'PXCWB',
     target_value: 5000.00,
     target_display: 'min 5,000 / yr',
     min_threshold: 75.00,
-    raw_value: 4330.00,
-    normalized_score: 87.00,
+    raw_value: 6400.00,
+    normalized_score: 85.33,
     weight: 1.0,
     is_indicative: false,
     is_employee_metric: true,
@@ -1903,6 +1911,17 @@ const LEGACY_OPTION_LABELS = {
 // are admin-editable, so a new value can only arrive through the boot). Appends the missing default options; null when
 // nothing is missing.
 const ADDED_OPTION_VALUES = { question_types: ['PERCENTAGE'] };
+
+// v2.54.0: seed metrics that are scored by tiers (their score_tiers in initialMetrics). The boot gives an existing database
+// the tier configuration ONCE, only while the metric has none yet (score_tiers NULL), so a later Admin edit is never
+// overwritten. raw_value / target are replaced only while they are still the old seed values (approved by the user:
+// metric 14 4,330 -> 6,400 recognised employees; targets metric 1 85 -> 2%, metric 3 80% -> 70%).
+const SCORE_TIER_UPGRADES = {
+  1: { target: { from: 85, to: 2, display: '2%' } },
+  2: {},
+  3: { target: { from: 80, to: 70, display: '> 70%' } },
+  14: { raw: { from: 4330, to: 6400 } }
+};
 function addMissingOptions(settingKey, currentValue) {
   const wanted = ADDED_OPTION_VALUES[settingKey];
   const target = initialAppSettings[settingKey];
@@ -1945,6 +1964,7 @@ module.exports = {
   LEGACY_OPTION_LABELS,
   upgradeLegacyOptionLabels,
   ADDED_OPTION_VALUES,
+  SCORE_TIER_UPGRADES,
   addMissingOptions,
   ESS_REMOVED_DUMMY_PERIODS,
   isRemovedEssDummyUpload,

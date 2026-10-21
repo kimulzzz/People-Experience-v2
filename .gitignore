@@ -18,3 +18,5 @@ docs/Template Report Exit Interview.xlsx
 server/data/store.from-sql.json
 # original social media uploads of metric 1 (v2.52.0) - audit trail, kept on the server, never committed
 server/data/social-uploads/
+# original uploads of monthly OUTCOME metric values (v2.54.0) - audit trail, kept on the server, never committed
+server/data/outcome-uploads/

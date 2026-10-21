@@ -10,6 +10,7 @@ const path = require('path');
 const sql = require('mssql');
 const seed = require('./seedData');
 const { defaultUnitForScale, parseUnit } = require('./metricUnit');
+const { readTierConfig, resolveTierConfig } = require('./scoreTiers');
 const { inferSurveySource, isEssMetric, resolveSurveySource, resolveRequiresManualUpload } = require('./surveySource');
 const { buildInitialStore } = require('./initialStore');
 const { parseFilterOptions, normalizeDateString, CURRENT_YEAR } = require('./filterUtils');
@@ -151,6 +152,7 @@ function rowToMetric(r) {
     pic_email: r.pic_email,
     unit: r.unit === null || r.unit === undefined ? defaultUnitForScale(r.scale_type) : r.unit,
     survey_source: r.survey_source || null,
+    score_tiers: readTierConfig(r.score_tiers), // v2.54.0: tier configuration { unit, bounds } or null (scored by its scale)
     metric_weight: r.weight
   };
   if (r.last_data_date_str) m.last_data_date = r.last_data_date_str;
@@ -474,6 +476,30 @@ async function topUpMetricUnits() {
     }
   });
   console.log(`[sqlStorage] Filled the display unit of ${rows.length} metrics.`);
+}
+
+// v2.54.0: the seed metrics scored by tiers (seed.SCORE_TIER_UPGRADES: 1, 2, 3, 14) get their tier configuration ONCE, only
+// while they have none (score_tiers NULL) - an Admin's later edit is never overwritten. raw_value and the target are replaced
+// only while they are still the old seed values.
+async function topUpScoreTiers() {
+  for (const [key, up] of Object.entries(seed.SCORE_TIER_UPGRADES || {})) {
+    const id = parseInt(key, 10);
+    const sm = seed.initialMetrics.find(m => m.metric_id === id);
+    const cfg = sm && readTierConfig(sm.score_tiers);
+    if (!cfg) continue;
+    const done = await inTransaction(async tx => {
+      const rows = await run('UPDATE dbo.px_metrics SET score_tiers = @cfg OUTPUT INSERTED.metric_id WHERE metric_id = @id AND score_tiers IS NULL',
+        { id, cfg: JSON.stringify(cfg) }, tx);
+      if (!rows.length) return false;
+      if (up.raw) await run('UPDATE dbo.px_metrics SET raw_value = @to WHERE metric_id = @id AND raw_value = @from', { id, from: parseFloat(up.raw.from), to: parseFloat(up.raw.to) }, tx);
+      if (up.target) {
+        await run('UPDATE dbo.px_metric_targets SET target_value = @to, target_display = @display WHERE metric_id = @id AND target_value = @from',
+          { id, from: parseFloat(up.target.from), to: parseFloat(up.target.to), display: up.target.display }, tx);
+      }
+      return true;
+    });
+    if (done) console.log(`[sqlStorage] Metric ${id} is now scored by tiers (${cfg.bounds ? cfg.bounds.map(b => `${b.op} ${b.min}`).join(' / ') : 'not configured yet: N/A'}).`);
+  }
 }
 
 // Fills px_metrics.survey_source where it is still NULL on a SURVEY metric (a database created before v2.29.0):
@@ -839,6 +865,7 @@ function metricParams(m) {
     last_data_date: toSqlDate(m.last_data_date) ? T.date(toSqlDate(m.last_data_date)) : null,
     unit: initialUnitFor(m),
     survey_source: resolveSurveySource({ metricType: m.metric_type, current: m.survey_source, fallback: inferSurveySource(m) }),
+    score_tiers: readTierConfig(m.score_tiers) ? JSON.stringify(readTierConfig(m.score_tiers)) : null,
     notes: m.notes === undefined || m.notes === null ? null : T.max(String(m.notes))
   };
 }
@@ -846,7 +873,7 @@ function metricParams(m) {
 const METRIC_COLUMNS = ['metric_id', 'journey_id', 'checkpoint_id', 'metric_name', 'metric_type', 'scale_type',
   'source_of_data', 'experience_owner', 'raw_value', 'normalized_score', 'weight', 'is_indicative',
   'is_employee_metric', 'target_audience', 'underlying_questions', 'update_frequency', 'requires_manual_upload',
-  'upload_deadline_day', 'upload_deadline_month', 'pic_name', 'pic_email', 'last_data_date', 'notes', 'unit', 'survey_source'];
+  'upload_deadline_day', 'upload_deadline_month', 'pic_name', 'pic_email', 'last_data_date', 'notes', 'unit', 'survey_source', 'score_tiers'];
 
 async function insertMetric(tx, m) {
   await run(`INSERT INTO dbo.px_metrics (${METRIC_COLUMNS.join(', ')})
@@ -1082,6 +1109,11 @@ async function importStore(store, log = () => {}) {
     counts.social_media_uploads = (store.socialMediaUploads || []).length;
     for (const r of store.socialMediaStats || []) await insertSocialStat(tx, r);
     counts.social_media_stats = (store.socialMediaStats || []).length;
+    // monthly values of OUTCOME metrics (v2.54.0)
+    for (const u of store.outcomeUploads || []) await insertOutcomeUpload(tx, u);
+    counts.outcome_uploads = (store.outcomeUploads || []).length;
+    for (const r of store.outcomeValues || []) await insertOutcomeValue(tx, r);
+    counts.outcome_values = (store.outcomeValues || []).length;
     // a store.json from before v2.32.0 still holds per-respondent ESS rows: same one-time cleanup as the upgrade boot
     if (!Array.isArray(store.essResults)) {
       const cleaned = await cleanupEssRespondentRows(tx);
@@ -1430,6 +1462,53 @@ async function insertSocialStat(tx, r) {
              VALUES (@platform, @y, @m, @followers, @reach, @engagement, @source, @upload_id${r.created_at ? ', @created_at, @updated_at' : ''})`, {
     platform: r.platform, y: parseInt(r.year, 10), m: parseInt(r.month, 10), followers: r.followers, reach: r.reach, engagement: r.engagement,
     source: r.source || 'UPLOAD', upload_id: r.upload_id || null,
+    ...(r.created_at ? { created_at: toDateObj(r.created_at), updated_at: r.updated_at ? toDateObj(r.updated_at) : null } : {})
+  }, tx);
+}
+
+// ------------------------------------------------------------------ monthly values of OUTCOME metrics (v2.54.0)
+const rowToOutcomeValue = r => ({
+  value_id: r.value_id,
+  metric_id: r.metric_id,
+  year: r.stat_year,
+  month: r.stat_month,
+  value: Number(r.value),
+  notes: r.notes || null,
+  source: r.source,
+  upload_id: r.upload_id || null,
+  created_at: iso(r.created_at),
+  updated_at: iso(r.updated_at)
+});
+const rowToOutcomeUpload = r => ({
+  upload_id: r.upload_id,
+  metric_id: r.metric_id,
+  file_name: r.file_name || null,
+  uploaded_by: r.uploaded_by,
+  total_rows: r.total_rows,
+  inserted_rows: r.inserted_rows,
+  updated_rows: r.updated_rows,
+  replaced_seed_rows: r.replaced_seed_rows,
+  period_from: r.period_from || null,
+  period_to: r.period_to || null,
+  uploaded_at: iso(r.uploaded_at)
+});
+const DECIMAL_VALUE = v => ({ __t: sql.Decimal(18, 4), v });
+
+async function insertOutcomeUpload(tx, u) {
+  await run(`INSERT INTO dbo.px_outcome_uploads (upload_id, metric_id, file_name, uploaded_by, total_rows, inserted_rows, updated_rows, replaced_seed_rows, period_from, period_to${u.uploaded_at ? ', uploaded_at' : ''})
+             VALUES (@upload_id, @metric_id, @file_name, @uploaded_by, @total_rows, @inserted_rows, @updated_rows, @replaced_seed_rows, @period_from, @period_to${u.uploaded_at ? ', @uploaded_at' : ''})`, {
+    upload_id: u.upload_id, metric_id: parseInt(u.metric_id, 10), file_name: u.file_name ? String(u.file_name).slice(0, 260) : null,
+    uploaded_by: String(u.uploaded_by || 'HR Admin').slice(0, 200), total_rows: u.total_rows || 0, inserted_rows: u.inserted_rows || 0,
+    updated_rows: u.updated_rows || 0, replaced_seed_rows: u.replaced_seed_rows || 0, period_from: u.period_from || null, period_to: u.period_to || null,
+    ...(u.uploaded_at ? { uploaded_at: toDateObj(u.uploaded_at) } : {})
+  }, tx);
+}
+
+async function insertOutcomeValue(tx, r) {
+  await run(`INSERT INTO dbo.px_outcome_values (metric_id, stat_year, stat_month, value, notes, source, upload_id${r.created_at ? ', created_at, updated_at' : ''})
+             VALUES (@metric_id, @y, @m, @value, @notes, @source, @upload_id${r.created_at ? ', @created_at, @updated_at' : ''})`, {
+    metric_id: parseInt(r.metric_id, 10), y: parseInt(r.year, 10), m: parseInt(r.month, 10), value: DECIMAL_VALUE(r.value),
+    notes: r.notes ? String(r.notes).slice(0, 500) : null, source: r.source || 'UPLOAD', upload_id: r.upload_id || null,
     ...(r.created_at ? { created_at: toDateObj(r.created_at), updated_at: r.updated_at ? toDateObj(r.updated_at) : null } : {})
   }, tx);
 }
@@ -2057,12 +2136,14 @@ async function compareConfiguration(snap, tx = null) {
 // (as DELETE /api/admin/metrics does).
 async function restoreConfiguration(snap) {
   checkConfigSnapshot(snap);
-  const { restored, extra, essUploadIds } = await inTransaction(async tx => {
+  const { restored, extra, essUploadIds, outcomeUploadIds } = await inTransaction(async tx => {
     const cmp = await compareConfiguration(snap, tx);
     const ids = cmp.extra_metrics.map(m => m.metric_id);
     const essIds = [];
+    const outcomeIds = [];
     for (const id of ids) {
       (await run("SELECT upload_id FROM dbo.px_survey_uploads WHERE metric_id = @id", { id }, tx)).forEach(r => essIds.push(r.upload_id));
+      (await run('SELECT upload_id FROM dbo.px_outcome_uploads WHERE metric_id = @id', { id }, tx)).forEach(r => outcomeIds.push(r.upload_id));
     }
     const groups = new Set(cmp.differing_tables.map(t => (CONFIG_GROUPS[t] ? 'px_directorates' : t)));
     const todo = CONFIG_TABLES.filter(t => groups.has(CONFIG_GROUPS[t] ? 'px_directorates' : t));
@@ -2086,12 +2167,16 @@ async function restoreConfiguration(snap) {
         DELETE FROM dbo.px_survey_uploaded_responses WHERE metric_id = @id;
         DELETE FROM dbo.px_ess_results WHERE metric_id = @id;
         DELETE FROM dbo.px_survey_uploads WHERE metric_id = @id;
+        DELETE FROM dbo.px_outcome_values WHERE metric_id = @id;
+        DELETE FROM dbo.px_outcome_uploads WHERE metric_id = @id;
         DELETE FROM dbo.px_metrics WHERE metric_id = @id;`, { id }, tx);
     }
-    return { restored: todo, extra: cmp.extra_metrics, essUploadIds: essIds };
+    return { restored: todo, extra: cmp.extra_metrics, essUploadIds: essIds, outcomeUploadIds: outcomeIds };
   });
   const { essOriginalFilePath } = require('../services/essSummaryService');   // lazy: that service requires the storage
   essUploadIds.forEach(id => { const f = essOriginalFilePath(id); if (f) fs.unlink(f, () => {}); });
+  const { outcomeOriginalFilePath } = require('../services/outcomeValueService');
+  outcomeUploadIds.forEach(id => { const f = outcomeOriginalFilePath(id); if (f) fs.unlink(f, () => {}); });
   return { removed_metrics: extra, restored_tables: restored, removed_ess_files: essUploadIds.length };
 }
 
@@ -2115,6 +2200,7 @@ const storage = {
     await topUpAddedOptions();
     await topUpDirectory();
     await topUpMetricUnits();
+    await topUpScoreTiers();
     await topUpSurveySource();
     await enforceEssManualUpload();
     await enforceEssPercentageQuestions();
@@ -2173,7 +2259,7 @@ const storage = {
   async dropAllTables() {
     const tables = ['px_recruitment_sla_by_unit', 'px_approval_stage_compliance', 'px_hiring_channel_mix',
       'px_recognition_categories', 'px_attrition_by_tenure', 'px_acknowledged_alerts', 'px_ess_results', 'px_exit_interviews', 'px_exit_interview_uploads',
-      'px_social_media_stats', 'px_social_media_uploads', 'px_survey_uploaded_responses',
+      'px_social_media_stats', 'px_social_media_uploads', 'px_outcome_values', 'px_outcome_uploads', 'px_survey_uploaded_responses',
       'px_survey_uploads', 'px_media', 'px_feedback_responses', 'px_attendances', 'px_event_questions', 'px_events',
       'px_reminder_log', 'px_email_settings', 'px_app_settings', 'px_survey_questions', 'px_custom_survey_questions', 'px_master_survey_questions', 'px_division_aliases', 'px_directorate_aliases', 'px_divisions', 'px_directorates', 'px_action_library',
       'px_metric_targets', 'px_metrics', 'px_checkpoints', 'px_journeys'];
@@ -2501,7 +2587,8 @@ const storage = {
         pic_name: metricData.pic_name ? String(metricData.pic_name).trim() : (metricData.experience_owner || ''),
         pic_email: metricData.pic_email ? String(metricData.pic_email).trim() : '',
         unit: metricData.unit !== undefined && metricData.unit !== null ? parseUnit(metricData.unit) : defaultUnitForScale(metricData.scale_type || (metricData.metric_type === 'SURVEY' ? 'RATING_5' : 'PERCENTAGE')),
-        survey_source: surveySource
+        survey_source: surveySource,
+        score_tiers: resolveTierConfig(metricData.score_tiers, null)
       };
       await insertMetric(tx, metric);
       await upsertTarget(tx, newId, metric);
@@ -2555,7 +2642,8 @@ const storage = {
       pic_name: metricData.pic_name !== undefined ? String(metricData.pic_name).trim() : (current.pic_name || current.experience_owner || ''),
       pic_email: metricData.pic_email !== undefined ? String(metricData.pic_email).trim() : (current.pic_email || ''),
       last_data_date: metricData.last_data_date !== undefined ? String(metricData.last_data_date).trim() : current.last_data_date,
-      unit: metricData.unit !== undefined ? parseUnit(metricData.unit) : current.unit
+      unit: metricData.unit !== undefined ? parseUnit(metricData.unit) : current.unit,
+      score_tiers: resolveTierConfig(metricData.score_tiers, current.score_tiers)
     };
 
     await inTransaction(async tx => {
@@ -2573,6 +2661,8 @@ const storage = {
         DELETE FROM dbo.px_survey_uploaded_responses WHERE metric_id = @id;
         DELETE FROM dbo.px_ess_results WHERE metric_id = @id;
         DELETE FROM dbo.px_survey_uploads WHERE metric_id = @id;
+        DELETE FROM dbo.px_outcome_values WHERE metric_id = @id;
+        DELETE FROM dbo.px_outcome_uploads WHERE metric_id = @id;
         DELETE FROM dbo.px_metrics WHERE metric_id = @id;`, { id }, tx);
     });
     return current;
@@ -3072,6 +3162,56 @@ const storage = {
   },
   topUpSocialMediaSeed, // boot top-up of the demo rows, exposed for the regression suite (optional seed rows)
   removeMetric1SlaRows, // boot cleanup, exposed for the regression suite
+
+  // ---- monthly values of OUTCOME metrics (v2.54.0)
+  // Rows of one metric (or of every metric when metric_id is null), by metric, oldest month first.
+  async getOutcomeValues(metric_id = null) {
+    const byMetric = metric_id !== null && metric_id !== undefined;
+    const rows = await run(`SELECT * FROM dbo.px_outcome_values ${byMetric ? 'WHERE metric_id = @id' : ''} ORDER BY metric_id, stat_year, stat_month`,
+      byMetric ? { id: parseInt(metric_id, 10) } : {});
+    return rows.map(rowToOutcomeValue);
+  },
+  // newest first
+  async getOutcomeUploads(metric_id = null) {
+    const byMetric = metric_id !== null && metric_id !== undefined;
+    const rows = await run(`SELECT * FROM dbo.px_outcome_uploads ${byMetric ? 'WHERE metric_id = @id' : ''} ORDER BY uploaded_at DESC, upload_id DESC`,
+      byMetric ? { id: parseInt(metric_id, 10) } : {});
+    return rows.map(rowToOutcomeUpload);
+  },
+  // One validated upload batch of one metric, atomic. Key (metric, year, month): an existing month is UPDATED (a SEED
+  // row becomes the uploaded value), a new one inserted. Returns { record, inserted, updated, replaced_seed }.
+  async saveOutcomeValues(meta, rows) {
+    return inTransaction(async tx => {
+      let inserted = 0;
+      let updated = 0;
+      let replaced = 0;
+      for (const r of rows) {
+        const res = await run(`DECLARE @old VARCHAR(20) = (SELECT source FROM dbo.px_outcome_values WITH (UPDLOCK, HOLDLOCK)
+                                                         WHERE metric_id = @metric_id AND stat_year = @y AND stat_month = @m);
+                               IF @old IS NULL
+                                 INSERT INTO dbo.px_outcome_values (metric_id, stat_year, stat_month, value, notes, source, upload_id)
+                                 VALUES (@metric_id, @y, @m, @value, @notes, 'UPLOAD', @upload_id);
+                               ELSE
+                                 UPDATE dbo.px_outcome_values SET value = @value, notes = @notes, source = 'UPLOAD', upload_id = @upload_id,
+                                   updated_at = SYSUTCDATETIME() WHERE metric_id = @metric_id AND stat_year = @y AND stat_month = @m;
+                               SELECT @old AS old;`, {
+          metric_id: parseInt(meta.metric_id, 10), y: r.year, m: r.month, value: DECIMAL_VALUE(r.value),
+          notes: r.notes ? String(r.notes).slice(0, 500) : null, upload_id: meta.upload_id
+        }, tx);
+        const old = res[0] ? res[0].old : null;
+        if (old === null || old === undefined) inserted++;
+        else { updated++; if (old === 'SEED') replaced++; }
+      }
+      const record = { ...meta, total_rows: rows.length, inserted_rows: inserted, updated_rows: updated, replaced_seed_rows: replaced };
+      await insertOutcomeUpload(tx, record);
+      return { record: { ...record }, inserted, updated, replaced_seed: replaced };
+    });
+  },
+  // { metric_id: 'YYYY-MM-DD' }: the newest survey date of every metric with survey rows ("Last update", v2.54.0)
+  async getLatestSurveyDates() {
+    const rows = await run('SELECT metric_id, CONVERT(char(10), MAX(survey_date), 23) AS d FROM dbo.px_survey_uploaded_responses GROUP BY metric_id');
+    return Object.fromEntries(rows.map(r => [r.metric_id, r.d]));
+  },
   dropRetiredIntegrationTokens, // v2.53.0 boot / migrate cleanup (SQL only; the JSON store drops auth.json integrationTokens on load)
 
   async deleteEssResultsForMetric(metric_id) {

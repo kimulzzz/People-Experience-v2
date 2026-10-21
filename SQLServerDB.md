@@ -76,7 +76,7 @@ Lalu set `STORAGE_BACKEND=sql` di `.env` dan restart server.
 | **Windows Authentication** | di SSMS pilih *Windows Authentication* (akun Windows administrator) — akses penuh ke seluruh server |
 | **Cek dari aplikasi** | `http://localhost:5000/api/health` → bagian `database` (server, edisi, jumlah baris tabel kunci) |
 
-Tabel aplikasi berawalan `px_` (36 tabel sejak v2.53.0). Yang paling sering dilihat: `px_metrics`, `px_metric_targets`, `px_survey_uploaded_responses`, `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` (kolom `file_path` + `transcript`).
+Tabel aplikasi berawalan `px_` (38 tabel sejak v2.54.0). Yang paling sering dilihat: `px_metrics`, `px_metric_targets`, `px_survey_uploaded_responses`, `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` (kolom `file_path` + `transcript`).
 
 > Jangan mengubah data langsung lewat SSMS tanpa alasan kuat — validasi dan perhitungan skor berjalan di aplikasi.
 
@@ -268,3 +268,11 @@ Kolom `px_users.menu_access` (`NVARCHAR(400) NULL`, JSON berisi 6 menu `true`/`f
 - Fitur integrasi token v2.52.0 dihapus (on-premise, tanpa internet). `px_integration_tokens` tidak lagi ada di `schema.sql`; jumlah tabel kini **36**.
 - Saat server start (dan di `npm run db:migrate`) tabel itu di-`DROP` **hanya bila kosong** (database utama: 0 baris); bila berisi, tabel dibiarkan dan log menampilkan peringatan - hapus manual setelah dicek. Aman dijalankan berulang.
 - `CHECK` kolom `source` tabel social media masih mengizinkan `INTEGRATION` (tidak perlu migrasi), tetapi data social media kini hanya masuk lewat upload Excel Admin. Query token di §24 tidak berlaku lagi. Rincian: `docs/08` §26.
+
+## 26. Skor bertingkat & nilai bulanan OUTCOME (v2.54.0)
+
+- Kolom baru `px_metrics.score_tiers` (`NVARCHAR(400)`, JSON tier; `NULL` = dinilai menurut skala) dan dua tabel baru `px_outcome_values` (satu nilai bankwide per metrik per bulan, unik `(metric_id, stat_year, stat_month)`) dan `px_outcome_uploads` (riwayat batch). Dibuat otomatis saat server start. Jumlah tabel kini **38**. Rincian: `docs/08` §27.
+- Boot mengisi `score_tiers` metrik 1, 2, 3, 14 sekali, hanya bila masih `NULL`; ubah tier lewat Admin Parameters, bukan langsung di tabel (nilai harus JSON valid; yang tidak valid dibaca sebagai "tidak bertier").
+- Nilai bulanan diisi lewat upload Excel Admin (Explore Metrics -> Upload), bukan langsung di tabel - upload memvalidasi, mencatat batch dan audit `OUTCOME_UPLOAD`. File asli di `server/data/outcome-uploads/` (gitignored, **tidak** ikut `.bak` - salin terpisah).
+- Ikut `.bak`, `npm run db:export` dan import `migrate.js`; dihapus `migrate --reset`. Nilai awal metrik 1 (0.66, September 2026) dan metrik 3 (75.04, September 2026) hanya ada di SQL Server sampai diekspor.
+- Pemeriksaan: `SELECT metric_id, stat_year, stat_month, value, source, upload_id FROM dbo.px_outcome_values ORDER BY metric_id, stat_year, stat_month;`

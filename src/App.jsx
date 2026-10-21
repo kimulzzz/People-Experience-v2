@@ -401,6 +401,7 @@ function AppContent() {
             selectedJourneyFilter={selectedJourneyFilter}
             setSelectedJourneyFilter={setSelectedJourneyFilter}
             onSelectMetric={handleOpenMetricDetail}
+            onDataUploaded={() => fetchAllData(filterOptions)}
             onOpenSurveyImport={(metricId) => {
               setPreSelectedSurveyMetricId(metricId);
               setIsSurveyImportOpen(true);
@@ -506,6 +507,7 @@ function AppContent() {
         metricId={selectedMetricDetailId}
         filterOptions={filterOptions}
         onClose={() => setSelectedMetricDetailId(null)}
+        onDataUploaded={() => fetchAllData(filterOptions)}
         onOpenSurveyUpload={(metricId) => {
           setSelectedMetricDetailId(null);
           setPreSelectedSurveyMetricId(metricId);

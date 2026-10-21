@@ -40,7 +40,7 @@ Script `scripts/sqlserver/Setup-SqlServer.ps1` (idempoten, log di `scripts/sqlse
 
 ---
 
-## 3. Skema (`server/db/schema.sql` — 36 tabel sejak v2.53.0, prefix `px_`)
+## 3. Skema (`server/db/schema.sql` — 38 tabel sejak v2.54.0, prefix `px_`)
 
 | Kelompok | Tabel | Catatan |
 | :--- | :--- | :--- |
@@ -58,6 +58,7 @@ Script `scripts/sqlserver/Setup-SqlServer.ps1` (idempoten, log di `scripts/sqlse
 | Cakupan User (v2.27.0) | `px_user_scopes` | `user_id` FK ke `px_users` `ON DELETE CASCADE`, `directorate`, `division` (**NULL = semua divisi** direktorat itu), `UNIQUE(user_id, directorate, division)`. Kolom `px_users.directorate`/`division` (v2.26.0) **legacy: tidak ditulis/dipakai lagi**. Dibuat idempoten saat boot. |
 | Drilldown OUTCOME | `px_recruitment_sla_by_unit`, `px_approval_stage_compliance`, `px_hiring_channel_mix`, `px_recognition_categories`, `px_attrition_by_tenure` | Menggantikan objek `operationalRecords` (5 bentuk kolom berbeda dalam satu objek). Sejak v2.52.0 `px_recruitment_sla_by_unit` tidak lagi berisi baris metrik 1 (dihapus saat boot). |
 | Social media metrik 1 (v2.52.0) | `px_social_media_stats`, `px_social_media_uploads` | Drilldown metrik 1: satu baris per platform (Instagram/LinkedIn/TikTok) per bulan, `UNIQUE (platform, stat_year, stat_month)`; riwayat batch upload `.xlsx` / integrasi. Tidak dipakai perhitungan skor. Lihat §25. |
+| Nilai bulanan OUTCOME (v2.54.0) | `px_outcome_values`, `px_outcome_uploads` | Satu nilai bankwide per metrik OUTCOME (kecuali 11) per bulan, `UNIQUE (metric_id, stat_year, stat_month)`; riwayat batch upload `.xlsx` Admin. Kolom terkait: `px_metrics.score_tiers` (tier skor, JSON). Lihat §27. |
 | Integrasi (v2.52.0, **dihapus di v2.53.0**, §26) | `px_integration_tokens` | Token integrasi untuk sistem internal lain: hanya `token_hash` (SHA-256), `scope` `SOCIAL_MEDIA_INGEST`. Seperti tabel login: tidak dihapus `migrate --reset`, tidak ikut `db:export`. Lihat §25. |
 
 **Normalisasi responden** (`px_survey_uploaded_responses`): alias `nip` / `participant_id` / `candidate_id` (dan `directorate`/`university`/`applied_position`, `division`/`major`/`recruitment_channel`) diringkas menjadi `respondent_type` (`EMPLOYEE` | `CAMPUS_STUDENT` | `JOB_CANDIDATE`) + `respondent_id/name/email` + `org_unit_1/org_unit_2`. `sqlStorage.js › rowToResponse()` menurunkan kembali nama-nama field lama untuk `calculationEngine`, `alertEngine`, evidence CSV, dst. — sehingga tidak ada kode lain yang berubah.
@@ -411,3 +412,27 @@ IF OBJECT_ID(N'dbo.px_integration_tokens', N'U') IS NOT NULL AND NOT EXISTS (SEL
 ```
 
 Hanya dijatuhkan bila **kosong** (di database utama 0 baris); bila berisi, tabel dibiarkan dengan peringatan log (hapus manual setelah dicek). Idempoten. `CHECK` `source` di `px_social_media_stats` / `px_social_media_uploads` tetap mengizinkan `'INTEGRATION'` (tanpa ALTER); tidak ada kode yang menulis nilai itu lagi. JSON: `integrationTokens` kosong dihapus dari `server/data/auth.json` saat dimuat. **Rollback** ke v2.52.x: kode lama membuat ulang tabel kosong saat boot (`IF OBJECT_ID(...) IS NULL`); token lama tidak kembali. Query cek token di §25 tidak berlaku lagi. Diverifikasi oleh Modul 55 (`docs/07` §42).
+
+## 27. Pembaruan v2.54.0 - Kolom `px_metrics.score_tiers`, Tabel Nilai Bulanan OUTCOME
+
+**Kolom baru** `px_metrics.score_tiers NVARCHAR(400) NULL` (ALTER idempoten via `COL_LENGTH`): JSON `{ "unit": "percent"|"number", "bounds": [{ "min": <angka>, "op": ">="|">" }] x 4 | null }`. `NULL` = dinilai menurut `scale_type`; `bounds: null` = tier belum diatur (N/A). Rumus: `docs/01` §3.9. Diisi sekali saat boot oleh `topUpScoreTiers()` untuk metrik seed 1, 2, 3, 14 **hanya bila masih `NULL`** (edit Admin tidak ditimpa); dalam transaksi yang sama `raw_value`/target hanya diganti bila masih nilai seed lama (`SCORE_TIER_UPGRADES` di `seedData.js`: metrik 14 `raw_value` 4330 -> 6400; target metrik 1 85 -> 2 "2%", metrik 3 80 -> 70 "> 70%"). JSON: langkah yang sama saat `store.json` dimuat.
+
+**Dua tabel baru** (`schema.sql` -> **38 tabel**):
+
+| Tabel | Kolom utama | Catatan |
+| :--- | :--- | :--- |
+| `px_outcome_uploads` | `upload_id` PK, `metric_id`, `file_name`, `uploaded_by`, `total_rows`, `inserted_rows`, `updated_rows`, `replaced_seed_rows`, `period_from`/`period_to` (`YYYY-MM`), `uploaded_at` | Riwayat batch; file asli `server/data/outcome-uploads/<upload_id>.xlsx` (gitignored, tidak ikut `.bak`) |
+| `px_outcome_values` | `value_id` IDENTITY, `metric_id`, `stat_year` (2000-2100), `stat_month` (1-12), `value DECIMAL(18,4)` (`CHECK >= 0`), `notes NVARCHAR(500)`, `source` (`UPLOAD`\|`SEED`), `upload_id`, `created_at`, `updated_at` | `UNIQUE (metric_id, stat_year, stat_month)` = upsert per bulan. Tanpa FK (sama seperti tabel metrik lain). `SEED` disiapkan, belum ada seed nilai bulanan |
+
+JSON: `store.json` `outcomeValues` / `outcomeUploads`. Kedua tabel ikut cascade hapus metrik, import `migrate.js` (hitungan `outcome_values`/`outcome_uploads`), `npm run db:export`, dan `dropAllTables()` (`migrate --reset` menghapus nilai yang diunggah - ekspor dulu bila perlu).
+
+**Data di database utama** (2026-10-21): batch `ov-initial-1-2026-09` (metrik 1, 0.66) dan `ov-initial-3-2026-09` (metrik 3, 75.04), `source` `UPLOAD`, `uploaded_by` "Initial value (user, 2026-10-21)" - dimasukkan langsung, bukan oleh boot; tidak ada di `store.json` sampai `npm run db:export -- --replace`.
+
+Pemeriksaan:
+
+```sql
+SELECT metric_id, score_tiers, raw_value FROM dbo.px_metrics WHERE score_tiers IS NOT NULL;
+SELECT metric_id, stat_year, stat_month, value, source, upload_id FROM dbo.px_outcome_values ORDER BY metric_id, stat_year, stat_month;
+```
+
+Diverifikasi oleh Modul 56 (`docs/07` §43).

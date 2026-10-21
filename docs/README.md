@@ -18,7 +18,7 @@ Dokumentasi ini disusun secara sistematis mulai dari fondasi konsep (*Brains & M
 ├── 📄 04_BACKEND_API_AND_SERVICES_SPECIFICATION.md# [Backend] Spesifikasi REST API, Service Engines & Storage
 ├── 📄 05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md  # [Frontend] Hirarki React Components, State & Desain UI
 ├── 📄 06_ADMIN_OPERATIONS_AND_USER_GUIDE.md      # [Panduan User] Manual Operasional HR & Konfigurasi Admin
-├── 📄 07_TESTING_AND_QUALITY_ASSURANCE.md        # [QA & Testing] Regression Test Suite (413 Test Cases)
+├── 📄 07_TESTING_AND_QUALITY_ASSURANCE.md        # [QA & Testing] Regression Test Suite (434 Test Cases)
 ├── 📄 08_DATABASE_SCHEMA_AND_MIGRATION.md        # [Database] Skema SQL Server, Migrasi JSON→SQL & Rollback
 └── 📄 SURVEY_IMPORT_GUIDE.md                     # [Panduan Impor] Impor CSV Survei & Ringkasan ESS (.xlsx)
 ```
@@ -35,7 +35,7 @@ Dokumentasi ini disusun secara sistematis mulai dari fondasi konsep (*Brains & M
 | **04** | [**Backend API & Services Specification**](./04_BACKEND_API_AND_SERVICES_SPECIFICATION.md) | Endpoint REST API Express.js, Service Engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptExportService`), dan Storage Layer. | Backend Developer, Integrator, DevOps |
 | **05** | [**Frontend UI & Component Hierarchy**](./05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md) | Struktur pohon komponen React 19, Tailwind CSS styling, State management, Modal orchestration, dan Public mobile check-in/feedback forms. | Frontend Developer, UI/UX Designer |
 | **06** | [**Admin Operations & User Guide**](./06_ADMIN_OPERATIONS_AND_USER_GUIDE.md) | Panduan langkah demi langkah: Setting Template Survei Admin, Download CSV Template & Evidence, Upload Berkas Survei, Manajemen Signature Events, dan Generate PPT Report. | Super Admin HR, PIC Program, Operasional HR |
-| **07** | [**Testing & Quality Assurance**](./07_TESTING_AND_QUALITY_ASSURANCE.md) | Dokumentasi 55 Modul Regression Test Suite, 413 skenario pengujian otomatis (SQL Server), opsi melewati modul media, petunjuk eksekusi test runner, dan verifikasi build Vite. | QA Engineer, Lead Developer, HR Auditor |
+| **07** | [**Testing & Quality Assurance**](./07_TESTING_AND_QUALITY_ASSURANCE.md) | Dokumentasi 56 Modul Regression Test Suite, 434 skenario pengujian otomatis (SQL Server), opsi melewati modul media, petunjuk eksekusi test runner, dan verifikasi build Vite. | QA Engineer, Lead Developer, HR Auditor |
 
 ---
 
@@ -45,7 +45,7 @@ Dokumentasi ini disusun secara sistematis mulai dari fondasi konsep (*Brains & M
 - **Backend Core**: Node.js, Express.js REST API, Multi-format CSV Engine.
 - **Storage Layer**: Local JSON transactional store (`data/store.json`) dengan sinkronisasi memori real-time (100% On-Premise compliant, tanpa dependensi cloud pihak ketiga).
 - **Automation & Reporting**: PPTXgenJS (Otomasi PowerPoint Corporate Deck), UTF-8 BOM CSV Generator, Dynamic Question Header Compiler.
-- **Testing Engine**: Native Node.js Assertion Regression Runner (413 test pada SQL Server, v2.53.0; run terakhir 327/327 lulus, 16 tes dilewati, modul media 27/32/38/41/42/43 dan event 8/24 di-skip; lihat docs/07).
+- **Testing Engine**: Native Node.js Assertion Regression Runner (434 test pada SQL Server, v2.54.0; run terakhir: 348/348 lulus, 16 dilewati, modul media/event di-skip; lihat docs/07).
 
 ---
 

@@ -23,6 +23,7 @@ const {
   upgradeLegacyOptionLabels,
   ADDED_OPTION_VALUES,
   addMissingOptions,
+  SCORE_TIER_UPGRADES,
   isRemovedEssDummyUpload
 } = require('./seedData');
 const { parseFilterOptions, normalizeDateString, todayDateString } = require('./filterUtils');
@@ -30,6 +31,7 @@ const { normalizeScopes, rowInScopes, legacyUserScopes } = require('./scopeUtils
 const { DEFAULT_USER_MENU_ACCESS, coversEventManagerDirectorate } = require('./menuAccess');
 const { isHistoricalTestRow } = require('./testAccounts');
 const { defaultUnitForScale, parseUnit } = require('./metricUnit');
+const { readTierConfig, resolveTierConfig } = require('./scoreTiers');
 const { inferSurveySource, isEssMetric, resolveSurveySource, resolveRequiresManualUpload } = require('./surveySource');
 const { buildInitialStore: loadInitialStore } = require('./initialStore');
 const { planDirectory, renamedDirectorate, migrateScopes, migrateDirectorateOptions, DIRECTORATE_SETTING_KEYS } = require('./directorateMigration');
@@ -308,6 +310,20 @@ function getStore() {
               m.survey_source = null;
             }
             if (m.metric_type === 'OUTCOME' && m.last_data_date === undefined) m.last_data_date = (seed && seed.last_data_date) || todayDateString();
+            // v2.54.0: tiered score (same rule as sqlStorage.topUpScoreTiers): the seed configuration once, only while the metric has none
+            const up = SCORE_TIER_UPGRADES[m.metric_id];
+            const tierCfg = up && seed ? readTierConfig(seed.score_tiers) : null;
+            if (tierCfg && !readTierConfig(m.score_tiers)) {
+              m.score_tiers = JSON.parse(JSON.stringify(tierCfg));
+              if (up.raw && parseFloat(m.raw_value) === parseFloat(up.raw.from)) m.raw_value = parseFloat(up.raw.to);
+              const t = (store.metricTargets || {})[m.metric_id];
+              if (up.target && parseFloat(t ? t.target_value : m.target_value) === parseFloat(up.target.from)) {
+                m.target_value = parseFloat(up.target.to);
+                m.target_display = up.target.display;
+                if (t) Object.assign(t, { target_value: m.target_value, target_display: m.target_display });
+              }
+              console.log(`[jsonStorage] Metric ${m.metric_id} is now scored by tiers (${tierCfg.bounds ? tierCfg.bounds.map(b => `${b.op} ${b.min}`).join(' / ') : 'not configured yet: N/A'}).`);
+            }
           });
         }
         if (!store.directorates || store.directorates.length === 0) {
@@ -406,6 +422,8 @@ function getStore() {
         }
         store.socialMediaStats = store.socialMediaStats || [];
         store.socialMediaUploads = store.socialMediaUploads || [];
+        store.outcomeValues = store.outcomeValues || [];
+        store.outcomeUploads = store.outcomeUploads || [];
         saveStore();
       } catch (err) {
         console.error('Error loading store.json, falling back to seed data:', err);
@@ -1050,7 +1068,8 @@ const storage = {
       pic_name: metricData.pic_name ? String(metricData.pic_name).trim() : (metricData.experience_owner || ''),
       pic_email: metricData.pic_email ? String(metricData.pic_email).trim() : '',
       unit: metricData.unit !== undefined && metricData.unit !== null ? parseUnit(metricData.unit) : defaultUnitForScale(metricData.scale_type || (metricData.metric_type === 'SURVEY' ? 'RATING_5' : 'PERCENTAGE')),
-      survey_source: surveySource
+      survey_source: surveySource,
+      score_tiers: resolveTierConfig(metricData.score_tiers, null)
     };
 
     s.metrics.push(newMetric);
@@ -1126,7 +1145,8 @@ const storage = {
       // too, or admin edits via PUT /api/admin/metrics/:id would silently be dropped and the
       // metric would keep falling back to its seeded/previous value forever.
       last_data_date: metricData.last_data_date !== undefined ? String(metricData.last_data_date).trim() : current.last_data_date,
-      unit: metricData.unit !== undefined ? parseUnit(metricData.unit) : current.unit
+      unit: metricData.unit !== undefined ? parseUnit(metricData.unit) : current.unit,
+      score_tiers: resolveTierConfig(metricData.score_tiers, current.score_tiers)
     };
 
     s.metrics[idx] = updated;
@@ -1163,6 +1183,8 @@ const storage = {
     s.surveyUploadedResponses = (s.surveyUploadedResponses || []).filter(r => r.metric_id !== id);
     s.essResults = (s.essResults || []).filter(r => r.metric_id !== id);
     s.surveyUploads = (s.surveyUploads || []).filter(u => u.metric_id !== id);
+    s.outcomeValues = (s.outcomeValues || []).filter(r => r.metric_id !== id);
+    s.outcomeUploads = (s.outcomeUploads || []).filter(u => u.metric_id !== id);
     
     // Remove from weights and targets
     s.weights = s.weights.filter(w => w.metric_id !== id);
@@ -1446,6 +1468,7 @@ const storage = {
     const s = getStore();
     const ids = new Set(cmp.extra_metrics.map(m => m.metric_id));
     const essUploadIds = (s.surveyUploads || []).filter(u => ids.has(u.metric_id)).map(u => u.upload_id);
+    const outcomeUploadIds = (s.outcomeUploads || []).filter(u => ids.has(u.metric_id)).map(u => u.upload_id);
     cmp.differing_tables.forEach(k => {
       const want = snap.keys[k] === undefined ? null : snap.keys[k];
       if (want === null) delete s[k]; else s[k] = deepCopy(want);
@@ -1456,10 +1479,14 @@ const storage = {
       s.surveyUploadedResponses = (s.surveyUploadedResponses || []).filter(r => !ids.has(r.metric_id));
       s.essResults = (s.essResults || []).filter(r => !ids.has(r.metric_id));
       s.surveyUploads = (s.surveyUploads || []).filter(u => !ids.has(u.metric_id));
+      s.outcomeValues = (s.outcomeValues || []).filter(r => !ids.has(r.metric_id));
+      s.outcomeUploads = (s.outcomeUploads || []).filter(u => !ids.has(u.metric_id));
     }
     if (cmp.differing_tables.length || ids.size) saveStore();
     const { essOriginalFilePath } = require('../services/essSummaryService');
     essUploadIds.forEach(id => { const f = essOriginalFilePath(id); if (f) fs.unlink(f, () => {}); });
+    const { outcomeOriginalFilePath } = require('../services/outcomeValueService');
+    outcomeUploadIds.forEach(id => { const f = outcomeOriginalFilePath(id); if (f) fs.unlink(f, () => {}); });
     return { removed_metrics: cmp.extra_metrics, restored_tables: cmp.differing_tables, removed_ess_files: essUploadIds.length };
   },
   // boot top-up (runs by itself when store.json is loaded), exposed for the regression suite (optional seed list)
@@ -1990,6 +2017,57 @@ const storage = {
     const n = removeStoreMetric1SlaRows(getStore());
     if (n) saveStore();
     return n;
+  },
+
+  // --- MONTHLY VALUES OF OUTCOME METRICS (v2.54.0) --- same contract as sqlStorage (px_outcome_values / px_outcome_uploads)
+  getOutcomeValues(metric_id = null) {
+    const id = metric_id === null || metric_id === undefined ? null : parseInt(metric_id, 10);
+    return (getStore().outcomeValues || []).filter(r => id === null || r.metric_id === id)
+      .map(r => ({ notes: null, upload_id: null, updated_at: null, ...r }))
+      .sort((a, b) => a.metric_id - b.metric_id || a.year - b.year || a.month - b.month);
+  },
+  getOutcomeUploads(metric_id = null) {
+    const id = metric_id === null || metric_id === undefined ? null : parseInt(metric_id, 10);
+    return (getStore().outcomeUploads || []).filter(u => id === null || u.metric_id === id)
+      .sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : a.uploaded_at > b.uploaded_at ? -1 : (a.upload_id < b.upload_id ? 1 : -1)))
+      .map(u => ({ ...u }));
+  },
+  saveOutcomeValues(meta, rows) {
+    const s = getStore();
+    s.outcomeValues = s.outcomeValues || [];
+    s.outcomeUploads = s.outcomeUploads || [];
+    const metricId = parseInt(meta.metric_id, 10);
+    const now = new Date().toISOString();
+    let inserted = 0;
+    let updated = 0;
+    let replaced = 0;
+    let id = s.outcomeValues.reduce((mx, r) => Math.max(mx, r.value_id || 0), 0) + 1;
+    rows.forEach(r => {
+      const values = { value: r.value, notes: r.notes ? String(r.notes).slice(0, 500) : null, source: 'UPLOAD', upload_id: meta.upload_id };
+      const existing = s.outcomeValues.find(x => x.metric_id === metricId && x.year === r.year && x.month === r.month);
+      if (existing) {
+        if (existing.source === 'SEED') replaced++;
+        Object.assign(existing, values, { updated_at: now });
+        updated++;
+      } else {
+        s.outcomeValues.push({ value_id: id++, metric_id: metricId, year: r.year, month: r.month, ...values, created_at: now, updated_at: null });
+        inserted++;
+      }
+    });
+    const record = { ...meta, metric_id: metricId, file_name: meta.file_name || null, total_rows: rows.length, inserted_rows: inserted, updated_rows: updated,
+      replaced_seed_rows: replaced, period_from: meta.period_from || null, period_to: meta.period_to || null, uploaded_at: now };
+    s.outcomeUploads.push(record);
+    saveStore();
+    return { record: { ...record }, inserted, updated, replaced_seed: replaced };
+  },
+  // { metric_id: 'YYYY-MM-DD' }: the newest survey date of every metric with survey rows ("Last update", v2.54.0)
+  getLatestSurveyDates() {
+    const out = {};
+    (getStore().surveyUploadedResponses || []).forEach(r => {
+      const d = normalizeDateString(r.survey_date || r.created_at);
+      if (d && (!out[r.metric_id] || d > out[r.metric_id])) out[r.metric_id] = d;
+    });
+    return out;
   },
 
   deleteEssResultsForMetric(metric_id) {

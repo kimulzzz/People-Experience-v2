@@ -561,3 +561,20 @@ Metrik 1 "Career website & social media follower, reach & engagement growth" ber
 - Hanya Admin yang bisa mengunggah dan mengelola token; User melihat tabel yang sama (tanpa tombol), dan filter direktorat tidak mengubah isinya.
 - Upload tidak mengubah tanggal data terakhir (`last_data_date`) metrik 1; ubah sendiri di Admin Parameters bila perlu.
 - Token tidak ikut `npm run db:export`; setelah pindah database buat token baru. Menghapus metrik 1 tidak menghapus data social media-nya.
+
+### Skor Bertingkat & Nilai Bulanan Metrik OUTCOME (v2.54.0)
+
+**Mengatur tier skor** (saat ini metrik 1, 2, 3, 14)
+1. **Admin Parameters** -> tab **Metric Parameters** -> **Edit** pada metrik.
+2. Bagian **Score Tiers**: pilih **Unit** (`%` atau Number), isi 4 batas bawah tier 2, 3, 4, 5 (naik, > 0) dan operator `>=` (batas masuk tier atas) atau `>` (batas masih tier bawah). Pratinjau menunjukkan nilai -> tier -> skor / 5 -> % dan persentase target.
+3. Centang **N/A (not configured)** bila tier belum diketahui: nilai metrik tampil N/A dan tidak dihitung di PX Index (contoh: metrik 2 Goes to Campus). Hapus centang dan isi batas untuk mengaktifkannya.
+4. Simpan. Skor % = nilai / batas bawah tiernya x nomor tier / 5 x 100 (tier 1: nilai / batas tier 2), maksimum 100%. Perhatikan **Min Threshold**: status CRITICAL dihitung terhadap threshold, bukan target (metrik 14: target 60% < threshold 75%; metrik 1: target = threshold 80%) - sesuaikan bila perlu.
+
+**Mengunggah nilai bulanan metrik OUTCOME** (semua OUTCOME kecuali metrik 11, yang dihitung dari absensi event)
+1. **Explore Metrics** -> baris metrik -> **Template** (atau dari detail metrik, bar Outcome Data Operations). File: Year | Month | Value | Notes, satu nilai bankwide per bulan; nilai dalam unit metrik (metrik % ditulis angka persen, mis. 0.66).
+2. **Upload** -> pilih file `.xlsx` (maks. 5 MB). Satu kesalahan saja = seluruh file ditolak dan semua kesalahan ditampilkan per baris/kolom. Bulan setelah bulan berjalan ditolak; bulan yang sudah ada diperbarui.
+3. Riwayat upload dan file asli ada di modal yang sama. Upload tercatat di Audit Trail (`OUTCOME_UPLOAD`).
+4. Skor: YTD memakai nilai **bulan terakhir** yang diunggah dalam periode, MTD hanya bulan itu; periode tanpa bulan yang diunggah = No Data. Metrik yang belum pernah diunggah tetap memakai nilai `raw_value` di Admin Parameters. Kolom **Last Update** menunjukkan periode data terakhir setiap metrik.
+5. Metrik 1: tombol **Upload** = nilai engagement rate yang dinilai; tombol **Social Media** = data Instagram/LinkedIn/TikTok (drilldown, v2.52.0).
+
+**Evidence** (Admin saja): tombol **Evidence** di Explore Metrics/detail mengunduh CSV untuk periode yang dipilih - metrik OUTCOME: bulan tersimpan dengan kolom `Used_In_Score`; metrik 1 juga baris social media; metrik 11: daftar absensi event dengan identitas peserta (data pribadi - simpan sesuai aturan). File asli upload ada di `server/data/outcome-uploads/` (tidak ikut git maupun `.bak`; salin terpisah). Menghapus metrik ikut menghapus nilai bulanan, riwayat, dan file aslinya.

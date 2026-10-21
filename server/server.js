@@ -23,6 +23,7 @@ const { generateSurveyEvidence } = require('./services/surveyEvidenceService');
 const { importEssSummary, generateEssTemplateXlsx, generateEssEvidence, essOriginalFilePath } = require('./services/essSummaryService');
 const { importExitInterviews, resolveExitPeriod, getExitInterviewSummary, generateExitTemplateXlsx, generateExitExportCsv } = require('./services/exitInterviewService');
 const socialMedia = require('./services/socialMediaService');
+const outcomeValues = require('./services/outcomeValueService');
 const { isEssMetric } = require('./db/surveySource');
 const { getPendingUploadReminders, sendPendingUploadReminders, startReminderScheduler } = require('./services/reminderService');
 const emailSettingsService = require('./services/emailSettingsService');
@@ -136,12 +137,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.53.1' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.54.0' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.53.1',
+    version: '2.54.0',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',
@@ -546,6 +547,8 @@ app.get('/api/metrics/by-directorate', async (req, res) => {
 // ==========================================
 // ADMIN PARAMETERS: JOURNEYS & METRICS CRUD
 // ==========================================
+// null when the target has no percentage (tier-scored metric whose tiers are not configured yet, v2.54.0)
+const targetPercent = v => (v === null || v === undefined ? null : parseFloat(v.toFixed(2)));
 app.get('/api/admin/parameters', async (req, res) => {
   try {
     const journeys = await storage.getJourneys();
@@ -556,7 +559,7 @@ app.get('/api/admin/parameters', async (req, res) => {
     // display Target and Threshold using one consistent unit instead of mixing scales.
     const metrics = (await storage.getMetrics()).map(m => ({
       ...m,
-      target_value_normalized: parseFloat(normalizeTarget(m, m).toFixed(2))
+      target_value_normalized: targetPercent(normalizeTarget(m, m))
     }));
     res.json({
       success: true,
@@ -666,11 +669,14 @@ app.put('/api/admin/metrics/:id', async (req, res) => {
 // Delete Metric
 app.delete('/api/admin/metrics/:id', async (req, res) => {
   try {
-    // its ESS uploads go with it (documented cascade), so their original files are removed too (v2.32.0)
+    // its ESS uploads go with it (documented cascade), so their original files are removed too (v2.32.0); the same for the
+    // uploaded monthly OUTCOME values (v2.54.0)
     const essUploadIds = (await storage.getSurveyUploads()).filter(u => String(u.metric_id) === String(parseInt(req.params.id, 10))).map(u => u.upload_id);
+    const outcomeUploadIds = /^\d{1,9}$/.test(String(req.params.id)) ? (await storage.getOutcomeUploads(parseInt(req.params.id, 10))).map(u => u.upload_id) : [];
     const result = await storage.deleteMetric(req.params.id);
-    await auth.audit(req, 'METRIC_DELETE', { target: `#${result.metric_id} "${result.metric_name}" (with its survey data, ESS results and uploads)` });
+    await auth.audit(req, 'METRIC_DELETE', { target: `#${result.metric_id} "${result.metric_name}" (with its survey data, ESS results, monthly values and uploads)` });
     essUploadIds.forEach(id => { const f = essOriginalFilePath(id); if (f) fs.unlink(f, () => {}); });
+    outcomeUploadIds.forEach(id => { const f = outcomeValues.outcomeOriginalFilePath(id); if (f) fs.unlink(f, () => {}); });
     const calculation = await calculatePEIndex();
     res.json({ success: true, ...result, calculation });
   } catch (err) {
@@ -1266,6 +1272,117 @@ app.get('/api/admin/social-media/file/:upload_id', async (req, res) => {
     res.setHeader('Content-Disposition', attachmentDisposition(upload.file_name, 'social_media.xlsx'));
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.sendFile(filePath);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 4e. Monthly values of OUTCOME metrics (v2.54.0): one bankwide value per month for every OUTCOME metric except metric 11 (live
+// event attendance); metric 1's value too (its social media upload above stays the drilldown). Admin only (under /api/admin).
+// A metric with stored months is scored from them (YTD = latest month in the window, MTD = that month, none -> NO_DATA).
+// Evidence: the stored months (OUTCOME_VALUES; metric 1 with ?kind=social_media: its social media rows) or metric 11's
+// attendances - Admin only, as
+// OUTCOME metrics have no PIC login (respondent-level evidence is Admin / PIC only) and the attendances carry identities.
+const OUTCOME_MAX_MB = 5;
+const outcomeUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: OUTCOME_MAX_MB * 1024 * 1024 } }); // never written to /uploads
+const outcomeUploadSingle = (req, res, next) => outcomeUpload.single('file')(req, res, err => {
+  if (!err) return next();
+  if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: `The monthly values file exceeds the ${OUTCOME_MAX_MB} MB limit.` });
+  return res.status(400).json({ error: 'The uploaded file could not be processed (send one .xlsx file in the field "file").' });
+});
+
+// The metric of :metric_id (strict number) or an answer: 400 malformed, 404 unknown; with uploadOnly, 400 when the metric
+// takes no monthly values (SURVEY, metric 11); otherwise 400 when it has no OUTCOME evidence (SURVEY).
+async function outcomeMetricOf(req, res, { uploadOnly }) {
+  if (!/^\d{1,9}$/.test(String(req.params.metric_id))) { res.status(400).json({ error: 'metric_id must be a metric number.' }); return null; }
+  const metric = await storage.getMetricById(parseInt(req.params.metric_id, 10));
+  if (!metric) { res.status(404).json({ error: `Metric ${req.params.metric_id} was not found.` }); return null; }
+  if (uploadOnly && !outcomeValues.isOutcomeUploadMetric(metric)) {
+    res.status(400).json({ error: `Metric ${metric.metric_id} does not take uploaded monthly values (only OUTCOME metrics; metric 11 is calculated from event attendance, SURVEY metrics use the survey upload).` });
+    return null;
+  }
+  if (!uploadOnly && !outcomeValues.evidenceTypeOf(metric)) {
+    res.status(400).json({ error: `Metric ${metric.metric_id} is a SURVEY metric: its evidence is /api/surveys/evidence.` });
+    return null;
+  }
+  return metric;
+}
+
+app.get('/api/admin/outcome-values/:metric_id/template', async (req, res) => {
+  try {
+    const metric = await outcomeMetricOf(req, res, { uploadOnly: true });
+    if (!metric) return;
+    const xlsx = await outcomeValues.generateOutcomeTemplateXlsx(metric);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Template_Outcome_Metric_${metric.metric_id}.xlsx"`);
+    res.send(xlsx);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/outcome-values/:metric_id/upload', outcomeUploadSingle, async (req, res) => {
+  try {
+    const metric = await outcomeMetricOf(req, res, { uploadOnly: true });
+    if (!metric) return;
+    if (!req.file) return res.status(400).json({ error: 'Choose the monthly values Excel file (.xlsx) to upload.' });
+    const fileName = repairUploadedName(req.file.originalname || 'outcome_values.xlsx');
+    const ext = path.extname(fileName).toLowerCase();
+    // the extension AND the (client-supplied) MIME type must both be an Excel workbook
+    if (ext !== '.xlsx' || !XLSX_MIME_TYPES.includes(String(req.file.mimetype || '').toLowerCase())) {
+      return res.status(415).json({ error: `Only the monthly values Excel file (.xlsx) is accepted, not ${ext || 'a file without extension'}${ext === '.xlsx' ? ` sent as ${req.file.mimetype}` : ''}. CSV and the old .xls format are not accepted.` });
+    }
+    const result = await outcomeValues.importOutcomeXlsx(req.file.buffer, fileName, metric, { uploadedBy: `${req.user.full_name} (${req.user.username})`.slice(0, 200) });
+    if (!result.success) return res.status(result.status || 400).json(result);
+    await auth.audit(req, 'OUTCOME_UPLOAD', { target: `metric ${metric.metric_id}; ${result.rows_imported} months (${result.inserted_rows} new, ${result.updated_rows} updated); ${result.periods.join(' ')}; batch ${result.upload_id}` });
+    const { status, ...body } = result;
+    res.json(body);
+  } catch (err) {
+    console.error('Outcome values upload error:', err.message);
+    res.status(500).json({ error: 'The monthly values file could not be stored; nothing was imported.' });
+  }
+});
+
+app.get('/api/admin/outcome-values/:metric_id/uploads', async (req, res) => {
+  try {
+    const metric = await outcomeMetricOf(req, res, { uploadOnly: true });
+    if (!metric) return;
+    res.json(await outcomeValues.getOutcomeUploads(metric.metric_id));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/outcome-values/uploads/:upload_id/file', async (req, res) => {
+  try {
+    const upload = (await storage.getOutcomeUploads()).find(u => u.upload_id === req.params.upload_id);
+    const filePath = upload ? outcomeValues.outcomeOriginalFilePath(upload.upload_id) : null;
+    if (!filePath) return res.status(404).json({ error: 'The original file of this upload is not stored.' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', attachmentDisposition(upload.file_name, 'outcome_values.xlsx'));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.sendFile(filePath);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ?period= ALL (default) | YTD | YYYY | YYYY-MM; ?kind=social_media (metric 1 only) = its social media rows
+app.get('/api/admin/outcome-evidence/:metric_id', async (req, res) => {
+  try {
+    const metric = await outcomeMetricOf(req, res, { uploadOnly: false });
+    if (!metric) return;
+    const mp = outcomeValues.parseEvidencePeriod(req.query.period);
+    if (!mp) return res.status(400).json({ error: 'period must be ALL, YTD, a year (YYYY) or a month (YYYY-MM).' });
+    const kind = req.query.kind ? String(req.query.kind) : null;
+    if (kind && !(kind === 'values' || (kind === 'social_media' && socialMedia.isSocialMediaMetric(metric)))) {
+      return res.status(400).json({ error: 'kind must be "values" (or "social_media" for metric 1).' });
+    }
+    const { fileName, csv } = await outcomeValues.generateOutcomeEvidence(metric, mp, kind);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.send(csv);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

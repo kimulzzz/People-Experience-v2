@@ -1208,7 +1208,9 @@ async function runAllModules() {
 
   await runTest('[POSITIVE] Editing an OUTCOME metric\'s last_data_date via Admin persists and is reflected in calculation output', async () => {
     const newDate = '2026-08-15';
-    const resUpdate = await fetch(`${BASE_URL}/api/admin/metrics/1`, {
+    // v2.54.0: metric 4 (static snapshot) - metric 1 now takes uploaded monthly values, which set its date
+    const originalDate = (await (await fetch(`${BASE_URL}/api/admin/parameters`)).json()).metrics.find(m => m.metric_id === 4).last_data_date || '2026-03-23';
+    const resUpdate = await fetch(`${BASE_URL}/api/admin/metrics/4`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ last_data_date: newDate })
@@ -1219,14 +1221,14 @@ async function runAllModules() {
 
     const resCalc = await fetch(`${BASE_URL}/api/metrics/calculate?period=YTD`);
     const calc = await resCalc.json();
-    const m1 = calc.metrics.find(m => m.metric_id === 1);
+    const m1 = calc.metrics.find(m => m.metric_id === 4);
     assert.strictEqual(m1.last_survey_date, newDate, 'Calculation output must reflect the admin-edited last_data_date, confirming the value is read from storage, not a hardcoded map');
 
-    // Cleanup: restore original default so it doesn't affect other tests / a later reset
-    await fetch(`${BASE_URL}/api/admin/metrics/1`, {
+    // Cleanup: restore the original value so it doesn't affect other tests / a later reset
+    await fetch(`${BASE_URL}/api/admin/metrics/4`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ last_data_date: '2026-03-24' })
+      body: JSON.stringify({ last_data_date: originalDate })
     });
   });
 
@@ -1507,8 +1509,9 @@ async function runAllModules() {
     const res = await fetch(`${BASE_URL}/api/metrics/calculate`);
     assert.strictEqual(res.status, 200);
     const data = await res.json();
-    const metric2 = data.metrics.find(m => m.metric_id === 2);
-    assert(metric2, 'Metric #2 (CIMB Niaga Goes to Campus — event evaluation / rating) must exist');
+    // v2.54.0: metric 2 is tier-scored (tiers not configured yet -> N/A), so the RATING_5 rule is checked on metric 5
+    const metric2 = data.metrics.find(m => m.metric_id === 5);
+    assert(metric2, 'Metric #5 (Candidate Experience Survey Score, RATING_5) must exist');
     assert.strictEqual(metric2.scale_type, 'RATING_5');
     const expectedNormalizedTarget = parseFloat(((parseFloat(metric2.target_value) / 5) * 100).toFixed(2));
     assert.strictEqual(metric2.target_value_normalized, expectedNormalizedTarget, `target_value_normalized must equal target_value/5*100 (${expectedNormalizedTarget}), got ${metric2.target_value_normalized} — Target (raw ${metric2.target_value}) and Min Threshold (${metric2.min_threshold}%) must now be directly comparable in the same unit`);
@@ -1518,7 +1521,8 @@ async function runAllModules() {
     const res = await fetch(`${BASE_URL}/api/metrics/calculate`);
     assert.strictEqual(res.status, 200);
     const data = await res.json();
-    const scaleMetrics = data.metrics.filter(m => m.scale_type === 'RATING_5' || m.scale_type === 'QUOTA_COUNT');
+    // v2.54.0: a NO_DATA / N/A metric (e.g. metric 2 with its tiers not configured) has no status band to check
+    const scaleMetrics = data.metrics.filter(m => (m.scale_type === 'RATING_5' || m.scale_type === 'QUOTA_COUNT') && m.has_data !== false);
     assert(scaleMetrics.length > 0, 'There must be at least one RATING_5/QUOTA_COUNT metric to regression-guard');
     scaleMetrics.forEach(m => {
       let expectedStatus;
@@ -1539,17 +1543,19 @@ async function runAllModules() {
     const data = await res.json();
     assert(Array.isArray(data.metrics) && data.metrics.length > 0, 'Must return a non-empty metrics list');
     data.metrics.forEach(m => {
+      // v2.54.0: a tier-scored metric whose tiers are not configured yet has no target percentage (N/A)
+      if (m.score_tiers && !m.score_tiers.bounds) { assert.strictEqual(m.target_value_normalized, null); return; }
       assert(typeof m.target_value_normalized === 'number', `Metric #${m.metric_id} must expose a numeric target_value_normalized`);
       assert(m.target_value_normalized >= 0 && m.target_value_normalized <= 100, `Metric #${m.metric_id}'s target_value_normalized (${m.target_value_normalized}) must be within the 0-100 % range shared with min_threshold`);
     });
   });
 
   await runTest('[POSITIVE] GET /api/metrics/:id/detail also exposes target_value_normalized for both SURVEY and OUTCOME metric types', async () => {
-    const surveyRes = await fetch(`${BASE_URL}/api/metrics/2/detail?period=YTD`); // SURVEY, RATING_5
+    const surveyRes = await fetch(`${BASE_URL}/api/metrics/5/detail?period=YTD`); // SURVEY, RATING_5 (v2.54.0: metric 2 is tier-scored)
     assert.strictEqual(surveyRes.status, 200);
     const surveyData = await surveyRes.json();
     assert.strictEqual(surveyData.metric_type, 'SURVEY');
-    assert.strictEqual(surveyData.target_value_normalized, 80, 'Metric #2 target 4.00/5.0 must normalize to 80%');
+    assert.strictEqual(surveyData.target_value_normalized, 80, 'Metric #5 target 4.00/5.0 must normalize to 80%');
 
     const outcomeRes = await fetch(`${BASE_URL}/api/metrics/1/detail?period=YTD`); // OUTCOME, PERCENTAGE
     assert.strictEqual(outcomeRes.status, 200);
@@ -2359,8 +2365,8 @@ async function runAllModules() {
     const m = await unitCalcMetric(14);
     assert.ok(m.unit && m.unit !== '%', `Metric 14 unit must not be "%", got "${m.unit}"`);
     assert.strictEqual(m.scale_type, 'QUOTA_COUNT');
-    // the unit is display-only: normalized score is still raw / target * 100 (capped at 100)
-    const expected = Math.min(m.raw_value / m.target_value * 100, 100);
+    // v2.54.0: metric 14 is scored by count tiers (Module 56); the unit stays display-only
+    const expected = require('../server/db/scoreTiers').tieredScore(m.raw_value, m.score_tiers.bounds).percent;
     assert.ok(Math.abs(m.normalized_score - expected) < 0.01, `normalized ${m.normalized_score} vs ${expected}`);
     const detail = await (await fetch(`${BASE_URL}/api/metrics/14/detail`)).json();
     assert.strictEqual(detail.unit, m.unit);
@@ -6109,11 +6115,12 @@ async function runAllModules() {
       assert.strictEqual(metricOf46(await calc46('mode=MTD&year=2025&month=06'), SYS46).sample_size, mtdMonthly.sample_size, 'Monthly again');
     });
 
-    await runTest('[POSITIVE] OUTCOME metrics are a current snapshot: the same value for any YTD / MTD filter, never NO_DATA', async () => {
+    await runTest('[POSITIVE] OUTCOME metrics without uploaded monthly values are a current snapshot: the same value for any YTD / MTD filter, never NO_DATA', async () => {
       const a = await calc46(`mode=YTD&year=${Y46}`);
       const b = await calc46('mode=MTD&year=2025&month=03');
       const c = await calc46(`mode=YTD&year=${Y46 + 1}`);
-      const outA = a.metrics.filter(m => m.metric_type === 'OUTCOME');
+      // v2.54.0: an OUTCOME metric with uploaded monthly values follows the window instead (Module 56)
+      const outA = a.metrics.filter(m => m.metric_type === 'OUTCOME' && m.value_basis !== 'MONTHLY_VALUES');
       assert.ok(outA.length > 0);
       for (const m of outA) {
         for (const other of [b, c]) {
@@ -6121,14 +6128,15 @@ async function runAllModules() {
           assert.deepStrictEqual([x.status === 'NO_DATA', x.raw_value, x.period_window], [false, m.raw_value, null], `metric ${m.metric_id}`);
         }
       }
-      assert.strictEqual(a.outcome_index, c.outcome_index);
+      if (!a.metrics.some(m => m.value_basis === 'MONTHLY_VALUES')) assert.strictEqual(a.outcome_index, c.outcome_index);
     });
 
     await runTest('[POSITIVE] Survey Index = weighted mean of the survey metrics WITH data only; PX = the configured weights (default 70/30) with basis BOTH; journeys / checkpoints only roll up metrics with data', async () => {
       const c = await calc46('mode=MTD&year=2025&month=10'); // SYSTEM surveys have October 2025 rows, ESS has no result on or before it (v2.50.0)
       const live = c.metrics.filter(m => !m.is_disabled && !m.excluded_from_index);
       const noData = live.filter(m => m.status === 'NO_DATA');
-      assert.ok(noData.length > 0 && noData.every(m => m.metric_type === 'SURVEY' && m.normalized_score === null), 'the ESS metrics have no data in October 2025');
+      // v2.54.0: OUTCOME metrics with uploaded monthly values but none in October 2025 (and N/A metrics) are NO_DATA too
+      assert.ok(noData.length > 0 && noData.every(m => (m.metric_type === 'SURVEY' || m.value_basis === 'MONTHLY_VALUES') && m.normalized_score === null), 'the ESS metrics have no data in October 2025');
       assert.strictEqual(c.no_data_metrics_count, noData.length);
       const surveys = live.filter(m => m.metric_type === 'SURVEY' && m.has_data);
       const w = surveys.reduce((s, m) => s + m.weight, 0);
@@ -8520,7 +8528,9 @@ async function runAllModules() {
         assert.strictEqual(d1.data_upload, 'SOCIAL_MEDIA');
         assert.ok(d1.operational_records.length > 0 && d1.operational_records.every(r => r.platform && r.unit === undefined && r.sla_achievement === undefined));
         assert.deepStrictEqual(d1.social_media.platforms, ['Instagram', 'LinkedIn', 'TikTok']);
-        assert.strictEqual(d1.current_raw_value, parseFloat((await st55.getMetricById(1)).raw_value || 0), 'the score stays the Admin raw_value');
+        // v2.54.0: the value of metric 1 = its uploaded monthly value (latest month of the period), else the Admin raw_value
+        const months1 = (await st55.getOutcomeValues(1)).filter(r => r.year === 2026);
+        assert.strictEqual(d1.current_raw_value, months1.length ? months1[months1.length - 1].value : parseFloat((await st55.getMetricById(1)).raw_value || 0));
       });
 
       await runTest('[POSITIVE] Template download (.xlsx): header Platform | Year | Month | Followers | Reach | Engagement and one row per platform for the last complete month, numbers empty', async () => {
@@ -8822,6 +8832,532 @@ async function runAllModules() {
         await pool55.close();
       }
       for (const id of userIds55) await adminJson('DELETE', `/api/admin/users/${id}`);
+    }
+  }
+  // --- MODULE 56 (v2.54.0): TIERED SCORE (METRICS 1, 2, 3, 14) + MONTHLY VALUES OF OUTCOME METRICS (TEMPLATE, UPLOAD, EVIDENCE) ---
+  // Upload fixtures only go to two metrics this module creates itself (deleted at the end with their monthly values, uploads
+  // and original files - the documented metric-delete cascade) and to far-past periods (2003 / 2004); real metrics are only
+  // read. SQL Server only (config guard snapshot + in-process JSON parity check with store.json / auth.json restored
+  // byte-identically).
+  console.log('\n📦 MODULE 56: Tiered score (metrics 1, 2, 3, 14; N/A) & monthly values of OUTCOME metrics - template, upload, evidence, Last update (Positive & Negative Testing)');
+  if (require('../server/db/storage').backend !== 'sql') {
+    console.log('  ⏭️  SKIPPED: Module 56 needs the SQL Server backend (config guard snapshot and in-process JSON parity check)');
+  } else if (!skipModuleBlock(56)) {
+    const st56 = require('../server/db/storage');
+    const tiers56 = require('../server/db/scoreTiers');
+    const engine56 = require('../server/services/calculationEngine');
+    const ov56 = require('../server/services/outcomeValueService');
+    const { buildXlsx: buildXlsx56, readFirstSheet: readSheet56 } = require('../server/services/xlsxUtils');
+    const { MONTH_NAMES: MONTHS56 } = require('../server/services/essSummaryService');
+    const fs56 = require('fs');
+    const path56 = require('path');
+    const stamp56 = Date.now().toString(36);
+    const HEAD56 = ['Year', 'Month', 'Value', 'Notes'];
+    const xlsx56 = rows => buildXlsx56([HEAD56, ...rows]);
+    const metricIds56 = [];
+    const userIds56 = [];
+    const uploadIds56 = [];
+    let userCookie56 = null;
+    const postOutcome = async (metricId, buf, fileName = 'module56.xlsx', cookie = null, type = undefined) => {
+      const fd = new FormData();
+      fd.append('file', new Blob([buf], type ? { type } : undefined), fileName);
+      const url = `${BASE_URL}/api/admin/outcome-values/${metricId}/upload`;
+      return cookie ? realFetch(url, { method: 'POST', body: fd, headers: { Cookie: cookie } }) : fetch(url, { method: 'POST', body: fd });
+    };
+    const calcMetric56 = async (q, id) => {
+      const r = await fetch(`${BASE_URL}/api/metrics/calculate?${q}`);
+      assert.strictEqual(r.status, 200);
+      const body = await r.json();
+      return { calc: body, m: body.metrics.find(x => x.metric_id === id) };
+    };
+    const detail56 = async (id, q) => {
+      const r = await fetch(`${BASE_URL}/api/metrics/${id}/detail?${q}`);
+      assert.strictEqual(r.status, 200);
+      return r.json();
+    };
+    const csvLines56 = text => text.replace(/^﻿/, '').split('\r\n').filter(Boolean);
+    const createMetric56 = async body => {
+      const r = await adminJson('POST', '/api/admin/metrics', { journey_id: 3, checkpoint_id: 8, metric_type: 'OUTCOME', is_employee_metric: true, ...body });
+      const b = await r.json();
+      assert.strictEqual(r.status, 201, JSON.stringify(b).slice(0, 300));
+      metricIds56.push(b.metric.metric_id);
+      return b.metric;
+    };
+    try {
+      const B14 = [{ min: 4000, op: '>=' }, { min: 5000, op: '>=' }, { min: 6000, op: '>=' }, { min: 7500, op: '>=' }];
+      const B1 = [{ min: 1, op: '>' }, { min: 2, op: '>' }, { min: 2.5, op: '>' }, { min: 3.5, op: '>' }];
+      const B3 = [{ min: 30, op: '>=' }, { min: 45, op: '>=' }, { min: 60, op: '>=' }, { min: 75, op: '>' }];
+      const checkTiers = (bounds, cases) => cases.forEach(([v, tier, pct]) => {
+        const t = tiers56.tieredScore(v, bounds);
+        assert.strictEqual(t.tier, tier, `${v}: tier ${t.tier}`);
+        assert.ok(Math.abs(t.percent - pct) < 0.001, `${v}: ${t.percent} vs ${pct}`);
+        assert.ok(Math.abs(engine56.normalizeScore({ scale_type: 'QUOTA_COUNT', score_tiers: JSON.stringify({ unit: 'number', bounds }), target_value: 1 }, v) - pct) < 0.001, `${v} via normalizeScore`);
+      });
+
+      await runTest('[POSITIVE] Tier function, metric 14 bounds (all >=): 0 / 3000 / 3999 / 4000 / 4999 / 5000 / 5999 / 6000 / 6400 / 7499 / 7500 / 9000 / negative -> right tier and % (tier 1 proportional to the tier-2 bound, cap 100%, floor 0)', async () => {
+        checkTiers(B14, [[0, 1, 0], [3000, 1, 15], [3999, 1, 19.995], [4000, 2, 40], [4999, 2, 49.99], [5000, 3, 60], [5999, 3, 71.988], [6000, 4, 80],
+          [6400, 4, 85.3333], [7499, 4, 99.9867], [7500, 5, 100], [9000, 5, 100], [-50, 1, 0]]);
+        const capped = engine56.tierInfo({ score_tiers: { unit: 'number', bounds: B14 } }, 9000);
+        assert.deepStrictEqual([capped.tier, capped.score, capped.score_uncapped, capped.percent, capped.capped], [5, 5, 6, 100, true]);
+        const t6400 = engine56.tierInfo({ score_tiers: { unit: 'number', bounds: B14 } }, 6400);
+        assert.deepStrictEqual([t6400.tier, t6400.lower_bound, t6400.score, t6400.percent, t6400.unit], [4, 6000, 4.27, 85.33, 'number']);
+        assert.strictEqual(engine56.tierInfo({ score_tiers: null }, 6400), null, 'a metric without tiers has no tier info');
+        assert.strictEqual(engine56.tierInfo({ score_tiers: { unit: 'number', bounds: null } }, 6400), null, 'tiers not configured: no tier info');
+      });
+
+      await runTest('[POSITIVE] Per-boundary > vs >=: metric 1 (all ">": 1 -> tier 1, 1.0001 -> tier 2, 2 -> tier 2, 2.5 -> tier 3, 2.6 / 3.5 -> tier 4, 3.51 -> tier 5; 0.66 -> 13.2%) and metric 3 (">=" 30/45/60, ">" 75: 29.99 -> 1, 30 -> 2, 60 -> 4, 75 -> 4, 75.04 -> 5 capped)', async () => {
+        checkTiers(B1, [[0.66, 1, 13.2], [1, 1, 20], [1.0001, 2, 40.004], [2, 2, 80], [2.0001, 3, 60.003], [2.5, 3, 75], [2.6, 4, 83.2], [3.5, 4, 100], [3.51, 5, 100]]);
+        checkTiers(B3, [[29.99, 1, 19.9933], [30, 2, 40], [44.99, 2, 59.9867], [45, 3, 60], [60, 4, 80], [70, 4, 93.3333], [75, 4, 100], [75.04, 5, 100]]);
+        // the same value on a >= boundary and on a > boundary lands in different tiers
+        assert.strictEqual(tiers56.tieredScore(2, [{ min: 1, op: '>' }, { min: 2, op: '>=' }, { min: 3, op: '>' }, { min: 4, op: '>' }]).tier, 3);
+        assert.strictEqual(tiers56.tieredScore(2, [{ min: 1, op: '>' }, { min: 2, op: '>' }, { min: 3, op: '>' }, { min: 4, op: '>' }]).tier, 2);
+      });
+
+      await runTest('[POSITIVE] Target normalization uses the same tiers (14: 5000 -> 60%, 1: 2% -> 80%, 3: 70% -> 93.33%); tiers not configured -> null (N/A); a metric without tiers keeps its scale rule', async () => {
+        const norm = (bounds, target) => engine56.normalizeTarget({ scale_type: 'PERCENTAGE', score_tiers: { unit: 'number', bounds } }, { target_value: target, min_threshold: 75 });
+        assert.strictEqual(norm(B14, 5000), 60);
+        assert.strictEqual(norm(B1, 2), 80);
+        assert.ok(Math.abs(norm(B3, 70) - 93.3333) < 0.001);
+        assert.strictEqual(norm(null, 4), null);
+        assert.strictEqual(engine56.normalizeScore({ scale_type: 'QUOTA_COUNT', score_tiers: null, target_value: 5000 }, 2500), 50);
+      });
+
+      await runTest('[NEGATIVE] Tier configuration validation: not 4 bounds, not strictly increasing, zero / negative / text, unknown operator or unit, bad JSON -> refused; a stored invalid value reads as null', async () => {
+        const bad = [
+          { unit: 'number', bounds: B14.slice(0, 3) },
+          { unit: 'number', bounds: [...B14, { min: 9000, op: '>=' }] },
+          { unit: 'number', bounds: [{ min: 4000, op: '>=' }, { min: 4000, op: '>' }, { min: 6000, op: '>=' }, { min: 7500, op: '>=' }] },
+          { unit: 'number', bounds: [...B14].reverse() },
+          { unit: 'number', bounds: [{ min: 0, op: '>=' }, ...B14.slice(1)] },
+          { unit: 'number', bounds: [{ min: -1, op: '>=' }, ...B14.slice(1)] },
+          { unit: 'number', bounds: [{ min: 'abc', op: '>=' }, ...B14.slice(1)] },
+          { unit: 'number', bounds: [{ min: 4000, op: '=>' }, ...B14.slice(1)] },
+          { unit: 'number', bounds: [{ min: 4000, op: '<' }, ...B14.slice(1)] },
+          { unit: 'euro', bounds: B14 },
+          '{not json', 42
+        ];
+        bad.forEach(b => {
+          assert.throws(() => tiers56.parseTierConfig(b), Error, JSON.stringify(b));
+          assert.strictEqual(tiers56.readTierConfig(b), null);
+        });
+        assert.deepStrictEqual(tiers56.parseTierConfig('{"unit":"percent","bounds":[{"min":1,"op":">"},{"min":2,"op":">"},{"min":2.5,"op":">"},{"min":3.5,"op":">"}]}'), { unit: 'percent', bounds: B1 });
+        assert.deepStrictEqual(tiers56.parseTierConfig([4000, 5000, 6000, 7500]), { unit: 'number', bounds: B14 }, 'a plain array = number, >=');
+        assert.deepStrictEqual(tiers56.parseTierConfig({ unit: 'percent', bounds: null }), { unit: 'percent', bounds: null }, 'not configured');
+        assert.strictEqual(tiers56.parseTierConfig(''), null);
+        assert.deepStrictEqual(tiers56.resolveTierConfig(null, { unit: 'number', bounds: B14 }), { unit: 'number', bounds: B14 }, 'null / undefined keep the stored configuration');
+      });
+
+      await runTest('[POSITIVE] Live configuration: metric 14 = 6,400 people -> tier 4 -> 4.27 / 5 = 85.33% (target 60%); metric 1 = 0.66% (Sept 2026) -> 13.2% (target 2% -> 80%); metric 3 = 75.04% (Sept 2026) -> 100% capped (target 70% -> 93.33%); detail agrees', async () => {
+        const { calc } = await calcMetric56('mode=YTD&year=2026', 14);
+        const byId = id => calc.metrics.find(x => x.metric_id === id);
+        const m14 = byId(14);
+        assert.strictEqual(m14.scale_type, 'QUOTA_COUNT', 'native scale kept');
+        assert.deepStrictEqual(m14.score_tiers, { unit: 'number', bounds: B14 });
+        assert.strictEqual((await st56.getMetricById(14)).raw_value, 6400, 'the approved live default of metric 14');
+        if (m14.value_basis === 'STATIC_SNAPSHOT') assert.deepStrictEqual([m14.raw_value, m14.normalized_score, m14.tier_info.tier, m14.tier_info.score], [6400, 85.33, 4, 4.27]);
+        assert.strictEqual(m14.target_value_normalized, 60);
+        const m1 = byId(1);
+        assert.deepStrictEqual(m1.score_tiers, { unit: 'percent', bounds: B1 });
+        assert.deepStrictEqual([m1.raw_value, m1.normalized_score, m1.outcome_period, m1.target_value, m1.target_value_normalized, m1.status], [0.66, 13.2, '2026-09', 2, 80, 'CRITICAL']);
+        const m3 = byId(3);
+        assert.deepStrictEqual(m3.score_tiers, { unit: 'percent', bounds: B3 });
+        assert.deepStrictEqual([m3.raw_value, m3.normalized_score, m3.tier_info.tier, m3.tier_info.capped, m3.target_value, m3.target_value_normalized, m3.status], [75.04, 100, 5, true, 70, 93.33, 'HEALTHY']);
+        for (const m of [m1, m3, m14]) {
+          const expected = m.normalized_score < m.min_threshold ? 'CRITICAL' : (m.normalized_score < m.target_value_normalized ? 'WARNING' : 'HEALTHY');
+          assert.strictEqual(m.status, expected, `metric ${m.metric_id}`);
+          const d = await detail56(m.metric_id, 'mode=YTD&year=2026');
+          assert.deepStrictEqual([d.current_raw_value, d.normalized_score, d.status, d.target_value_normalized], [m.raw_value, m.normalized_score, m.status, m.target_value_normalized], `detail ${m.metric_id}`);
+          assert.deepStrictEqual(d.tier_info, m.tier_info);
+        }
+        const aug = (await calcMetric56('mode=MTD&year=2026&month=08', 1)).calc;
+        assert.deepStrictEqual([1, 3].map(id => aug.metrics.find(x => x.metric_id === id).status), ['NO_DATA', 'NO_DATA'], 'a month without an uploaded value is NO_DATA (agreed rule)');
+        const s = await (await fetch(`${BASE_URL}/api/settings`)).json();
+        assert.ok(!s.scale_types.some(o => o.value === 'TIERED_COUNT'), 'tiers are a per-metric configuration, not a scale type');
+      });
+
+      await runTest('[POSITIVE] Metric 2 (tiers not configured) is N/A: no value / score, status NO_DATA + not_applicable, target N/A, not in the Survey Index, its journey rollup, alerts, trend or the detail; the PX Index ignores it', async () => {
+        const { calc, m } = await calcMetric56('mode=YTD&year=2026', 2);
+        assert.deepStrictEqual(m.score_tiers, { unit: 'number', bounds: null });
+        assert.deepStrictEqual([m.has_data, m.not_applicable, m.status, m.raw_value, m.normalized_score, m.target_value_normalized, m.tier_info], [false, true, 'NO_DATA', null, null, null, null]);
+        const surveys = calc.metrics.filter(x => x.metric_type === 'SURVEY' && x.has_data);
+        assert.ok(!surveys.some(x => x.metric_id === 2));
+        const expected = surveys.reduce((a, x) => a + x.normalized_score * x.weight, 0) / surveys.reduce((a, x) => a + x.weight, 0);
+        assert.ok(Math.abs(calc.survey_index - expected) < 0.01, 'Survey Index without metric 2');
+        const j = calc.journeys.find(x => x.journey_id === m.journey_id);
+        assert.ok(j.no_data_count >= 1 && !j.metrics.filter(x => x.has_data).some(x => x.metric_id === 2));
+        const d = await detail56(2, 'mode=YTD&year=2026');
+        assert.deepStrictEqual([d.has_data, d.not_applicable, d.status, d.current_raw_value, d.normalized_score, d.target_value_normalized], [false, true, 'NO_DATA', null, null, null]);
+        assert.ok(d.questions.filter(q => q.type !== 'FREE_TEXT').every(q => q.avg_score === null), 'no question score either');
+        const alerts = await (await fetch(`${BASE_URL}/api/alerts`)).json();
+        const list = Array.isArray(alerts) ? alerts : (alerts.alerts || []);
+        assert.ok(!list.some(a => a.metric_id === 2), 'no alert for an N/A metric');
+        const params = await (await fetch(`${BASE_URL}/api/admin/parameters`)).json();
+        assert.strictEqual(params.metrics.find(x => x.metric_id === 2).target_value_normalized, null);
+      });
+
+      let tiered56 = null;
+      await runTest('[POSITIVE] Admin creates a tier-scored metric and edits its tiers (unit, bounds, >= / >, N/A): stored, exposed by parameters / calculate, the score follows; N/A takes it out of the index; the config snapshot covers px_metrics.score_tiers; audited', async () => {
+        tiered56 = await createMetric56({ metric_name: `RT56 Tiered ${stamp56}`, scale_type: 'QUOTA_COUNT', target_value: 20, min_threshold: 50, raw_value: 25, unit: 'pax',
+          score_tiers: { unit: 'number', bounds: [{ min: 10, op: '>=' }, { min: 20, op: '>=' }, { min: 30, op: '>=' }, { min: 40, op: '>=' }] } });
+        assert.deepStrictEqual(tiered56.score_tiers.bounds.map(b => b.min), [10, 20, 30, 40]);
+        let { m } = await calcMetric56('mode=YTD', tiered56.metric_id);
+        assert.deepStrictEqual([m.raw_value, m.normalized_score, m.tier_info.tier, m.target_value_normalized, m.status], [25, 75, 3, 60, 'HEALTHY']);
+        const cfg2 = { unit: 'percent', bounds: [{ min: 5, op: '>' }, { min: 10, op: '>' }, { min: 25, op: '>' }, { min: 50, op: '>' }] };
+        assert.strictEqual((await adminJson('PUT', `/api/admin/metrics/${tiered56.metric_id}`, { score_tiers: cfg2 })).status, 200);
+        const params = await (await fetch(`${BASE_URL}/api/admin/parameters`)).json();
+        assert.deepStrictEqual(params.metrics.find(x => x.metric_id === tiered56.metric_id).score_tiers, cfg2);
+        ({ m } = await calcMetric56('mode=YTD', tiered56.metric_id));
+        assert.deepStrictEqual([m.tier_info.tier, m.normalized_score, m.tier_info.capped], [3, 100, true], '25 is not > 25 -> tier 3 (lower boundary 10) -> 25 / 10 x 3 = 7.5 -> capped 100%');
+        const snap = await st56.snapshotConfiguration();
+        const t = snap.tables.px_metrics;
+        assert.ok(t.columns.includes('score_tiers'), 'px_metrics.score_tiers is in the configuration snapshot');
+        const row = t.rows.find(r => r[t.columns.indexOf('metric_id')] === tiered56.metric_id);
+        assert.deepStrictEqual(JSON.parse(row[t.columns.indexOf('score_tiers')]), cfg2);
+        const audit = await st56.getAuditLog(20, { includeTest: true });
+        assert.ok(audit.some(a => a.action === 'METRIC_UPDATE' && String(a.target).startsWith(`#${tiered56.metric_id}:`) && /score_tiers/.test(a.target)), 'the tier change is audited');
+        // N/A: tiers not configured -> out of the index
+        assert.strictEqual((await adminJson('PUT', `/api/admin/metrics/${tiered56.metric_id}`, { score_tiers: { unit: 'percent', bounds: null } })).status, 200);
+        const na = await calcMetric56('mode=YTD', tiered56.metric_id);
+        assert.deepStrictEqual([na.m.has_data, na.m.not_applicable, na.m.status, na.m.raw_value], [false, true, 'NO_DATA', null]);
+        const outcomes = na.calc.metrics.filter(x => x.metric_type === 'OUTCOME' && x.has_data);
+        const expected = outcomes.reduce((a, x) => a + x.normalized_score * x.weight, 0) / outcomes.reduce((a, x) => a + x.weight, 0);
+        assert.ok(Math.abs(na.calc.outcome_index - expected) < 0.01 && !outcomes.some(x => x.metric_id === tiered56.metric_id));
+        assert.strictEqual((await adminJson('PUT', `/api/admin/metrics/${tiered56.metric_id}`, { score_tiers: cfg2 })).status, 200);
+      });
+
+      await runTest('[NEGATIVE] Tier validation through the Admin API: 3 bounds, decreasing, zero, text, bad operator, bad unit -> 400 and nothing changes; sending no / null tiers keeps them', async () => {
+        const before = (await st56.getMetricById(tiered56.metric_id)).score_tiers;
+        const bounds = n => [{ min: 5, op: '>' }, { min: 10, op: '>' }, { min: 25, op: '>' }, { min: 50, op: '>' }].slice(0, n);
+        for (const bad of [{ unit: 'number', bounds: bounds(3) }, { unit: 'number', bounds: [...bounds(4)].reverse() }, { unit: 'number', bounds: [{ min: 0, op: '>' }, ...bounds(4).slice(1)] },
+          { unit: 'number', bounds: [{ min: 'x', op: '>' }, ...bounds(4).slice(1)] }, { unit: 'number', bounds: [{ min: 5, op: '=' }, ...bounds(4).slice(1)] }, { unit: 'kg', bounds: bounds(4) }, 'garbage']) {
+          const r = await adminJson('PUT', `/api/admin/metrics/${tiered56.metric_id}`, { score_tiers: bad });
+          assert.strictEqual(r.status, 400, JSON.stringify(bad));
+        }
+        const noTiers = await adminJson('POST', '/api/admin/metrics', { metric_name: `RT56 bad ${stamp56}`, metric_type: 'OUTCOME', scale_type: 'PERCENTAGE', target_value: 10, raw_value: 1, score_tiers: { unit: 'x', bounds: null } });
+        assert.strictEqual(noTiers.status, 400);
+        assert.ok(!(await st56.getMetrics()).some(x => x.metric_name === `RT56 bad ${stamp56}`), 'no metric created');
+        assert.strictEqual((await adminJson('PUT', `/api/admin/metrics/${tiered56.metric_id}`, { metric_name: `RT56 Tiered ${stamp56} b`, score_tiers: null })).status, 200);
+        assert.deepStrictEqual((await st56.getMetricById(tiered56.metric_id)).score_tiers, before, 'tiers unchanged');
+      });
+
+      let om56 = null;
+      let legacy56 = null;
+      await runTest('[POSITIVE] Template (.xlsx) of an OUTCOME metric: title with the metric name and unit, header Year | Month | Value | Notes and the last complete month prefilled; metric 1 -> 200 (its value), metric 11 / SURVEY -> 400, unknown -> 404, malformed -> 400', async () => {
+        om56 = await createMetric56({ metric_name: `RT56 Outcome ${stamp56}`, scale_type: 'PERCENTAGE', target_value: 80, min_threshold: 70, raw_value: 50, unit: '%' });
+        legacy56 = await createMetric56({ metric_name: `RT56 Legacy ${stamp56}`, scale_type: 'PERCENTAGE', target_value: 80, min_threshold: 70, raw_value: 55, unit: '%', last_data_date: '2004-05-10' });
+        assert.strictEqual((await adminJson('PUT', `/api/admin/metrics/${legacy56.metric_id}`, { last_data_date: '2004-05-10' })).status, 200);
+        const r = await fetch(`${BASE_URL}/api/admin/outcome-values/${om56.metric_id}/template`);
+        assert.strictEqual(r.status, 200);
+        assert.ok(/spreadsheetml/.test(r.headers.get('content-type')));
+        assert.ok(new RegExp(`Template_Outcome_Metric_${om56.metric_id}\\.xlsx`).test(r.headers.get('content-disposition')));
+        const rows = await readSheet56(Buffer.from(await r.arrayBuffer()));
+        assert.ok(String(rows[0].cells[0].value).includes(om56.metric_name));
+        assert.ok(/Value unit: %/.test(String(rows[1].cells[0].value)));
+        assert.deepStrictEqual(rows[2].cells.map(c => c.value), HEAD56);
+        const now = new Date();
+        const y = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+        const mo = now.getMonth() === 0 ? 12 : now.getMonth();
+        assert.deepStrictEqual(rows[3].cells.filter(c => c && c.type !== 'empty').map(c => c.value), [y, MONTHS56[mo - 1]]);
+        const v = ov56.validateOutcomeSheet(rows);
+        assert.ok(v.errors.length === 1 && /Value is empty/.test(v.errors[0].reason), JSON.stringify(v.errors));
+        for (const [id, status] of [[1, 200], [11, 400], [2, 400], [999999, 404], ['abc', 400]]) {
+          assert.strictEqual((await fetch(`${BASE_URL}/api/admin/outcome-values/${id}/template`)).status, status, `template ${id}`);
+        }
+        assert.strictEqual((await postOutcome(11, await xlsx56([[2003, 1, 10]]))).status, 400, 'metric 11 is computed from attendance');
+      });
+
+      let firstUpload56 = null;
+      await runTest('[POSITIVE] Admin uploads valid monthly values (month names EN/ID, "70,5" decimal comma, notes): 200 with counts + periods, original kept + downloadable (nosniff), history entry, audit OUTCOME_UPLOAD (test-run row)', async () => {
+        const res = await postOutcome(om56.metric_id, await xlsx56([
+          ['2003', 'January', '40', ''],
+          [2003, 'Maret', 60, '=HYPERLINK("http://x")'],
+          [2003, 7, '70,5', 'mid-year figure']
+        ]), 'module56_valid.xlsx');
+        const body = await res.json();
+        assert.strictEqual(res.status, 200, JSON.stringify(body).slice(0, 400));
+        uploadIds56.push(body.upload_id);
+        firstUpload56 = body;
+        assert.deepStrictEqual([body.rows_imported, body.inserted_rows, body.updated_rows, body.metric_id], [3, 3, 0, om56.metric_id]);
+        assert.deepStrictEqual(body.periods, ['2003-01', '2003-03', '2003-07']);
+        assert.deepStrictEqual(body.period_labels, ['January 2003', 'March 2003', 'July 2003']);
+        assert.ok(fs56.existsSync(path56.join(ov56.OUTCOME_UPLOAD_DIR, `${body.upload_id}.xlsx`)), 'original kept (non-public folder)');
+        const hist = await (await fetch(`${BASE_URL}/api/admin/outcome-values/${om56.metric_id}/uploads`)).json();
+        const h = hist.find(u => u.upload_id === body.upload_id);
+        assert.ok(h && h.file_name === 'module56_valid.xlsx' && h.has_original_file && h.period_from === '2003-01' && h.period_to === '2003-07' && h.metric_id === om56.metric_id);
+        const file = await fetch(`${BASE_URL}/api/admin/outcome-values/uploads/${body.upload_id}/file`);
+        assert.strictEqual(file.status, 200);
+        assert.strictEqual(file.headers.get('x-content-type-options'), 'nosniff');
+        assert.ok(/attachment; filename="module56_valid\.xlsx"/.test(file.headers.get('content-disposition')));
+        assert.strictEqual((await fetch(`${BASE_URL}/api/admin/outcome-values/uploads/not-there/file`)).status, 404);
+        const stored = await st56.getOutcomeValues(om56.metric_id);
+        assert.deepStrictEqual(stored.map(r => [r.year, r.month, r.value, r.source]), [[2003, 1, 40, 'UPLOAD'], [2003, 3, 60, 'UPLOAD'], [2003, 7, 70.5, 'UPLOAD']]);
+        const audit = await st56.getAuditLog(30, { includeTest: true });
+        const a = audit.find(x => x.action === 'OUTCOME_UPLOAD' && String(x.target).includes(body.upload_id));
+        assert.ok(a && a.is_test === true && new RegExp(`metric ${om56.metric_id}; 3 months \\(3 new, 0 updated\\); 2003-01 2003-03 2003-07`).test(a.target), JSON.stringify(a));
+      });
+
+      await runTest('[POSITIVE] Scoring: YTD 2003 = latest uploaded month (July 70.5), MTD 2003-03 = that month (60), MTD 2003-02 and YTD 2004 = NO_DATA (out of the index); detail agrees; Last update = July 2003', async () => {
+        let { m, calc } = await calcMetric56('mode=YTD&year=2003', om56.metric_id);
+        assert.deepStrictEqual([m.raw_value, m.normalized_score, m.has_data, m.value_basis, m.outcome_period, m.outcome_period_label, m.outcome_value_source],
+          [70.5, 70.5, true, 'MONTHLY_VALUES', '2003-07', 'July 2003', 'UPLOAD']);
+        assert.deepStrictEqual(m.period_window, { from: '2003-01-01', to: '2003-12-31', basis: 'LATEST_MONTH' });
+        assert.deepStrictEqual([m.last_update_period, m.last_update_label], ['2003-07', 'July 2003']);
+        ({ m } = await calcMetric56('mode=MTD&year=2003&month=03', om56.metric_id));
+        assert.deepStrictEqual([m.raw_value, m.status, m.outcome_period], [60, 'CRITICAL', '2003-03'], '60% < min 70 -> CRITICAL');
+        ({ m, calc } = await calcMetric56('mode=MTD&year=2003&month=02', om56.metric_id));
+        assert.deepStrictEqual([m.has_data, m.status, m.raw_value, m.normalized_score, m.outcome_period], [false, 'NO_DATA', null, null, null]);
+        const others = calc.metrics.filter(x => x.metric_type === 'OUTCOME' && x.has_data);
+        const expected = others.reduce((s, x) => s + x.normalized_score * x.weight, 0) / others.reduce((s, x) => s + x.weight, 0);
+        assert.ok(Math.abs(calc.outcome_index - expected) < 0.01, 'the NO_DATA metric is left out of the Outcome Index');
+        ({ m } = await calcMetric56('mode=YTD&year=2004', om56.metric_id));
+        assert.strictEqual(m.status, 'NO_DATA', 'uploads exist but none inside 2004');
+        const d = await detail56(om56.metric_id, 'mode=MTD&year=2003&month=03');
+        assert.deepStrictEqual([d.current_raw_value, d.normalized_score, d.status, d.outcome_period_label, d.last_update_label], [60, 60, 'CRITICAL', 'March 2003', 'July 2003']);
+        const dNo = await detail56(om56.metric_id, 'mode=MTD&year=2003&month=02');
+        assert.deepStrictEqual([dNo.has_data, dNo.status, dNo.current_raw_value, dNo.normalized_score], [false, 'NO_DATA', null, null]);
+        // directorate filter: bankwide, same value
+        const directory56 = await (await rawFetch(`${BASE_URL}/api/directorates`)).json();
+        const byDir = await calcMetric56(`mode=MTD&year=2003&month=03&directorate=${encodeURIComponent(directory56[0].directorate_name)}`, om56.metric_id);
+        assert.strictEqual(byDir.m.raw_value, 60, 'a directorate filter does not change an OUTCOME value');
+      });
+
+      await runTest('[POSITIVE] Trend chart and PX Index by directorate use the same rule: MTD trend points of 2003 equal calculate MTD of that month (the metric is NO_DATA in February)', async () => {
+        const t = await (await fetch(`${BASE_URL}/api/metrics/trends?mode=MTD&year=2003&startYear=2003&startMonth=02&endYear=2003&endMonth=03`)).json();
+        const feb = t.trends.find(p => p.month_code === '2003-02');
+        const mar = t.trends.find(p => p.month_code === '2003-03');
+        assert.strictEqual(feb.outcome_index, (await calcMetric56('mode=MTD&year=2003&month=02', om56.metric_id)).calc.outcome_index);
+        assert.strictEqual(mar.outcome_index, (await calcMetric56('mode=MTD&year=2003&month=03', om56.metric_id)).calc.outcome_index);
+        assert.notStrictEqual(feb.outcome_index, mar.outcome_index);
+        const byDir = await (await fetch(`${BASE_URL}/api/metrics/by-directorate?mode=MTD&year=2003&month=03`)).json();
+        assert.ok(Array.isArray(byDir.directorates) && byDir.directorates.length > 0);
+      });
+
+      await runTest('[POSITIVE] Upsert: uploading July 2003 again UPDATES it (0 new, 1 updated) and the current month is accepted; YTD 2003 follows (72)', async () => {
+        const now = new Date();
+        const res = await postOutcome(om56.metric_id, await xlsx56([[2003, 'Jul', 72, 'revised'], [now.getFullYear(), now.getMonth() + 1, 10, 'current month']]), 'module56_upsert.xlsx');
+        const body = await res.json();
+        assert.strictEqual(res.status, 200, JSON.stringify(body).slice(0, 300));
+        uploadIds56.push(body.upload_id);
+        assert.deepStrictEqual([body.inserted_rows, body.updated_rows], [1, 1]);
+        const { m } = await calcMetric56('mode=YTD&year=2003', om56.metric_id);
+        assert.strictEqual(m.raw_value, 72);
+        assert.strictEqual((await st56.getOutcomeValues(om56.metric_id)).length, 4, 'no duplicate month');
+        const cur = await calcMetric56('mode=YTD', om56.metric_id);
+        assert.strictEqual(cur.m.last_update_label, `${MONTHS56[now.getMonth()]} ${now.getFullYear()}`);
+      });
+
+      await runTest('[NEGATIVE] Invalid file refused as a whole with every error listed (bad year, unknown month, text value, negative, duplicate month, future month, notes too long) - nothing stored', async () => {
+        const now = new Date();
+        const fy = now.getMonth() === 11 ? now.getFullYear() + 1 : now.getFullYear();
+        const fm = now.getMonth() === 11 ? 1 : now.getMonth() + 2;
+        const before = await st56.getOutcomeValues(om56.metric_id);
+        const res = await postOutcome(om56.metric_id, await xlsx56([
+          [1999, 'January', 10],
+          [2004, 'Foo', 10],
+          [2004, 2, 'abc'],
+          [2004, 3, -5],
+          [2004, 4, 10],
+          [2004, 'April', 11],
+          [fy, fm, 10],
+          [2004, 5, 10, 'x'.repeat(501)]
+        ]), 'module56_bad.xlsx');
+        const body = await res.json();
+        assert.strictEqual(res.status, 400);
+        const reasons = body.errors.map(e => `${e.row_number}|${e.column}|${e.reason}`).join('\n');
+        assert.ok(/^2\|A\|Year must be a 4-digit year/m.test(reasons), reasons);
+        assert.ok(/^3\|B\|Month must be a month name/m.test(reasons), reasons);
+        assert.ok(/^4\|C\|Value must be a number/m.test(reasons), reasons);
+        assert.ok(/^5\|C\|Value must not be negative/m.test(reasons), reasons);
+        assert.ok(/^7\|B\|April 2004 appears more than once \(rows 6 and 7\)/m.test(reasons), reasons);
+        assert.ok(new RegExp(`^8\\|B\\|${MONTHS56[fm - 1]} ${fy} is in the future`, 'm').test(reasons), reasons);
+        assert.ok(/^9\|D\|Notes must be at most 500 characters/m.test(reasons), reasons);
+        assert.strictEqual(body.errors.length, 7);
+        assert.deepStrictEqual(await st56.getOutcomeValues(om56.metric_id), before, 'nothing stored');
+        const noHeader = await postOutcome(om56.metric_id, await buildXlsx56([['Something', 'Else'], [1, 2]]));
+        assert.strictEqual(noHeader.status, 400);
+        assert.ok(/No header row found/.test((await noHeader.json()).errors[0].reason));
+        const notXlsx = await postOutcome(om56.metric_id, Buffer.from('not a zip at all'), 'fake.xlsx');
+        assert.strictEqual(notXlsx.status, 400);
+      });
+
+      await runTest('[NEGATIVE] Wrong file type -> 415 (.csv, .xls, .xlsx sent as text/plain), too large -> 413, no file -> 400; nothing stored', async () => {
+        const before = (await st56.getOutcomeValues(om56.metric_id)).length;
+        assert.strictEqual((await postOutcome(om56.metric_id, Buffer.from('Year,Month,Value\n2003,1,1'), 'values.csv', null, 'text/csv')).status, 415);
+        assert.strictEqual((await postOutcome(om56.metric_id, await xlsx56([[2003, 2, 5]]), 'values.xls', null, 'application/vnd.ms-excel')).status, 415);
+        assert.strictEqual((await postOutcome(om56.metric_id, await xlsx56([[2003, 2, 5]]), 'values.xlsx', null, 'text/plain')).status, 415);
+        assert.strictEqual((await postOutcome(om56.metric_id, Buffer.alloc(5 * 1024 * 1024 + 100), 'big.xlsx')).status, 413);
+        assert.strictEqual((await fetch(`${BASE_URL}/api/admin/outcome-values/${om56.metric_id}/upload`, { method: 'POST', body: new FormData() })).status, 400);
+        assert.strictEqual((await st56.getOutcomeValues(om56.metric_id)).length, before);
+      });
+
+      await runTest('[NEGATIVE] A USER gets 403 and a request without login 401 on template / upload / history / evidence; the USER calculate payload still has the Last update', async () => {
+        const directory56 = await (await rawFetch(`${BASE_URL}/api/directorates`)).json();
+        const username = `rt56u${stamp56}`;
+        const created = await adminJson('POST', '/api/admin/users', { username, full_name: 'Regression Outcome User', email: `${username}@example.test`, role: 'USER', scopes: [{ directorate: directory56[0].directorate_name, divisions: null }] });
+        assert.strictEqual(created.status, 201);
+        const cb = await created.json();
+        userIds56.push(cb.user.user_id);
+        const { cookie } = await loginAs(username, cb.temporary_password);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/auth/change-password`, jsonBody('POST', { current_password: cb.temporary_password, new_password: STRONG }, cookie))).status, 200);
+        userCookie56 = cookie;
+        const paths = [`/api/admin/outcome-values/${om56.metric_id}/template`, `/api/admin/outcome-values/${om56.metric_id}/uploads`,
+          `/api/admin/outcome-evidence/${om56.metric_id}?period=2003`, '/api/admin/outcome-evidence/11?period=ALL', '/api/admin/outcome-evidence/1?period=ALL',
+          `/api/admin/outcome-values/uploads/${firstUpload56.upload_id}/file`];
+        for (const p of paths) {
+          assert.strictEqual((await rawFetch(`${BASE_URL}${p}`, { headers: { Cookie: cookie } })).status, 403, `USER ${p}`);
+          assert.strictEqual((await rawFetch(`${BASE_URL}${p}`)).status, 401, `no login ${p}`);
+        }
+        const before = (await st56.getOutcomeValues(om56.metric_id)).length;
+        assert.strictEqual((await postOutcome(om56.metric_id, await xlsx56([[2003, 2, 5]]), 'user.xlsx', cookie)).status, 403);
+        const fd = new FormData();
+        fd.append('file', new Blob([await xlsx56([[2003, 2, 5]])]), 'anon.xlsx');
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/admin/outcome-values/${om56.metric_id}/upload`, { method: 'POST', body: fd })).status, 401);
+        assert.strictEqual((await st56.getOutcomeValues(om56.metric_id)).length, before, 'nothing stored');
+        const u = await (await rawFetch(`${BASE_URL}/api/metrics/calculate?mode=YTD&year=2003`, { headers: { Cookie: cookie } })).json();
+        const um = u.metrics.find(x => x.metric_id === om56.metric_id);
+        assert.deepStrictEqual([um.raw_value, um.last_update_label !== null], [72, true], 'the USER sees the same bankwide OUTCOME value');
+      });
+
+      await runTest('[POSITIVE] Evidence CSV of the stored months: period filter, Used_In_Score marks the month the period is scored with, notes formula-escaped, uploaded_by / uploaded_at filled; invalid period -> 400; SURVEY metric -> 400', async () => {
+        const r = await fetch(`${BASE_URL}/api/admin/outcome-evidence/${om56.metric_id}?period=2003`);
+        assert.strictEqual(r.status, 200);
+        assert.ok(/text\/csv/.test(r.headers.get('content-type')));
+        assert.ok(new RegExp(`Evidence_Outcome_Metric_${om56.metric_id}_YTD_2003\\.csv`).test(r.headers.get('content-disposition')));
+        const lines = csvLines56(await r.text());
+        assert.strictEqual(lines[0], 'Metric_ID,Metric_Name,Unit,Year,Month,Period,Value,Notes,Source,Used_In_Score,Upload_ID,File_Name,Uploaded_By,Uploaded_At,Updated_At');
+        assert.strictEqual(lines.length, 4, 'January, March, July 2003');
+        assert.ok(lines[1].startsWith(`${om56.metric_id},RT56 Outcome ${stamp56},%,2003,January,2003-01,40,,UPLOAD,NO,${firstUpload56.upload_id},module56_valid.xlsx,Regression Suite Admin (rt-suite-`), lines[1]);
+        assert.ok(lines[2].includes(`,2003-03,60,"'=HYPERLINK(""http://x"")",UPLOAD,NO,`), lines[2]);
+        assert.ok(lines[3].includes(',2003-07,72,revised,UPLOAD,YES,'), lines[3]);
+        assert.ok(/,\d{4}-\d{2}-\d{2}T/.test(lines[3]), 'uploaded_at / updated_at present');
+        const mar = csvLines56(await (await fetch(`${BASE_URL}/api/admin/outcome-evidence/${om56.metric_id}?period=2003-03`)).text());
+        assert.strictEqual(mar.length, 2);
+        assert.ok(mar[1].includes(',UPLOAD,YES,'));
+        const all = csvLines56(await (await fetch(`${BASE_URL}/api/admin/outcome-evidence/${om56.metric_id}`)).text());
+        assert.strictEqual(all.length, 5, 'ALL = every stored month (incl. the current month)');
+        assert.ok(all.slice(1).every(l => l.split(',')[9] === ''), 'no Used_In_Score for ALL');
+        for (const bad of ['abc', '2003-13', '20031']) assert.strictEqual((await fetch(`${BASE_URL}/api/admin/outcome-evidence/${om56.metric_id}?period=${bad}`)).status, 400, bad);
+        assert.strictEqual((await fetch(`${BASE_URL}/api/admin/outcome-evidence/2`)).status, 400, 'SURVEY metric');
+        assert.strictEqual((await fetch(`${BASE_URL}/api/admin/outcome-evidence/999999`)).status, 404);
+      });
+
+      await runTest('[POSITIVE] Evidence of metric 1 (social media rows of the period) and metric 11 (event attendances of the period, with identity - Admin only); offered as evidence_type in calculate', async () => {
+        const { calc } = await calcMetric56('mode=YTD', 1);
+        const byId = id => calc.metrics.find(x => x.metric_id === id);
+        assert.deepStrictEqual([byId(1).evidence_type, byId(1).outcome_upload, byId(1).data_upload, byId(11).evidence_type, byId(11).outcome_upload, byId(14).evidence_type, byId(2).evidence_type],
+          ['OUTCOME_VALUES', true, 'SOCIAL_MEDIA', 'EVENT_ATTENDANCE', false, 'OUTCOME_VALUES', undefined]);
+        const v1 = csvLines56(await (await fetch(`${BASE_URL}/api/admin/outcome-evidence/1?period=2026-09`)).text());
+        assert.ok(v1[0].startsWith('Metric_ID,Metric_Name,Unit,Year,Month,Period,Value'), 'metric 1 default evidence = its monthly values');
+        for (const [q, status] of [['1?kind=bogus', 400], ['14?kind=social_media', 400], ['14?kind=values', 200]]) {
+          assert.strictEqual((await fetch(`${BASE_URL}/api/admin/outcome-evidence/${q}`)).status, status, q);
+        }
+        const stats = await st56.getSocialMediaStats();
+        const latest = stats[stats.length - 1];
+        const period = `${latest.year}-${String(latest.month).padStart(2, '0')}`;
+        const sm = await fetch(`${BASE_URL}/api/admin/outcome-evidence/1?period=${period}&kind=social_media`);
+        assert.strictEqual(sm.status, 200);
+        const smLines = csvLines56(await sm.text());
+        assert.strictEqual(smLines[0], 'Metric_ID,Metric_Name,Platform,Year,Month,Period,Followers,Reach,Engagement,Source,Upload_ID,File_Name,Uploaded_By,Uploaded_At');
+        assert.strictEqual(smLines.length - 1, stats.filter(s => s.year === latest.year && s.month === latest.month).length);
+        const att = await fetch(`${BASE_URL}/api/admin/outcome-evidence/11?period=ALL`);
+        assert.strictEqual(att.status, 200);
+        const attLines = csvLines56(await att.text());
+        assert.strictEqual(attLines[0], 'Metric_ID,Metric_Name,Event_ID,Event_Name,Event_Date,NIP,Employee_Name,CIMB_Email,Directorate,Division,Attendance_Timestamp');
+        assert.strictEqual(attLines.length - 1, (await st56.getAttendances()).length);
+        const empty = csvLines56(await (await fetch(`${BASE_URL}/api/admin/outcome-evidence/11?period=2003`)).text());
+        assert.strictEqual(empty.length, 1, 'no attendance in 2003 - header only');
+      });
+
+      await runTest('[POSITIVE] Legacy rule: an OUTCOME metric without any uploaded month keeps its static raw_value in every period (STATIC_SNAPSHOT), Last update = last_data_date month; metric 1 / 11 / SURVEY / ESS metrics get a Last update too (metric 1 = its latest value month)', async () => {
+        for (const q of ['mode=YTD&year=2003', 'mode=MTD&year=2004&month=02', 'mode=YTD']) {
+          const { m } = await calcMetric56(q, legacy56.metric_id);
+          assert.deepStrictEqual([m.raw_value, m.has_data, m.value_basis, m.outcome_period, m.period_window], [55, true, 'STATIC_SNAPSHOT', null, null], q);
+        }
+        const { calc } = await calcMetric56('mode=YTD', legacy56.metric_id);
+        const byId = id => calc.metrics.find(x => x.metric_id === id);
+        assert.deepStrictEqual([byId(legacy56.metric_id).last_update_period, byId(legacy56.metric_id).last_update_label], ['2004-05', 'May 2004']);
+        const ov1 = await st56.getOutcomeValues(1);
+        const stats = await st56.getSocialMediaStats();
+        const latest1 = ov1.length ? ov1.reduce((mx, r) => Math.max(mx, r.year * 100 + r.month), 0) : stats.reduce((mx, r) => Math.max(mx, r.year * 100 + r.month), 0);
+        assert.strictEqual(byId(1).last_update_period, `${Math.floor(latest1 / 100)}-${String(latest1 % 100).padStart(2, '0')}`, 'metric 1: its latest uploaded value month');
+        const atts = await st56.getAttendances();
+        const latestAtt = atts.map(a => String(a.attendance_timestamp).slice(0, 7)).sort().pop() || null;
+        assert.strictEqual(byId(11).last_update_period, latestAtt);
+        const surveyDates = await st56.getLatestSurveyDates();
+        const sys = calc.metrics.find(x => x.metric_type === 'SURVEY' && x.survey_source === 'SYSTEM' && surveyDates[x.metric_id]);
+        assert.strictEqual(sys.last_update_period, surveyDates[sys.metric_id].slice(0, 7));
+        const ess = calc.metrics.find(x => x.survey_source === 'ESS' && x.last_update_period);
+        if (ess) {
+          const rows = await st56.getEssResults(ess.metric_id);
+          const k = rows.reduce((mx, r) => Math.max(mx, r.survey_year * 100 + r.survey_month), 0);
+          assert.strictEqual(ess.last_update_period, `${Math.floor(k / 100)}-${String(k % 100).padStart(2, '0')}`);
+        }
+        const d = await detail56(legacy56.metric_id, 'mode=YTD');
+        assert.deepStrictEqual([d.value_basis, d.current_raw_value, d.last_update_label], ['STATIC_SNAPSHOT', 55, 'May 2004']);
+      });
+
+      await runTest('[POSITIVE] JSON backend in-process (same contract): save / upsert / read / uploads / latest survey dates give the same results as SQL Server; metrics 14 / 2 get the same tier configuration there; store.json and auth.json restored byte-identically', async () => {
+        const dataDir = path56.join(__dirname, '..', 'server', 'data');
+        const files = ['store.json', 'auth.json'].map(f => path56.join(dataDir, f));
+        const saved = files.map(f => (fs56.existsSync(f) ? fs56.readFileSync(f) : null));
+        const fakeId = 990000 + Math.floor(Math.random() * 9000);
+        const run = async st => {
+          const a = await st.saveOutcomeValues({ upload_id: `rt56-parity-a-${stamp56}`, metric_id: fakeId, file_name: 'a.xlsx', uploaded_by: 'RT56', period_from: '2003-01', period_to: '2003-02' },
+            [{ year: 2003, month: 1, value: 10.25, notes: 'n1' }, { year: 2003, month: 2, value: 0, notes: null }]);
+          const b = await st.saveOutcomeValues({ upload_id: `rt56-parity-b-${stamp56}`, metric_id: fakeId, file_name: 'b.xlsx', uploaded_by: 'RT56', period_from: '2003-02', period_to: '2003-03' },
+            [{ year: 2003, month: 2, value: 7, notes: 'upd' }, { year: 2003, month: 3, value: 1234567.8912, notes: null }]);
+          return {
+            saves: [a, b].map(x => [x.inserted, x.updated, x.replaced_seed, x.record.total_rows, x.record.metric_id]),
+            values: (await st.getOutcomeValues(fakeId)).map(r => [r.metric_id, r.year, r.month, r.value, r.notes, r.source, r.upload_id.replace(stamp56, '')]),
+            uploads: (await st.getOutcomeUploads(fakeId)).map(u => [u.upload_id.replace(stamp56, ''), u.metric_id, u.file_name, u.total_rows, u.inserted_rows, u.updated_rows, u.period_from, u.period_to]),
+            allHas: (await st.getOutcomeValues()).some(r => r.metric_id === fakeId),
+            latestType: typeof (await st.getLatestSurveyDates())
+          };
+        };
+        let jsonOut;
+        let sqlOut;
+        let json14;
+        let json2;
+        try {
+          const js = require('../server/db/jsonStorage');
+          jsonOut = await run(js);
+          json14 = await js.getMetricById(14);
+          json2 = await js.getMetricById(2);
+          sqlOut = await run(st56);
+        } finally {
+          files.forEach((f, i) => { if (saved[i] === null) { if (fs56.existsSync(f)) fs56.unlinkSync(f); } else fs56.writeFileSync(f, saved[i]); });
+          await st56.deleteMetric(fakeId).catch(() => {}); // no px_metrics row -> throws; the rows go via the SQL below
+          const sql56 = require('mssql');
+          const pool = await new sql56.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
+            user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
+          try {
+            await pool.request().input('id', sql56.Int, fakeId).query('DELETE FROM dbo.px_outcome_values WHERE metric_id = @id; DELETE FROM dbo.px_outcome_uploads WHERE metric_id = @id;');
+          } finally { await pool.close(); }
+        }
+        files.forEach((f, i) => assert.ok(saved[i] === null ? !fs56.existsSync(f) : Buffer.compare(fs56.readFileSync(f), saved[i]) === 0, `${path56.basename(f)} restored byte-identically`));
+        assert.deepStrictEqual(jsonOut, sqlOut);
+        assert.deepStrictEqual(sqlOut.saves, [[2, 0, 0, 2, fakeId], [1, 1, 0, 2, fakeId]]);
+        assert.deepStrictEqual(sqlOut.values, [[fakeId, 2003, 1, 10.25, 'n1', 'UPLOAD', 'rt56-parity-a-'], [fakeId, 2003, 2, 7, 'upd', 'UPLOAD', 'rt56-parity-b-'], [fakeId, 2003, 3, 1234567.8912, null, 'UPLOAD', 'rt56-parity-b-']]);
+        assert.deepStrictEqual([json14.scale_type, json14.score_tiers], ['QUOTA_COUNT', { unit: 'number', bounds: B14 }]);
+        assert.deepStrictEqual(json2.score_tiers, { unit: 'number', bounds: null }, 'metric 2 not configured (N/A) on JSON too');
+        assert.strictEqual(sqlOut.latestType, 'object');
+      });
+
+      await runTest('[POSITIVE] Deleting a metric deletes its monthly values, upload history and original files (documented cascade)', async () => {
+        const id = om56.metric_id;
+        const r = await adminJson('DELETE', `/api/admin/metrics/${id}`);
+        assert.strictEqual(r.status, 200);
+        metricIds56.splice(metricIds56.indexOf(id), 1);
+        assert.deepStrictEqual(await st56.getOutcomeValues(id), []);
+        assert.deepStrictEqual(await st56.getOutcomeUploads(id), []);
+        for (let i = 0; i < 20 && uploadIds56.some(u => fs56.existsSync(path56.join(ov56.OUTCOME_UPLOAD_DIR, `${u}.xlsx`))); i++) await new Promise(r => setTimeout(r, 100)); // unlink is asynchronous
+        for (const u of uploadIds56) assert.ok(!fs56.existsSync(path56.join(ov56.OUTCOME_UPLOAD_DIR, `${u}.xlsx`)), `${u} file removed`);
+      });
+    } finally {
+      for (const id of [...metricIds56].reverse()) await adminJson('DELETE', `/api/admin/metrics/${id}`);
+      for (const u of uploadIds56) { const f = path56.join(ov56.OUTCOME_UPLOAD_DIR, `${u}.xlsx`); if (fs56.existsSync(f)) fs56.unlinkSync(f); }
+      for (const id of userIds56) await adminJson('DELETE', `/api/admin/users/${id}`);
+      if (userCookie56) userCookie56 = null;
     }
   }
 }

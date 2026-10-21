@@ -68,8 +68,9 @@ CREATE TABLE dbo.px_metrics (
   last_data_date         DATE           NULL,                -- OUTCOME metrics: last HR-system ingestion
   notes                  NVARCHAR(MAX)  NULL,
   unit                   NVARCHAR(30)   NULL,                -- display unit of the actual value ('%', '/ 5', 'pax', ...); NULL = not set yet (filled at boot)
-  survey_source          VARCHAR(10)    NULL CONSTRAINT CK_px_metrics_survey_source CHECK (survey_source IN ('SYSTEM', 'ESS'))
+  survey_source          VARCHAR(10)    NULL CONSTRAINT CK_px_metrics_survey_source CHECK (survey_source IN ('SYSTEM', 'ESS')),
                                                              -- SURVEY metrics only: SYSTEM (other system/form) | ESS (Employee Sentiment Survey); OUTCOME = NULL
+  score_tiers            NVARCHAR(400)  NULL                 -- v2.54.0: tier configuration JSON { unit, bounds } (NULL = scored by its scale)
 );
 GO
 
@@ -82,6 +83,16 @@ GO
 -- (SURVEY metric whose source_of_data mentions ESS -> 'ESS', other SURVEY -> 'SYSTEM'); an admin's value is never overwritten.
 IF COL_LENGTH(N'dbo.px_metrics', N'survey_source') IS NULL
 ALTER TABLE dbo.px_metrics ADD survey_source VARCHAR(10) NULL CONSTRAINT CK_px_metrics_survey_source CHECK (survey_source IN ('SYSTEM', 'ESS'));
+GO
+
+-- v2.54.0: tiered score - JSON { "unit": "percent"|"number", "bounds": [{ "min": 4000, "op": ">=" }, ... 4] | null } (lower
+-- boundaries of tiers 2..5; bounds null = not configured -> value N/A, out of the index); NULL = scored by its scale_type.
+-- init() fills it once for the seed metrics 1, 2, 3 and 14 while it is still NULL (server/db/scoreTiers.js).
+IF COL_LENGTH(N'dbo.px_metrics', N'score_tiers') IS NULL
+ALTER TABLE dbo.px_metrics ADD score_tiers NVARCHAR(400) NULL;
+GO
+IF COL_LENGTH(N'dbo.px_metrics', N'score_tiers') < 800
+ALTER TABLE dbo.px_metrics ALTER COLUMN score_tiers NVARCHAR(400) NULL;
 GO
 
 IF OBJECT_ID(N'dbo.px_metric_targets', N'U') IS NULL
@@ -642,3 +653,40 @@ CREATE TABLE dbo.px_social_media_stats (
 GO
 -- px_integration_tokens (v2.52.0) was removed in v2.53.0: sqlStorage.dropRetiredIntegrationTokens() drops it at boot /
 -- migrate when it is empty (a table that still holds rows is kept and reported).
+
+-- ---------------------------------------------------------------- monthly values of OUTCOME metrics (v2.54.0)
+-- Bankwide value per metric per month, uploaded by the Admin (.xlsx: Year | Month | Value | Notes; original kept in
+-- server/data/outcome-uploads/<upload_id>.xlsx). Key (metric, year, month): uploading a month again updates it. A metric
+-- with rows here is scored from them (YTD = latest month inside the window, MTD = that month, none -> NO_DATA); a metric
+-- without rows keeps its static raw_value. Not used for metric 1 (social media) and 11 (live event attendance).
+-- Deleting a metric deletes its rows (documented metric-delete cascade).
+IF OBJECT_ID(N'dbo.px_outcome_uploads', N'U') IS NULL
+CREATE TABLE dbo.px_outcome_uploads (
+  upload_id           NVARCHAR(64)   NOT NULL CONSTRAINT PK_px_outcome_uploads PRIMARY KEY,
+  metric_id           INT            NOT NULL,
+  file_name           NVARCHAR(260)  NULL,
+  uploaded_by         NVARCHAR(200)  NOT NULL,  -- "Name (username)"
+  total_rows          INT            NOT NULL CONSTRAINT DF_px_oc_up_total DEFAULT (0),
+  inserted_rows       INT            NOT NULL CONSTRAINT DF_px_oc_up_ins DEFAULT (0),
+  updated_rows        INT            NOT NULL CONSTRAINT DF_px_oc_up_upd DEFAULT (0),
+  replaced_seed_rows  INT            NOT NULL CONSTRAINT DF_px_oc_up_seed DEFAULT (0),
+  period_from         CHAR(7)        NULL,      -- 'YYYY-MM'
+  period_to           CHAR(7)        NULL,
+  uploaded_at         DATETIME2(3)   NOT NULL CONSTRAINT DF_px_oc_up_ts DEFAULT (SYSUTCDATETIME())
+);
+GO
+IF OBJECT_ID(N'dbo.px_outcome_values', N'U') IS NULL
+CREATE TABLE dbo.px_outcome_values (
+  value_id     INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_px_outcome_values PRIMARY KEY,
+  metric_id    INT            NOT NULL,
+  stat_year    INT            NOT NULL CONSTRAINT CK_px_oc_year CHECK (stat_year BETWEEN 2000 AND 2100),
+  stat_month   INT            NOT NULL CONSTRAINT CK_px_oc_month CHECK (stat_month BETWEEN 1 AND 12),
+  value        DECIMAL(18,4)  NOT NULL CONSTRAINT CK_px_oc_value CHECK (value >= 0),
+  notes        NVARCHAR(500)  NULL,
+  source       VARCHAR(20)    NOT NULL CONSTRAINT CK_px_oc_src CHECK (source IN ('UPLOAD', 'SEED')),
+  upload_id    NVARCHAR(64)   NULL,           -- px_outcome_uploads.upload_id (NULL for SEED rows)
+  created_at   DATETIME2(3)   NOT NULL CONSTRAINT DF_px_oc_created DEFAULT (SYSUTCDATETIME()),
+  updated_at   DATETIME2(3)   NULL,
+  CONSTRAINT UQ_px_outcome_metric_period UNIQUE (metric_id, stat_year, stat_month)
+);
+GO

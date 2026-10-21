@@ -5,6 +5,8 @@ const { isEssMetric } = require('../db/surveySource');
 const { selectEssResult, essOrgFor, essOriginalFilePath } = require('./essSummaryService');
 const { periodWindow } = require('../db/filterUtils');
 const { isSocialMediaMetric, getSocialMediaDrilldown } = require('./socialMediaService');
+const { readTierConfig, tieredScore } = require('../db/scoreTiers');
+const { isOutcomeUploadMetric, evidenceTypeOf, selectOutcomeValue, loadLastUpdateContext, lastUpdateFor } = require('./outcomeValueService');
 
 // Default year for YTD/unparseable period requests, derived from the real server clock
 // instead of a hardcoded literal — this dataset happens to be seeded for 2026 (today's real
@@ -57,6 +59,11 @@ function normalizeScore(metric, rawValue = null) {
   const value = rawValue !== null ? parseFloat(rawValue) : parseFloat(metric.raw_value || 0);
   const target = parseFloat(metric.target_value || 100);
 
+  // v2.54.0: a tier-scored metric (score_tiers set) is scored by its tiers, whatever its scale; tiers not configured yet ->
+  // null (N/A, left out of the index)
+  const tierCfg = readTierConfig(metric.score_tiers);
+  if (tierCfg) return tierCfg.bounds ? tieredScore(value, tierCfg.bounds).percent : null;
+
   switch (metric.scale_type) {
     case 'RATING_5':
       // Scale 1-5 to 0-100%
@@ -66,6 +73,7 @@ function normalizeScore(metric, rawValue = null) {
       // % Achievement towards quota target
       if (target <= 0) return 100;
       return Math.min(Math.max((value / target) * 100, 0), 100);
+
 
     case 'PERCENTAGE':
     case 'NUMERIC':
@@ -84,6 +92,44 @@ function normalizeScore(metric, rawValue = null) {
  */
 function normalizeTarget(metric, targetConfig) {
   return normalizeScore({ ...metric, ...targetConfig }, parseFloat(targetConfig.target_value || 0));
+}
+
+/**
+ * v2.54.0: how a tier-scored value was scored, for the UI ("6,400 -> tier 4 -> 4.27 / 5 = 85.33%"); null for a metric that is
+ * not tier-scored, whose tiers are not configured, or without a value.
+ */
+function tierInfo(metric, rawValue) {
+  const cfg = readTierConfig(metric.score_tiers);
+  if (!cfg || !cfg.bounds || rawValue === null || rawValue === undefined) return null;
+  const tiers = cfg.bounds;
+  const t = tieredScore(rawValue, tiers);
+  return {
+    value: parseFloat(parseFloat(rawValue).toFixed(4)),
+    tier: t.tier,
+    lower_bound: t.lower_bound,
+    score: parseFloat(t.score.toFixed(2)),
+    score_uncapped: parseFloat(t.score_uncapped.toFixed(4)),
+    percent: parseFloat(t.percent.toFixed(2)),
+    capped: t.score_uncapped > 5,
+    unit: cfg.unit,
+    bounds: tiers
+  };
+}
+
+// v2.54.0: the extra fields of an OUTCOME metric - which evidence it offers, whether the Admin can upload monthly values,
+// and (when it has stored months) the month the period is scored with.
+function outcomeFields(m, { basis = null, pick = null } = {}) {
+  if (m.metric_type !== 'OUTCOME') return {};
+  return {
+    evidence_type: evidenceTypeOf(m),
+    outcome_upload: isOutcomeUploadMetric(m),
+    ...(isOutcomeUploadMetric(m) ? {
+      value_basis: basis,                                    // 'MONTHLY_VALUES' (uploaded months) | 'STATIC_SNAPSHOT' (raw_value)
+      outcome_period: pick ? pick.period : null,
+      outcome_period_label: pick ? pick.period_label : null,
+      outcome_value_source: pick ? pick.row.source : null
+    } : {})
+  };
 }
 
 /**
@@ -188,6 +234,8 @@ function normalizeDateString(dateVal) {
   } catch (e) {}
   return str;
 }
+
+const round2 = v => (v === null || v === undefined ? null : parseFloat(v.toFixed(2)));
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -365,6 +413,8 @@ async function computeMonthlyTrends(filterOptions = {}) {
 // The window of an ESS metric (v2.50.0): the selected window, with basis LATEST_RESULT (the latest ESS result on or before
 // its end is used, see essSummaryService.selectEssResult).
 const essWindow = mp => ({ ...(periodWindow(mp) || { from: null, to: null }), basis: 'LATEST_RESULT' });
+// The window of an OUTCOME metric with uploaded monthly values (v2.54.0): the latest stored month inside it (MTD = that month)
+const outcomeWindow = mp => ({ ...(periodWindow(mp) || { from: null, to: null }), basis: String(mp.mode).toUpperCase() === 'MTD' ? 'MONTH' : 'LATEST_MONTH' });
 
 async function essDirectorateFor(directorate, subDirectorate, scopes) {
   if (scopes || (directorate && directorate !== 'ALL') || !subDirectorate || subDirectorate === 'ALL') return directorate;
@@ -421,14 +471,17 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
   const isDirectorateFiltered = (directorate && directorate !== 'ALL') || !!scopes;
   const queryFilter = { mode, year, month, directorate, sub_directorate: subDirectorate, period: periodString, endMonth, scopes };
 
-  const [metrics, journeys, checkpoints, targets, essResults, pxWeights] = await Promise.all([
+  const [metrics, journeys, checkpoints, targets, essResults, pxWeights, outcomeRows] = await Promise.all([
     storage.getMetrics(),
     storage.getJourneys(),
     storage.getCheckpoints(),
     storage.getMetricTargets(),
     storage.getEssResults(null), // ESS summaries (v2.32.0): small table, read once per calculation
-    getPxWeights()
+    getPxWeights(),
+    storage.getOutcomeValues()   // monthly OUTCOME values (v2.54.0): small table, read once per calculation
   ]);
+  // "Last update" of every metric (v2.54.0) - only for the scorecard itself, not for its per-month / per-directorate inner calls
+  const lastUpdateCtx = options.skipTrends ? null : await loadLastUpdateContext({ essResults, outcomeRows });
   const wSurvey = pxWeights.survey / 100;
   const wOutcome = pxWeights.outcome / 100;
   // ESS is reported per directorate: a division filter reads its parent directorate's row.
@@ -456,8 +509,10 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
     let lastSurveyDate = null;
     // v2.36.0: a SURVEY metric only has a value when it has data INSIDE the selected window; without it the metric
     // is NO_DATA (no static raw_value fallback) and stays out of every index, rollup and alert. OUTCOME metrics are
-    // current snapshots and always have a value.
+    // current snapshots and always have a value - unless they have uploaded monthly values (v2.54.0, see below).
     let hasData = true;
+    let outcomeBasis = null;
+    let outcomePick = null;
     const isEss = m.metric_type === 'SURVEY' && isEssMetric(m);
     let essResult = null;
     // The period this metric is read for (v2.37.0): exactly the selected period for every SYSTEM survey metric - MTD =
@@ -497,7 +552,27 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       // PUT /api/admin/metrics/:id), not a hardcoded lookup in business logic.
       const rawDate = m.last_data_date || m.last_survey_date || todayDateString();
       lastSurveyDate = normalizeDateString(rawDate) || todayDateString();
+      // v2.54.0: a metric with uploaded monthly values takes the latest stored month inside the window (MTD = that month);
+      // none inside the window -> NO_DATA. Without any stored month the static raw_value above stays (bankwide either way).
+      if (isOutcomeUploadMetric(m)) {
+        const own = outcomeRows.filter(r => r.metric_id === m.metric_id);
+        outcomeBasis = own.length ? 'MONTHLY_VALUES' : 'STATIC_SNAPSHOT';
+        if (own.length) {
+          outcomePick = selectOutcomeValue(own, mp);
+          if (outcomePick) {
+            rawVal = outcomePick.row.value;
+            lastSurveyDate = `${outcomePick.period}-01`;
+          } else {
+            hasData = false;
+          }
+        }
+      }
     }
+
+    // v2.54.0: a tier-scored metric whose tiers are not configured yet has no value (N/A): out of every index, rollup and alert
+    const tierCfg = readTierConfig(m.score_tiers);
+    const notApplicable = !!tierCfg && !tierCfg.bounds;
+    if (notApplicable) hasData = false;
 
     const normScore = hasData ? normalizeScore({ ...m, ...targetConfig }, rawVal) : null;
     const minThreshold = parseFloat(targetConfig.min_threshold || 75);
@@ -525,7 +600,7 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       survey_source: m.survey_source || null,
       experience_owner: m.experience_owner,
       target_value: targetConfig.target_value,
-      target_value_normalized: parseFloat(normalizedTarget.toFixed(2)),
+      target_value_normalized: round2(normalizedTarget),
       target_display: targetConfig.target_display,
       min_threshold: targetConfig.min_threshold,
       raw_value: hasData ? parseFloat(rawVal.toFixed(2)) : null,
@@ -537,7 +612,9 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       update_frequency: m.update_frequency || 'MONTHLY',
       // the dates this SURVEY metric was read for (OUTCOME = current snapshot, no window)
       // ESS (v2.50.0): basis LATEST_RESULT - the result of ess_period is used for the whole selected window
-      period_window: m.metric_type === 'SURVEY' ? (isEss ? essWindow(mp) : periodWindow(mp)) : null,
+      // OUTCOME with uploaded months (v2.54.0): basis LATEST_MONTH (YTD) / MONTH (MTD)
+      period_window: m.metric_type === 'SURVEY' ? (isEss ? essWindow(mp) : periodWindow(mp))
+        : (outcomeBasis === 'MONTHLY_VALUES' ? outcomeWindow(mp) : null),
       sample_size: sampleSize,
       last_survey_date: lastSurveyDate,
       gap: hasData ? parseFloat((normalizedTarget - normScore).toFixed(2)) : null,
@@ -550,6 +627,11 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       is_bankwide_value: isBankwideValue,
       // v2.52.0: metric 1 takes social media statistics (Admin .xlsx upload) - the UI offers Template + Upload
       ...(isSocialMediaMetric(m) ? { data_upload: 'SOCIAL_MEDIA' } : {}),
+      ...outcomeFields(m, { basis: outcomeBasis, pick: outcomePick }),
+      score_tiers: tierCfg,
+      not_applicable: notApplicable, // tiers not configured yet: value N/A (status NO_DATA, out of the index)
+      tier_info: hasData ? tierInfo(m, rawVal) : null,
+      ...(lastUpdateCtx ? lastUpdateFor(m, lastUpdateCtx) : {}),
       ...(isEss ? {
         ess_period: essResult ? essResult.period : null,
         ess_period_label: essResult ? essResult.period_label : null,
@@ -591,7 +673,6 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
     pxIndex = outcomeIndex;
     pxIndexBasis = 'OUTCOME_ONLY';
   }
-  const round2 = v => (v === null ? null : parseFloat(v.toFixed(2)));
 
   // 6. Rollup by Journey
   const journeySummaries = journeys.map(j => {
@@ -714,6 +795,14 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
  * - ESS sentiment summary and dimension statistics if source is ESS
  */
 async function getMetricDetail(metricId, filterInput = 'YTD') {
+  const detail = await buildMetricDetail(metricId, filterInput);
+  if (!detail) return detail;
+  // v2.54.0: the latest data period of the metric (bankwide, any window) - "Last update: <Month Year>"
+  const metric = (await storage.getMetrics()).find(m => m.metric_id === detail.metric_id);
+  return { ...detail, ...lastUpdateFor(metric, await loadLastUpdateContext()) };
+}
+
+async function buildMetricDetail(metricId, filterInput = 'YTD') {
   const id = parseInt(metricId);
   const metrics = await storage.getMetrics();
   const metric = metrics.find(m => m.metric_id === id);
@@ -820,8 +909,22 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
       operationalRecords = await storage.getOperationalRecords(id);
     }
 
-    const rawVal = parseFloat(metric.raw_value || 0);
-    const normalizedScore = normalizeScore({ ...metric, ...targetConfig }, rawVal);
+    // v2.54.0: uploaded monthly values (same rule as calculatePEIndex): latest stored month inside the window, none -> NO_DATA
+    let rawVal = parseFloat(metric.raw_value || 0);
+    let hasData = true;
+    let basis = null;
+    let pick = null;
+    if (isOutcomeUploadMetric(metric)) {
+      const own = await storage.getOutcomeValues(id);
+      basis = own.length ? 'MONTHLY_VALUES' : 'STATIC_SNAPSHOT';
+      if (own.length) {
+        pick = selectOutcomeValue(own, mp);
+        if (pick) rawVal = pick.row.value; else hasData = false;
+      }
+    }
+    const tierCfg = readTierConfig(metric.score_tiers);
+    if (tierCfg && !tierCfg.bounds) hasData = false; // v2.54.0: tiers not configured -> N/A
+    const normalizedScore = hasData ? normalizeScore({ ...metric, ...targetConfig }, rawVal) : null;
     const normalizedTargetOutcome = normalizeTarget(metric, targetConfig);
 
     return {
@@ -836,7 +939,7 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
         journey_name: journey?.journey_name || '',
         checkpoint_name: checkpoint?.checkpoint_name || '',
         target_value: targetConfig.target_value,
-        target_value_normalized: parseFloat(normalizedTargetOutcome.toFixed(2)),
+        target_value_normalized: round2(normalizedTargetOutcome),
         target_display: targetConfig.target_display,
         unit: metric.unit,
         min_threshold: targetConfig.min_threshold,
@@ -861,13 +964,21 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
       journey_color: journey?.color || '#ED1C24',
       checkpoint_name: checkpoint?.checkpoint_name || '',
       target_value: targetConfig.target_value,
-      target_value_normalized: parseFloat(normalizedTargetOutcome.toFixed(2)),
+      target_value_normalized: round2(normalizedTargetOutcome),
       target_display: targetConfig.target_display,
       min_threshold: targetConfig.min_threshold,
-      current_raw_value: rawVal,
+      current_raw_value: hasData ? rawVal : null,
       unit: metric.unit,
-      normalized_score: parseFloat(normalizedScore.toFixed(2)),
-      status: normalizedScore < targetConfig.min_threshold ? 'CRITICAL' : (normalizedScore < normalizedTargetOutcome ? 'WARNING' : 'HEALTHY'),
+      normalized_score: hasData ? parseFloat(normalizedScore.toFixed(2)) : null,
+      has_data: hasData,
+      status: !hasData ? 'NO_DATA' : (normalizedScore < targetConfig.min_threshold ? 'CRITICAL' : (normalizedScore < normalizedTargetOutcome ? 'WARNING' : 'HEALTHY')),
+      update_frequency: metric.update_frequency || 'MONTHLY',
+      period_window: basis === 'MONTHLY_VALUES' ? outcomeWindow(mp) : null,
+      is_bankwide_value: isBankwideValue,
+      ...outcomeFields(metric, { basis, pick }),
+      score_tiers: tierCfg,
+      not_applicable: !!tierCfg && !tierCfg.bounds,
+      tier_info: hasData ? tierInfo(metric, rawVal) : null,
       period: periodString,
       filter_options: queryFilter,
       total_respondents: null,
@@ -1103,7 +1214,10 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
 
   // v2.36.0: no data in the window (an ESS metric without a result here, or no survey rows) -> NO_DATA with null
   // scores, exactly like the scorecard; no static raw_value / default ESS score fallback.
-  const hasData = !isEss && responses.length > 0;
+  // v2.54.0: a tier-scored metric whose tiers are not configured yet is N/A
+  const tierCfg = readTierConfig(metric.score_tiers);
+  const notApplicable = !!tierCfg && !tierCfg.bounds;
+  const hasData = !isEss && !notApplicable && responses.length > 0;
   const overallAvg = hasData
     ? responses.reduce((acc, r) => acc + (parseFloat(r.rating_score) || 0), 0) / responses.length
     : null;
@@ -1140,7 +1254,7 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
       journey_name: journey?.journey_name || '',
       checkpoint_name: checkpoint?.checkpoint_name || '',
       target_value: targetConfig.target_value,
-      target_value_normalized: parseFloat(normalizedTargetSurvey.toFixed(2)),
+      target_value_normalized: round2(normalizedTargetSurvey),
       target_display: targetConfig.target_display,
       unit: metric.unit,
       min_threshold: targetConfig.min_threshold,
@@ -1166,13 +1280,16 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
     journey_color: journey?.color || '#ED1C24',
     checkpoint_name: checkpoint?.checkpoint_name || '',
     target_value: targetConfig.target_value,
-    target_value_normalized: parseFloat(normalizedTargetSurvey.toFixed(2)),
+    target_value_normalized: round2(normalizedTargetSurvey),
     target_display: targetConfig.target_display,
     min_threshold: targetConfig.min_threshold,
     current_raw_value: hasData ? parseFloat(overallAvg.toFixed(2)) : null,
     unit: metric.unit,
     normalized_score: hasData ? parseFloat(normalizedOverall.toFixed(2)) : null,
     has_data: hasData,
+    score_tiers: tierCfg,
+    not_applicable: notApplicable,
+    tier_info: hasData ? tierInfo(metric, overallAvg) : null,
     ...windowInfo,
     status: !hasData ? 'NO_DATA' : (normalizedOverall < targetConfig.min_threshold ? 'CRITICAL' : (normalizedOverall < normalizedTargetSurvey ? 'WARNING' : 'HEALTHY')),
     period: periodString,
@@ -1287,7 +1404,7 @@ async function buildEssDetail({ id, metric, targetConfig, journey, checkpoint, i
     journey_name: journey?.journey_name || '',
     checkpoint_name: checkpoint?.checkpoint_name || '',
     target_value: targetConfig.target_value,
-    target_value_normalized: parseFloat(normalizedTarget.toFixed(2)),
+    target_value_normalized: round2(normalizedTarget),
     target_display: targetConfig.target_display,
     unit: metric.unit,
     min_threshold: targetConfig.min_threshold,
@@ -1341,6 +1458,7 @@ async function buildEssDetail({ id, metric, targetConfig, journey, checkpoint, i
 }
 
 module.exports = {
+  tierInfo,
   getPxWeights,
   clearPxWeightsCache,
   pxWeightsError,

@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(413-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(434-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,8 +75,8 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (413 cases on SQL; v2.53.0 run 327/327, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
-| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (36 `px_*` tables), JSON→SQL migration, rollback |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (434 cases on SQL; v2.54.0 run 348/348, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
+| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (38 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
 ## Compliance constraints (do not violate)
@@ -768,6 +768,19 @@ domain model, not just descriptive:
 
 - **v2.53.1** (2026-10-21, see `CHANGELOG.md` [2.53.1], `docs/05`, `docs/06`): Manage Users no longer offers divisions - a User's scope is whole directorates
   (`divisions: null`); old division limits are flagged and widened on save. Backend division scopes still work (API/tests). Frontend only.
+
+- **v2.54.0** (2026-10-21, see `CHANGELOG.md` [2.54.0], `docs/01` §3.9, `docs/02`, `docs/04`/`05` "Catatan v2.54.0", `docs/06`, `docs/07` §43, `docs/08` §27, `SQLServerDB.md` §26): user asked
+  for tier scoring (metric 14: <4000 / 4000 / 5000 / 6000 / 7500, % = value / lower bound of its tier x tier / 5, cap 100%, tier 1 proportional to 4000; 6400 -> 85.33%) and
+  the same for metrics 1 and 3, metric 2 N/A, plus monthly Template/Upload/Evidence for OUTCOME metrics. New `px_metrics.score_tiers` (JSON `{unit, bounds x4 | null}`; NULL = scale
+  scoring, bounds null = N/A -> `NO_DATA` + `not_applicable`, out of every index/rollup/alert/trend), logic in `server/db/scoreTiers.js` + `src/utils/scoreTiers.js`, used by
+  `normalizeScore`/`normalizeTarget`. New `px_outcome_values`/`px_outcome_uploads` (38 tables), `outcomeValueService.js`, Admin-only `/api/admin/outcome-values/*` + `/api/admin/outcome-evidence/:id`:
+  OUTCOME (not 11) with stored months -> YTD = latest month in window, MTD = that month, none -> NO_DATA; without months -> static `raw_value`. New fields incl. `last_update_label`
+  ("Last Update" column), `target_value_normalized` may be null. Live data: boot `topUpScoreTiers` only where `score_tiers` is NULL; metric 14 raw 4330 -> 6400, metric 1 target 2%
+  (value 0.66 Sep 2026 -> 13.2%), metric 3 target 70% (75.04 -> 100%); initial values are batches `ov-initial-1/3-2026-09` inserted directly in SQL (not in store.json). YTD 2026 PX
+  83.86 -> 81.48. Gotchas: Score Tiers UI only for already-tiered metrics; API cannot switch tiers off; metric 14 target 60% < threshold 75%, metric 1 target = threshold;
+  metric 11 evidence is period-filtered but its score is all-time. Tests: Module 56 (21, SQL only), Modules 21/25/33/46/55 adjusted -> suite 434 by count; SQL 348/348, 16 skipped; QC: LULUS DENGAN CATATAN; open: tier formula (user's) is not monotonic
+  (metric 1: 2.00% -> 80%, 2.01% -> 60.3%) - awaiting the user's decision; ESS detail + N/A tiers may 500 (buildEssDetail toFixed on null); tiers can't be switched off.
+  Thresholds set after the suite (user: one tier below target): metric 14 min 75 -> 40, metric 1 min 80 -> 20 (via Admin API, audited); metric 3 left at 70.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

@@ -347,7 +347,7 @@ export default function Dashboard({
                       const isDisabled = m.is_disabled === true;
                       const isNoData = !isDisabled && m.status === 'NO_DATA';
                       const StatusIcon = isDisabled || isNoData ? MinusCircle : m.status === 'CRITICAL' ? AlertCircle : m.status === 'WARNING' ? AlertTriangle : CheckCircle2;
-                      const statusLabel = isDisabled ? 'Exempted' : isNoData ? 'No Data' : m.status === 'CRITICAL' ? 'Critical' : m.status === 'WARNING' ? 'Warning' : 'On Target';
+                      const statusLabel = isDisabled ? 'Exempted' : isNoData ? (m.not_applicable ? 'N/A' : 'No Data') : m.status === 'CRITICAL' ? 'Critical' : m.status === 'WARNING' ? 'Warning' : 'On Target';
                       return (
                         <button
                           key={m.metric_id}

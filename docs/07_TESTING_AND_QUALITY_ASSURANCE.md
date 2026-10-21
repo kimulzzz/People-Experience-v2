@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    55 MODUL PENGUJIAN    │     413 AUTOMATED TESTS     │       100% PASS RATE          │
+│    56 MODUL PENGUJIAN    │     434 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -1277,3 +1277,49 @@ Tes 12-16 (token, ingest, validasi ingest, revoke, rate limit) dihapus; tes 11 t
 Run suite penuh SQL (developer, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **327/327 lulus, 0 gagal, 16 tes dilewati**. Ukuran suite penuh SQL kini **413** = 415 - 5 + 3 (hitungan, bukan angka cetakan suite). Suite JSON penuh tidak dijalankan.
 
 **Tidak diuji otomatis**: tampilan Admin Parameters tanpa tab Integrations (tidak ada tes render).
+
+## 43. v2.54.0 - Skor bertingkat & nilai bulanan metrik OUTCOME
+
+### Modul 56 - Tier skor (metrik 1, 2, 3, 14; N/A) & nilai bulanan OUTCOME (21 tes, SQL saja)
+
+Di JSON seluruh modul dilewati (butuh snapshot config guard SQL dan cek paritas JSON in-process). Membuat metrik OUTCOME sementara dan akun User sementara; data tahun 2003/2004 dipakai agar tidak bersinggungan dengan data asli; metrik, nilai, riwayat, file asli, dan akun dihapus di akhir.
+
+| # | Jenis | Yang diuji |
+| :-: | :---: | :--- |
+| 1 | Positif | `tieredScore` batas metrik 14 (`>=`): 0 / 3000 / 3999 / 4000 / ... / 6400 / 7499 / 7500 / 9000 / negatif -> tier dan % benar (tier 1 proporsional, maks. 100%, min. 0) |
+| 2 | Positif | `>` vs `>=` per batas: metrik 1 (1 -> tier 1, 1.0001 -> 2, 2.5 -> 3, 3.51 -> 5; 0.66 -> 13.2%), metrik 3 (29.99 -> 1, 30 -> 2, 75 -> 4, 75.04 -> 5 dibatasi) |
+| 3 | Positif | Normalisasi target memakai tier (14: 60%, 1: 80%, 3: 93.33%); tier belum diatur -> `null`; metrik tanpa tier tetap aturan skala |
+| 4 | Negatif | Validasi konfigurasi: bukan 4 batas, tidak naik, nol/negatif/teks, operator/unit tak dikenal, JSON rusak -> ditolak; nilai tersimpan rusak dibaca `null` |
+| 5 | Positif | Konfigurasi live: metrik 14 = 6400 -> 85.33%, metrik 1 = 0.66% -> 13.2%, metrik 3 = 75.04% -> 100%; detail sama |
+| 6 | Positif | Metrik 2 N/A: tanpa nilai/skor, `NO_DATA` + `not_applicable`, target N/A, tidak di Survey Index, rollup journey, alert, trend, detail |
+| 7 | Positif | Admin membuat/mengedit metrik bertier (unit, batas, `>=`/`>`, N/A): tersimpan, terlihat di parameters/calculate, snapshot config guard memuat `score_tiers`, ter-audit |
+| 8 | Negatif | Validasi lewat API Admin: 3 batas, turun, nol, teks, operator/unit salah -> 400, tidak berubah; tanpa/`null` `score_tiers` = konfigurasi tetap |
+| 9 | Positif | Template `.xlsx`: judul + unit, header, bulan lengkap terakhir; metrik 1 200, metrik 11/SURVEY 400, tidak ada 404, bukan angka 400 |
+| 10 | Positif | Upload valid (bulan EN/ID, koma desimal, notes): 200 + hitungan + periode, file asli tersimpan dan bisa diunduh (nosniff), riwayat, audit `OUTCOME_UPLOAD` |
+| 11 | Positif | Skor: YTD 2003 = bulan terakhir (Juli 70.5), MTD 2003-03 = 60, MTD 2003-02 dan YTD 2004 = `NO_DATA`; detail sama; Last update = July 2003 |
+| 12 | Positif | Trend MTD dan PX Index per direktorat memakai aturan yang sama |
+| 13 | Positif | Upsert: Juli 2003 diunggah lagi = 0 baru, 1 diperbarui; bulan berjalan diterima; YTD 2003 = 72 |
+| 14 | Negatif | File tidak valid ditolak utuh dengan semua error (tahun, bulan, nilai teks, negatif, bulan ganda, bulan masa depan, notes terlalu panjang) |
+| 15 | Negatif | `.csv`, `.xls`, `.xlsx` sebagai `text/plain` -> 415; > 5 MB -> 413; tanpa file -> 400 |
+| 16 | Negatif | USER -> 403, tanpa login -> 401 pada template/upload/riwayat/evidence; payload calculate USER tetap memuat Last update |
+| 17 | Positif | Evidence CSV: filter periode, `Used_In_Score`, escape formula, `uploaded_by`/`uploaded_at`; periode salah 400; metrik SURVEY 400 |
+| 18 | Positif | Evidence metrik 1 (social media) dan metrik 11 (absensi, Admin); `kind` salah 400; `evidence_type` di calculate |
+| 19 | Positif | Aturan lama: OUTCOME tanpa bulan tersimpan = `raw_value` statis (`STATIC_SNAPSHOT`) di semua periode; Last update untuk metrik 1/11/SURVEY/ESS |
+| 20 | Positif | Backend JSON in-process: simpan/upsert/baca/riwayat/tanggal survei terbaru sama dengan SQL; tier metrik 14/2 sama; `store.json`/`auth.json` dipulihkan byte-identik |
+| 21 | Positif | Hapus metrik ikut menghapus nilai bulanan, riwayat, dan file asli |
+
+### Modul lama disesuaikan (jumlah tes tidak berubah)
+
+| Modul | Perubahan |
+| :-: | :--- |
+| 21 | Cek `last_data_date` memakai metrik 4 (metrik 1 kini mengambil tanggal dari nilai bulanan) |
+| 25 | Aturan RATING_5 dicek di metrik 5 (metrik 2 kini bertier/N/A); metrik `NO_DATA`/N/A tanpa pita status; target N/A boleh `null` |
+| 33 | Metrik 14 kini dinilai tier; unit tetap hanya tampilan |
+| 46 | OUTCOME tanpa nilai bulanan tetap snapshot; OUTCOME dengan nilai bulanan (dan metrik N/A) boleh `NO_DATA` |
+| 55 | Nilai metrik 1 = nilai bulanan terakhir periode, bila tidak ada `raw_value` |
+
+### Hasil
+
+Run suite penuh SQL akhir (main session, backend kedua, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **348/348 lulus, 0 gagal, 16 tes dilewati**. Ukuran suite penuh SQL kini **434** = 413 + 21 Modul 56 (hitungan, bukan angka cetakan suite; run developer sebelum perbaikan akhir: 344/348 dengan modul media/event di-skip, lalu 27/27 pada modul terdampak). Suite JSON penuh tidak dijalankan. QC: LULUS DENGAN CATATAN - Dashboard/Explore/detail/editor tier/upload end-to-end/evidence/akses USER/cascade hapus metrik dicek; tidak ada crash, kebocoran data atau celah akses. Temuan terbuka: (1) rumus tier sesuai spesifikasi user tidak monoton - nilai lebih tinggi bisa mendapat skor lebih rendah di awal tier berikutnya (metrik 1: 2,00% -> 80%, 2,01% -> 60,3%) - menunggu keputusan user; (2) laten: detail metrik ESS yang diberi tier N/A lewat API bisa 500 (`buildEssDetail` memanggil `toFixed` pada null); (3) tier tidak bisa dimatikan lagi lewat UI/API; (4) narasi alert metrik 1 mencampur skor ternormalisasi dengan target mentah; (5) komentar schema `px_outcome_values` keliru menyebut metrik 1; metrik 2 'Last update: October 2026' vs 'Latest Survey Date: —'. JSON backend tidak diuji QC.
+
+**Tidak diuji otomatis**: tampilan UI (tombol Explore Metrics, `OutcomeUploadModal`, bagian Score Tiers) - tidak ada tes render.

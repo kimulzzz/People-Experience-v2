@@ -37,6 +37,8 @@ import { formatMetricValue } from '../utils/formatMetricValue';
 import { monthName } from '../utils/months';
 import { surveySourceLabel, surveySourceBadgeClass, surveyTemplateFileName } from '../utils/surveySource';
 import SocialMediaUploadModal from './SocialMediaUploadModal';
+import OutcomeUploadModal from './OutcomeUploadModal';
+import { tierBandsText, tierValue } from '../utils/scoreTiers';
 
 function normalizeDateString(dateVal) {
   if (!dateVal) return null;
@@ -104,7 +106,8 @@ export default function MetricDetailModal({
   filterOptions = null,
   onOpenSurveyUpload,
   onOpenSurveyQuestionSettings,
-  onOpenExitInterview
+  onOpenExitInterview,
+  onDataUploaded
 }) {
   // The dashboard filter (YTD / MTD + year + month) decides the period; the `period` prop is only a fallback when no
   // filter is passed (App.jsx passes filterOptions only, so the badge used to read Year-to-Date even in MTD mode).
@@ -125,6 +128,7 @@ export default function MetricDetailModal({
   const [selectedRespondent, setSelectedRespondent] = useState(null);
   const [essViewMode, setEssViewMode] = useState('table'); // 'table' | 'cards'
   const [isSocialUploadOpen, setIsSocialUploadOpen] = useState(false); // v2.52.0: social media data of metric 1 (Admin)
+  const [isOutcomeUploadOpen, setIsOutcomeUploadOpen] = useState(false); // v2.54.0: monthly values of an OUTCOME metric (Admin)
 
   useEffect(() => {
     if (isOpen && metricId) {
@@ -172,6 +176,8 @@ export default function MetricDetailModal({
   const pct = v => (v === null || v === undefined ? '—' : `${v}%`);
   // v2.36.0: a survey metric without data in the selected period (status NO_DATA, null scores)
   const isNoData = detailData?.status === 'NO_DATA';
+  // v2.54.0: a tier-scored metric whose tiers are not configured yet: value N/A (status NO_DATA, not counted in the PX Index)
+  const isNotApplicable = isNoData && !!detailData?.not_applicable;
 
   const isCampus = detailData?.metric_id === 2 || detailData?.target_audience === 'CAMPUS_STUDENTS';
   const isCandidate = detailData?.metric_id === 5 || detailData?.target_audience === 'JOB_APPLICANTS';
@@ -250,6 +256,11 @@ export default function MetricDetailModal({
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 border border-gray-200">
                   Period: {periodLabel}
                 </span>
+                {detailData?.last_update_label && (
+                  <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 border border-gray-200" title="Latest data period of this metric (any period)">
+                    Last update: {detailData.last_update_label}
+                  </span>
+                )}
               </div>
               <h2 className="text-xl font-black text-gray-900 mt-1">
                 {detailData?.metric_name || 'Metric Details'}
@@ -296,17 +307,30 @@ export default function MetricDetailModal({
                   <div className="text-[11px] font-bold text-gray-500 uppercase">Actual Value & Target</div>
                   <div className="flex items-baseline space-x-2 mt-1">
                     <span className="text-2xl font-black text-gray-900">
-                      {isNoData ? '—' : formatMetricValue(detailData.current_raw_value, detailData.unit, detailData.scale_type)}
+                      {isNotApplicable ? 'N/A' : isNoData ? '—' : formatMetricValue(detailData.current_raw_value, detailData.unit, detailData.scale_type)}
                     </span>
                     <span className="text-xs font-semibold text-gray-500">
                       ({detailData.target_display})
                     </span>
                   </div>
                   <div className="text-[10px] text-gray-500 mt-0.5">
-                    {isNoData
-                      ? <>No survey data in this period - left out of the index</>
+                    {isNotApplicable
+                      ? <>Score tiers not configured yet - N/A, not counted in the PX Index</>
+                      : isNoData
+                      ? <>No data in this period - left out of the index</>
                       : <>Calculated Index Score: <strong className="text-[#ED1C24]">{detailData.normalized_score}%</strong></>}
                   </div>
+                  {/* v2.54.0: how a Tiered Count value was scored, e.g. 6,400 -> tier 4 -> 4.27 / 5 = 85.33% */}
+                  {!isNoData && detailData.tier_info && (
+                    <div className="text-[10px] text-gray-500 mt-0.5" title={tierBandsText(detailData.tier_info.bounds, detailData.tier_info.unit)}>
+                      {tierValue(detailData.tier_info.value, detailData.tier_info.unit)} → tier {detailData.tier_info.tier} → <strong>{detailData.tier_info.score.toFixed(2)} / 5</strong> = {detailData.tier_info.percent.toFixed(2)}%{detailData.tier_info.capped ? ' (capped)' : ''}
+                    </div>
+                  )}
+                  {isOutcome && detailData.value_basis === 'MONTHLY_VALUES' && (
+                    <div className="text-[10px] text-blue-700 mt-0.5">
+                      {isNoData ? 'No uploaded month in this period' : `Value of ${detailData.outcome_period_label} (latest uploaded month in the period)`}
+                    </div>
+                  )}
                 </div>
 
                 {/* CARD 2: THRESHOLD STATUS */}
@@ -320,7 +344,7 @@ export default function MetricDetailModal({
                       'bg-emerald-100 text-emerald-800'
                     }`}>
                       {isNoData ? <MinusCircle className="w-3.5 h-3.5 mr-1" /> : detailData.status === 'CRITICAL' ? <AlertCircle className="w-3.5 h-3.5 mr-1" /> : <CheckCircle2 className="w-3.5 h-3.5 mr-1" />}
-                      <span>{isNoData ? 'No Data' : detailData.status === 'CRITICAL' ? 'Critical Deficit' : (detailData.status === 'WARNING' ? 'Warning Zone' : 'On Target')}</span>
+                      <span>{isNotApplicable ? 'N/A' : isNoData ? 'No Data' : detailData.status === 'CRITICAL' ? 'Critical Deficit' : (detailData.status === 'WARNING' ? 'Warning Zone' : 'On Target')}</span>
                     </span>
                   </div>
                   <div className="text-[10px] text-gray-500 mt-1">
@@ -432,6 +456,48 @@ export default function MetricDetailModal({
                 )}
 
               </div>
+
+              {/* v2.54.0: OUTCOME data operations (Admin): Template / Evidence / Upload - monthly values, metric 1 social media,
+                  metric 11 event attendance (Evidence only) */}
+              {isOutcome && isAdmin && detailData.evidence_type && (
+                <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-[11px] font-bold text-gray-500 uppercase">Outcome Data Operations</div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {detailData.outcome_upload && (
+                      <a href={`/api/admin/outcome-values/${detailData.metric_id}/template`} download={`Template_Outcome_Metric_${detailData.metric_id}.xlsx`} className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs" title="Download the monthly value template (.xlsx)">
+                        <Download className="w-3 h-3 text-slate-500 shrink-0" />
+                        <span>{isSocialMedia ? 'Value Template' : 'Template'}</span>
+                      </a>
+                    )}
+                    <a href={`/api/admin/outcome-evidence/${detailData.metric_id}?period=${period || 'YTD'}`} download className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs" title={`Download the evidence (CSV) for ${periodLabel}`}>
+                      <FileText className="w-3 h-3 text-slate-500 shrink-0" />
+                      <span>{isSocialMedia ? 'Value Evidence' : 'Evidence'}</span>
+                    </a>
+                    {detailData.outcome_upload && (
+                      <button onClick={() => setIsOutcomeUploadOpen(true)} className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs" title="Upload monthly values (.xlsx)">
+                        <FileSpreadsheet className="w-3 h-3 text-slate-500 shrink-0" />
+                        <span>{isSocialMedia ? 'Value Upload' : 'Upload'}</span>
+                      </button>
+                    )}
+                    {isSocialMedia && (
+                      <>
+                        <a href="/api/admin/social-media/template" download="Template_Social_Media_Metric_1.xlsx" className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs" title="Download the social media template (.xlsx)">
+                          <Download className="w-3 h-3 text-slate-500 shrink-0" />
+                          <span>Social Media Template</span>
+                        </a>
+                        <a href={`/api/admin/outcome-evidence/${detailData.metric_id}?period=${period || 'YTD'}&kind=social_media`} download className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs" title={`Download the social media rows (CSV) for ${periodLabel}`}>
+                          <FileText className="w-3 h-3 text-slate-500 shrink-0" />
+                          <span>Social Media Evidence</span>
+                        </a>
+                        <button onClick={() => setIsSocialUploadOpen(true)} className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs" title="Upload Instagram / LinkedIn / TikTok data (.xlsx)">
+                          <FileSpreadsheet className="w-3 h-3 text-slate-500 shrink-0" />
+                          <span>Social Media Upload</span>
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* DEDICATED ESS SENTIMENT DIMENSION CARD (For ESS Metrics) */}
               {isEss && detailData.ess_summary && (
@@ -1076,10 +1142,21 @@ export default function MetricDetailModal({
                           <span className="text-gray-600">Minimum Threshold:</span>
                           <span className="font-black text-amber-700">{detailData.min_threshold}%</span>
                         </div>
+                        {detailData.score_tiers && (
+                          <div className="p-2.5 bg-white rounded-lg border border-gray-200 space-y-0.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-600">Score Tiers ({detailData.score_tiers.unit === 'percent' ? '%' : 'number'}):</span>
+                              <span className="font-black text-gray-900">{detailData.score_tiers.bounds ? `Target = ${detailData.target_value_normalized}%` : 'N/A (not configured)'}</span>
+                            </div>
+                            {detailData.score_tiers.bounds && (
+                              <div className="text-[10.5px] text-gray-500">{tierBandsText(detailData.score_tiers.bounds, detailData.score_tiers.unit)}. Score % = value / lower boundary of its tier × tier / 5 (max 100%).</div>
+                            )}
+                          </div>
+                        )}
                         <div className="flex items-center justify-between p-2.5 bg-white rounded-lg border border-gray-200">
                           <span className="text-gray-600">Current Performance Status:</span>
                           <span className={`font-black ${isNoData ? 'text-gray-500' : detailData.status === 'CRITICAL' ? 'text-red-600' : (detailData.status === 'WARNING' ? 'text-amber-600' : 'text-emerald-600')}`}>
-                            {isNoData ? 'NO DATA (no survey data in this period)' : `${detailData.status} (${detailData.normalized_score}% Index Score)`}
+                            {isNotApplicable ? 'N/A (score tiers not configured)' : isNoData ? 'NO DATA (no data in this period)' : `${detailData.status} (${detailData.normalized_score}% Index Score)`}
                           </span>
                         </div>
                       </div>
@@ -1315,6 +1392,14 @@ export default function MetricDetailModal({
           isOpen={isSocialUploadOpen}
           onClose={() => setIsSocialUploadOpen(false)}
           onUploaded={() => fetchDetail({ keepTab: true })}
+        />
+      )}
+      {isAdmin && detailData?.outcome_upload && (
+        <OutcomeUploadModal
+          isOpen={isOutcomeUploadOpen}
+          metric={detailData}
+          onClose={() => setIsOutcomeUploadOpen(false)}
+          onUploaded={() => { fetchDetail({ keepTab: true }); if (onDataUploaded) onDataUploaded(); }}
         />
       )}
     </div>

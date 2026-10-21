@@ -81,6 +81,7 @@ Setiap metrik Outcome tidak merepresentasikan kuesioner individual, melainkan **
 Dihitung aplikasi (tidak disimpan): **Follower growth %** = (followers bulan ini - followers bulan kalender sebelumnya platform yang sama) / followers bulan sebelumnya x 100; **Engagement rate %** = engagement / reach x 100; baris "All platforms" = jumlah ketiga platform per bulan.
 
 ### 2. Metrik #3: Candidate Offering Lead Time (TAT H-14)
+- **Catatan**: definisi lama. Nama di seed/database = "Success ratio candidate from targeted university"; sejak v2.54.0 dinilai per tier dari nilai bulanan yang diunggah - lihat butir 7 di bawah.
 - **Pengukuran**: Persentase penerbitan surat penawaran kerja (*Offering Letter*) yang diselesaikan minimal 14 hari sebelum tanggal mulai bekerja.
 - **Logika Nilai**: $\frac{\text{Offering Letter } \ge H-14}{\text{Total Offering Terbit}} \times 100\%$.
 
@@ -95,12 +96,34 @@ Dihitung aplikasi (tidak disimpan): **Follower growth %** = (followers bulan ini
 
 ### 5. Metrik #14: Total Penerima Reward Recognition Arjuna
 - **Pengukuran**: Jumlah karyawan yang menerima pengakuan dan reward pada platform apresiasi internal *Arjuna*.
-- **Logika Nilai**: Normalisasi terhadap target kuota tahunan 500 penerima per tahun.
+- **Logika Nilai**: sejak v2.54.0 skor bertingkat (tier jumlah penerima, target 5000 = 60%, nilai 6400 = 85.33%) - lihat butir 7 di bawah.
 
 ### 6. Metrik #25: Early Attrition Rate (< 1 Year Tenure)
 - **Pengukuran**: Tingkat *turnover* sukarela karyawan baru dengan masa kerja di bawah 1 tahun.
 - **Logika Nilai**: Skor invers (semakin rendah persentase turnover, semakin tinggi skor indeks PE).
 - **Formula Normalisasi**: $\text{Normalized Score} = \max\left(0, 100 - \left(\frac{\text{Turnover Rate}}{10\%} \times 100\right)\right)$.
+
+### 7. Skor Bertingkat & Nilai Bulanan OUTCOME (sejak v2.54.0)
+
+Rumus tier dan aturan N/A: `docs/01` §3.9. Definisi yang berlaku di database (katalog §2 untuk metrik 1, 3, 14 masih memuat definisi lama):
+
+| Metrik | Nama di database | Nilai yang dinilai | Tier (batas bawah tier 2/3/4/5) | Target | Sumber nilai |
+| :-: | :--- | :--- | :--- | :--- | :--- |
+| 1 | Career website & social media follower, reach & engagement growth (disebut user "Social Media Engagement Rate") | engagement rate (%) | `>` 1 / `>` 2 / `>` 2.5 / `>` 3.5 | 2% | upload bulanan; 0.66% per September 2026 |
+| 2 | CIMB Niaga Goes to Campus — event evaluation / rating | - | belum diatur -> **N/A** (di luar PX Index) | - | belum ada data riil |
+| 3 | Success ratio candidate from targeted university | rasio sukses (%) | `>=` 30 / `>=` 45 / `>=` 60 / `>` 75 | > 70% | upload bulanan; 75.04% per September 2026 |
+| 14 | % employees receiving recognition / year | jumlah penerima (orang/tahun) | `>=` 4000 / 5000 / 6000 / 7500 | min 5,000 / yr | `raw_value` 6400 (belum ada upload bulanan) |
+
+**Berkas nilai bulanan OUTCOME (.xlsx)** - satu nilai bankwide per bulan per metrik, tabel `px_outcome_values` (semua metrik OUTCOME kecuali metrik 11):
+
+| Kolom | Wajib | Aturan |
+| :--- | :-: | :--- |
+| Year | ya | 4 digit, 2000-2100 |
+| Month | ya | nama bulan Inggris/Indonesia, singkatan, atau 1-12; bulan setelah bulan berjalan ditolak; bulan yang sama dua kali dalam satu file ditolak |
+| Value | ya | angka >= 0 (desimal; teks boleh pemisah ribuan "6,400", koma desimal "70,5", akhiran `%`); unit = unit metrik (metrik % disimpan sebagai angka persen: 0.66 = 0.66%) |
+| Notes | tidak | maks. 500 karakter |
+
+Baris header dicari di 10 baris pertama (template punya judul di atasnya). Upload bulan yang sudah ada = memperbarui nilainya.
 
 ---
 

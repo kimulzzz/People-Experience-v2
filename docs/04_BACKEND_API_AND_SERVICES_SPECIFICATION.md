@@ -605,6 +605,43 @@ Pengujian: `docs/07` §31 (Modul 46).
 
 ---
 
+## Catatan v2.54.0 - Skor Bertingkat (`score_tiers`) & Nilai Bulanan Metrik OUTCOME
+
+**Ringkasan**: metrik 1, 2, 3, 14 dinilai per tier (`px_metrics.score_tiers`; rumus `docs/01` §3.9); tier belum diatur = N/A (di luar indeks). Metrik OUTCOME (kecuali 11) menerima satu nilai bankwide per bulan lewat upload `.xlsx` Admin; setiap metrik mendapat "Last update". `/api/health` `version` = `2.54.0`. Tidak ada env/setting baru.
+
+| Endpoint (Admin saja; USER 403, tanpa login 401) | Keterangan |
+| :--- | :--- |
+| `GET /api/admin/outcome-values/:metric_id/template` | `.xlsx` `Template_Outcome_Metric_<id>.xlsx`: judul metrik + unit, header Year \| Month \| Value \| Notes, satu baris bulan lengkap terakhir (nilai kosong) |
+| `POST /api/admin/outcome-values/:metric_id/upload` | multipart field `file`, `.xlsx` + MIME Excel (lainnya 415), maks. 5 MB (413), tanpa file 400; validasi utuh -> 400 `{ error, errors: [{ row_number, column, reason }] }`, tidak ada yang disimpan; sukses -> `upload_id`, `rows_imported`, `inserted_rows`, `updated_rows`, `periods`, `period_labels`; audit `OUTCOME_UPLOAD`; `uploaded_by` = `Name (username)` |
+| `GET /api/admin/outcome-values/:metric_id/uploads` | riwayat batch metrik (terbaru dulu) + `has_original_file` |
+| `GET /api/admin/outcome-values/uploads/:upload_id/file` | file asli dari `server/data/outcome-uploads/<upload_id>.xlsx` (nosniff); tidak ada -> 404 |
+| `GET /api/admin/outcome-evidence/:metric_id?period=&kind=` | CSV; `period` = `ALL` (default) \| `YTD` \| `YYYY` \| `YYYY-MM` (lainnya 400). `OUTCOME_VALUES`: bulan tersimpan + `Used_In_Score` (YES = bulan yang dipakai skor periode itu); metrik 1 `kind=social_media`: baris social media; metrik 11: absensi event (NIP, nama, e-mail, direktorat). Escape formula seperti evidence lain |
+
+`:metric_id` bukan angka -> 400, tidak ada -> 404; template/upload/uploads untuk metrik SURVEY atau metrik 11 -> 400; evidence untuk metrik SURVEY -> 400 (pakai `/api/surveys/evidence`).
+
+**Aturan skor OUTCOME** (`calculatePEIndex` dan `getMetricDetail`, sama di trend dan PX Index per direktorat): metrik dengan baris `px_outcome_values` -> YTD = bulan tersimpan terakhir di jendela (`periodWindow`), MTD = bulan itu, tidak ada -> `NO_DATA`; tanpa baris sama sekali -> `raw_value` statis (`value_basis: STATIC_SNAPSHOT`). Nilai tetap bankwide di bawah filter direktorat (aturan v2.48.0).
+
+**Field baru** (`/api/metrics/calculate` per metrik dan `/api/metrics/:id/detail`):
+
+| Field | Isi |
+| :--- | :--- |
+| `score_tiers` | `{ unit, bounds }` atau `null` (tidak bertier) |
+| `tier_info` | `{ value, tier, lower_bound, score, score_uncapped, percent, capped, unit, bounds }` atau `null` |
+| `not_applicable` | `true` bila tier belum diatur (status `NO_DATA`) |
+| `evidence_type` | OUTCOME: `OUTCOME_VALUES` / `EVENT_ATTENDANCE` (metrik 11) |
+| `outcome_upload` | OUTCOME selain metrik 11 = `true` |
+| `value_basis` | `MONTHLY_VALUES` \| `STATIC_SNAPSHOT` |
+| `outcome_period`, `outcome_period_label`, `outcome_value_source` | bulan yang dipakai skor (`YYYY-MM`, "September 2026", `UPLOAD`/`SEED`) |
+| `last_update_period`, `last_update_label` | periode data terakhir (periode mana pun): SURVEY SYSTEM = tanggal survei terbaru, ESS = hasil terbaru, metrik 11 = absensi terbaru, OUTCOME = bulan tersimpan terbaru, metrik 1 tanpa nilai bulanan = bulan social media terbaru, lainnya `last_data_date` |
+
+`target_value_normalized` bisa `null` (metrik N/A) di calculate, detail dan `/api/admin/parameters`. `period_window.basis` OUTCOME dengan nilai bulanan = `LATEST_MONTH` (YTD) / `MONTH` (MTD).
+
+**Admin metrik**: `POST`/`PUT /api/admin/metrics` menerima `score_tiers` (objek atau JSON; validasi `parseTierConfig`: 4 batas positif naik ketat, `op` `>=`/`>`, `unit` `percent`/`number`; salah -> 400). `score_tiers` tidak dikirim atau `null` = konfigurasi tersimpan dipertahankan (tier tidak dimatikan lewat API).
+
+**Storage** (kedua backend): `getOutcomeValues(metricId?)`, `getOutcomeUploads(metricId?)`, `saveOutcomeValues(meta, rows)` (upsert dalam satu transaksi), `getLatestSurveyDates()`, `getLatestSocialMediaPeriod()`; `deleteMetric` ikut menghapus nilai + riwayat (route menghapus file asli). Boot: `topUpScoreTiers()` (SQL) / langkah yang sama saat `store.json` dimuat - konfigurasi seed sekali, hanya bila `score_tiers` masih kosong.
+
+---
+
 ## Catatan v2.53.0 - Fitur Integrasi Token Dihapus
 
 **Ringkasan**: seluruh fitur integrasi v2.52.0 dihapus (aplikasi on-premise tanpa internet; permintaan user). Data social media metrik 1 kini hanya masuk lewat upload `.xlsx` Admin (endpoint `/api/admin/social-media/*` tidak berubah). `/api/health` `version` = `2.53.0`. Tidak ada env baru. Pengujian: `docs/07` §42.

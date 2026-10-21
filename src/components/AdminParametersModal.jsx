@@ -26,6 +26,7 @@ import {
   Building2
 } from 'lucide-react';
 import { formatMetricValue, defaultUnitForScale } from '../utils/formatMetricValue';
+import { TIER_OPS, validTierBounds, tieredPercent, tierRanges, tierValue } from '../utils/scoreTiers';
 import { SURVEY_SOURCE_OPTIONS, surveySourceLabel, surveySourceBadgeClass } from '../utils/surveySource';
 
 import { MONTH_NAMES } from '../utils/months';
@@ -37,8 +38,20 @@ import DirectoryManager from './DirectoryManager';
 // RATING_5 1-5 scale) into the same 0-100 % scale as Min Threshold, mirroring the backend's
 // normalizeTarget()/normalizeScore() in calculationEngine.js. Used as a client-side fallback
 // when the API response hasn't been refreshed with target_value_normalized yet.
+// v2.54.0: the tier configuration of a metric ({ unit, bounds | null } from the API) or of the edit form
+// ({ enabled, unit, configured, bounds: [{ min, op }] }); null = not tier-scored.
+function tierConfigOf(metric) {
+  const t = metric.score_tiers;
+  if (!t) return null;
+  if (t.enabled === undefined) return t;
+  return t.enabled ? { unit: t.unit, bounds: t.configured ? validTierBounds(t.bounds) : null } : null;
+}
+
+// null = no percentage (a tier-scored metric whose tiers are not configured yet: N/A)
 function computeTargetPercent(metric) {
   const value = parseFloat(metric.target_value || 0);
+  const tiers = tierConfigOf(metric);
+  if (tiers) return tiers.bounds ? tieredPercent(value, tiers.bounds).percent : null;
   switch (metric.scale_type) {
     case 'RATING_5':
       return Math.min(Math.max((value / 5.0) * 100, 0), 100);
@@ -191,7 +204,8 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
     upload_deadline_day: 25,
     upload_deadline_month: 11,
     pic_name: '',
-    pic_email: ''
+    pic_email: '',
+    score_tiers: { enabled: false, unit: 'number', configured: false, bounds: [0, 1, 2, 3].map(() => ({ min: '', op: '>=' })) }
   });
 
   // Reset confirmation modal state
@@ -375,7 +389,8 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
       upload_deadline_day: 25,
       upload_deadline_month: 11,
       pic_name: '',
-      pic_email: ''
+      pic_email: '',
+      score_tiers: { enabled: false, unit: 'number', configured: false, bounds: [0, 1, 2, 3].map(() => ({ min: '', op: '>=' })) }
     });
     setIsAddingMetric(true);
     setEditingMetric(null);
@@ -404,7 +419,12 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
       upload_deadline_day: m.upload_deadline_day !== undefined ? m.upload_deadline_day : 25,
       upload_deadline_month: m.upload_deadline_month !== undefined ? m.upload_deadline_month : 11,
       pic_name: m.pic_name || m.experience_owner || '',
-      pic_email: m.pic_email || ''
+      pic_email: m.pic_email || '',
+      // v2.54.0: tier-scored metrics (score_tiers set) show the tier editor
+      score_tiers: m.score_tiers
+        ? { enabled: true, unit: m.score_tiers.unit || 'number', configured: !!m.score_tiers.bounds,
+          bounds: (m.score_tiers.bounds || [0, 1, 2, 3].map(() => ({ min: '', op: '>=' }))).map(b => ({ min: String(b.min), op: b.op })) }
+        : { enabled: false, unit: 'number', configured: false, bounds: [0, 1, 2, 3].map(() => ({ min: '', op: '>=' })) }
     });
     setEditingMetric(m);
     setIsAddingMetric(false);
@@ -416,9 +436,16 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
     setLoading(true);
     setErrorMessage('');
     try {
+      // v2.54.0: the tier configuration is sent only for a tier-scored metric; the server validates it again
+      const { score_tiers: tierInputs, ...formData } = metricFormData;
+      const isTiered = !!tierInputs.enabled;
+      if (isTiered && tierInputs.configured && !validTierBounds(tierInputs.bounds)) {
+        throw new Error('The tier boundaries must be 4 strictly increasing positive numbers (lower boundary of tiers 2, 3, 4 and 5).');
+      }
       // Survey Source only applies to SURVEY metrics; an ESS metric is always uploaded manually.
       const payload = {
-        ...metricFormData,
+        ...formData,
+        ...(isTiered ? { score_tiers: { unit: tierInputs.unit, bounds: tierInputs.configured ? validTierBounds(tierInputs.bounds) : null } } : {}),
         survey_source: metricFormData.metric_type === 'SURVEY' ? metricFormData.survey_source : '',
         ...(metricFormData.metric_type === 'SURVEY' && metricFormData.survey_source === 'ESS' ? { requires_manual_upload: true } : {})
       };
@@ -944,6 +971,86 @@ All survey data (responses) and question settings of this metric will also be de
                       </select>
                     </div>
 
+                    {metricFormData.score_tiers.enabled && (() => {
+                      // v2.54.0: score tiers (lower boundary of tiers 2..5 with >= or >); not configured = value N/A, out of the index
+                      const t = metricFormData.score_tiers;
+                      const setTiers = patch => setMetricFormData({ ...metricFormData, score_tiers: { ...t, ...patch } });
+                      const bounds = t.configured ? validTierBounds(t.bounds) : null;
+                      const pct = t.unit === 'percent' ? '%' : '';
+                      const preview = bounds ? tieredPercent(t.previewValue !== undefined && t.previewValue !== '' ? t.previewValue : metricFormData.target_value, bounds) : null;
+                      return (
+                        <div className="sm:col-span-2 lg:col-span-4 p-3 bg-gray-50 border border-gray-200 rounded-xl space-y-2">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <span className="text-xs font-bold text-gray-700">Score Tiers</span>
+                            <label className="text-[11px] text-gray-600 flex items-center gap-1">
+                              Unit
+                              <select value={t.unit} onChange={(e) => setTiers({ unit: e.target.value })} className="px-2 py-1 text-xs border border-gray-300 rounded-lg">
+                                <option value="percent">% (percentage)</option>
+                                <option value="number">Number</option>
+                              </select>
+                            </label>
+                            <label className="text-[11px] text-gray-600 flex items-center gap-1">
+                              <input type="checkbox" checked={!t.configured} onChange={(e) => setTiers({ configured: !e.target.checked })} />
+                              N/A (not configured) - value N/A, not counted in the PX Index
+                            </label>
+                          </div>
+                          {t.configured && (
+                            <>
+                              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                                {[0, 1, 2, 3].map(i => (
+                                  <div key={i}>
+                                    <span className="block text-[10px] font-bold text-gray-500 mb-0.5">Tier {i + 2} starts at</span>
+                                    <div className="flex gap-1">
+                                      <select
+                                        value={t.bounds[i].op}
+                                        onChange={(e) => setTiers({ bounds: t.bounds.map((b, j) => (j === i ? { ...b, op: e.target.value } : b)) })}
+                                        className="px-1.5 py-2 text-xs border border-gray-300 rounded-lg font-mono font-bold"
+                                      >
+                                        {TIER_OPS.map(op => <option key={op} value={op}>{op === '>=' ? '≥' : '>'}</option>)}
+                                      </select>
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="any"
+                                        required
+                                        value={t.bounds[i].min}
+                                        onChange={(e) => setTiers({ bounds: t.bounds.map((b, j) => (j === i ? { ...b, min: e.target.value } : b)) })}
+                                        className="w-full px-2 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 font-mono font-bold"
+                                      />
+                                      {pct && <span className="self-center text-xs text-gray-500">%</span>}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                              {bounds ? (
+                                <div className="text-[10.5px] text-gray-600 space-y-1">
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {tierRanges(bounds, t.unit).map((r, i) => (
+                                      <span key={i} className="px-1.5 py-0.5 rounded bg-white border border-gray-200"><strong>Tier {i + 1}</strong>: {r}</span>
+                                    ))}
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span>Preview: value</span>
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      value={t.previewValue !== undefined ? t.previewValue : metricFormData.target_value}
+                                      onChange={(e) => setTiers({ previewValue: e.target.value })}
+                                      className="w-24 px-2 py-1 text-xs border border-gray-300 rounded-lg font-mono"
+                                    />
+                                    <span>→ tier {preview.tier} → {preview.score.toFixed(2)} / 5 = <strong>{preview.percent.toFixed(2)}%</strong> (target {tierValue(metricFormData.target_value || 0, t.unit)} → {tieredPercent(metricFormData.target_value, bounds).percent.toFixed(2)}%)</span>
+                                  </div>
+                                  <div className="text-gray-400">Score = value / lower boundary of its tier × tier, as % of 5 (max 100%); tier 1: value / tier-2 boundary × 1.</div>
+                                </div>
+                              ) : (
+                                <div className="text-[10.5px] text-red-600 font-semibold">Enter 4 strictly increasing positive boundaries{pct ? ' (in %)' : ''}.</div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      );
+                    })()}
+
                     {metricFormData.metric_type === 'SURVEY' && (
                       <div>
                         <label className="block text-xs font-bold text-gray-700 mb-1">Survey Source</label>
@@ -990,7 +1097,7 @@ All survey data (responses) and question settings of this metric will also be de
                         className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 font-mono font-bold"
                       />
                       <div className="text-[10px] text-gray-500 mt-1">
-                        ≈ <span className="font-bold text-gray-700">{computeTargetPercent(metricFormData).toFixed(1)}%</span> of the full scale — this is the value compared directly with the Min Threshold below.
+                        ≈ <span className="font-bold text-gray-700">{computeTargetPercent(metricFormData) === null ? 'N/A' : `${computeTargetPercent(metricFormData).toFixed(1)}%`}</span> of the full scale — this is the value compared directly with the Min Threshold below.
                       </div>
                     </div>
 
@@ -1354,7 +1461,7 @@ All survey data (responses) and question settings of this metric will also be de
                           </td>
                           <td className="py-2.5 px-3 text-center">
                             <div className="font-mono font-bold text-gray-700">
-                              {(m.target_value_normalized !== undefined ? m.target_value_normalized : computeTargetPercent(m)).toFixed(1)}%
+                              {(() => { const t = m.target_value_normalized !== undefined ? m.target_value_normalized : computeTargetPercent(m); return t === null ? 'N/A' : `${t.toFixed(1)}%`; })()}
                             </div>
                             <div className="text-[9.5px] text-gray-400 leading-tight">
                               {m.target_display || `${m.target_value} raw`}

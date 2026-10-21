@@ -25,6 +25,7 @@ import {
 import { formatMetricValue } from '../utils/formatMetricValue';
 import { monthName } from '../utils/months';
 import SocialMediaUploadModal from './SocialMediaUploadModal';
+import OutcomeUploadModal from './OutcomeUploadModal';
 
 function normalizeDateString(dateVal) {
   if (!dateVal) return null;
@@ -89,10 +90,12 @@ export default function Calculator({
   selectedJourneyFilter = 'ALL', 
   setSelectedJourneyFilter,
   onSelectMetric,
-  onOpenSurveyImport
+  onOpenSurveyImport,
+  onDataUploaded
 }) {
   const { isAdmin } = useAuth();
   const [isSocialUploadOpen, setIsSocialUploadOpen] = useState(false); // v2.52.0: social media data of metric 1 (Admin)
+  const [outcomeUploadMetric, setOutcomeUploadMetric] = useState(null); // v2.54.0: monthly values of an OUTCOME metric (Admin)
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('ALL'); // ALL, SURVEY, OUTCOME
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -103,6 +106,10 @@ export default function Calculator({
   if (!calculationData) return null;
 
   const { metrics, journeys, checkpoints, pe_index, survey_index, outcome_index, period, year } = calculationData;
+  // OUTCOME evidence period (v2.54.0): the selected month (MTD) or year (YTD)
+  const evidencePeriod = calculationData.mode === 'MTD' && year && calculationData.month
+    ? `${year}-${String(calculationData.month).padStart(2, '0')}`
+    : (year || 'YTD');
 
   // v2.36.0: an index without any metric data in the period is null -> "—"
   const fmtPct = v => (v === null || v === undefined ? '—' : `${v.toFixed(2)}%`);
@@ -351,7 +358,7 @@ export default function Calculator({
                 </th>
                 <th className={`py-3 px-2.5 w-28 bg-[var(--theme-deep)]`}>Type & PIC</th>
                 <th className={`py-3 px-2 text-center w-24 bg-[var(--theme-deep)]`}>Total Respondents</th>
-                <th className={`py-3 px-2 text-center w-24 bg-[var(--theme-deep)]`}>Date / Last Sync</th>
+                <th className={`py-3 px-2 text-center w-24 bg-[var(--theme-deep)]`} title="Latest data period of the metric (any period)">Last Update</th>
                 <th className={`py-3 px-2 text-right w-24 bg-[var(--theme-deep)]`}>Actual Value</th>
                 <th className={`py-3 px-2.5 min-w-[120px] w-32 bg-[var(--theme-deep)]`}>Index Score (Target)</th>
                 <th className={`py-3 px-2 text-center w-24 bg-[var(--theme-deep)]`}>Status</th>
@@ -481,8 +488,8 @@ export default function Calculator({
 
                       {/* Last Survey / Ingestion Date (Actual Date for both Survey and Outcome) */}
                       <td className={`py-3 px-2 text-center whitespace-nowrap`}>
-                        <span className="text-[10px] font-medium text-gray-700 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-200" title={`Last data entry date: ${displayDate}`}>
-                          {displayDate}
+                        <span className="text-[10px] font-medium text-gray-700 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-200" title={`Last update (latest data period, any period): ${m.last_update_label || displayDate}`}>
+                          {m.last_update_label || displayDate}
                         </span>
                       </td>
 
@@ -492,7 +499,7 @@ export default function Calculator({
                           <span className="text-xs font-bold text-gray-400">N/A</span>
                         ) : isNoData ? (
                           <>
-                            <div className="text-xs font-black text-gray-400">—</div>
+                            <div className="text-xs font-black text-gray-400">{m.not_applicable ? 'N/A' : '—'}</div>
                             <span className="text-[9.5px] text-gray-400 block leading-tight">Tgt: {m.target_display}</span>
                           </>
                         ) : (
@@ -512,8 +519,8 @@ export default function Calculator({
                             Exempted (0%)
                           </div>
                         ) : isNoData ? (
-                          <div className="text-center py-1 text-[10px] font-bold text-gray-400 bg-gray-100 rounded" title="No survey data in the selected period">
-                            —
+                          <div className="text-center py-1 text-[10px] font-bold text-gray-400 bg-gray-100 rounded" title={m.not_applicable ? 'Score tiers not configured yet - not counted in the PX Index' : 'No data in the selected period'}>
+                            {m.not_applicable ? 'N/A' : '—'}
                           </div>
                         ) : (
                           <>
@@ -546,8 +553,8 @@ export default function Calculator({
                             Exempted
                           </span>
                         ) : isNoData ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold bg-gray-200 text-gray-500" title="No survey data in the selected period - left out of the index">
-                            No Data
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold bg-gray-200 text-gray-500" title={m.not_applicable ? 'Score tiers not configured yet - N/A, not counted in the PX Index' : 'No data in the selected period - left out of the index'}>
+                            {m.not_applicable ? 'N/A' : 'No Data'}
                           </span>
                         ) : (
                           <span className={`inline-flex items-center space-x-0.5 px-2 py-0.5 rounded-full text-[9.5px] font-bold ${
@@ -610,30 +617,59 @@ export default function Calculator({
 
                               </>)}
                             </>
-                          ) : (m.data_upload === 'SOCIAL_MEDIA' && isAdmin) ? (
+                          ) : (m.evidence_type && isAdmin) ? (
                             <>
-                              {/* v2.52.0: metric 1 takes social media statistics (Excel upload, Admin only; the server decides which metric) */}
+                              {/* v2.54.0: OUTCOME metrics take monthly values (Excel upload, Admin only) - metric 1 too (its value) */}
+                              {m.outcome_upload && (
+                                <a
+                                  href={`/api/admin/outcome-values/${m.metric_id}/template`}
+                                  download={`Template_Outcome_Metric_${m.metric_id}.xlsx`}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
+                                  title={`Download the monthly values template (.xlsx) for ${m.metric_name}`}
+                                >
+                                  <Download className="w-3 h-3 text-slate-500 shrink-0" />
+                                  <span>Template</span>
+                                </a>
+                              )}
+                              {/* v2.54.0: Evidence of every OUTCOME metric (stored months / social media rows / event attendances), Admin only */}
                               <a
-                                href="/api/admin/social-media/template"
-                                download="Template_Social_Media_Metric_1.xlsx"
+                                href={`/api/admin/outcome-evidence/${m.metric_id}?period=${evidencePeriod}`}
+                                download
                                 onClick={(e) => e.stopPropagation()}
                                 className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
-                                title={`Download the social media template (.xlsx) for ${m.metric_name}`}
+                                title={`Download the evidence (CSV) of ${m.metric_name} for the selected period`}
                               >
-                                <Download className="w-3 h-3 text-slate-500 shrink-0" />
-                                <span>Template</span>
+                                <FileText className="w-3 h-3 text-slate-500 shrink-0" />
+                                <span>Evidence</span>
                               </a>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setIsSocialUploadOpen(true);
-                                }}
-                                className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
-                                title={`Upload Instagram / LinkedIn / TikTok data (.xlsx) for ${m.metric_name}`}
-                              >
-                                <FileSpreadsheet className="w-3 h-3 text-slate-500 shrink-0" />
-                                <span>Upload</span>
-                              </button>
+                              {m.outcome_upload && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setOutcomeUploadMetric(m);
+                                  }}
+                                  className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
+                                  title={`Upload monthly values (.xlsx) for ${m.metric_name}`}
+                                >
+                                  <FileSpreadsheet className="w-3 h-3 text-slate-500 shrink-0" />
+                                  <span>Upload</span>
+                                </button>
+                              )}
+                              {/* v2.52.0: metric 1 also takes social media statistics (its drilldown; the modal has its own template + history) */}
+                              {m.data_upload === 'SOCIAL_MEDIA' && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIsSocialUploadOpen(true);
+                                  }}
+                                  className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
+                                  title={`Social media data (Instagram / LinkedIn / TikTok): template, .xlsx upload and history for ${m.metric_name}`}
+                                >
+                                  <FileSpreadsheet className="w-3 h-3 text-slate-500 shrink-0" />
+                                  <span>Social Media</span>
+                                </button>
+                              )}
                             </>
                           ) : null /* v2.50.0: no Detail / View Data button - clicking the metric row opens the detail */}
                         </div>
@@ -674,6 +710,14 @@ export default function Calculator({
 
       {isAdmin && (
         <SocialMediaUploadModal isOpen={isSocialUploadOpen} onClose={() => setIsSocialUploadOpen(false)} />
+      )}
+      {isAdmin && (
+        <OutcomeUploadModal
+          isOpen={Boolean(outcomeUploadMetric)}
+          metric={outcomeUploadMetric}
+          onClose={() => setOutcomeUploadMetric(null)}
+          onUploaded={() => { if (onDataUploaded) onDataUploaded(); }}
+        />
       )}
 
     </div>

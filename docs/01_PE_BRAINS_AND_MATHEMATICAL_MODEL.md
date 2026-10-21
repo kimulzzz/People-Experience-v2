@@ -201,6 +201,25 @@ Dimana:
 
 ---
 
+### 3.9 Skor Bertingkat (Score Tiers) & Metrik N/A (sejak v2.54.0)
+
+Metrik dengan `px_metrics.score_tiers` terisi dinilai per tier, apa pun `scale_type`-nya (`server/db/scoreTiers.js` `tieredScore`, dipanggil `normalizeScore`/`normalizeTarget`). Konfigurasi: `unit` (`percent`|`number`, hanya tampilan/input) dan `bounds` = batas bawah tier 2, 3, 4, 5 dengan operator `>=` atau `>` (batas itu sendiri masuk tier atas atau tidak).
+
+$$\text{Skor}(V) = \begin{cases} \dfrac{V}{B_1} \times 1, & \text{tier 1 (di bawah batas tier 2)} \\ \dfrac{V}{B_{t-1}} \times t, & \text{tier } t = 2..5 \end{cases} \qquad \text{Normalized Score} = \min\left(100, \max\left(0, \frac{\text{Skor}}{5} \times 100\right)\right)$$
+
+Contoh metrik 14 (batas `>=` 4000/5000/6000/7500): 6400 -> tier 4 -> 6400 / 6000 x 4 = 4.27 -> **85.33%**; target 5000 -> tier 3 -> 3 / 5 = 60%. Konsekuensi rumus: nilai di dalam tier bisa mencapai 100% sebelum tier 5 (metrik 1: >= 3.125% dalam tier 4).
+
+| Metrik | Unit | Batas tier 2/3/4/5 | Target |
+| :--- | :--- | :--- | :--- |
+| 1 (engagement rate social media) | % | `>` 1 / `>` 2 / `>` 2.5 / `>` 3.5 | 2% (= 80%) |
+| 2 (Goes to Campus) | angka | belum diatur (`bounds: null`) -> **N/A** | - |
+| 3 (success ratio kandidat universitas target) | % | `>=` 30 / `>=` 45 / `>=` 60 / `>` 75 | 70% (= 93.33%) |
+| 14 (penerima recognition / tahun) | angka | `>=` 4000 / 5000 / 6000 / 7500 | 5000 (= 60%) |
+
+**N/A**: metrik bertier dengan `bounds: null` -> `status: NO_DATA`, `not_applicable: true`, nilai/skor/target persen `null`; diperlakukan seperti `NO_DATA` (§4): tidak masuk pembilang maupun penyebut Survey/Outcome/PX Index, rollup journey/checkpoint, alert, dan trend. `score_tiers` `NULL` = normalisasi menurut `scale_type` seperti sebelumnya. Status tetap memakai aturan biasa (< `min_threshold` = CRITICAL, < target persen = WARNING).
+
+---
+
 ## ⏳ 4. Model Agregasi Waktu: Period Filter (YTD vs MTD)
 
 Aturan sejak v2.36.0; periode MTD per metrik diubah di v2.37.0; periode ESS diubah lagi di v2.50.0 (*carry-forward*, lihat butir 3). Jendela periode dihitung di `server/db/filterUtils.js` (`ytdEndMonth`, `periodWindow`, `parseFilterOptions`) dan dipakai kedua backend storage (`sqlStorage.buildResponseFilter`, `jsonStorage.applyResponseFilters`), sehingga SQL Server dan JSON membaca baris yang sama.
@@ -219,7 +238,8 @@ Aturan sejak v2.36.0; periode MTD per metrik diubah di v2.37.0; periode ESS diub
    | :--- | :--- | :--- |
    | SURVEY SYSTEM (Monthly maupun Annual) | Januari s.d. batas YTD | Hanya bulan M |
    | ESS (ringkasan `.xlsx`, `selectEssResult`, sejak v2.50.0) | Hasil **terakhir** dengan tahun-bulan <= bulan akhir YTD (dibatasi jam server), dari tahun mana pun | Hasil **terakhir** dengan tahun-bulan <= Y-M, dari tahun mana pun |
-   | OUTCOME | Snapshot saat ini, tanpa filter periode | Sama |
+   | OUTCOME tanpa nilai bulanan | Snapshot saat ini (`raw_value`), tanpa filter periode | Sama |
+   | OUTCOME dengan nilai bulanan (upload Admin, sejak v2.54.0; bukan metrik 11) | Nilai bulan tersimpan **terakhir** di Januari s.d. batas YTD; tidak ada -> `NO_DATA` | Hanya bulan M; tidak ada -> `NO_DATA` |
 
    **ESS = *carry-forward* (sejak v2.50.0)**: ESS hanya sekali setahun (November, batas pengingat 25 November), jadi tahun berjalan memakai hasil tahun lalu sampai hasil tahun berjalan diunggah. `NO_DATA` hanya bila tidak ada hasil pada/sebelum akhir periode, atau periodenya belum dimulai (bulan/tahun depan; `essPeriodEndKey` = `null`). `period_window` metrik ESS = jendela periode yang dipilih dengan `basis: 'LATEST_RESULT'`; `ess_period` / `ess_period_label` = periode hasil yang dipakai; `ess_carried_forward` = `true` bila hasil itu sebelum periode yang dipilih (MTD: bulan lain; YTD: tahun sebelumnya). Contoh dengan satu-satunya hasil ESS 2025-11 (metrik 9 = 92 dari file asli): 92 pada MTD 2025-11 dan YTD 2025 (tidak carried), juga pada MTD 2025-12, MTD 2026-01 s.d. 2026-10 dan YTD 2026 (carried); `NO_DATA` pada MTD 2025-10, MTD 2024-12, YTD 2024.
 
