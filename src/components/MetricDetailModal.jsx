@@ -256,6 +256,11 @@ export default function MetricDetailModal({
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 border border-gray-200">
                   Period: {periodLabel}
                 </span>
+                {detailData?.manual_override && (
+                  <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200" title={detailData.manual_override.note}>
+                    Manual value{detailData.manual_override.bankwide_only ? ' (bankwide only)' : ''}
+                  </span>
+                )}
                 {detailData?.last_update_label && (
                   <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 border border-gray-200" title="Latest data period of this metric (any period)">
                     Last update: {detailData.last_update_label}

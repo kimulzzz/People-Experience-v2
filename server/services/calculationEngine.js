@@ -422,6 +422,28 @@ async function essDirectorateFor(directorate, subDirectorate, scopes) {
   return parent ? parent.directorate_name : '__NONE__';
 }
 
+// v2.54.2: a TEMPORARY manual value for a metric (user request 2026-10-22: Signature Program Events is not in use yet, metric 11 is
+// shown to the Board with a fixed value). Stored in the database, not in code: setting `metric_manual_overrides` =
+// { "<metric_id>": { value, score (0-100), note, bankwide_only (default true) } }. Remove the key (or the setting) to go back to
+// the live calculation. bankwide_only: under a directorate filter / USER scope the metric is N/A (not counted) - the value is bankwide.
+async function loadManualOverrides() {
+  try {
+    const stored = (await storage.getSettings()).metric_manual_overrides;
+    const obj = typeof stored === 'string' ? JSON.parse(stored) : stored;
+    return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : {};
+  } catch (_) {
+    return {};
+  }
+}
+function manualOverrideFor(overrides, metricId) {
+  const o = overrides && overrides[String(metricId)];
+  if (!o || typeof o !== 'object') return null;
+  const value = Number(o.value);
+  const score = Number(o.score);
+  if (!Number.isFinite(value) || !Number.isFinite(score)) return null;
+  return { value, score: Math.min(Math.max(score, 0), 100), note: String(o.note || 'Manual value'), bankwide_only: o.bankwide_only !== false };
+}
+
 async function calculatePEIndex(filterInput = 'YTD', options = {}) {
   // The per-month inner calls from computeMonthlyTrends() skip this (it syncs once up front).
   if (!options.skipTrends) await syncLiveEventMetrics();
@@ -480,6 +502,7 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
     getPxWeights(),
     storage.getOutcomeValues()   // monthly OUTCOME values (v2.54.0): small table, read once per calculation
   ]);
+  const manualOverrides = await loadManualOverrides(); // v2.54.2
   // "Last update" of every metric (v2.54.0) - only for the scorecard itself, not for its per-month / per-directorate inner calls
   const lastUpdateCtx = options.skipTrends ? null : await loadLastUpdateContext({ essResults, outcomeRows });
   const wSurvey = pxWeights.survey / 100;
@@ -571,10 +594,22 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
 
     // v2.54.0: a tier-scored metric whose tiers are not configured yet has no value (N/A): out of every index, rollup and alert
     const tierCfg = readTierConfig(m.score_tiers);
-    const notApplicable = !!tierCfg && !tierCfg.bounds;
+    let notApplicable = !!tierCfg && !tierCfg.bounds;
     if (notApplicable) hasData = false;
 
-    const normScore = hasData ? normalizeScore({ ...m, ...targetConfig }, rawVal) : null;
+    // v2.54.2: temporary manual value (bankwide only: N/A under a directorate filter / USER scope)
+    const manual = manualOverrideFor(manualOverrides, m.metric_id);
+    if (manual) {
+      if (manual.bankwide_only && isDirectorateFiltered) {
+        hasData = false;
+        notApplicable = true;
+      } else {
+        hasData = true;
+        rawVal = manual.value;
+      }
+    }
+
+    const normScore = hasData ? (manual ? manual.score : normalizeScore({ ...m, ...targetConfig }, rawVal)) : null;
     const minThreshold = parseFloat(targetConfig.min_threshold || 75);
     const normalizedTarget = normalizeTarget(m, targetConfig);
 
@@ -606,6 +641,7 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       raw_value: hasData ? parseFloat(rawVal.toFixed(2)) : null,
       unit: m.unit,
       normalized_score: hasData ? parseFloat(normScore.toFixed(2)) : null,
+      manual_override: manual ? { value: manual.value, score: manual.score, note: manual.note, bankwide_only: manual.bankwide_only } : null,
       weight,
       status,
       has_data: hasData,
@@ -924,7 +960,13 @@ async function buildMetricDetail(metricId, filterInput = 'YTD') {
     }
     const tierCfg = readTierConfig(metric.score_tiers);
     if (tierCfg && !tierCfg.bounds) hasData = false; // v2.54.0: tiers not configured -> N/A
-    const normalizedScore = hasData ? normalizeScore({ ...metric, ...targetConfig }, rawVal) : null;
+    // v2.54.2: temporary manual value (same rule as calculatePEIndex)
+    const manual = manualOverrideFor(await loadManualOverrides(), id);
+    if (manual) {
+      if (manual.bankwide_only && isDirectorateFiltered) hasData = false;
+      else { hasData = true; rawVal = manual.value; }
+    }
+    const normalizedScore = hasData ? (manual ? manual.score : normalizeScore({ ...metric, ...targetConfig }, rawVal)) : null;
     const normalizedTargetOutcome = normalizeTarget(metric, targetConfig);
 
     return {
@@ -970,6 +1012,7 @@ async function buildMetricDetail(metricId, filterInput = 'YTD') {
       current_raw_value: hasData ? rawVal : null,
       unit: metric.unit,
       normalized_score: hasData ? parseFloat(normalizedScore.toFixed(2)) : null,
+      manual_override: manual ? { value: manual.value, score: manual.score, note: manual.note, bankwide_only: manual.bankwide_only } : null,
       has_data: hasData,
       status: !hasData ? 'NO_DATA' : (normalizedScore < targetConfig.min_threshold ? 'CRITICAL' : (normalizedScore < normalizedTargetOutcome ? 'WARNING' : 'HEALTHY')),
       update_frequency: metric.update_frequency || 'MONTHLY',
@@ -977,7 +1020,7 @@ async function buildMetricDetail(metricId, filterInput = 'YTD') {
       is_bankwide_value: isBankwideValue,
       ...outcomeFields(metric, { basis, pick }),
       score_tiers: tierCfg,
-      not_applicable: !!tierCfg && !tierCfg.bounds,
+      not_applicable: (!!tierCfg && !tierCfg.bounds) || !!(manual && manual.bankwide_only && isDirectorateFiltered),
       tier_info: hasData ? tierInfo(metric, rawVal) : null,
       period: periodString,
       filter_options: queryFilter,

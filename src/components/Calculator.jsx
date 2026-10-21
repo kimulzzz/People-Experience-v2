@@ -507,6 +507,9 @@ export default function Calculator({
                             <div className="text-xs font-black text-gray-900">
                               {formatMetricValue(m.raw_value, m.unit, m.scale_type)}
                             </div>
+                            {m.manual_override && (
+                              <span className="text-[9.5px] font-bold text-amber-700 block leading-tight" title={m.manual_override.note}>Manual value</span>
+                            )}
                             <span className="text-[9.5px] text-gray-400 block leading-tight">Tgt: {m.target_display}</span>
                           </>
                         )}
@@ -519,7 +522,7 @@ export default function Calculator({
                             Exempted (0%)
                           </div>
                         ) : isNoData ? (
-                          <div className="text-center py-1 text-[10px] font-bold text-gray-400 bg-gray-100 rounded" title={m.not_applicable ? 'Score tiers not configured yet - not counted in the PX Index' : 'No data in the selected period'}>
+                          <div className="text-center py-1 text-[10px] font-bold text-gray-400 bg-gray-100 rounded" title={m.not_applicable ? (m.manual_override ? 'Bankwide-only value - N/A under a directorate filter, not counted' : 'Score tiers not configured yet - not counted in the PX Index') : 'No data in the selected period'}>
                             {m.not_applicable ? 'N/A' : '—'}
                           </div>
                         ) : (
@@ -553,7 +556,7 @@ export default function Calculator({
                             Exempted
                           </span>
                         ) : isNoData ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold bg-gray-200 text-gray-500" title={m.not_applicable ? 'Score tiers not configured yet - N/A, not counted in the PX Index' : 'No data in the selected period - left out of the index'}>
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold bg-gray-200 text-gray-500" title={m.not_applicable ? (m.manual_override ? 'Bankwide-only value - N/A under a directorate filter, not counted in the PX Index' : 'Score tiers not configured yet - N/A, not counted in the PX Index') : 'No data in the selected period - left out of the index'}>
                             {m.not_applicable ? 'N/A' : 'No Data'}
                           </span>
                         ) : (

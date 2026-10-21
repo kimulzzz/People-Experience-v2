@@ -1597,6 +1597,12 @@ async function runAllModules() {
     const metric11Before = originalMetric.metrics.find(m => m.metric_id === 11);
     assert(metric11Before, 'Metric #11 (Signature Program participation rate) must exist');
     const originalTarget = metric11Before.target_value;
+    // v2.54.2: a temporary manual value of metric 11 (setting metric_manual_overrides) would replace the live calculation -
+    // take it out for this test and put it back exactly afterwards.
+    const st11 = require('../server/db/storage');
+    const overrides11 = (await st11.getSettings()).metric_manual_overrides;
+    const hasOverride11 = !!(overrides11 && overrides11['11']);
+    if (hasOverride11) { const rest = { ...overrides11 }; delete rest['11']; await st11.setSetting('metric_manual_overrides', rest); }
 
     try {
       // Change the quota target far enough that normalized_score visibly shifts if (and only
@@ -1622,6 +1628,7 @@ async function runAllModules() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target_value: originalTarget })
       });
+      if (hasOverride11) await st11.setSetting('metric_manual_overrides', overrides11);
     }
   });
 
@@ -6977,7 +6984,10 @@ async function runAllModules() {
         const O = wmean(live.filter(m => m.metric_type === 'OUTCOME'));
         near(dir.survey_index, S, 0.02, 'survey index incl. bankwide-only survey metrics');
         near(dir.outcome_index, O, 0.02, 'outcome index = all outcome metrics');
-        near(dir.outcome_index, bank.outcome_index, 0.01, 'outcome index equals bankwide (all outcome metrics are snapshots)');
+        // outcome metrics are bankwide snapshots; a bankwide-only manual value (v2.54.2) is N/A per directorate, so compare with the
+        // bankwide values of the outcome metrics that count under this filter
+        const bankO = wmean(bank.metrics.filter(m => m.metric_type === 'OUTCOME' && live.some(l => l.metric_id === m.metric_id)));
+        near(dir.outcome_index, bankO, 0.01, 'outcome index equals the bankwide values of the same outcome metrics');
         near(dir.px_index, 0.7 * S + 0.3 * O, 0.02, 'px index');
         // the employee-only index differs: proves the bankwide-only survey metrics really are inside
         const empOnly = wmean(live.filter(m => m.metric_type === 'SURVEY' && m.is_employee_metric !== false));
@@ -8957,7 +8967,7 @@ async function runAllModules() {
         assert.deepStrictEqual(tiers56.resolveTierConfig(null, { unit: 'number', bounds: B14 }), { unit: 'number', bounds: B14 }, 'null / undefined keep the stored configuration');
       });
 
-      await runTest('[POSITIVE] Live configuration: metric 14 = 6,400 people -> tier 4 -> 4.27 / 5 = 85.33% (target 60%); metric 1 = 0.66% (Sept 2026) -> 13.2% (target 2% -> 60%); metric 3 = 75.04% (Sept 2026) -> 100% capped (target 70% -> 93.33%); detail agrees', async () => {
+      await runTest('[POSITIVE] Live configuration: metric 14 = 6,400 people -> tier 4 -> 4.27 / 5 = 85.33% (target 60%); metric 1 = the stored Sept 2026 value through its tiers (target 2% -> 60%); metric 3 = 75.04% (Sept 2026) -> 100% capped (target 70% -> 93.33%); detail agrees', async () => {
         const { calc } = await calcMetric56('mode=YTD&year=2026', 14);
         const byId = id => calc.metrics.find(x => x.metric_id === id);
         const m14 = byId(14);
@@ -8968,7 +8978,11 @@ async function runAllModules() {
         assert.strictEqual(m14.target_value_normalized, 60);
         const m1 = byId(1);
         assert.deepStrictEqual(m1.score_tiers, { unit: 'percent', bounds: B1 });
-        assert.deepStrictEqual([m1.raw_value, m1.normalized_score, m1.outcome_period, m1.target_value, m1.target_value_normalized, m1.status], [0.66, 13.2, '2026-09', 2, 60, 'CRITICAL']);
+        // the live September 2026 value may be updated by the Admin (0.66% at v2.54.0, 3.19% since 2026-10-22): expect what is stored
+        const m1Sep = (await st56.getOutcomeValues(1)).find(r => r.year === 2026 && r.month === 9);
+        const m1Pct = Math.round(tiers56.tieredScore(Number(m1Sep.value), B1).percent * 100) / 100;
+        const m1Status = m1Pct < m1.min_threshold ? 'CRITICAL' : (m1Pct < 60 ? 'WARNING' : 'HEALTHY');
+        assert.deepStrictEqual([m1.raw_value, m1.normalized_score, m1.outcome_period, m1.target_value, m1.target_value_normalized, m1.status], [Number(m1Sep.value), m1Pct, '2026-09', 2, 60, m1Status]);
         const m3 = byId(3);
         assert.deepStrictEqual(m3.score_tiers, { unit: 'percent', bounds: B3 });
         assert.deepStrictEqual([m3.raw_value, m3.normalized_score, m3.tier_info.tier, m3.tier_info.capped, m3.target_value, m3.target_value_normalized, m3.status], [75.04, 100, 5, false, 70, 93.33, 'HEALTHY']);
@@ -9368,6 +9382,75 @@ async function runAllModules() {
       for (const u of uploadIds56) { const f = path56.join(ov56.OUTCOME_UPLOAD_DIR, `${u}.xlsx`); if (fs56.existsSync(f)) fs56.unlinkSync(f); }
       for (const id of userIds56) await adminJson('DELETE', `/api/admin/users/${id}`);
       if (userCookie56) userCookie56 = null;
+    }
+  }
+
+  // --- MODULE 57 (v2.54.2): TEMPORARY MANUAL VALUE PER METRIC (setting metric_manual_overrides; metric 11 = 714 pax / 87%) ---
+  // Works on a metric this module creates; the setting is restored exactly in finally (the config guard also covers px_app_settings).
+  console.log('\n📦 MODULE 57: Temporary manual metric value (bankwide only; N/A under a directorate filter) (Positive & Negative Testing)');
+  if (!skipModuleBlock(57)) {
+    const st57 = require('../server/db/storage');
+    const before57 = (await st57.getSettings()).metric_manual_overrides;
+    if (before57 === undefined) {
+      console.log('  ⏭️  SKIPPED: setting metric_manual_overrides does not exist in this database');
+    } else {
+      let metric57 = null;
+      const dirList57 = await (await fetch(`${BASE_URL}/api/directorates`)).json();
+      const dir57 = (Array.isArray(dirList57) ? dirList57 : (dirList57.directorates || []))[0];
+      const calc57 = async q => {
+        const r = await fetch(`${BASE_URL}/api/metrics/calculate${q ? `?${q}` : ''}`);
+        assert.strictEqual(r.status, 200);
+        const body = await r.json();
+        return { body, m: body.metrics.find(x => x.metric_id === metric57.metric_id) };
+      };
+      try {
+        const r = await adminJson('POST', '/api/admin/metrics', { journey_id: 3, checkpoint_id: 8, metric_type: 'OUTCOME', is_employee_metric: true,
+          metric_name: `RT57 Manual ${Date.now().toString(36)}`, scale_type: 'QUOTA_COUNT', target_value: 500, min_threshold: 60, raw_value: 10, unit: 'pax' });
+        assert.strictEqual(r.status, 201);
+        metric57 = (await r.json()).metric;
+        const withOverride = Object.assign({}, before57 || {}, { [metric57.metric_id]: { value: 321, score: 65, note: 'RT57 temporary', bankwide_only: true } });
+        await st57.setSetting('metric_manual_overrides', withOverride);
+
+        await runTest('[POSITIVE] Bankwide: the manual value and score replace the calculated ones and count in the index; detail shows the same', async () => {
+          const { m } = await calc57('');
+          assert.deepStrictEqual([m.raw_value, m.normalized_score, m.status, !!m.manual_override], [321, 65, 'WARNING', true]);
+          assert.strictEqual(m.manual_override.note, 'RT57 temporary');
+          const d = await (await fetch(`${BASE_URL}/api/metrics/${metric57.metric_id}/detail`)).json();
+          assert.deepStrictEqual([d.current_raw_value, d.normalized_score, d.has_data, !!d.not_applicable], [321, 65, true, false]);
+        });
+
+        await runTest('[POSITIVE] Directorate filter: a bankwide-only manual value is N/A (not counted), in calculate and detail', async () => {
+          assert.ok(dir57, 'a directorate exists');
+          const q = `directorate=${encodeURIComponent(dir57.name)}`;
+          const { m } = await calc57(q);
+          assert.deepStrictEqual([m.raw_value, m.normalized_score, m.status, m.not_applicable], [null, null, 'NO_DATA', true]);
+          const d = await (await fetch(`${BASE_URL}/api/metrics/${metric57.metric_id}/detail?${q}`)).json();
+          assert.deepStrictEqual([d.normalized_score, d.has_data, d.not_applicable], [null, false, true]);
+        });
+
+        await runTest('[NEGATIVE] An invalid manual entry (score not a number) is ignored; removing the key returns to the calculated value', async () => {
+          await st57.setSetting('metric_manual_overrides', Object.assign({}, before57 || {}, { [metric57.metric_id]: { value: 321, score: 'abc' } }));
+          let { m } = await calc57('');
+          assert.strictEqual(m.manual_override, null);
+          assert.strictEqual(m.raw_value, 10);
+          await st57.setSetting('metric_manual_overrides', before57);
+          ({ m } = await calc57(''));
+          assert.deepStrictEqual([m.raw_value, m.manual_override], [10, null]);
+        });
+
+        await runTest('[POSITIVE] Live: metric 11 follows its manual entry when one is set (714 pax / 87% bankwide, N/A per directorate)', async () => {
+          const entry = before57 && before57['11'];
+          const r11 = await fetch(`${BASE_URL}/api/metrics/calculate`);
+          const m11 = (await r11.json()).metrics.find(x => x.metric_id === 11);
+          if (!entry) { assert.strictEqual(m11.manual_override, null); return; }
+          assert.deepStrictEqual([m11.raw_value, m11.normalized_score], [Number(entry.value), Number(entry.score)]);
+          const m11d = (await (await fetch(`${BASE_URL}/api/metrics/calculate?directorate=${encodeURIComponent(dir57.name)}`)).json()).metrics.find(x => x.metric_id === 11);
+          assert.deepStrictEqual([m11d.normalized_score, m11d.not_applicable], [null, true]);
+        });
+      } finally {
+        await st57.setSetting('metric_manual_overrides', before57);
+        if (metric57) await adminJson('DELETE', `/api/admin/metrics/${metric57.metric_id}`);
+      }
     }
   }
 }

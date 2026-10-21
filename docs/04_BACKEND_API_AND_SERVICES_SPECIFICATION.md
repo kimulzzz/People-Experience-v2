@@ -605,6 +605,10 @@ Pengujian: `docs/07` §31 (Modul 46).
 
 ---
 
+## Catatan v2.54.2 - Nilai manual sementara per metrik (metrik 11)
+
+Setting baru `metric_manual_overrides` di `px_app_settings` (JSON per `metric_id`: `value`, `score` 0-100, `note`, `bankwide_only` default `true`). `calculationEngine.loadManualOverrides()` / `manualOverrideFor()` dibaca `calculatePEIndex` (dan semua pemanggilnya: trend, by-directorate, alerts) serta detail metrik: nilai = `value`, normalized score = `score`; `bankwide_only` + filter direktorat / cakupan User -> `NO_DATA` + `not_applicable: true`. Field baru `manual_override` (`{ value, score, note, bankwide_only }` atau `null`) di `GET /api/metrics/calculate` dan `GET /api/metrics/:id/detail`. Tidak ada endpoint baru; setting diubah langsung di database (sementara untuk presentasi direksi 2026-10-22: metrik 11 = 714 pax / 87%). Hapus key metrik untuk kembali ke perhitungan live.
+
 ## Catatan v2.54.0 - Skor Bertingkat (`score_tiers`) & Nilai Bulanan Metrik OUTCOME
 
 **Ringkasan**: metrik 1, 2, 3, 14 dinilai per tier (`px_metrics.score_tiers`; rumus `docs/01` §3.9); tier belum diatur = N/A (di luar indeks). Metrik OUTCOME (kecuali 11) menerima satu nilai bankwide per bulan lewat upload `.xlsx` Admin; setiap metrik mendapat "Last update". `/api/health` `version` = `2.54.0`. Tidak ada env/setting baru.

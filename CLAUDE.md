@@ -785,6 +785,11 @@ domain model, not just descriptive:
 - **v2.54.1** (2026-10-21, see `CHANGELOG.md` [2.54.1], `docs/01` §3.9): tier scoring now interpolates between boundaries (user decision after QC found the
   v2.54.0 rule non-monotonic): tier 1 = v/B1, tier t=2..4 = t + (v-Bt-1)/(Bt-Bt-1), tier 5 = 5. Live values unchanged (85.33 / 13.2 / 100); metric 1 target 2% now = 60%.
 
+- **v2.54.2** (2026-10-22, see `CHANGELOG.md` [2.54.2]): TEMPORARY manual value for metric 11 (Signature Program participation: 714 pax / 87%, Board
+  presentation; Signature Program Events not in use yet) via new setting `metric_manual_overrides` (`{"11":{value,score,note,bankwide_only}}`) read by
+  calculatePEIndex + detail; bankwide only (N/A under a directorate filter / USER scope). Remove key "11" to return to the live calculation. Module 57 (4). Same day: metric 1 value set to 3.19% for 2026-09 (upload, audited)
+  -> tier 4 -> 93.8%; PX YTD 2026 = 88.65.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan

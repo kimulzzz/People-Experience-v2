@@ -2,6 +2,20 @@
 
 Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Management & Scoring System dicatat di dalam dokumen ini mengikuti standar [Semantic Versioning](https://semver.org/).
 
+## [2.54.2] - 2026-10-22
+
+### 📌 Nilai manual sementara untuk metrik 11 "Signature Program participation rate" (Added)
+
+- **Permintaan user**: menu Signature Program Events belum dipakai, sedangkan besok ada presentasi ke direksi. Metrik 11 diminta **sementara** bernilai **714 pax** dengan index score **87%**, ikut memengaruhi nilai **bankwide**; metrik ini tidak punya nilai per direktorat, jadi nilainya hanya untuk bankwide.
+- **Bukan hardcode di kode**: nilai disimpan di database sebagai setting baru `metric_manual_overrides` (`px_app_settings`) = `{ "11": { "value": 714, "score": 87, "note": "...", "bankwide_only": true } }`, sehingga mudah dicabut. **Cara kembali ke perhitungan live**: hapus key `"11"` dari setting itu (atau hapus baris setting-nya) - tanpa deploy ulang.
+- **Engine** (`calculationEngine.js` `loadManualOverrides` / `manualOverrideFor`, dipakai `calculatePEIndex` dan detail metrik): bila ada entri valid (`value` dan `score` angka; score dibatasi 0-100), nilai metrik = `value` dan normalized score = `score` (rumus skala/target tidak dipakai). Status tetap dihitung terhadap target ternormalisasi dan threshold. `bankwide_only: true` (default): di bawah filter direktorat atau cakupan User metrik ini **N/A** (`NO_DATA` + `not_applicable`) dan tidak ikut dihitung - supaya tidak terlihat seolah setiap direktorat punya 714 peserta. Entri tidak valid diabaikan. Field baru `manual_override` di calculate dan detail. Trend, PX by directorate dan alerts memakai hitungan yang sama.
+- **Nilai metrik 1 diperbarui (permintaan user 2026-10-22)**: "Career website & social media follower, reach & engagement growth" memakai nilai aktual **3,19%** (September 2026, menggantikan 0,66%) - diunggah lewat `POST /api/admin/outcome-values/1/upload` oleh admin pemeliharaan sementara `claude-maint` (audit OUTCOME_UPLOAD terlihat). Kelompok skor + interpolasi: tier 4 (> 2,5% s.d. <= 3,5%) -> 4 + (3,19 - 2,5) / (3,5 - 2,5) = 4,69 -> **93,8%**, HEALTHY (target 60%, threshold 20%). PX Index YTD 2026 bankwide: **88,65** (Survey 87,47, Outcome 91,39; termasuk metrik 11 = 87%). Tes live Modul 56 kini membaca nilai September yang tersimpan (tidak lagi angka tetap 0,66).
+- **UI**: label "Manual value" di kolom Actual Value Explore Metrics dan badge "Manual value (bankwide only)" di header detail metrik (tooltip berisi catatan); tooltip N/A di tampilan direktorat menyebut "Bankwide-only value".
+- **Data live**: setting dibuat langsung di database (main session, 2026-10-22; tidak lewat API sehingga tidak ada baris audit). Status metrik 11: target 500 pax = 100%, threshold 80% -> skor 87% = **WARNING** (walau 714 > 500, karena skor diisi manual).
+- **Tes**: Modul 57 baru (4 tes: bankwide memakai nilai manual + detail, filter direktorat N/A, entri tidak valid diabaikan dan hapus key kembali ke hitungan live, metrik 11 live). `npx vite build` lulus; suite penuh SQL sebelum commit - **352/352 lulus, 0 gagal, 16 tes dilewati** (modul media/event di-skip).
+
+---
+
 ## [2.54.1] - 2026-10-21
 
 ### 📈 Rumus skor bertingkat diubah ke interpolasi antar batas (Changed)
