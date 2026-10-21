@@ -751,6 +751,9 @@ domain model, not just descriptive:
   16 skipped (suite 415 by count); JSON full suite not run. QC: LULUS DENGAN CATATAN; fixed after QC: original-file downloads (social + ESS) 500 on non-Latin-1 names ->
   `attachmentDisposition()` (ASCII + `filename*=UTF-8''`) + nosniff. Open: future months (to 2100) accepted, so "Latest data" can point to the future.
 
+- **v2.52.1** (2026-10-21, see `CHANGELOG.md` [2.52.1], `docs/05`): the PX Index by Directorate panel no longer shows a rank / row number column
+  (user found it odd next to the alphabetical order). Frontend only.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan

@@ -432,7 +432,7 @@ Catatan: bobot berlaku untuk PX Index dan skor journey (default 70/30). Bila dal
 
 - Di bawah panel PX Index ada **PX Index by Directorate**; klik judulnya untuk membuka. Periode sama dengan filter Header (YTD/MTD, tahun, bulan).
 - Admin melihat semua direktorat master (12 saat ini; bisa diubah di tab Directorates sejak v2.51.0); User hanya direktorat dalam cakupannya (User dengan sebagian divisi melihat angka divisi itu saja, tertulis "Your divisions: ...").
-- Urutan (sejak v2.51.0): abjad nama direktorat. Angka di kiri = peringkat PX (PX tertinggi = 1); direktorat tanpa data sendiri (mis. direktorat baru) tampil "—", tanpa angka PX, dan tidak diperingkat. (v2.48.0-v2.50.0: PX tertinggi dulu.)
+- Urutan (sejak v2.51.0): abjad nama direktorat, tanpa nomor/peringkat di kiri (dihapus di v2.52.1). Direktorat tanpa data sendiri (mis. direktorat baru) tampil tanpa angka PX. (v2.48.0-v2.50.0: PX tertinggi dulu.)
 - Klik satu direktorat = memilihnya di filter Direktorat Header, seluruh web mengikuti. Kembali ke bankwide lewat filter Header.
 
 **Metrik non-karyawan di filter direktorat**

@@ -2,6 +2,16 @@
 
 Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Management & Scoring System dicatat di dalam dokumen ini mengikuti standar [Semantic Versioning](https://semver.org/).
 
+## [2.52.1] - 2026-10-21
+
+### 🧹 PX Index by Directorate tanpa nomor baris (Changed)
+
+- **Permintaan user**: nomor di kiri setiap baris panel **PX Index by Directorate** terasa aneh (daftar sudah abjad, jadi nomor peringkat PX yang tidak berurutan terlihat seperti nomor baris acak) - dihapus.
+- **`src/components/DirectoratePxPanel.jsx`**: kolom peringkat (badge angka/"—" dan tooltip "PX rank n of m") dihapus beserta perhitungan `rankOf`; kolom nama direktorat kini memakai lebar kolom itu. Urutan tetap abjad; klik baris tetap memfilter dashboard. Tidak ada perubahan API/backend.
+- **Tes**: `npx vite build` lulus; suite penuh SQL sebelum commit (modul media dan event di-skip karena tidak tersentuh): **329/329 lulus, 0 gagal, 16 tes dilewati**. Dicek di browser: panel tanpa nomor, urutan abjad.
+
+---
+
 ## [2.52.0] - 2026-10-21
 
 ### 📱 Metrik 1: Data Social Media (Instagram, LinkedIn, TikTok) lewat Upload Excel & Token Integrasi (Added / Changed / Fixed)
