@@ -754,6 +754,10 @@ domain model, not just descriptive:
 - **v2.52.1** (2026-10-21, see `CHANGELOG.md` [2.52.1], `docs/05`): the PX Index by Directorate panel no longer shows a rank / row number column
   (user found it odd next to the alphabetical order). Frontend only.
 
+- **v2.52.2** (2026-10-21, see `CHANGELOG.md` [2.52.2], `docs/05`): the Header Sub-Dir (division) filter was removed from the web; `filterOptions.sub_directorate`
+  stays `ALL`. Backend `?sub_directorate=` and per-division User scopes are unchanged (enforced server-side). Footer: the "Internal HR Confidential System" tagline
+  is gone; the app version (from `/api/health`) shows on the left after the copyright. Frontend only.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan

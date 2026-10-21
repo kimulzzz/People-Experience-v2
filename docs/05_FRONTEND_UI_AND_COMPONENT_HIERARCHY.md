@@ -93,7 +93,9 @@ graph TD
   - ✉️ **Email Settings** (dulu Setting Email): Membuka `EmailSettingsModal`.
   - 👥 **Manage Users** (dulu Kelola User): Membuka `UserManagementModal`.
   - 🎨 **Theme** (dulu Tema): Pemilih warna aksen per-browser (§4.1).
-  - Keempat tombol Admin hanya tampil untuk role Admin (`isAdmin`). Pada lebar <= 500px select Directorate / Sub-Dir tidak lagi tumpang tindih (`min-w-0 max-w-full`).
+  - Keempat tombol Admin hanya tampil untuk role Admin (`isAdmin`). Pada lebar <= 500px select Directorate tidak lagi tumpang tindih (`min-w-0 max-w-full`).
+- **Footer (v2.52.2)**: kiri = "© <tahun> PT Bank CIMB Niaga Tbk. People Experience Framework." + versi aplikasi dari `GET /api/health` (mis. v2.52.2); tagline "Internal HR Confidential System • 100% On-Premise Compliant" dihapus.
+- **Filter Sub-Dir dihapus (v2.52.2)**: Header tidak lagi punya dropdown Sub-Dir (divisi); `filterOptions.sub_directorate` selalu `ALL`. Backend tetap mendukung `?sub_directorate=` dan cakupan User per divisi tetap ditegakkan di server.
 - **Dropdown bulan (sejak v2.30.0)**: hanya nama bulan Inggris tanpa angka (`January` ... `December`, dari `src/utils/months.js`); nilai internal tetap `01`..`12`. Pada mode YTD opsi pertama "All Months (YTD)".
 
 ---

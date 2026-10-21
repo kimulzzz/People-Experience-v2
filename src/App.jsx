@@ -577,9 +577,10 @@ function AppContent() {
       {/* Footer */}
       <footer className="bg-white border-t border-gray-200 py-4 text-center text-xs text-gray-400">
         <div className="max-w-[1600px] mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>&copy; {new Date().getFullYear()} PT Bank CIMB Niaga Tbk. People Experience Framework.</span>
-          <span className="text-[11px] text-gray-400 font-medium">
-            Internal HR Confidential System • 100% On-Premise Compliant
+          {/* v2.52.2: version from /api/health (never hardcoded here); the "Internal HR Confidential System" tagline was removed */}
+          <span>
+            &copy; {new Date().getFullYear()} PT Bank CIMB Niaga Tbk. People Experience Framework.
+            {healthStatus?.version && <span className="ml-1.5 font-semibold text-gray-500">v{healthStatus.version}</span>}
           </span>
         </div>
       </footer>

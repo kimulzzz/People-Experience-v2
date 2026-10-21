@@ -8,7 +8,6 @@ import {
   FileSpreadsheet,
   Sliders,
   Building2,
-  GitBranch,
   Clock,
   BookMarked,
   Palette,
@@ -71,12 +70,9 @@ export default function Header({
     ? [...availableYears].sort((a, b) => b.localeCompare(a))
     : [filterOptions.year || CURRENT_YEAR];
 
-  // Directorates / divisions the filters offer: everything for an Admin, only the account's scope for a User
+  // Directorates the filter offers: everything for an Admin, only the account's scope for a User.
+  // v2.53.0: the Sub-Dir (division) filter was removed from the web; sub_directorate stays 'ALL'.
   const selectableDirectorates = userScopes ? directoratesList.filter(d => userScopes.some(s => s.directorate === d.name)) : directoratesList;
-  const currentDirectorateObj = directoratesList.find(d => d.name === filterOptions.directorate);
-  const currentScope = userScopes ? userScopes.find(s => s.directorate === filterOptions.directorate) : null;
-  const availableSubDirectorates = !currentDirectorateObj ? []
-    : (currentScope && currentScope.divisions ? currentDirectorateObj.divisions.filter(v => currentScope.divisions.includes(v)) : currentDirectorateObj.divisions);
 
   const handleModeChange = (newMode) => {
     if (onFilterChange) {
@@ -111,15 +107,6 @@ export default function Header({
         ...filterOptions,
         directorate: newDirectorate,
         sub_directorate: 'ALL' // Reset sub-directorate when directorate changes
-      });
-    }
-  };
-
-  const handleSubDirectorateChange = (newSubDirectorate) => {
-    if (onFilterChange) {
-      onFilterChange({
-        ...filterOptions,
-        sub_directorate: newSubDirectorate
       });
     }
   };
@@ -263,29 +250,6 @@ export default function Header({
                   <option key={d.name} value={d.name}>
                     {d.name}
                   </option>
-                ))}
-              </select>
-            </div>
-
-            {/* 5. Filter Sub Direktorat (Divisi) */}
-            <div className={`flex items-center space-x-1 px-2.5 py-1 border rounded-lg shadow-2xs transition min-w-0 max-w-[180px] sm:max-w-none ${
-              filterOptions.directorate === 'ALL'
-                ? 'bg-gray-100 border-gray-200 text-gray-400 opacity-60 cursor-not-allowed'
-                : 'bg-gray-50 border-gray-300 text-gray-900'
-            }`}>
-              <GitBranch className="w-3.5 h-3.5 text-gray-500 shrink-0" />
-              <select
-                value={filterOptions.sub_directorate}
-                disabled={filterOptions.directorate === 'ALL'}
-                onChange={(e) => handleSubDirectorateChange(e.target.value)}
-                className={`min-w-0 max-w-full text-xs font-bold bg-transparent focus:outline-none truncate ${
-                  filterOptions.directorate === 'ALL' ? 'cursor-not-allowed text-gray-400' : 'cursor-pointer text-gray-900'
-                }`}
-                title={filterOptions.directorate === 'ALL' ? 'Select a Directorate first' : 'Select Sub-Directorate (Division)'}
-              >
-                <option value="ALL">Sub-Dir: All</option>
-                {availableSubDirectorates.map(div => (
-                  <option key={div} value={div}>{div}</option>
                 ))}
               </select>
             </div>

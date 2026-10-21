@@ -383,7 +383,7 @@ Setelah mengubah `.env`, restart backend. Bila batas ringkasan habis, kartu vide
 
 **Siapa**: semua akun dengan menu **Exit Interview** (default aktif untuk User; Menu Access sejak v2.49.0) bisa membuka tab **Exit Interview** di Header. Admin melihat data bankwide dan mendapat toolbar data (template, upload, export, riwayat). User hanya melihat **agregat** direktorat dalam cakupannya (direktorat lain ditolak); tidak ada NIK, nama, atau jawaban terbuka yang dikirim ke User. Dari detail metrik 26 (Exit Survey) tombol **Open Exit Interview Dashboard** membuka tab yang sama.
 
-**Filter**: memakai filter Header. YTD = Januari s.d. bulan berjalan tahun itu, MTD = satu bulan; periode dihitung dari **Effective Resignation Date**. Filter Directorate/Sub-Directorate memakai kolom Directorate/Division di file.
+**Filter**: memakai filter Header. YTD = Januari s.d. bulan berjalan tahun itu, MTD = satu bulan; periode dihitung dari **Effective Resignation Date**. Filter Directorate memakai kolom Directorate di file (filter Sub-Dir dihapus dari web sejak v2.52.2; kolom Division tetap disimpan).
 
 **Mengunggah data (Admin)**
 1. Tab Exit Interview -> **Download Template (.xlsx)**. Baris 1 = judul, baris 2 = nama kolom (format "Termination Report" HR, kolom A..AG) + kolom **Directorate** dan **Division**, baris 3 = contoh (hapus sebelum upload).
