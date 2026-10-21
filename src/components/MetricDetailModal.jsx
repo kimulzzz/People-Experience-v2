@@ -1149,7 +1149,7 @@ export default function MetricDetailModal({
                               <span className="font-black text-gray-900">{detailData.score_tiers.bounds ? `Target = ${detailData.target_value_normalized}%` : 'N/A (not configured)'}</span>
                             </div>
                             {detailData.score_tiers.bounds && (
-                              <div className="text-[10.5px] text-gray-500">{tierBandsText(detailData.score_tiers.bounds, detailData.score_tiers.unit)}. Score % = value / lower boundary of its tier × tier / 5 (max 100%).</div>
+                              <div className="text-[10.5px] text-gray-500">{tierBandsText(detailData.score_tiers.bounds, detailData.score_tiers.unit)}. Score rises in a straight line inside each tier (tier 5 = 100%); Score % = score / 5.</div>
                             )}
                           </div>
                         )}

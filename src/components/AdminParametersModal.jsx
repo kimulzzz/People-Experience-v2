@@ -1040,7 +1040,7 @@ All survey data (responses) and question settings of this metric will also be de
                                     />
                                     <span>→ tier {preview.tier} → {preview.score.toFixed(2)} / 5 = <strong>{preview.percent.toFixed(2)}%</strong> (target {tierValue(metricFormData.target_value || 0, t.unit)} → {tieredPercent(metricFormData.target_value, bounds).percent.toFixed(2)}%)</span>
                                   </div>
-                                  <div className="text-gray-400">Score = value / lower boundary of its tier × tier, as % of 5 (max 100%); tier 1: value / tier-2 boundary × 1.</div>
+                                  <div className="text-gray-400">Score rises in a straight line inside each tier: tier 1 = value / tier-2 boundary; tiers 2-4 = tier + share of the way to the next boundary; tier 5 = 5. Shown as % of 5 (max 100%).</div>
                                 </div>
                               ) : (
                                 <div className="text-[10.5px] text-red-600 font-semibold">Enter 4 strictly increasing positive boundaries{pct ? ' (in %)' : ''}.</div>

@@ -568,7 +568,7 @@ Metrik 1 "Career website & social media follower, reach & engagement growth" ber
 1. **Admin Parameters** -> tab **Metric Parameters** -> **Edit** pada metrik.
 2. Bagian **Score Tiers**: pilih **Unit** (`%` atau Number), isi 4 batas bawah tier 2, 3, 4, 5 (naik, > 0) dan operator `>=` (batas masuk tier atas) atau `>` (batas masih tier bawah). Pratinjau menunjukkan nilai -> tier -> skor / 5 -> % dan persentase target.
 3. Centang **N/A (not configured)** bila tier belum diketahui: nilai metrik tampil N/A dan tidak dihitung di PX Index (contoh: metrik 2 Goes to Campus). Hapus centang dan isi batas untuk mengaktifkannya.
-4. Simpan. Skor % = nilai / batas bawah tiernya x nomor tier / 5 x 100 (tier 1: nilai / batas tier 2), maksimum 100%. Perhatikan **Min Threshold**: status CRITICAL dihitung terhadap threshold, bukan target (metrik 14: target 60% < threshold 75%; metrik 1: target = threshold 80%) - sesuaikan bila perlu.
+4. Simpan. Sejak v2.54.1 skor naik lurus di dalam setiap tier: tier 1 = nilai / batas tier 2; tier 2-4 = nomor tier + bagian jarak menuju batas berikutnya; tier 5 = 5. Skor % = skor / 5 x 100, maksimum 100%. Perhatikan **Min Threshold**: status CRITICAL dihitung terhadap threshold, bukan target (metrik 14: target 60% < threshold 75%; metrik 1: target = threshold 80%) - sesuaikan bila perlu.
 
 **Mengunggah nilai bulanan metrik OUTCOME** (semua OUTCOME kecuali metrik 11, yang dihitung dari absensi event)
 1. **Explore Metrics** -> baris metrik -> **Template** (atau dari detail metrik, bar Outcome Data Operations). File: Year | Month | Value | Notes, satu nilai bankwide per bulan; nilai dalam unit metrik (metrik % ditulis angka persen, mis. 0.66).

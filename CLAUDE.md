@@ -782,6 +782,9 @@ domain model, not just descriptive:
   (metric 1: 2.00% -> 80%, 2.01% -> 60.3%) - awaiting the user's decision; ESS detail + N/A tiers may 500 (buildEssDetail toFixed on null); tiers can't be switched off.
   Thresholds set after the suite (user: one tier below target): metric 14 min 75 -> 40, metric 1 min 80 -> 20 (via Admin API, audited); metric 3 left at 70.
 
+- **v2.54.1** (2026-10-21, see `CHANGELOG.md` [2.54.1], `docs/01` §3.9): tier scoring now interpolates between boundaries (user decision after QC found the
+  v2.54.0 rule non-monotonic): tier 1 = v/B1, tier t=2..4 = t + (v-Bt-1)/(Bt-Bt-1), tier 5 = 5. Live values unchanged (85.33 / 13.2 / 100); metric 1 target 2% now = 60%.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan

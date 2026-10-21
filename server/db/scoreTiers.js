@@ -63,13 +63,18 @@ const reaches = (v, b) => (b.op === '>' ? v > b.min : v >= b.min);
 /**
  * Score of a value for configured boundaries: { tier (1-5), lower_bound (null for tier 1), score (0-5, capped),
  * score_uncapped, percent (0-100) }.
+ * v2.54.1 (user decision): linear interpolation between the boundaries, so a higher value never scores lower:
+ *   tier 1: value / tier-2 boundary (0..1); tier t = 2..4: t + (value - lower) / (next boundary - lower) (t..t+1);
+ *   tier 5: 5 (= 100%). (v2.54.0 used value / lower × tier, which dropped at each boundary, e.g. 2.00% -> 80% but 2.01% -> 60.3%.)
  */
 function tieredScore(value, bounds) {
   const v = Math.max(parseFloat(value) || 0, 0);
   let tier = 1;
   bounds.forEach((b, i) => { if (reaches(v, b)) tier = i + 2; });
   const lowerBound = tier === 1 ? null : bounds[tier - 2].min;
-  const scoreUncapped = tier === 1 ? v / bounds[0].min : (v / lowerBound) * tier;
+  const scoreUncapped = tier === 1 ? v / bounds[0].min
+    : tier === 5 ? 5
+      : tier + (v - lowerBound) / (bounds[tier - 1].min - lowerBound);
   return {
     tier,
     lower_bound: lowerBound,

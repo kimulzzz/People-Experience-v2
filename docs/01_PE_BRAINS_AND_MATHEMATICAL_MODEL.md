@@ -205,13 +205,15 @@ Dimana:
 
 Metrik dengan `px_metrics.score_tiers` terisi dinilai per tier, apa pun `scale_type`-nya (`server/db/scoreTiers.js` `tieredScore`, dipanggil `normalizeScore`/`normalizeTarget`). Konfigurasi: `unit` (`percent`|`number`, hanya tampilan/input) dan `bounds` = batas bawah tier 2, 3, 4, 5 dengan operator `>=` atau `>` (batas itu sendiri masuk tier atas atau tidak).
 
-$$\text{Skor}(V) = \begin{cases} \dfrac{V}{B_1} \times 1, & \text{tier 1 (di bawah batas tier 2)} \\ \dfrac{V}{B_{t-1}} \times t, & \text{tier } t = 2..5 \end{cases} \qquad \text{Normalized Score} = \min\left(100, \max\left(0, \frac{\text{Skor}}{5} \times 100\right)\right)$$
+Sejak **v2.54.1** (keputusan user) skor diinterpolasi lurus antar batas sehingga selalu naik seiring nilai ($B_1..B_4$ = batas bawah tier 2..5):
 
-Contoh metrik 14 (batas `>=` 4000/5000/6000/7500): 6400 -> tier 4 -> 6400 / 6000 x 4 = 4.27 -> **85.33%**; target 5000 -> tier 3 -> 3 / 5 = 60%. Konsekuensi rumus: nilai di dalam tier bisa mencapai 100% sebelum tier 5 (metrik 1: >= 3.125% dalam tier 4).
+$$\text{Skor}(V) = \begin{cases} \dfrac{V}{B_1}, & \text{tier 1 (di bawah batas tier 2)} \\ t + \dfrac{V - B_{t-1}}{B_t - B_{t-1}}, & \text{tier } t = 2..4 \\ 5, & \text{tier 5} \end{cases} \qquad \text{Normalized Score} = \min\left(100, \max\left(0, \frac{\text{Skor}}{5} \times 100\right)\right)$$
+
+Contoh metrik 14 (batas `>=` 4000/5000/6000/7500): 6400 -> tier 4 -> 4 + (6400 - 6000) / (7500 - 6000) = 4.27 -> **85.33%**; target 5000 -> tier 3 -> 3 / 5 = 60%. (v2.54.0 memakai V / batas bawah x t, yang turun tepat setelah batas - mis. metrik 1: 2,00% -> 80% tetapi 2,01% -> 60,3%; diganti di v2.54.1.)
 
 | Metrik | Unit | Batas tier 2/3/4/5 | Target |
 | :--- | :--- | :--- | :--- |
-| 1 (engagement rate social media) | % | `>` 1 / `>` 2 / `>` 2.5 / `>` 3.5 | 2% (= 80%) |
+| 1 (engagement rate social media) | % | `>` 1 / `>` 2 / `>` 2.5 / `>` 3.5 | 2% (= 60% sejak v2.54.1; 80% di v2.54.0) |
 | 2 (Goes to Campus) | angka | belum diatur (`bounds: null`) -> **N/A** | - |
 | 3 (success ratio kandidat universitas target) | % | `>=` 30 / `>=` 45 / `>=` 60 / `>` 75 | 70% (= 93.33%) |
 | 14 (penerima recognition / tahun) | angka | `>=` 4000 / 5000 / 6000 / 7500 | 5000 (= 60%) |

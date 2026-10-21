@@ -21,7 +21,10 @@ export function tieredPercent(value, bounds) {
   const v = Math.max(Number(value) || 0, 0);
   let tier = 1;
   bounds.forEach((b, i) => { if (reaches(v, b)) tier = i + 2; });
-  const raw = tier === 1 ? v / bounds[0].min : (v / bounds[tier - 2].min) * tier;
+  // v2.54.1: linear interpolation between boundaries (same rule as the server) - tier 1 = v / tier-2 boundary,
+  // tier t = 2..4 = t + (v - lower) / (next - lower), tier 5 = 5
+  const lower = tier === 1 ? null : bounds[tier - 2].min;
+  const raw = tier === 1 ? v / bounds[0].min : tier === 5 ? 5 : tier + (v - lower) / (bounds[tier - 1].min - lower);
   return { tier, score: Math.min(Math.max(raw, 0), 5), percent: Math.min(Math.max((raw / 5) * 100, 0), 100) };
 }
 

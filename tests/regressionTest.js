@@ -8894,11 +8894,11 @@ async function runAllModules() {
         assert.ok(Math.abs(engine56.normalizeScore({ scale_type: 'QUOTA_COUNT', score_tiers: JSON.stringify({ unit: 'number', bounds }), target_value: 1 }, v) - pct) < 0.001, `${v} via normalizeScore`);
       });
 
-      await runTest('[POSITIVE] Tier function, metric 14 bounds (all >=): 0 / 3000 / 3999 / 4000 / 4999 / 5000 / 5999 / 6000 / 6400 / 7499 / 7500 / 9000 / negative -> right tier and % (tier 1 proportional to the tier-2 bound, cap 100%, floor 0)', async () => {
-        checkTiers(B14, [[0, 1, 0], [3000, 1, 15], [3999, 1, 19.995], [4000, 2, 40], [4999, 2, 49.99], [5000, 3, 60], [5999, 3, 71.988], [6000, 4, 80],
+      await runTest('[POSITIVE] Tier function, metric 14 bounds (all >=): 0 / 3000 / 3999 / 4000 / 4999 / 5000 / 5999 / 6000 / 6400 / 7499 / 7500 / 9000 / negative -> right tier and % (v2.54.1 interpolation: tier 1 proportional to the tier-2 bound, tier t = t + share of the way to the next bound, tier 5 = 100%, floor 0)', async () => {
+        checkTiers(B14, [[0, 1, 0], [3000, 1, 15], [3999, 1, 19.995], [4000, 2, 40], [4999, 2, 59.98], [5000, 3, 60], [5999, 3, 79.98], [6000, 4, 80],
           [6400, 4, 85.3333], [7499, 4, 99.9867], [7500, 5, 100], [9000, 5, 100], [-50, 1, 0]]);
         const capped = engine56.tierInfo({ score_tiers: { unit: 'number', bounds: B14 } }, 9000);
-        assert.deepStrictEqual([capped.tier, capped.score, capped.score_uncapped, capped.percent, capped.capped], [5, 5, 6, 100, true]);
+        assert.deepStrictEqual([capped.tier, capped.score, capped.score_uncapped, capped.percent, capped.capped], [5, 5, 5, 100, false]);
         const t6400 = engine56.tierInfo({ score_tiers: { unit: 'number', bounds: B14 } }, 6400);
         assert.deepStrictEqual([t6400.tier, t6400.lower_bound, t6400.score, t6400.percent, t6400.unit], [4, 6000, 4.27, 85.33, 'number']);
         assert.strictEqual(engine56.tierInfo({ score_tiers: null }, 6400), null, 'a metric without tiers has no tier info');
@@ -8906,17 +8906,27 @@ async function runAllModules() {
       });
 
       await runTest('[POSITIVE] Per-boundary > vs >=: metric 1 (all ">": 1 -> tier 1, 1.0001 -> tier 2, 2 -> tier 2, 2.5 -> tier 3, 2.6 / 3.5 -> tier 4, 3.51 -> tier 5; 0.66 -> 13.2%) and metric 3 (">=" 30/45/60, ">" 75: 29.99 -> 1, 30 -> 2, 60 -> 4, 75 -> 4, 75.04 -> 5 capped)', async () => {
-        checkTiers(B1, [[0.66, 1, 13.2], [1, 1, 20], [1.0001, 2, 40.004], [2, 2, 80], [2.0001, 3, 60.003], [2.5, 3, 75], [2.6, 4, 83.2], [3.5, 4, 100], [3.51, 5, 100]]);
+        checkTiers(B1, [[0.66, 1, 13.2], [1, 1, 20], [1.0001, 2, 40.002], [2, 2, 60], [2.0001, 3, 60.004], [2.5, 3, 80], [2.6, 4, 82], [3.5, 4, 100], [3.51, 5, 100]]);
         checkTiers(B3, [[29.99, 1, 19.9933], [30, 2, 40], [44.99, 2, 59.9867], [45, 3, 60], [60, 4, 80], [70, 4, 93.3333], [75, 4, 100], [75.04, 5, 100]]);
+        // v2.54.1: never lower for a higher value (the v2.54.0 rule dropped from 80% at 2.00% to 60.3% at 2.01%)
+        for (const bounds of [B14, B1, B3]) {
+          let prev = -1;
+          for (let i = 0; i <= 400; i++) {
+            const v = bounds[3].min * 1.2 * i / 400;
+            const pct = tiers56.tieredScore(v, bounds).percent;
+            assert.ok(pct >= prev - 1e-9, `monotonic: ${v} -> ${pct} < ${prev}`);
+            prev = pct;
+          }
+        }
         // the same value on a >= boundary and on a > boundary lands in different tiers
         assert.strictEqual(tiers56.tieredScore(2, [{ min: 1, op: '>' }, { min: 2, op: '>=' }, { min: 3, op: '>' }, { min: 4, op: '>' }]).tier, 3);
         assert.strictEqual(tiers56.tieredScore(2, [{ min: 1, op: '>' }, { min: 2, op: '>' }, { min: 3, op: '>' }, { min: 4, op: '>' }]).tier, 2);
       });
 
-      await runTest('[POSITIVE] Target normalization uses the same tiers (14: 5000 -> 60%, 1: 2% -> 80%, 3: 70% -> 93.33%); tiers not configured -> null (N/A); a metric without tiers keeps its scale rule', async () => {
+      await runTest('[POSITIVE] Target normalization uses the same tiers (14: 5000 -> 60%, 1: 2% -> 60%, 3: 70% -> 93.33%); tiers not configured -> null (N/A); a metric without tiers keeps its scale rule', async () => {
         const norm = (bounds, target) => engine56.normalizeTarget({ scale_type: 'PERCENTAGE', score_tiers: { unit: 'number', bounds } }, { target_value: target, min_threshold: 75 });
         assert.strictEqual(norm(B14, 5000), 60);
-        assert.strictEqual(norm(B1, 2), 80);
+        assert.strictEqual(norm(B1, 2), 60);
         assert.ok(Math.abs(norm(B3, 70) - 93.3333) < 0.001);
         assert.strictEqual(norm(null, 4), null);
         assert.strictEqual(engine56.normalizeScore({ scale_type: 'QUOTA_COUNT', score_tiers: null, target_value: 5000 }, 2500), 50);
@@ -8947,7 +8957,7 @@ async function runAllModules() {
         assert.deepStrictEqual(tiers56.resolveTierConfig(null, { unit: 'number', bounds: B14 }), { unit: 'number', bounds: B14 }, 'null / undefined keep the stored configuration');
       });
 
-      await runTest('[POSITIVE] Live configuration: metric 14 = 6,400 people -> tier 4 -> 4.27 / 5 = 85.33% (target 60%); metric 1 = 0.66% (Sept 2026) -> 13.2% (target 2% -> 80%); metric 3 = 75.04% (Sept 2026) -> 100% capped (target 70% -> 93.33%); detail agrees', async () => {
+      await runTest('[POSITIVE] Live configuration: metric 14 = 6,400 people -> tier 4 -> 4.27 / 5 = 85.33% (target 60%); metric 1 = 0.66% (Sept 2026) -> 13.2% (target 2% -> 60%); metric 3 = 75.04% (Sept 2026) -> 100% capped (target 70% -> 93.33%); detail agrees', async () => {
         const { calc } = await calcMetric56('mode=YTD&year=2026', 14);
         const byId = id => calc.metrics.find(x => x.metric_id === id);
         const m14 = byId(14);
@@ -8958,10 +8968,10 @@ async function runAllModules() {
         assert.strictEqual(m14.target_value_normalized, 60);
         const m1 = byId(1);
         assert.deepStrictEqual(m1.score_tiers, { unit: 'percent', bounds: B1 });
-        assert.deepStrictEqual([m1.raw_value, m1.normalized_score, m1.outcome_period, m1.target_value, m1.target_value_normalized, m1.status], [0.66, 13.2, '2026-09', 2, 80, 'CRITICAL']);
+        assert.deepStrictEqual([m1.raw_value, m1.normalized_score, m1.outcome_period, m1.target_value, m1.target_value_normalized, m1.status], [0.66, 13.2, '2026-09', 2, 60, 'CRITICAL']);
         const m3 = byId(3);
         assert.deepStrictEqual(m3.score_tiers, { unit: 'percent', bounds: B3 });
-        assert.deepStrictEqual([m3.raw_value, m3.normalized_score, m3.tier_info.tier, m3.tier_info.capped, m3.target_value, m3.target_value_normalized, m3.status], [75.04, 100, 5, true, 70, 93.33, 'HEALTHY']);
+        assert.deepStrictEqual([m3.raw_value, m3.normalized_score, m3.tier_info.tier, m3.tier_info.capped, m3.target_value, m3.target_value_normalized, m3.status], [75.04, 100, 5, false, 70, 93.33, 'HEALTHY']);
         for (const m of [m1, m3, m14]) {
           const expected = m.normalized_score < m.min_threshold ? 'CRITICAL' : (m.normalized_score < m.target_value_normalized ? 'WARNING' : 'HEALTHY');
           assert.strictEqual(m.status, expected, `metric ${m.metric_id}`);
@@ -9001,13 +9011,13 @@ async function runAllModules() {
           score_tiers: { unit: 'number', bounds: [{ min: 10, op: '>=' }, { min: 20, op: '>=' }, { min: 30, op: '>=' }, { min: 40, op: '>=' }] } });
         assert.deepStrictEqual(tiered56.score_tiers.bounds.map(b => b.min), [10, 20, 30, 40]);
         let { m } = await calcMetric56('mode=YTD', tiered56.metric_id);
-        assert.deepStrictEqual([m.raw_value, m.normalized_score, m.tier_info.tier, m.target_value_normalized, m.status], [25, 75, 3, 60, 'HEALTHY']);
+        assert.deepStrictEqual([m.raw_value, m.normalized_score, m.tier_info.tier, m.target_value_normalized, m.status], [25, 70, 3, 60, 'HEALTHY']);
         const cfg2 = { unit: 'percent', bounds: [{ min: 5, op: '>' }, { min: 10, op: '>' }, { min: 25, op: '>' }, { min: 50, op: '>' }] };
         assert.strictEqual((await adminJson('PUT', `/api/admin/metrics/${tiered56.metric_id}`, { score_tiers: cfg2 })).status, 200);
         const params = await (await fetch(`${BASE_URL}/api/admin/parameters`)).json();
         assert.deepStrictEqual(params.metrics.find(x => x.metric_id === tiered56.metric_id).score_tiers, cfg2);
         ({ m } = await calcMetric56('mode=YTD', tiered56.metric_id));
-        assert.deepStrictEqual([m.tier_info.tier, m.normalized_score, m.tier_info.capped], [3, 100, true], '25 is not > 25 -> tier 3 (lower boundary 10) -> 25 / 10 x 3 = 7.5 -> capped 100%');
+        assert.deepStrictEqual([m.tier_info.tier, m.normalized_score, m.tier_info.capped], [3, 80, false], '25 is not > 25 -> tier 3 (10..25) -> 3 + 15/15 = 4 -> 80%');
         const snap = await st56.snapshotConfiguration();
         const t = snap.tables.px_metrics;
         assert.ok(t.columns.includes('score_tiers'), 'px_metrics.score_tiers is in the configuration snapshot');
