@@ -9444,6 +9444,10 @@ async function runAllModules() {
           const m11 = (await r11.json()).metrics.find(x => x.metric_id === 11);
           if (!entry) { assert.strictEqual(m11.manual_override, null); return; }
           assert.deepStrictEqual([m11.raw_value, m11.normalized_score], [Number(entry.value), Number(entry.score)]);
+          if (entry.target_score !== undefined) {
+            assert.strictEqual(m11.target_value_normalized, Number(entry.target_score), 'the manual target in % drives the status');
+            assert.strictEqual(m11.status, Number(entry.score) < m11.min_threshold ? 'CRITICAL' : (Number(entry.score) < Number(entry.target_score) ? 'WARNING' : 'HEALTHY'));
+          }
           const m11d = (await (await fetch(`${BASE_URL}/api/metrics/calculate?directorate=${encodeURIComponent(dir57.name)}`)).json()).metrics.find(x => x.metric_id === 11);
           assert.deepStrictEqual([m11d.normalized_score, m11d.not_applicable], [null, true]);
         });

@@ -790,6 +790,9 @@ domain model, not just descriptive:
   calculatePEIndex + detail; bankwide only (N/A under a directorate filter / USER scope). Remove key "11" to return to the live calculation. Module 57 (4). Same day: metric 1 value set to 3.19% for 2026-09 (upload, audited)
   -> tier 4 -> 93.8%; PX YTD 2026 = 88.65.
 
+- **v2.54.3** (2026-10-22, see `CHANGELOG.md` [2.54.3]): metric 11 no longer labelled "Manual value" in the UI; a manual entry may carry `target_score`
+  (metric 11: 80 -> 87% = On Target).
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan

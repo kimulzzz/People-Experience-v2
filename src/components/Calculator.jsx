@@ -507,9 +507,6 @@ export default function Calculator({
                             <div className="text-xs font-black text-gray-900">
                               {formatMetricValue(m.raw_value, m.unit, m.scale_type)}
                             </div>
-                            {m.manual_override && (
-                              <span className="text-[9.5px] font-bold text-amber-700 block leading-tight" title={m.manual_override.note}>Manual value</span>
-                            )}
                             <span className="text-[9.5px] text-gray-400 block leading-tight">Tgt: {m.target_display}</span>
                           </>
                         )}

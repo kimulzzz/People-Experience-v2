@@ -441,7 +441,9 @@ function manualOverrideFor(overrides, metricId) {
   const value = Number(o.value);
   const score = Number(o.score);
   if (!Number.isFinite(value) || !Number.isFinite(score)) return null;
-  return { value, score: Math.min(Math.max(score, 0), 100), note: String(o.note || 'Manual value'), bankwide_only: o.bankwide_only !== false };
+  const targetScore = o.target_score === undefined || o.target_score === null ? null : Number(o.target_score); // optional target in % (status)
+  return { value, score: Math.min(Math.max(score, 0), 100), note: String(o.note || 'Manual value'), bankwide_only: o.bankwide_only !== false,
+    target_score: Number.isFinite(targetScore) ? Math.min(Math.max(targetScore, 0), 100) : null };
 }
 
 async function calculatePEIndex(filterInput = 'YTD', options = {}) {
@@ -611,7 +613,8 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
 
     const normScore = hasData ? (manual ? manual.score : normalizeScore({ ...m, ...targetConfig }, rawVal)) : null;
     const minThreshold = parseFloat(targetConfig.min_threshold || 75);
-    const normalizedTarget = normalizeTarget(m, targetConfig);
+    // v2.54.2: a manual entry may carry its own target in % (e.g. metric 11: 87% >= 80% = on target)
+    const normalizedTarget = manual && manual.target_score !== null ? manual.target_score : normalizeTarget(m, targetConfig);
 
     let status = 'HEALTHY';
     if (!hasData) {
@@ -967,7 +970,7 @@ async function buildMetricDetail(metricId, filterInput = 'YTD') {
       else { hasData = true; rawVal = manual.value; }
     }
     const normalizedScore = hasData ? (manual ? manual.score : normalizeScore({ ...metric, ...targetConfig }, rawVal)) : null;
-    const normalizedTargetOutcome = normalizeTarget(metric, targetConfig);
+    const normalizedTargetOutcome = manual && manual.target_score !== null ? manual.target_score : normalizeTarget(metric, targetConfig);
 
     return {
       metric: {
