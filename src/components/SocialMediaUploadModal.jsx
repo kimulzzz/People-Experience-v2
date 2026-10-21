@@ -4,10 +4,10 @@ import { monthName } from '../utils/months';
 
 // Social media data of metric 1 (v2.52.0, Admin only - every route is under /api/admin, the server answers 403 to a User).
 // 1. Template (.xlsx: Platform | Year | Month | Followers | Reach | Engagement), 2. Upload (validated as a whole: any error
-// -> nothing stored, every error listed with its row and column), 3. History of uploads and integration batches (with the
+// -> nothing stored, every error listed with its row and column), 3. History of uploads (with the
 // original file of an upload). onUploaded() lets the opener reload its data (e.g. the metric detail).
 
-const SOURCE_LABELS = { UPLOAD: 'Excel upload', INTEGRATION: 'Integration' };
+const SOURCE_LABELS = { UPLOAD: 'Excel upload' };
 const formatDateTime = (iso) => (iso ? new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
 const periodText = (code) => (code ? `${monthName(code.slice(5, 7))} ${code.slice(0, 4)}` : '—');
 

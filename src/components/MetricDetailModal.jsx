@@ -197,7 +197,7 @@ export default function MetricDetailModal({
     return true;
   });
 
-  // v2.52.0: metric 1 = social media statistics per platform per month (bankwide; Excel upload / integration)
+  // v2.52.0: metric 1 = social media statistics per platform per month (bankwide; Admin Excel upload)
   const isSocialMedia = detailData?.data_upload === 'SOCIAL_MEDIA';
   const socialTotals = detailData?.social_media?.period_totals || [];
   const fmtCount = v => (v === null || v === undefined ? '—' : Number(v).toLocaleString('en-US'));

@@ -605,9 +605,22 @@ Pengujian: `docs/07` §31 (Modul 46).
 
 ---
 
+## Catatan v2.53.0 - Fitur Integrasi Token Dihapus
+
+**Ringkasan**: seluruh fitur integrasi v2.52.0 dihapus (aplikasi on-premise tanpa internet; permintaan user). Data social media metrik 1 kini hanya masuk lewat upload `.xlsx` Admin (endpoint `/api/admin/social-media/*` tidak berubah). `/api/health` `version` = `2.53.0`. Tidak ada env baru. Pengujian: `docs/07` §42.
+
+| Dihapus | Perilaku URL lama sejak v2.53.0 |
+| :--- | :--- |
+| `POST /api/integrations/social-media` (+ entri `PUBLIC_ROUTES`, validasi JSON ingest, rate limiter ingest) | 401 tanpa login (juga dengan header Bearer); 404 dengan sesi Admin/USER |
+| `GET`/`POST /api/admin/integration-tokens`, `POST /api/admin/integration-tokens/:id/revoke`, `DELETE /api/admin/integration-tokens/:id` | 404 Admin, 403 USER, 401 tanpa login |
+
+**Storage**: method token dihapus dari `sqlStorage.js` dan `jsonStorage.js`. Baru `dropRetiredIntegrationTokens()` (SQL saja; dipanggil saat boot setelah `applySchema()` dan di `migrate.js`): tabel tidak ada -> `ABSENT`; ada dan kosong -> `DROP`; berisi -> dibiarkan + peringatan log. JSON: `integrationTokens` kosong dihapus dari `auth.json` saat dimuat; berisi -> dibiarkan + peringatan. Riwayat upload (`GET /api/admin/social-media/uploads`) masih bisa memuat batch lama `source: 'INTEGRATION'` bila ada; tidak ada yang membuat batch baru dengan sumber itu.
+
+---
+
 ## Catatan v2.52.0 - Data Social Media Metrik 1, Upload Excel & Token Integrasi
 
-**Ringkasan**: metrik 1 "Career website & social media follower, reach & engagement growth" (OUTCOME, bankwide) kini memakai statistik bulanan Instagram, LinkedIn dan TikTok (followers, reach, engagement) sebagai drilldown, bukan lagi 5 baris SLA rekrutmen (dihapus saat boot, metrik 1 saja). Data masuk lewat upload `.xlsx` Admin atau injeksi JSON dari sistem internal lain dengan token integrasi. **Skor tetap `raw_value` Admin** - baris social media belum dipakai perhitungan; `last_data_date` tidak diubah. Service baru `server/services/socialMediaService.js` (`SOCIAL_MEDIA_METRIC_ID = 1`, `isSocialMediaMetric` = metrik 1 bertipe OUTCOME). Tabel baru `px_social_media_stats`, `px_social_media_uploads`, `px_integration_tokens` (`docs/08` §25). Tidak ada env baru. `/api/health` `version` = `2.52.0`. Pengujian: `docs/07` §41 (Modul 55).
+**Ringkasan**: metrik 1 "Career website & social media follower, reach & engagement growth" (OUTCOME, bankwide) kini memakai statistik bulanan Instagram, LinkedIn dan TikTok (followers, reach, engagement) sebagai drilldown, bukan lagi 5 baris SLA rekrutmen (dihapus saat boot, metrik 1 saja). Data masuk lewat upload `.xlsx` Admin atau injeksi JSON dari sistem internal lain dengan token integrasi (**injeksi, token, tabel `px_integration_tokens` dan semua endpoint `integration*` di bawah dihapus di v2.53.0** - lihat "Catatan v2.53.0"). **Skor tetap `raw_value` Admin** - baris social media belum dipakai perhitungan; `last_data_date` tidak diubah. Service baru `server/services/socialMediaService.js` (`SOCIAL_MEDIA_METRIC_ID = 1`, `isSocialMediaMetric` = metrik 1 bertipe OUTCOME). Tabel baru `px_social_media_stats`, `px_social_media_uploads`, `px_integration_tokens` (`docs/08` §25). Tidak ada env baru. `/api/health` `version` = `2.52.0`. Pengujian: `docs/07` §41 (Modul 55).
 
 **Endpoint baru**
 

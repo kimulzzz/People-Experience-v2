@@ -548,7 +548,7 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       excluded_from_index: false,
       disabled_reason: null,
       is_bankwide_value: isBankwideValue,
-      // v2.52.0: metric 1 takes social media statistics (Admin .xlsx upload / integration) - the UI offers Template + Upload
+      // v2.52.0: metric 1 takes social media statistics (Admin .xlsx upload) - the UI offers Template + Upload
       ...(isSocialMediaMetric(m) ? { data_upload: 'SOCIAL_MEDIA' } : {}),
       ...(isEss ? {
         ess_period: essResult ? essResult.period : null,

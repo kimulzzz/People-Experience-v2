@@ -638,7 +638,16 @@ function getAuth() {
       unclassified.forEach(e => { if (e.is_test === undefined) e.is_test = false; });
       console.log(`[jsonStorage] Audit trail: marked ${marked} test-run row(s) of old test accounts as is_test (nothing deleted).`);
     }
-    if (migrated || unclassified.length || preMenu.length || renamed.user_scopes + renamed.users) saveAuth();
+    // v2.53.0: the integration tokens of v2.52.0 are gone - an empty `integrationTokens` list is dropped; a non-empty one
+    // is kept untouched (nothing reads it any more) with a warning, like the guarded DROP of px_integration_tokens.
+    let droppedTokens = false;
+    if (Array.isArray(authStore.integrationTokens) && !authStore.integrationTokens.length) {
+      delete authStore.integrationTokens;
+      droppedTokens = true;
+    } else if (authStore.integrationTokens !== undefined) {
+      console.warn('[jsonStorage] auth.json still holds integration tokens (feature removed in v2.53.0) - kept, not used; remove them by hand.');
+    }
+    if (migrated || unclassified.length || preMenu.length || renamed.user_scopes + renamed.users || droppedTokens) saveAuth();
   }
   return authStore;
 }
@@ -655,9 +664,6 @@ function saveAuth() {
   try { fs.writeFileSync(AUTH_FILE, JSON.stringify(authStore, null, 2), 'utf8'); }
   catch (err) { console.error('Failed to save auth.json:', err); }
 }
-
-// an integration token without its hash (v2.52.0)
-const publicToken = t => { const { token_hash, ...rest } = t; return { ...rest, is_test: t.is_test === true }; }; // eslint-disable-line no-unused-vars
 
 const copyUser = u => (u ? { ...u, scopes: normalizeScopes(u.scopes), is_test_account: u.is_test_account === true,
   menu_access: u.menu_access && typeof u.menu_access === 'object' ? { ...u.menu_access } : null } : null);
@@ -1984,61 +1990,6 @@ const storage = {
     const n = removeStoreMetric1SlaRows(getStore());
     if (n) saveStore();
     return n;
-  },
-
-  // --- INTEGRATION TOKENS (v2.52.0, server/data/auth.json like the login accounts) - only token_hash is stored
-  getIntegrationTokens() {
-    return [...(getAuth().integrationTokens || [])]
-      .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : b.token_id - a.token_id))
-      .map(publicToken);
-  },
-  getIntegrationTokenByHash(token_hash) {
-    const t = (getAuth().integrationTokens || []).find(x => x.token_hash === String(token_hash));
-    return t ? publicToken(t) : null;
-  },
-  createIntegrationToken(t) {
-    const a = getAuth();
-    a.integrationTokens = a.integrationTokens || [];
-    const record = {
-      token_id: a.integrationTokens.reduce((mx, x) => Math.max(mx, x.token_id), 0) + 1,
-      name: String(t.name).slice(0, 100),
-      token_hash: t.token_hash,
-      token_hint: String(t.token_hint).slice(0, 20),
-      scope: t.scope,
-      created_by: String(t.created_by || 'Admin').slice(0, 200),
-      created_at: new Date().toISOString(),
-      last_used_at: null,
-      revoked_at: null,
-      revoked_by: null,
-      is_test: t.is_test === true
-    };
-    a.integrationTokens.push(record);
-    saveAuth();
-    return publicToken(record);
-  },
-  touchIntegrationToken(token_id) {
-    const t = (getAuth().integrationTokens || []).find(x => x.token_id === parseInt(token_id, 10));
-    if (!t) return;
-    t.last_used_at = new Date().toISOString();
-    saveAuth();
-  },
-  revokeIntegrationToken(token_id, revoked_by) {
-    const t = (getAuth().integrationTokens || []).find(x => x.token_id === parseInt(token_id, 10));
-    if (!t) return null;
-    if (!t.revoked_at) {
-      t.revoked_at = new Date().toISOString();
-      t.revoked_by = String(revoked_by || 'Admin').slice(0, 200);
-      saveAuth();
-    }
-    return publicToken(t);
-  },
-  deleteIntegrationToken(token_id) {
-    const a = getAuth();
-    const idx = (a.integrationTokens || []).findIndex(x => x.token_id === parseInt(token_id, 10));
-    if (idx === -1) return null;
-    const [removed] = a.integrationTokens.splice(idx, 1);
-    saveAuth();
-    return publicToken(removed);
   },
 
   deleteEssResultsForMetric(metric_id) {

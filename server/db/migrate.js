@@ -57,6 +57,7 @@ async function main() {
     await storage.dropAllTables();
   }
   await storage.applySchema();
+  await storage.dropRetiredIntegrationTokens(); // v2.53.0: retired table, dropped only when empty
 
   const before = await storage.health();
   const existing = before.tables.metrics + before.tables.survey_responses + before.tables.events;

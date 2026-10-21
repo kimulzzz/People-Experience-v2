@@ -40,7 +40,7 @@ Script `scripts/sqlserver/Setup-SqlServer.ps1` (idempoten, log di `scripts/sqlse
 
 ---
 
-## 3. Skema (`server/db/schema.sql` — 37 tabel sejak v2.52.0, prefix `px_`)
+## 3. Skema (`server/db/schema.sql` — 36 tabel sejak v2.53.0, prefix `px_`)
 
 | Kelompok | Tabel | Catatan |
 | :--- | :--- | :--- |
@@ -58,7 +58,7 @@ Script `scripts/sqlserver/Setup-SqlServer.ps1` (idempoten, log di `scripts/sqlse
 | Cakupan User (v2.27.0) | `px_user_scopes` | `user_id` FK ke `px_users` `ON DELETE CASCADE`, `directorate`, `division` (**NULL = semua divisi** direktorat itu), `UNIQUE(user_id, directorate, division)`. Kolom `px_users.directorate`/`division` (v2.26.0) **legacy: tidak ditulis/dipakai lagi**. Dibuat idempoten saat boot. |
 | Drilldown OUTCOME | `px_recruitment_sla_by_unit`, `px_approval_stage_compliance`, `px_hiring_channel_mix`, `px_recognition_categories`, `px_attrition_by_tenure` | Menggantikan objek `operationalRecords` (5 bentuk kolom berbeda dalam satu objek). Sejak v2.52.0 `px_recruitment_sla_by_unit` tidak lagi berisi baris metrik 1 (dihapus saat boot). |
 | Social media metrik 1 (v2.52.0) | `px_social_media_stats`, `px_social_media_uploads` | Drilldown metrik 1: satu baris per platform (Instagram/LinkedIn/TikTok) per bulan, `UNIQUE (platform, stat_year, stat_month)`; riwayat batch upload `.xlsx` / integrasi. Tidak dipakai perhitungan skor. Lihat §25. |
-| Integrasi (v2.52.0) | `px_integration_tokens` | Token integrasi untuk sistem internal lain: hanya `token_hash` (SHA-256), `scope` `SOCIAL_MEDIA_INGEST`. Seperti tabel login: tidak dihapus `migrate --reset`, tidak ikut `db:export`. Lihat §25. |
+| Integrasi (v2.52.0, **dihapus di v2.53.0**, §26) | `px_integration_tokens` | Token integrasi untuk sistem internal lain: hanya `token_hash` (SHA-256), `scope` `SOCIAL_MEDIA_INGEST`. Seperti tabel login: tidak dihapus `migrate --reset`, tidak ikut `db:export`. Lihat §25. |
 
 **Normalisasi responden** (`px_survey_uploaded_responses`): alias `nip` / `participant_id` / `candidate_id` (dan `directorate`/`university`/`applied_position`, `division`/`major`/`recruitment_channel`) diringkas menjadi `respondent_type` (`EMPLOYEE` | `CAMPUS_STUDENT` | `JOB_CANDIDATE`) + `respondent_id/name/email` + `org_unit_1/org_unit_2`. `sqlStorage.js › rowToResponse()` menurunkan kembali nama-nama field lama untuk `calculationEngine`, `alertEngine`, evidence CSV, dst. — sehingga tidak ada kode lain yang berubah.
 
@@ -371,7 +371,7 @@ Diverifikasi oleh Modul 53 dan 54 (`docs/07` §40).
 
 ## 25. Pembaruan v2.52.0 - Tabel Social Media Metrik 1 & Token Integrasi
 
-**Tabel baru** (dibuat idempoten saat boot, `IF OBJECT_ID(...) IS NULL` di `schema.sql`, tanpa ALTER tabel lama). Jumlah tabel 34 -> **37**. API: `docs/04` "Catatan v2.52.0".
+**Tabel baru** (dibuat idempoten saat boot, `IF OBJECT_ID(...) IS NULL` di `schema.sql`, tanpa ALTER tabel lama). Jumlah tabel 34 -> **37** (v2.53.0: `px_integration_tokens` dihapus -> 36, §26). API: `docs/04` "Catatan v2.52.0".
 
 | Tabel | Kolom | Kunci / constraint |
 | :--- | :--- | :--- |
@@ -401,3 +401,13 @@ SELECT COUNT(*) AS sla_rows_metric_1 FROM dbo.px_recruitment_sla_by_unit WHERE m
 ```
 
 Diverifikasi oleh Modul 55 (`docs/07` §41).
+
+## 26. Pembaruan v2.53.0 - `px_integration_tokens` Dihapus
+
+Fitur integrasi token v2.52.0 dihapus (`docs/04` "Catatan v2.53.0"). `px_integration_tokens` dihapus dari `schema.sql` -> **36 tabel**. Database yang sudah punya tabel itu dibersihkan oleh `dropRetiredIntegrationTokens()` (`sqlStorage.js`) saat boot (setelah `applySchema()`) dan di `migrate.js`:
+
+```sql
+IF OBJECT_ID(N'dbo.px_integration_tokens', N'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM dbo.px_integration_tokens) DROP TABLE dbo.px_integration_tokens
+```
+
+Hanya dijatuhkan bila **kosong** (di database utama 0 baris); bila berisi, tabel dibiarkan dengan peringatan log (hapus manual setelah dicek). Idempoten. `CHECK` `source` di `px_social_media_stats` / `px_social_media_uploads` tetap mengizinkan `'INTEGRATION'` (tanpa ALTER); tidak ada kode yang menulis nilai itu lagi. JSON: `integrationTokens` kosong dihapus dari `server/data/auth.json` saat dimuat. **Rollback** ke v2.52.x: kode lama membuat ulang tabel kosong saat boot (`IF OBJECT_ID(...) IS NULL`); token lama tidak kembali. Query cek token di §25 tidak berlaku lagi. Diverifikasi oleh Modul 55 (`docs/07` §42).

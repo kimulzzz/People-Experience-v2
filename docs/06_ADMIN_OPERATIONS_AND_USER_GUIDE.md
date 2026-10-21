@@ -525,6 +525,8 @@ Template non-ESS di zip yang sama (Onboarding Day 1 Survey, Mandatory & Non Mand
 
 ### Data Social Media Metrik 1 & Token Integrasi (v2.52.0)
 
+> **Sejak v2.53.0 token integrasi dihapus**: tab **Integrations**, endpoint `POST /api/integrations/social-media` dan token tidak ada lagi (aplikasi on-premise tanpa internet). Data social media metrik 1 hanya diisi lewat **Mengunggah Excel** di bawah. Bagian token di bawah hanya riwayat.
+
 Metrik 1 "Career website & social media follower, reach & engagement growth" bersifat **bankwide** (tanpa direktorat). Detailnya (tab **Internal Transaction Records**) menampilkan per platform per bulan: Followers, Follower growth %, Reach, Engagement, Engagement rate %, plus baris **All platforms** per bulan. **Skor metrik 1 tetap nilai yang Anda isi** di Admin Parameters (`raw_value`); data social media belum dipakai untuk menghitung skor.
 
 **Arti kolom** (isi per platform per bulan): **Followers** = jumlah pengikut di akhir bulan; **Reach** = jangkauan selama bulan itu; **Engagement** = jumlah interaksi selama bulan itu. Follower growth % dan Engagement rate % dihitung aplikasi (growth dibanding bulan sebelumnya platform yang sama; rate = engagement / reach).
@@ -538,7 +540,7 @@ Metrik 1 "Career website & social media follower, reach & engagement growth" ber
 
 **Data asli menggantikan dummy**: Januari-September 2026 berisi data **fiktif** (badge **Dummy**). Begitu satu bulan diunggah (atau dikirim lewat integrasi), semua baris dummy bulan itu (ketiga platform) dihapus, jadi bulan itu hanya berisi data asli - unggah ketiga platform untuk bulan yang sama. Mengunggah ulang bulan yang sudah ada **memperbarui** angkanya. `SEED_DEMO_DATA=false` mencegah dummy ditambahkan saat server start; baris dummy yang sudah ada tetap sampai bulannya diisi data asli.
 
-**Membuat token integrasi** (sistem internal lain mengirim data otomatis)
+**Membuat token integrasi** (sistem internal lain mengirim data otomatis) - *dihapus di v2.53.0*
 1. **Admin Parameters** -> tab **Integrations**.
 2. Isi nama token (mis. nama sistem pengirim) -> **Create Token**.
 3. Token tampil **sekali saja** di kotak kuning. Klik **Copy**, simpan, lalu **I have stored the token - hide it**. Aplikasi hanya menyimpan sidik jari (hash) token; token yang hilang tidak bisa ditampilkan lagi - buat token baru dan cabut yang lama.

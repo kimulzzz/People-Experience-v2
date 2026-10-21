@@ -58,7 +58,7 @@ async function main() {
     // Exit Interview rows (v2.38.0) incl. TEMPLATE_IMPORT rows = real per-employee data: keep such an export local
     exitInterviews: await storage.getExitInterviews(),
     exitInterviewUploads: (await storage.getExitInterviewUploads()).reverse(),
-    // social media statistics of metric 1 (v2.52.0); integration tokens are NOT exported (like the login accounts)
+    // social media statistics of metric 1 (v2.52.0)
     socialMediaStats: await storage.getSocialMediaStats(),
     socialMediaUploads: (await storage.getSocialMediaUploads()).reverse(),
     media: await storage.getAllMedia(),

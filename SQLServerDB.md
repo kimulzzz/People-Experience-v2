@@ -76,7 +76,7 @@ Lalu set `STORAGE_BACKEND=sql` di `.env` dan restart server.
 | **Windows Authentication** | di SSMS pilih *Windows Authentication* (akun Windows administrator) — akses penuh ke seluruh server |
 | **Cek dari aplikasi** | `http://localhost:5000/api/health` → bagian `database` (server, edisi, jumlah baris tabel kunci) |
 
-Tabel aplikasi berawalan `px_` (37 tabel sejak v2.52.0). Yang paling sering dilihat: `px_metrics`, `px_metric_targets`, `px_survey_uploaded_responses`, `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` (kolom `file_path` + `transcript`).
+Tabel aplikasi berawalan `px_` (36 tabel sejak v2.53.0). Yang paling sering dilihat: `px_metrics`, `px_metric_targets`, `px_survey_uploaded_responses`, `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` (kolom `file_path` + `transcript`).
 
 > Jangan mengubah data langsung lewat SSMS tanpa alasan kuat — validasi dan perhitungan skor berjalan di aplikasi.
 
@@ -254,9 +254,17 @@ Kolom `px_users.menu_access` (`NVARCHAR(400) NULL`, JSON berisi 6 menu `true`/`f
 
 ## 24. Social Media Metrik 1 & Token Integrasi (v2.52.0)
 
+> Sejak v2.53.0 token integrasi, `POST /api/integrations/social-media` dan tabel `px_integration_tokens` dihapus - lihat §25. Data hanya lewat upload Excel.
+
 - Tabel baru (dibuat otomatis saat server start): `px_social_media_stats` (satu baris per platform Instagram/LinkedIn/TikTok per bulan: followers, reach, engagement, `source` UPLOAD/INTEGRATION/SEED; unik `(platform, stat_year, stat_month)`), `px_social_media_uploads` (riwayat batch upload `.xlsx` dan kiriman integrasi) dan `px_integration_tokens` (token integrasi: hanya hash SHA-256 + petunjuk 12 karakter, nama, pembuat, pemakaian terakhir, dicabut). Jumlah tabel kini **37**. Rincian kolom: `docs/08` §25.
 - **Setiap start**: baris SLA rekrutmen metrik 1 di `px_recruitment_sla_by_unit` dihapus (data salah untuk metrik bankwide social media; metrik lain tidak disentuh). Bila `SEED_DEMO_DATA` bukan `false`: dummy fiktif Januari-September 2026 (27 baris) ditambahkan hanya untuk bulan tanpa data asli.
 - Data diisi lewat aplikasi (upload Excel Admin atau `POST /api/integrations/social-media` dengan token), bukan langsung di tabel: upload/injeksi menghapus dummy bulan yang disentuh dan mencatat batch serta audit. Skor metrik 1 tetap `raw_value` di `px_metrics`.
 - **Token**: dibuat/dicabut di Admin Parameters -> Integrations. Token asli tidak ada di database - backup `.bak` tidak memuat token yang bisa dipakai. Tabel token **tidak** dihapus `migrate --reset` dan **tidak** ikut `npm run db:export` (seperti akun); setelah pindah database buat token baru.
 - Ikut `.bak`; dua tabel social media ikut `npm run db:export` dan import `migrate.js`, dan dihapus `migrate --reset` (data asli hilang kecuali `store.json` diekspor ulang dulu). File asli upload ada di `server/data/social-uploads/` (gitignored, tidak ikut `.bak` - salin terpisah bila perlu).
-- Pemeriksaan: `SELECT platform, stat_year, stat_month, followers, reach, engagement, source FROM dbo.px_social_media_stats ORDER BY stat_year, stat_month, platform;` dan `SELECT token_id, name, token_hint, created_at, last_used_at, revoked_at FROM dbo.px_integration_tokens;`
+- Pemeriksaan: `SELECT platform, stat_year, stat_month, followers, reach, engagement, source FROM dbo.px_social_media_stats ORDER BY stat_year, stat_month, platform;` dan `SELECT token_id, name, token_hint, created_at, last_used_at, revoked_at FROM dbo.px_integration_tokens;` (sampai v2.52.x)
+
+## 25. Tabel token integrasi dihapus (v2.53.0)
+
+- Fitur integrasi token v2.52.0 dihapus (on-premise, tanpa internet). `px_integration_tokens` tidak lagi ada di `schema.sql`; jumlah tabel kini **36**.
+- Saat server start (dan di `npm run db:migrate`) tabel itu di-`DROP` **hanya bila kosong** (database utama: 0 baris); bila berisi, tabel dibiarkan dan log menampilkan peringatan - hapus manual setelah dicek. Aman dijalankan berulang.
+- `CHECK` kolom `source` tabel social media masih mengizinkan `INTEGRATION` (tidak perlu migrasi), tetapi data social media kini hanya masuk lewat upload Excel Admin. Query token di §24 tidak berlaku lagi. Rincian: `docs/08` §26.

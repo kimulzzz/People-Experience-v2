@@ -67,7 +67,7 @@ Setiap metrik Outcome tidak merepresentasikan kuesioner individual, melainkan **
 ### 1. Metrik #1: Career Website & Social Media Follower, Reach & Engagement Growth (tabel log sejak v2.52.0)
 - **Catatan**: katalog §2 di atas masih memuat definisi lama "% SLA of candidate fulfillment"; nama metrik di seed/database = "Career website & social media follower, reach & engagement growth", sumber "Website & Social Media Analytics", bankwide (tanpa dimensi direktorat).
 - **Logika Nilai**: **manual** - skor = `raw_value` yang diisi Admin di Admin Parameters (keputusan user v2.52.0; mungkin dihitung dari data social media kemudian).
-- **Tabel Log** (tab Internal Transaction Records, tabel `px_social_media_stats`): satu baris per platform per bulan, diisi upload `.xlsx` Admin atau injeksi integrasi (`docs/04` "Catatan v2.52.0"). Baris SLA rekrutmen per unit metrik 1 (seed lama) dihapus sejak v2.52.0.
+- **Tabel Log** (tab Internal Transaction Records, tabel `px_social_media_stats`): satu baris per platform per bulan, diisi upload `.xlsx` Admin (injeksi integrasi bertoken dihapus di v2.53.0; `docs/04` "Catatan v2.52.0" / "Catatan v2.53.0"). Baris SLA rekrutmen per unit metrik 1 (seed lama) dihapus sejak v2.52.0.
 
 | Kolom file / field JSON | Tipe | Arti |
 | :--- | :--- | :--- |

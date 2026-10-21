@@ -605,15 +605,16 @@ GO
 -- ---------------------------------------------------------------- social media statistics of metric 1 (v2.52.0)
 -- Metric 1 "Career website & social media follower, reach & engagement growth" is bankwide (no directorate). Its drilldown
 -- = one row per platform per month: followers (at month end), reach and engagement of the month. Loaded by the Admin
--- (.xlsx upload, source UPLOAD), injected by another internal system (POST /api/integrations/social-media with an
--- integration token, source INTEGRATION) or generated demo rows (source SEED: a month only gets them while it has no real
--- row, and real rows of a month replace its seed rows). The metric score stays the Admin's raw_value (not calculated yet).
+-- (.xlsx upload, source UPLOAD) or generated demo rows (source SEED: a month only gets them while it has no real row, and
+-- real rows of a month replace its seed rows). The metric score stays the Admin's raw_value (not calculated yet).
+-- Source INTEGRATION (the token-based ingest endpoint of v2.52.0, removed in v2.53.0) is still allowed by the CHECK
+-- constraints so existing databases need no constraint change, but nothing produces it any more.
 IF OBJECT_ID(N'dbo.px_social_media_uploads', N'U') IS NULL
 CREATE TABLE dbo.px_social_media_uploads (
   upload_id           NVARCHAR(64)   NOT NULL CONSTRAINT PK_px_sm_uploads PRIMARY KEY,
   source              VARCHAR(20)    NOT NULL CONSTRAINT CK_px_sm_up_src CHECK (source IN ('UPLOAD', 'INTEGRATION')),
   file_name           NVARCHAR(260)  NULL,      -- UPLOAD only (original kept in server/data/social-uploads/<upload_id>.xlsx)
-  uploaded_by         NVARCHAR(200)  NOT NULL,  -- "Name (username)" or "Integration: <token name>"
+  uploaded_by         NVARCHAR(200)  NOT NULL,  -- "Name (username)"
   total_rows          INT            NOT NULL CONSTRAINT DF_px_sm_up_total DEFAULT (0),
   inserted_rows       INT            NOT NULL CONSTRAINT DF_px_sm_up_ins DEFAULT (0),
   updated_rows        INT            NOT NULL CONSTRAINT DF_px_sm_up_upd DEFAULT (0),
@@ -639,21 +640,5 @@ CREATE TABLE dbo.px_social_media_stats (
   CONSTRAINT UQ_px_sm_platform_period UNIQUE (platform, stat_year, stat_month)
 );
 GO
--- Integration tokens (v2.52.0): let another internal system push data without a user session. Created / revoked by the Admin
--- (Admin Parameters -> Integrations); the token is shown ONCE, only its SHA-256 is stored (like px_sessions). scope = the one
--- endpoint it opens. Not part of the configuration snapshot and not dropped by migrate --reset (like the login accounts).
-IF OBJECT_ID(N'dbo.px_integration_tokens', N'U') IS NULL
-CREATE TABLE dbo.px_integration_tokens (
-  token_id      INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_px_int_tokens PRIMARY KEY,
-  name          NVARCHAR(100)  NOT NULL,
-  token_hash    CHAR(64)       NOT NULL CONSTRAINT UQ_px_int_tokens_hash UNIQUE,
-  token_hint    NVARCHAR(20)   NOT NULL,      -- first characters of the token, to recognise it in the list
-  scope         VARCHAR(40)    NOT NULL CONSTRAINT CK_px_int_tokens_scope CHECK (scope IN ('SOCIAL_MEDIA_INGEST')),
-  created_by    NVARCHAR(200)  NOT NULL,
-  created_at    DATETIME2(3)   NOT NULL CONSTRAINT DF_px_int_tokens_created DEFAULT (SYSUTCDATETIME()),
-  last_used_at  DATETIME2(3)   NULL,
-  revoked_at    DATETIME2(3)   NULL,
-  revoked_by    NVARCHAR(200)  NULL,
-  is_test       BIT            NOT NULL CONSTRAINT DF_px_int_tokens_is_test DEFAULT (0)  -- made by a test-run account (audit rows hidden)
-);
-GO
+-- px_integration_tokens (v2.52.0) was removed in v2.53.0: sqlStorage.dropRetiredIntegrationTokens() drops it at boot /
+-- migrate when it is empty (a table that still holds rows is kept and reported).

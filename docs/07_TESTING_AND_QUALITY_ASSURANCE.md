@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    55 MODUL PENGUJIAN    │     415 AUTOMATED TESTS     │       100% PASS RATE          │
+│    55 MODUL PENGUJIAN    │     413 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -1219,6 +1219,8 @@ Run suite penuh SQL terakhir (developer, modul media 27/32/38/41/42/43 di-skip, 
 
 ### Modul 55 - Social media metrik 1 (17 tes, SQL saja)
 
+> Sejak v2.53.0 tes 12-16 (token/ingest) dihapus dan Modul 55 berisi 15 tes - lihat §42.
+
 Di backend JSON seluruh modul di-skip ("needs the SQL Server backend"). Fixture memakai tahun yang tidak dipakai data lain (2097, 2099; YTD tahun lampau: 2018) dan dihapus di akhir lewat `upload_id` run ini, baris seed yang disisipkan modul sendiri, dan id token yang dibuat run ini. Tes pertama gagal bila tahun fixture tidak kosong sebelum modul berjalan.
 
 | # | Jenis | Yang diuji |
@@ -1257,3 +1259,21 @@ Run suite penuh SQL (developer, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **3
 QC: LULUS DENGAN CATATAN - nilai tabel dicek manual terhadap baris DB (growth, engagement rate, total), YTD/MTD, filter direktorat, empty state, upload valid/invalid (7 jenis error, 415/413), History (XSS ter-escape), token (tampil sekali, hint saja di daftar, revoke -> 401, delete), varian auth ingest, token ditolak di route lain, rate limit (X-Forwarded-For tidak mem-bypass), tidak ada kebocoran token, USER tanpa tombol/tab dan 403 di endpoint admin, config guard tidak memuat token. Bug rendah yang ditemukan dan **sudah diperbaiki** main session: unduhan file asli (social media DAN ESS `GET /api/surveys/ess-file/:upload_id`) gagal 500 bila nama file memuat karakter di luar Latin-1 - kini `attachmentDisposition()` mengirim nama ASCII + `filename*=UTF-8''...` dan header `X-Content-Type-Options: nosniff`. Catatan (tidak diubah): tahun/bulan masa depan (s.d. 2100) diterima sehingga "Latest data" bisa menunjuk bulan masa depan; 20 token salah dari IP yang sama memblokir integrasi dari IP itu 60 detik (by design).
 
 **Tidak diuji otomatis / tidak terverifikasi**: suite JSON penuh; modul media dan event (8, 24); batas 20 cek token gagal per menit per IP dan penolakan `Origin` host lain pada endpoint ingest (tidak ada tes khusus); render tabel social media, modal upload dan tab Integrations (tidak ada tes render).
+
+## 42. v2.53.0 - Fitur integrasi token dihapus
+
+### Modul 55 - kini 15 tes (SQL saja)
+
+Tes 12-16 (token, ingest, validasi ingest, revoke, rate limit) dihapus; tes 11 tidak lagi menyebut token; tes 17 (JSON in-process) tanpa token. Tes baru:
+
+| Jenis | Yang diuji |
+| :---: | :--- |
+| Negatif | URL lama hilang: `POST /api/integrations/social-media` -> 401 tanpa login (juga dengan header Bearer), 404 untuk sesi Admin/USER; `/api/admin/integration-tokens` (GET, POST, `/:id/revoke`, `DELETE /:id`) -> 404 Admin, 403 USER, 401 tanpa login; tidak ada yang tersimpan |
+| Positif | `DROP` terjaga `px_integration_tokens`: tidak ada setelah boot; tabel berisi baris tetap ada, setelah kosong dihapus, lalu `ABSENT` (idempoten) |
+| Positif | Backend JSON: `integrationTokens` kosong dihapus dari `auth.json` saat dimuat, yang berisi dibiarkan; `store.json` dan `auth.json` dipulihkan byte-identik |
+
+### Hasil
+
+Run suite penuh SQL (developer, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **327/327 lulus, 0 gagal, 16 tes dilewati**. Ukuran suite penuh SQL kini **413** = 415 - 5 + 3 (hitungan, bukan angka cetakan suite). Suite JSON penuh tidak dijalankan.
+
+**Tidak diuji otomatis**: tampilan Admin Parameters tanpa tab Integrations (tidak ada tes render).

@@ -1401,7 +1401,7 @@ const rowToSocialUpload = r => ({
 const periodKeyOf = code => parseInt(code.slice(0, 4), 10) * 100 + parseInt(code.slice(5, 7), 10);
 
 // Demo rows (seed.generateSocialMediaSeed) for every (platform, month) that has no row, skipping a month that already has a
-// real (UPLOAD / INTEGRATION) row - real data of a month is never mixed with dummy rows. seedRows: optional (regression
+// real (UPLOAD) row - real data of a month is never mixed with dummy rows. seedRows: optional (regression
 // suite). Returns the months that got rows ('YYYY-MM').
 async function topUpSocialMediaSeed(seedRows = seed.generateSocialMediaSeed()) {
   const existing = await run('SELECT platform, stat_year, stat_month, source FROM dbo.px_social_media_stats');
@@ -1441,19 +1441,20 @@ async function removeMetric1SlaRows() {
   return rows[0] ? rows[0].n : 0;
 }
 
-const rowToIntegrationToken = r => ({
-  token_id: r.token_id,
-  name: r.name,
-  token_hint: r.token_hint,
-  scope: r.scope,
-  created_by: r.created_by,
-  created_at: iso(r.created_at),
-  last_used_at: iso(r.last_used_at),
-  revoked_at: iso(r.revoked_at),
-  revoked_by: r.revoked_by || null,
-  is_test: r.is_test === true
-});
-const TOKEN_COLS = 'token_id, name, token_hint, scope, created_by, created_at, last_used_at, revoked_at, revoked_by, is_test';
+// v2.53.0: the integration tokens of v2.52.0 are removed (on-premise app, Excel upload only). Their table is dropped at
+// every boot / migrate while it exists and is EMPTY; a table that still holds rows is kept (nothing reads it any more)
+// and reported, never dropped with data in it. Returns { state: 'ABSENT' | 'DROPPED' | 'KEPT', rows }.
+async function dropRetiredIntegrationTokens() {
+  if (!(await run("SELECT OBJECT_ID(N'dbo.px_integration_tokens', N'U') AS id"))[0].id) return { state: 'ABSENT', rows: 0 };
+  const rows = (await run('SELECT COUNT(*) AS n FROM dbo.px_integration_tokens'))[0].n;
+  if (rows) {
+    console.warn(`[sqlStorage] px_integration_tokens still holds ${rows} row(s) - kept (the integration feature was removed in v2.53.0; nothing uses them). Drop it by hand once checked.`);
+    return { state: 'KEPT', rows };
+  }
+  await run("IF OBJECT_ID(N'dbo.px_integration_tokens', N'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM dbo.px_integration_tokens) DROP TABLE dbo.px_integration_tokens");
+  console.log('[sqlStorage] Dropped the empty table px_integration_tokens (integration feature removed in v2.53.0).');
+  return { state: 'DROPPED', rows: 0 };
+}
 
 // ------------------------------------------------------------------ response filter -> SQL
 function nextMonthStart(year, monthNum) {
@@ -2106,6 +2107,7 @@ const storage = {
     // v2.49.0: the boot that adds px_users.menu_access moves the old event managers to menu access (once)
     const menuAccessUpgrade = (await run("SELECT COL_LENGTH(N'dbo.px_users', N'menu_access') AS c"))[0].c === null;
     await applySchema();
+    await dropRetiredIntegrationTokens();
     await seedIfEmpty();
     await migrateDirectorates();     // v2.31.0: old demo directorate names -> the 12 real ones (before any top-up)
     await inTransaction(async tx => { await seedSurveyQuestions(tx); await seedAppSettings(tx); await seedEmailSettings(tx); });
@@ -3034,7 +3036,7 @@ const storage = {
     const rows = await run('SELECT * FROM dbo.px_social_media_uploads ORDER BY uploaded_at DESC, upload_id DESC');
     return rows.map(rowToSocialUpload);
   },
-  // One validated batch (upload or integration), atomic. Key (platform, year, month): an existing row is UPDATED, a new one
+  // One validated upload batch, atomic. Key (platform, year, month): an existing row is UPDATED, a new one
   // inserted. The SEED rows of every month in the batch are removed first (all platforms: real data of a month is never
   // mixed with dummy rows). Returns { record, inserted, updated, replaced_seed }.
   async saveSocialMediaStats(meta, rows) {
@@ -3070,41 +3072,7 @@ const storage = {
   },
   topUpSocialMediaSeed, // boot top-up of the demo rows, exposed for the regression suite (optional seed rows)
   removeMetric1SlaRows, // boot cleanup, exposed for the regression suite
-
-  // ---- integration tokens (v2.52.0) - the token itself is never stored, only token_hash (SHA-256)
-  async getIntegrationTokens() {
-    return (await run(`SELECT ${TOKEN_COLS} FROM dbo.px_integration_tokens ORDER BY created_at DESC, token_id DESC`)).map(rowToIntegrationToken);
-  },
-  async getIntegrationTokenByHash(token_hash) {
-    const rows = await run(`SELECT ${TOKEN_COLS} FROM dbo.px_integration_tokens WHERE token_hash = @h`, { h: String(token_hash) });
-    return rows[0] ? rowToIntegrationToken(rows[0]) : null;
-  },
-  async createIntegrationToken(t) {
-    const rows = await run(`INSERT INTO dbo.px_integration_tokens (name, token_hash, token_hint, scope, created_by, is_test)
-                            OUTPUT INSERTED.token_id VALUES (@name, @hash, @hint, @scope, @created_by, @is_test)`, {
-      name: String(t.name).slice(0, 100), hash: t.token_hash, hint: String(t.token_hint).slice(0, 20), scope: t.scope,
-      created_by: String(t.created_by || 'Admin').slice(0, 200), is_test: t.is_test === true
-    });
-    return rowToIntegrationToken((await run(`SELECT ${TOKEN_COLS} FROM dbo.px_integration_tokens WHERE token_id = @id`, { id: rows[0].token_id }))[0]);
-  },
-  async touchIntegrationToken(token_id) {
-    await run('UPDATE dbo.px_integration_tokens SET last_used_at = SYSUTCDATETIME() WHERE token_id = @id', { id: parseInt(token_id, 10) });
-  },
-  // Sets revoked_at once; returns the record (null when the id does not exist).
-  async revokeIntegrationToken(token_id, revoked_by) {
-    const id = parseInt(token_id, 10);
-    await run('UPDATE dbo.px_integration_tokens SET revoked_at = SYSUTCDATETIME(), revoked_by = @by WHERE token_id = @id AND revoked_at IS NULL',
-      { id, by: String(revoked_by || 'Admin').slice(0, 200) });
-    const rows = await run(`SELECT ${TOKEN_COLS} FROM dbo.px_integration_tokens WHERE token_id = @id`, { id });
-    return rows[0] ? rowToIntegrationToken(rows[0]) : null;
-  },
-  // Returns the removed record, or null.
-  async deleteIntegrationToken(token_id) {
-    const id = parseInt(token_id, 10);
-    const rows = await run(`SELECT ${TOKEN_COLS} FROM dbo.px_integration_tokens WHERE token_id = @id;
-                            DELETE FROM dbo.px_integration_tokens WHERE token_id = @id;`, { id });
-    return rows[0] ? rowToIntegrationToken(rows[0]) : null;
-  },
+  dropRetiredIntegrationTokens, // v2.53.0 boot / migrate cleanup (SQL only; the JSON store drops auth.json integrationTokens on load)
 
   async deleteEssResultsForMetric(metric_id) {
     const rows = await run('DELETE FROM dbo.px_ess_results WHERE metric_id = @id; SELECT @@ROWCOUNT AS n;', { id: parseInt(metric_id, 10) });

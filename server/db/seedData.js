@@ -1623,9 +1623,9 @@ const initialOperationalRecords = {
 
 // Social media statistics of metric 1 (v2.52.0), source 'SEED': FICTIONAL monthly Instagram / LinkedIn / TikTok numbers
 // (followers at month end, reach and engagement of the month) for January - September 2026, so the metric-1 drilldown has
-// something to show before real data is uploaded (.xlsx) or injected by another system. Deterministic (one seeded PRNG per
+// something to show before real data is uploaded (.xlsx). Deterministic (one seeded PRNG per
 // platform). The storage boot top-up adds a (platform, month) only while it has no row and the month has no real row; real
-// rows (UPLOAD / INTEGRATION) of a month replace that month's seed rows. The score of metric 1 stays the Admin's raw_value.
+// rows (UPLOAD) of a month replace that month's seed rows. The score of metric 1 stays the Admin's raw_value.
 const SOCIAL_MEDIA_SEED_MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(month => ({ year: 2026, month }));
 const SOCIAL_MEDIA_SEED_PROFILES = [ // [platform, followers in Dec 2025, monthly follower growth range, reach / followers, engagement / reach]
   ['Instagram', 182000, [0.012, 0.024], [1.8, 2.6], [0.032, 0.046]],
