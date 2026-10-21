@@ -19,8 +19,6 @@ import {
   TrendingUp,
   ChevronLeft,
   ChevronRight,
-  Maximize2,
-  Minimize2,
   MousePointerClick,
   Sparkles
 } from 'lucide-react';
@@ -95,7 +93,6 @@ export default function Calculator({
   const { isAdmin } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('ALL'); // ALL, SURVEY, OUTCOME
-  const [tableDensity, setTableDensity] = useState('fit'); // 'fit' (Fit to Screen) or 'wide' (Expanded)
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
 
@@ -140,7 +137,7 @@ export default function Calculator({
     checkScrollState();
     window.addEventListener('resize', checkScrollState);
     return () => window.removeEventListener('resize', checkScrollState);
-  }, [filteredMetrics, tableDensity]);
+  }, [filteredMetrics]);
 
   const handleScrollLeft = () => {
     if (tableContainerRef.current) {
@@ -154,7 +151,6 @@ export default function Calculator({
     }
   };
 
-  const isFit = tableDensity === 'fit';
   const periodLabel = period === 'YTD' ? `Year-to-Date ${year}` : `Month ${/^\d{4}-\d{2}$/.test(String(period)) ? `${monthName(String(period).slice(5))} ${String(period).slice(0, 4)}` : period}`;
 
   return (
@@ -298,30 +294,6 @@ export default function Calculator({
         {/* Right: Table View & Quick Scroll Controls */}
         <div className="flex items-center justify-between md:justify-end space-x-2 shrink-0 border-t md:border-t-0 pt-2 md:pt-0 border-white/20">
 
-          {/* Density Toggle */}
-          <div className="inline-flex items-center bg-white/90 rounded-lg p-0.5 text-[11px]">
-            <button
-              onClick={() => setTableDensity('fit')}
-              className={`px-2 py-1 rounded-md font-bold transition flex items-center space-x-1 ${
-                isFit ? 'bg-[var(--theme-tint-50)] text-[var(--theme-base)] shadow-2xs' : 'text-gray-500 hover:text-gray-800'
-              }`}
-              title="Fit to Screen view (Optimized layout to eliminate horizontal scrolling)"
-            >
-              <Minimize2 className="w-3 h-3" />
-              <span>Fit Screen</span>
-            </button>
-            <button
-              onClick={() => setTableDensity('wide')}
-              className={`px-2 py-1 rounded-md font-bold transition flex items-center space-x-1 ${
-                !isFit ? 'bg-gray-800 text-white shadow-2xs' : 'text-gray-500 hover:text-gray-800'
-              }`}
-              title="Expanded Wide view"
-            >
-              <Maximize2 className="w-3 h-3" />
-              <span>Wide</span>
-            </button>
-          </div>
-
           {/* Quick Scroll Left / Right Buttons */}
           <div className="inline-flex items-center space-x-1 bg-white/90 rounded-lg p-0.5">
             <button
@@ -366,24 +338,24 @@ export default function Calculator({
           onScroll={checkScrollState}
           className="overflow-x-auto relative max-h-[75vh] overflow-y-auto rounded-xl scrollbar-thin scrollbar-thumb-gray-300 hover:scrollbar-thumb-gray-400"
         >
-          <table className={`w-full text-left border-collapse ${isFit ? 'text-[11.5px]' : 'text-xs'}`}>
+          <table className={`w-full text-left border-collapse text-[11.5px]`}>
 
             {/* Sticky Table Header */}
             <thead className="sticky top-0 z-20 shadow-xs">
               <tr className="bg-[var(--theme-deep)] text-[10.5px] font-extrabold text-white uppercase tracking-wider border-b border-white/10">
-                <th className={`py-3 ${isFit ? 'px-2.5 w-10' : 'px-3.5 w-12'} text-center bg-[var(--theme-deep)]`}>ID</th>
-                <th className={`py-3 ${isFit ? 'px-2.5 min-w-[210px] max-w-[270px]' : 'px-3.5 min-w-[260px]'} bg-[var(--theme-deep)]`}>
+                <th className={`py-3 px-2.5 w-10 text-center bg-[var(--theme-deep)]`}>ID</th>
+                <th className={`py-3 px-2.5 min-w-[210px] max-w-[270px] bg-[var(--theme-deep)]`}>
                   Check Point & Metric
                 </th>
-                <th className={`py-3 ${isFit ? 'px-2.5 w-28' : 'px-3.5 w-36'} bg-[var(--theme-deep)]`}>Type & PIC</th>
-                <th className={`py-3 ${isFit ? 'px-2 text-center w-24' : 'px-3.5 text-center w-32'} bg-[var(--theme-deep)]`}>Total Respondents</th>
-                <th className={`py-3 ${isFit ? 'px-2 text-center w-24' : 'px-3.5 text-center w-28'} bg-[var(--theme-deep)]`}>Date / Last Sync</th>
-                <th className={`py-3 ${isFit ? 'px-2 text-right w-24' : 'px-3.5 text-right w-28'} bg-[var(--theme-deep)]`}>Actual Value</th>
-                <th className={`py-3 ${isFit ? 'px-2.5 min-w-[120px] w-32' : 'px-3.5 min-w-[150px]'} bg-[var(--theme-deep)]`}>Index Score (Target)</th>
-                <th className={`py-3 ${isFit ? 'px-2 text-center w-24' : 'px-3.5 text-center w-28'} bg-[var(--theme-deep)]`}>Status</th>
+                <th className={`py-3 px-2.5 w-28 bg-[var(--theme-deep)]`}>Type & PIC</th>
+                <th className={`py-3 px-2 text-center w-24 bg-[var(--theme-deep)]`}>Total Respondents</th>
+                <th className={`py-3 px-2 text-center w-24 bg-[var(--theme-deep)]`}>Date / Last Sync</th>
+                <th className={`py-3 px-2 text-right w-24 bg-[var(--theme-deep)]`}>Actual Value</th>
+                <th className={`py-3 px-2.5 min-w-[120px] w-32 bg-[var(--theme-deep)]`}>Index Score (Target)</th>
+                <th className={`py-3 px-2 text-center w-24 bg-[var(--theme-deep)]`}>Status</th>
 
                 {/* STICKY RIGHT COLUMN HEADER (FREEZE COLUMN) */}
-                <th className={`py-3 ${isFit ? 'px-3 w-[260px]' : 'px-3.5 w-[300px]'} text-right sticky right-0 bg-[var(--theme-deep)] backdrop-blur-xs z-30 shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.3)] border-l border-white/10`}>
+                <th className={`py-3 px-3 w-[260px] text-right sticky right-0 bg-[var(--theme-deep)] backdrop-blur-xs z-30 shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.3)] border-l border-white/10`}>
                   <div className="flex items-center justify-end space-x-1.5">
                     <span>Actions & Evidence</span>
                   </div>
@@ -427,12 +399,12 @@ export default function Calculator({
                       }
                     >
                       {/* ID */}
-                      <td className={`py-3 ${isFit ? 'px-2.5' : 'px-3.5'} text-center font-bold ${isDisabled ? 'text-gray-400' : 'text-[var(--theme-deep)] group-hover:text-[var(--theme-base)]'}`}>
+                      <td className={`py-3 px-2.5 text-center font-bold ${isDisabled ? 'text-gray-400' : 'text-[var(--theme-deep)] group-hover:text-[var(--theme-base)]'}`}>
                         {m.metric_id}
                       </td>
 
                       {/* Name & Checkpoint */}
-                      <td className={`py-3 ${isFit ? 'px-2.5' : 'px-3.5'}`}>
+                      <td className={`py-3 px-2.5`}>
                         <div className={`flex items-center space-x-1 text-[10px] font-extrabold uppercase tracking-tight ${isDisabled ? 'text-gray-400' : 'text-[#231F20]'}`}>
                           <span 
                             className="w-2 h-2 rounded-full shrink-0 ring-1 ring-white/70" 
@@ -440,7 +412,7 @@ export default function Calculator({
                           />
                           <span className="truncate max-w-[190px]">{j?.journey_name}</span>
                         </div>
-                        <div className={`font-extrabold ${isDisabled ? 'text-gray-500 line-through decoration-gray-400' : 'text-[#231F20] group-hover:text-[var(--theme-base)]'} transition ${isFit ? 'text-xs' : 'text-sm'} leading-snug mt-0.5 line-clamp-2`}>
+                        <div className={`font-extrabold ${isDisabled ? 'text-gray-500 line-through decoration-gray-400' : 'text-[#231F20] group-hover:text-[var(--theme-base)]'} transition text-xs leading-snug mt-0.5 line-clamp-2`}>
                           {m.metric_name}
                         </div>
                         <div className="flex items-center gap-1 mt-0.5">
@@ -469,7 +441,7 @@ export default function Calculator({
                       </td>
 
                       {/* Type & Owner */}
-                      <td className={`py-3 ${isFit ? 'px-2.5' : 'px-3.5'}`}>
+                      <td className={`py-3 px-2.5`}>
                         {(() => {
                           return (
                             <span className={`inline-block px-1.5 py-0.5 rounded text-[9.5px] font-bold ${
@@ -487,7 +459,7 @@ export default function Calculator({
                       </td>
 
                       {/* Total respondents for Survey vs Data HR Internal badge for Outcome */}
-                      <td className={`py-3 ${isFit ? 'px-2' : 'px-3.5'} text-center`}>
+                      <td className={`py-3 px-2 text-center`}>
                         {isDisabled ? (
                           <span className="text-[10px] font-mono text-gray-400">-</span>
                         ) : isSurvey ? (
@@ -506,14 +478,14 @@ export default function Calculator({
                       </td>
 
                       {/* Last Survey / Ingestion Date (Actual Date for both Survey and Outcome) */}
-                      <td className={`py-3 ${isFit ? 'px-2' : 'px-3.5'} text-center whitespace-nowrap`}>
+                      <td className={`py-3 px-2 text-center whitespace-nowrap`}>
                         <span className="text-[10px] font-medium text-gray-700 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-200" title={`Last data entry date: ${displayDate}`}>
                           {displayDate}
                         </span>
                       </td>
 
                       {/* Actual Raw Value */}
-                      <td className={`py-3 ${isFit ? 'px-2' : 'px-3.5'} text-right whitespace-nowrap`}>
+                      <td className={`py-3 px-2 text-right whitespace-nowrap`}>
                         {isDisabled ? (
                           <span className="text-xs font-bold text-gray-400">N/A</span>
                         ) : isNoData ? (
@@ -532,7 +504,7 @@ export default function Calculator({
                       </td>
 
                       {/* Normalized Score & Progress Bar */}
-                      <td className={`py-3 ${isFit ? 'px-2.5' : 'px-3.5'}`}>
+                      <td className={`py-3 px-2.5`}>
                         {isDisabled ? (
                           <div className="text-center py-1 text-[10px] font-bold text-gray-400 bg-gray-200/60 rounded">
                             Exempted (0%)
@@ -566,7 +538,7 @@ export default function Calculator({
                       </td>
 
                       {/* Status */}
-                      <td className={`py-3 ${isFit ? 'px-2' : 'px-3.5'} text-center`}>
+                      <td className={`py-3 px-2 text-center`}>
                         {isDisabled ? (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold bg-gray-200 text-gray-500">
                             Exempted
@@ -588,7 +560,7 @@ export default function Calculator({
                       </td>
 
                       {/* STICKY RIGHT COLUMN: ACTION BUTTONS (ALWAYS VISIBLE) */}
-                      <td className={`py-2.5 ${isFit ? 'px-2.5' : 'px-3.5'} text-right whitespace-nowrap sticky right-0 ${isDisabled ? 'bg-gray-200/95' : 'bg-[var(--theme-row-end)] group-hover:bg-[var(--theme-row-end-h)]'} transition-colors z-10 shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.15)] border-l border-red-200/50`}>
+                      <td className={`py-2.5 px-2.5 text-right whitespace-nowrap sticky right-0 ${isDisabled ? 'bg-gray-200/95' : 'bg-[var(--theme-row-end)] group-hover:bg-[var(--theme-row-end-h)]'} transition-colors z-10 shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.15)] border-l border-red-200/50`}>
                         <div className="flex items-center justify-end space-x-1">
                           {isDisabled ? (
                             <span className="text-[10px] font-semibold text-gray-400 italic px-2 py-1">
@@ -606,7 +578,7 @@ export default function Calculator({
                                 title={isEssRow ? `Download the ESS summary template (.xlsx) for ${m.metric_name}` : `Download CSV Template format with standard questions for ${m.metric_name}`}
                               >
                                 <Download className="w-3 h-3 text-slate-500 shrink-0" />
-                                <span>{isEssRow ? 'Template (.xlsx)' : 'Template'}</span>
+                                <span>Template</span>
                               </a>
 
                               {/* 2. Download Evidence */}

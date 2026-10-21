@@ -354,7 +354,7 @@ export default function MetricDetailModal({
                           title={isEss ? 'Download the ESS summary template (.xlsx)' : 'Download CSV Template with standard question format'}
                         >
                           <Download className="w-3 h-3 text-slate-500 shrink-0" />
-                          <span>{isEss ? 'Template (.xlsx)' : 'Template'}</span>
+                          <span>Template</span>
                         </a>
                         {isEssSummary && detailData.ess_upload?.has_original_file && (
                           <a

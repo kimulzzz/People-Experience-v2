@@ -2,6 +2,18 @@
 
 Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Management & Scoring System dicatat di dalam dokumen ini mengikuti standar [Semantic Versioning](https://semver.org/).
 
+## [2.51.1] - 2026-10-21
+
+### 🧹 Explore Metrics: satu tampilan tabel & tombol Template ESS tanpa ".xlsx" (Changed)
+
+- **Permintaan user**: pilihan tampilan **Fit Screen** / **Wide** di Explore Metrics tidak perlu - cukup satu tampilan (Fit Screen); tombol Template metrik ESS di kolom ACTIONS & EVIDENCE tidak perlu embel-embel ".xlsx", cukup "Template" seperti metrik lain.
+- **`src/components/Calculator.jsx`**: toggle Fit Screen / Wide dihapus (state `tableDensity`, ikon `Minimize2`/`Maximize2`); tabel selalu memakai ukuran Fit Screen (font 11.5px, padding dan lebar kolom yang sama seperti mode Fit Screen sebelumnya). Tombol scroll kiri/kanan tetap ada. Tombol Template baris ESS kini berlabel **"Template"**; tooltip tetap menyebut template ringkasan ESS (.xlsx) dan nama file unduhan tidak berubah.
+- **`src/components/MetricDetailModal.jsx`**: tombol "Template (.xlsx)" di detail metrik ESS juga menjadi **"Template"** agar konsisten.
+- Tidak ada perubahan API/backend/database. Label lain yang menyebut .xlsx (modal Survey Templates "Download ESS Template (.xlsx)", panduan kolom di modal import, toolbar Exit Interview) tidak diubah.
+- **Tes**: `npx vite build` lulus; suite penuh SQL sebelum commit (modul media 27/32/38/41/42/43 dan event 8/24 di-skip karena tidak tersentuh): **312/312 lulus, 0 gagal, 16 tes dilewati**. Config guard bekerja: nama metrik 8, direktorat dan former names tetap utuh setelah run.
+
+---
+
 ## [2.51.0] - 2026-10-21
 
 ### 🏢 Admin Direktorat, Urutan PX Index per Direktorat, Template Pertanyaan ESS & Suite Tidak Lagi Mereset Konfigurasi (Added / Changed / Fixed)

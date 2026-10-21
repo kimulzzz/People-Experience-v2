@@ -734,6 +734,9 @@ domain model, not just descriptive:
   Final round: a leftover config snapshot (killed run) is NEVER auto-restored - the suite exits with code 2 and shows the diff; choose `TEST_DISCARD_STALE_SNAPSHOT=1` (keep live config,
   usual) or `TEST_RESTORE_STALE_SNAPSHOT=1`; restore is one transaction. All directorate/division lists are alphabetical at the source (`sortDirectory`), per user request.
 
+- **v2.51.1** (2026-10-21, see `CHANGELOG.md` [2.51.1], `docs/05`): Explore Metrics has one table view (Fit Screen; the Fit Screen / Wide toggle is gone) and the ESS
+  rows' Template button reads "Template" like the others (also in the metric detail). Frontend only.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan
