@@ -24,6 +24,7 @@ const { importEssSummary, generateEssTemplateXlsx, generateEssEvidence, essOrigi
 const { importExitInterviews, resolveExitPeriod, getExitInterviewSummary, generateExitTemplateXlsx, generateExitExportCsv } = require('./services/exitInterviewService');
 const socialMedia = require('./services/socialMediaService');
 const outcomeValues = require('./services/outcomeValueService');
+const metricParts = require('./services/metricPartsService');
 const { isEssMetric } = require('./db/surveySource');
 const { getPendingUploadReminders, sendPendingUploadReminders, startReminderScheduler } = require('./services/reminderService');
 const emailSettingsService = require('./services/emailSettingsService');
@@ -137,12 +138,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.54.3' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.55.0' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.54.3',
+    version: '2.55.0',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',
@@ -1312,7 +1313,14 @@ app.get('/api/admin/outcome-values/:metric_id/template', async (req, res) => {
   try {
     const metric = await outcomeMetricOf(req, res, { uploadOnly: true });
     if (!metric) return;
-    const xlsx = await outcomeValues.generateOutcomeTemplateXlsx(metric);
+    // v2.55.0: ?year= (AVERAGE metrics: the year whose stored values the template shows; default the current year)
+    let year = null;
+    if (req.query.year !== undefined && req.query.year !== '') {
+      const y = outcomeValues.parseUploadYear(req.query.year);
+      if (y.error) return res.status(400).json({ error: y.error });
+      year = y.year;
+    }
+    const xlsx = await outcomeValues.generateOutcomeTemplateXlsx(metric, new Date(), { year });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="Template_Outcome_Metric_${metric.metric_id}.xlsx"`);
     res.send(xlsx);
@@ -1332,9 +1340,13 @@ app.post('/api/admin/outcome-values/:metric_id/upload', outcomeUploadSingle, asy
     if (ext !== '.xlsx' || !XLSX_MIME_TYPES.includes(String(req.file.mimetype || '').toLowerCase())) {
       return res.status(415).json({ error: `Only the monthly values Excel file (.xlsx) is accepted, not ${ext || 'a file without extension'}${ext === '.xlsx' ? ` sent as ${req.file.mimetype}` : ''}. CSV and the old .xls format are not accepted.` });
     }
-    const result = await outcomeValues.importOutcomeXlsx(req.file.buffer, fileName, metric, { uploadedBy: `${req.user.full_name} (${req.user.username})`.slice(0, 200) });
+    // v2.55.0: AVERAGE metrics (metric 1) are uploaded one year at a time - the form field "year" (the file has no year)
+    const result = await outcomeValues.importOutcomeXlsx(req.file.buffer, fileName, metric, {
+      uploadedBy: `${req.user.full_name} (${req.user.username})`.slice(0, 200), year: req.body ? req.body.year : undefined
+    });
     if (!result.success) return res.status(result.status || 400).json(result);
-    await auth.audit(req, 'OUTCOME_UPLOAD', { target: `metric ${metric.metric_id}; ${result.rows_imported} months (${result.inserted_rows} new, ${result.updated_rows} updated); ${result.periods.join(' ')}; batch ${result.upload_id}` });
+    const yearPart = result.year ? `year ${result.year} replaced, ${result.deleted_rows} removed; average ${result.average_value}; ` : '';
+    await auth.audit(req, 'OUTCOME_UPLOAD', { target: `metric ${metric.metric_id}; ${yearPart}${result.rows_imported} months (${result.inserted_rows} new, ${result.updated_rows} updated); ${result.periods.join(' ')}; batch ${result.upload_id}` });
     const { status, ...body } = result;
     res.json(body);
   } catch (err) {
@@ -1379,6 +1391,97 @@ app.get('/api/admin/outcome-evidence/:metric_id', async (req, res) => {
       return res.status(400).json({ error: 'kind must be "values" (or "social_media" for metric 1).' });
     }
     const { fileName, csv } = await outcomeValues.generateOutcomeEvidence(metric, mp, kind);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.send(csv);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// v2.55.0: composite SUMMARY metrics (metric 7 = 4 parts, metric 5 and 12 = 1 part): per part an Admin .xlsx summary upload
+// (Directorate | Level | Year | Month | score | questions | Jumlah Responden | Periode), its template and its evidence CSV.
+// Admin only (like the OUTCOME uploads): these metrics' summaries are not per-respondent data, so no PIC path was added.
+const partUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: OUTCOME_MAX_MB * 1024 * 1024 } }); // never written to disk
+const partUploadSingle = (req, res, next) => partUpload.single('file')(req, res, err => {
+  if (!err) return next();
+  if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: `The summary file exceeds the ${OUTCOME_MAX_MB} MB limit.` });
+  return res.status(400).json({ error: 'The uploaded file could not be processed (send one .xlsx file in the field "file").' });
+});
+
+// { metric, parts, part } of :metric_id (+ :part_key) or an answer: 400 malformed, 404 unknown metric / part or a metric
+// without parts
+async function metricPartOf(req, res, { needPart = true } = {}) {
+  if (!/^\d{1,9}$/.test(String(req.params.metric_id))) { res.status(400).json({ error: 'metric_id must be a metric number.' }); return null; }
+  const metric = await storage.getMetricById(parseInt(req.params.metric_id, 10));
+  if (!metric) { res.status(404).json({ error: `Metric ${req.params.metric_id} was not found.` }); return null; }
+  const parts = await storage.getMetricParts(metric.metric_id);
+  if (!parts.length) { res.status(404).json({ error: `Metric ${metric.metric_id} is not scored from uploaded summary parts.` }); return null; }
+  if (!needPart) return { metric, parts };
+  const part = parts.find(p => p.part_key === String(req.params.part_key || ''));
+  if (!part) { res.status(404).json({ error: `Metric ${metric.metric_id} has no part "${String(req.params.part_key || '').slice(0, 40)}".` }); return null; }
+  return { metric, parts, part };
+}
+
+app.get('/api/admin/metric-parts/:metric_id', async (req, res) => {
+  try {
+    const found = await metricPartOf(req, res, { needPart: false });
+    if (!found) return;
+    const uploads = await storage.getMetricPartUploads(found.metric.metric_id);
+    res.json({
+      metric_id: found.metric.metric_id,
+      metric_name: found.metric.metric_name,
+      parts: found.parts.map(p => ({ part_key: p.part_key, part_name: p.part_name, sort_order: p.sort_order, scale: metricParts.scaleOf(p),
+        uploads: uploads.filter(u => u.part_key === p.part_key) }))
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/metric-parts/:metric_id/:part_key/template', async (req, res) => {
+  try {
+    const found = await metricPartOf(req, res);
+    if (!found) return;
+    const xlsx = await metricParts.generatePartTemplateXlsx(found.metric, found.part);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Template_Metric_${found.metric.metric_id}_${found.part.part_key}.xlsx"`);
+    res.send(xlsx);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/metric-parts/:metric_id/:part_key/upload', partUploadSingle, async (req, res) => {
+  try {
+    const found = await metricPartOf(req, res);
+    if (!found) return;
+    if (!req.file) return res.status(400).json({ error: 'Choose the summary Excel file (.xlsx) to upload.' });
+    const fileName = repairUploadedName(req.file.originalname || 'summary.xlsx');
+    const ext = path.extname(fileName).toLowerCase();
+    if (ext !== '.xlsx' || !XLSX_MIME_TYPES.includes(String(req.file.mimetype || '').toLowerCase())) {
+      return res.status(415).json({ error: `Only the summary Excel file (.xlsx) is accepted, not ${ext || 'a file without extension'}${ext === '.xlsx' ? ` sent as ${req.file.mimetype}` : ''}.` });
+    }
+    const result = await metricParts.importPartXlsx(req.file.buffer, fileName, found.metric, found.part, { uploadedBy: `${req.user.full_name} (${req.user.username})`.slice(0, 200) });
+    if (!result.success) return res.status(result.status || 400).json(result);
+    await auth.audit(req, 'METRIC_PART_UPLOAD', { target: `metric ${found.metric.metric_id} ${found.part.part_key}; ${result.rows_imported} rows (${result.replaced_rows} replaced); ${result.periods.join(' ')}; batch ${result.upload_id}` });
+    const { status, ...body } = result;
+    res.json(body);
+  } catch (err) {
+    console.error('Metric part upload error:', err.message);
+    res.status(500).json({ error: 'The summary file could not be stored; nothing was imported.' });
+  }
+});
+
+// ?period= ALL (default) | YTD | YYYY | YYYY-MM
+app.get('/api/admin/metric-parts/:metric_id/:part_key/evidence', async (req, res) => {
+  try {
+    const found = await metricPartOf(req, res);
+    if (!found) return;
+    const mp = outcomeValues.parseEvidencePeriod(req.query.period);
+    if (!mp) return res.status(400).json({ error: 'period must be ALL, YTD, a year (YYYY) or a month (YYYY-MM).' });
+    const { fileName, csv } = await metricParts.generatePartEvidence(found.metric, found.part, mp);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.setHeader('X-Content-Type-Options', 'nosniff');

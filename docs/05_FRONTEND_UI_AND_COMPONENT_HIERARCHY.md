@@ -404,6 +404,14 @@ API kini bisa mengirim indeks dan skor `null` serta status `NO_DATA` (lihat `doc
 | `MetricDetailModal.jsx` | Nilai "—", "No survey data in this period - left out of the index", badge abu-abu "No Data", pertanyaan berlabel "No Data" tanpa skor. Catatan "Annual metric: shows the result of Jan–Sep 2026" untuk metrik tahunan pada filter MTD **dihapus di v2.37.0** (MTD kini selalu satu bulan, `period_window.basis = 'MONTH'`). |
 | `TrendChart.jsx` | Titik `null` menjadi celah (garis dipotong per segmen), tooltip "—". |
 
+## Catatan v2.55.0 - Upload ringkasan per bagian, rata-rata bulan & centang N/A
+
+- **`PartSummaryModal.jsx` (baru)**: judul "Summary Upload: Metric <id>"; pilih bagian, lalu Template / Evidence (periode terpilih) / Upload `.xlsx`; riwayat upload per bagian (nama file, SHA-256 di tooltip). Dibuka dari Explore Metrics (`Calculator.jsx`, tombol Template/Evidence/Upload pada baris `data_upload === 'PART_SUMMARY'`, Admin saja) dan dari detail metrik. Upload CSV per responden lama untuk metrik 5/7/12 tidak ditawarkan di UI.
+- **Explore Metrics**: metrik ringkasan menampilkan "Average of x of y parts"; metrik `AVERAGE` (1, 3) menampilkan label rata-rata bulan (mis. "Average of 7 months (Mar-Sep 2026)"). Tombol Social Media metrik 1 hilang.
+- **Detail metrik (`MetricDetailModal.jsx`)**: tab "Summary Parts (n)" untuk metrik ringkasan (nilai per bagian, N/A bila tanpa data) dengan teks "Average of x of y parts (parts without data are N/A, not counted)"; tab Internal Transaction Records disembunyikan bila `operational_records_hidden`; metrik N/A menampilkan "Real data not available yet.".
+- **Admin Parameters (`AdminParametersModal.jsx`)**: centang "Real data not available yet (N/A, excluded from the PX Index)" di form edit metrik. Belum ada kontrol untuk `outcome_aggregation` atau bagian metrik.
+- `OutcomeUploadModal.jsx`: untuk metrik `AVERAGE` memilih tahun (template `?year=`, field `year` saat upload). `Dashboard.jsx`: tooltip chip metrik N/A menyebut alasannya ("N/A - Real data not available yet (not counted in the PX Index)"). `DirectoryManager.jsx`: pratinjau rename/merge direktorat ikut menghitung "Metric part summaries".
+
 ## Catatan v2.54.0 - Skor bertingkat, N/A, nilai bulanan OUTCOME & "Last Update"
 
 - **Explore Metrics (`Calculator.jsx`)**: baris OUTCOME (Admin) punya tombol **Template** (bila `outcome_upload`), **Evidence** (`/api/admin/outcome-evidence/:id?period=` = bulan terpilih untuk MTD, tahun untuk YTD) dan **Upload** (membuka `OutcomeUploadModal`); metrik 1 tambahan tombol **Social Media** (modal social media v2.52.0); metrik 11 hanya Evidence. USER tidak melihat tombol ini. Kolom "Date / Last Sync" menjadi **Last Update** (`last_update_label`, periode data terakhir di periode mana pun). Metrik dengan `not_applicable` tampil "N/A" (nilai, skor, chip status) dengan tooltip "Score tiers not configured yet - N/A, not counted in the PX Index".

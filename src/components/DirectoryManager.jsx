@@ -15,6 +15,7 @@ const USAGE_LABELS = {
   survey_responses: 'Survey responses (employee)',
   ess_results: 'ESS results',
   ess_results_pooled: 'ESS results pooled into the target',
+  part_results: 'Metric part summaries',
   exit_interviews: 'Exit interviews',
   attendances: 'Event attendances',
   user_scopes: 'User data scopes',

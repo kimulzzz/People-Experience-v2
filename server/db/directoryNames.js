@@ -327,7 +327,7 @@ function orphanUsage(usageRows, name) {
   return Object.keys(counts).length ? counts : null;
 }
 
-const DIRECTORATE_USAGE_KEYS = ['survey_responses', 'ess_results', 'exit_interviews', 'attendances', 'user_scopes', 'users', 'operational_records', 'settings'];
+const DIRECTORATE_USAGE_KEYS = ['survey_responses', 'ess_results', 'part_results', 'exit_interviews', 'attendances', 'user_scopes', 'users', 'operational_records', 'settings'];
 const DIVISION_USAGE_KEYS = ['survey_responses', 'exit_interviews', 'attendances', 'user_scopes', 'users'];
 const zero = keys => Object.fromEntries(keys.map(k => [k, 0]));
 const sum = o => Object.values(o).reduce((a, b) => a + b, 0);

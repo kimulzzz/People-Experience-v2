@@ -365,7 +365,9 @@ export default function Dashboard({
                           title={
                             isDisabled
                               ? `Metric ${m.metric_id} (${m.metric_name}) is disabled under the Directorate filter (Bankwide External).`
-                              : `Click to view survey details and questions for ${m.metric_name}`
+                              : isNoData && m.not_applicable && m.not_applicable_reason
+                                ? `${m.metric_name}: N/A - ${m.not_applicable_reason} (not counted in the PX Index)`
+                                : `Click to view survey details and questions for ${m.metric_name}`
                           }
                         >
                           <span className="flex items-center space-x-1.5 min-w-0 text-left">

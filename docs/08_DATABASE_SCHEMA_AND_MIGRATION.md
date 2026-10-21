@@ -40,7 +40,7 @@ Script `scripts/sqlserver/Setup-SqlServer.ps1` (idempoten, log di `scripts/sqlse
 
 ---
 
-## 3. Skema (`server/db/schema.sql` — 38 tabel sejak v2.54.0, prefix `px_`)
+## 3. Skema (`server/db/schema.sql` — 41 tabel sejak v2.55.0, prefix `px_`)
 
 | Kelompok | Tabel | Catatan |
 | :--- | :--- | :--- |
@@ -436,3 +436,34 @@ SELECT metric_id, stat_year, stat_month, value, source, upload_id FROM dbo.px_ou
 ```
 
 Diverifikasi oleh Modul 56 (`docs/07` §43).
+
+## 28. Pembaruan v2.55.0 - Kolom `outcome_aggregation` & `data_status`, Tabel Metrik Ringkasan per Bagian
+
+**Dua kolom baru di `px_metrics`** (ALTER idempoten via `COL_LENGTH`):
+
+| Kolom | Tipe / CHECK | Arti | Isi saat boot |
+| :--- | :--- | :--- | :--- |
+| `outcome_aggregation` | `VARCHAR(10) NULL`, `LATEST`\|`AVERAGE` | Cara membaca nilai bulanan OUTCOME (`NULL` = `LATEST`; SURVEY selalu `NULL`) | metrik 1 dan 3 = `AVERAGE`, hanya bila masih `NULL` |
+| `data_status` | `VARCHAR(20) NULL`, `AVAILABLE`\|`NOT_AVAILABLE` | `NOT_AVAILABLE` = data riil belum ada -> N/A (`NULL` = `AVAILABLE`) | metrik 4, 6, 8, 10, 23, 26 = `NOT_AVAILABLE`, hanya bila masih `NULL` |
+
+Edit Admin tidak pernah ditimpa oleh boot.
+
+**Tiga tabel baru** (`schema.sql` -> **41 tabel**):
+
+| Tabel | Kolom utama | Catatan |
+| :--- | :--- | :--- |
+| `px_metric_parts` | `part_id` IDENTITY, `metric_id`, `part_key`, `part_name`, `sort_order`, `template_json` | `UNIQUE (metric_id, part_key)`. Seed sekali per metrik yang belum punya bagian (`initialMetricParts`): 7 (4), 5, 12, 19, 20 |
+| `px_metric_part_uploads` | `upload_id` PK, `metric_id`, `part_key`, `file_name`, `file_sha256 CHAR(64)`, `uploaded_by`, `total_rows`, `replaced_rows`, `periods`, `columns_json`, `uploaded_at` | File asli **tidak** disimpan (data pribadi di "Raw Data") |
+| `px_metric_part_results` | `result_id` IDENTITY, `metric_id`, `part_key`, `upload_id`, `org_level` (`BANKWIDE`\|`DIRECTORATE`), `directorate`, `stat_year` (2000-2100), `stat_month`, `score DECIMAL(18,8)` (`NULL` = "-"), `respondents` (`NULL` = file tanpa kolom responden), `questions_json`, `period_text` | Index `IX_px_mpr_metric_part_period`. Ikut cascade rename/merge direktorat |
+
+Saat bagian di-seed, metrik 12 diubah sekali (hanya bila masih nilai seed): `scale_type` `RATING_5` -> `PERCENTAGE`, unit "/ 5" -> "%", target 4.00 -> 80 "> 80%" (`METRIC_PART_UPGRADES`). JSON: `store.json` `metricParts` / `metricPartUploads` / `metricPartResults`. Ketiga tabel ikut cascade hapus metrik, import `migrate.js`, `npm run db:export`, dan `dropAllTables()` (`migrate --reset` menghapus ringkasan yang diunggah). `px_metric_parts` **tidak** ikut snapshot config guard suite.
+
+Pemeriksaan:
+
+```sql
+SELECT metric_id, outcome_aggregation, data_status FROM dbo.px_metrics WHERE outcome_aggregation IS NOT NULL OR data_status IS NOT NULL;
+SELECT metric_id, part_key, part_name, sort_order FROM dbo.px_metric_parts ORDER BY metric_id, sort_order;
+SELECT metric_id, part_key, stat_year, stat_month, COUNT(*) AS rows_ FROM dbo.px_metric_part_results GROUP BY metric_id, part_key, stat_year, stat_month ORDER BY 1, 2, 3, 4;
+```
+
+Diverifikasi oleh Modul 58-60 (`docs/07` §45).

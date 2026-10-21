@@ -201,6 +201,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
     survey_source: 'SYSTEM',
     update_frequency: 'MONTHLY',
     requires_manual_upload: true,
+    data_not_available: false,
     upload_deadline_day: 25,
     upload_deadline_month: 11,
     pic_name: '',
@@ -386,6 +387,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
       survey_source: 'SYSTEM',
       update_frequency: 'MONTHLY',
       requires_manual_upload: true,
+      data_not_available: false,
       upload_deadline_day: 25,
       upload_deadline_month: 11,
       pic_name: '',
@@ -416,6 +418,7 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
       survey_source: m.survey_source || 'SYSTEM',
       update_frequency: m.update_frequency || 'MONTHLY',
       requires_manual_upload: m.requires_manual_upload !== undefined ? m.requires_manual_upload : (m.metric_type === 'SURVEY'),
+      data_not_available: m.data_status === 'NOT_AVAILABLE', // v2.55.0
       upload_deadline_day: m.upload_deadline_day !== undefined ? m.upload_deadline_day : 25,
       upload_deadline_month: m.upload_deadline_month !== undefined ? m.upload_deadline_month : 11,
       pic_name: m.pic_name || m.experience_owner || '',
@@ -1209,6 +1212,22 @@ All survey data (responses) and question settings of this metric will also be de
                       </select>
                       <p className="text-[10.5px] text-gray-400 mt-1">
                         Monthly: data is uploaded/refreshed every month. Annual: a single upload is enough and is used for calculations throughout the year (e.g. ESS metrics).
+                      </p>
+                    </div>
+
+                    {/* v2.55.0: "Real data not available yet" - the metric is N/A and left out of every index (stored data is kept) */}
+                    <div className="flex items-start pt-5 md:col-span-2">
+                      <label className="flex items-center space-x-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={!!metricFormData.data_not_available}
+                          onChange={(e) => setMetricFormData({ ...metricFormData, data_not_available: e.target.checked })}
+                          className="w-4 h-4 text-red-600 rounded focus:ring-red-500 border-gray-300"
+                        />
+                        <span className="text-xs font-bold text-gray-800">Real data not available yet (N/A, excluded from the PX Index)</span>
+                      </label>
+                      <p className="text-[10.5px] text-gray-400 ml-3 max-w-md">
+                        The metric shows N/A everywhere and its records are not shown; uploaded data is kept. Untick it once real data is uploaded to count the metric again.
                       </p>
                     </div>
 

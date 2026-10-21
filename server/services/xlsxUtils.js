@@ -41,7 +41,10 @@ const colLetter = idx => {
  * Returns [{ row_number, cells: [{ value, type: 'string'|'number'|'boolean'|'error'|'empty', formulaWithoutValue }] }].
  * Throws an Error with a user-facing message when the bytes are not an .xlsx workbook.
  */
-async function readFirstSheet(buffer) {
+// options (v2.55.0): preferSheet = a sheet name read instead of the first sheet when the workbook has it (case-insensitive);
+// refuseSheet = a RegExp - when the sheet that would be read is named like it, nothing is read (Error). Only the chosen
+// sheet's cells are parsed. withFill = every cell also gets `fill`: its solid fill colour ('FF0070C0', 'theme:5') or null.
+async function readFirstSheet(buffer, { preferSheet = null, refuseSheet = null, withFill = false } = {}) {
   let zip;
   try {
     zip = await JSZip.loadAsync(buffer);
@@ -54,7 +57,12 @@ async function readFirstSheet(buffer) {
 
   // first <sheet> -> its relationship target
   let sheetPath = 'xl/worksheets/sheet1.xml';
-  const firstSheet = workbook.match(/<sheet\b([^>]*?)\/?>/);
+  const sheets = [...workbook.matchAll(/<sheet\b([^>]*?)\/?>/g)];
+  const preferred = preferSheet ? sheets.find(m => String(attrOf(m[1], 'name') || '').trim().toLowerCase() === String(preferSheet).toLowerCase()) : null;
+  const firstSheet = preferred || sheets[0] || null;
+  if (firstSheet && refuseSheet && refuseSheet.test(String(attrOf(firstSheet[1], 'name') || ''))) {
+    throw new Error(`The sheet "${attrOf(firstSheet[1], 'name')}" is not read. Put the summary in a sheet named "${preferSheet || 'Pivot'}" (the first sheet).`);
+  }
   const rels = await read('xl/_rels/workbook.xml.rels');
   if (firstSheet && rels) {
     const rid = attrOf(firstSheet[1], 'r:id');
@@ -64,6 +72,26 @@ async function readFirstSheet(buffer) {
   }
   const sheet = await read(sheetPath);
   if (!sheet) throw new Error('The workbook has no readable worksheet.');
+
+  // v2.55.0: cell style index -> fill colour (styles.xml: cellXfs[s].fillId -> fills[fillId] solid fgColor)
+  let fillOfStyle = [];
+  if (withFill) {
+    const styles = (await read('xl/styles.xml')) || '';
+    const fillsXml = (styles.match(/<fills\b[^>]*>([\s\S]*?)<\/fills>/) || [])[1] || '';
+    const fills = [...fillsXml.matchAll(/<fill\b[^>]*>([\s\S]*?)<\/fill>/g)].map(m => {
+      if (!/patternType="solid"/.test(m[1])) return null;
+      const fg = m[1].match(/<fgColor\b([^>]*?)\/?>/);
+      if (!fg) return null;
+      const rgb = attrOf(fg[1], 'rgb');
+      const theme = attrOf(fg[1], 'theme');
+      return rgb ? rgb.toUpperCase() : (theme !== null ? `theme:${theme}` : null);
+    });
+    const xfsXml = (styles.match(/<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/) || [])[1] || '';
+    fillOfStyle = [...xfsXml.matchAll(/<xf\b([^>]*?)(?:\/>|>)/g)].map(m => {
+      const id = parseInt(attrOf(m[1], 'fillId'), 10);
+      return Number.isFinite(id) ? (fills[id] || null) : null;
+    });
+  }
 
   const shared = [];
   const sst = await read('xl/sharedStrings.xml');
@@ -109,6 +137,7 @@ async function readFirstSheet(buffer) {
         cell = Number.isFinite(num) ? { value: num, type: 'number' } : { value: raw, type: 'string' };
       }
       if (cell.type === 'string' && !String(cell.value).trim()) cell = { value: null, type: 'empty', formulaWithoutValue: false };
+      if (withFill) { const s = parseInt(attrOf(cm[1], 's'), 10); cell.fill = Number.isFinite(s) ? (fillOfStyle[s] || null) : null; }
       if (idx >= 0) cells[idx] = cell;
     }
     rows.push({ row_number: rowNumber, cells });
@@ -119,7 +148,8 @@ async function readFirstSheet(buffer) {
 const xmlEsc = s => String(s === null || s === undefined ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-function buildXlsx(rows, { sheetName = 'Dimensions', colWidths = [], headerRow = 0 } = {}) {
+// merges (v2.55.0): optional merged ranges, e.g. ['B1:M1']
+function buildXlsx(rows, { sheetName = 'Dimensions', colWidths = [], headerRow = 0, merges = [] } = {}) {
   const zip = new JSZip();
   zip.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
     + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
@@ -167,7 +197,9 @@ function buildXlsx(rows, { sheetName = 'Dimensions', colWidths = [], headerRow =
   }).join('');
   zip.file('xl/worksheets/sheet1.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
     + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-    + `${cols}<sheetData>${sheetRows}</sheetData></worksheet>`);
+    + `${cols}<sheetData>${sheetRows}</sheetData>`
+    + (merges.length ? `<mergeCells count="${merges.length}">${merges.map(r => `<mergeCell ref="${xmlEsc(r)}"/>`).join('')}</mergeCells>` : '')
+    + '</worksheet>');
   return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
 

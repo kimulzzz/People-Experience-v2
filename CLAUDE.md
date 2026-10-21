@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(434-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(462-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,8 +75,8 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (434 cases on SQL; v2.54.0 run 348/348, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
-| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (38 `px_*` tables), JSON→SQL migration, rollback |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (462 cases on SQL; v2.55.0 run 376/376, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
+| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (41 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
 ## Compliance constraints (do not violate)
@@ -792,6 +792,18 @@ domain model, not just descriptive:
 
 - **v2.54.3** (2026-10-22, see `CHANGELOG.md` [2.54.3]): metric 11 no longer labelled "Manual value" in the UI; a manual entry may carry `target_score`
   (metric 11: 80 -> 87% = On Target).
+
+- **v2.55.0** (2026-10-22, see `CHANGELOG.md` [2.55.0], `docs/01` §3.10, `docs/02` §3.8, `docs/04`/`05` "Catatan v2.55.0", `docs/06`, `docs/07` §45, `docs/08` §28, `SQLServerDB.md` §27,
+  `docs/SURVEY_IMPORT_GUIDE.md`): user's real templates in `docs/Template Survey/`. (1) Metric 1 social drilldown hidden (`SOCIAL_MEDIA_DRILLDOWN_ENABLED=false`, dormant, `operational_records_hidden`).
+  (2) `px_metrics.outcome_aggregation` LATEST|AVERAGE (NULL = LATEST; 1 and 3 = AVERAGE via boot top-up where NULL): yearly row-of-months upload (field `year`, replaces that year; template `?year=`),
+  YTD = average of stored months in the window -> tiers, MTD = that month. (3) Composite summary metrics: `px_metric_parts`/`_uploads`/`_results` (41 tables), `metricPartsService.js`, Admin-only
+  `/api/admin/metric-parts/:id[/:part/template|upload|evidence]`, audit `METRIC_PART_UPLOAD`, `PartSummaryModal.jsx`: 7 = 4 parts (Welcome Session + Infrastructure & App N/A), 5, 12 (PERCENT; boot
+  switches metric 12 to `%` target 80 if still seed values, event feedback no longer overwrites it), 19/20 (score column by header, no respondents). Part = average of its months, metric = average of
+  parts with a value, 1-5 -> /5x100. ORIGINAL FILE NOT KEPT ("Raw Data" sheet = personal data; never parsed) - name + SHA-256 + rows are the audit trail. (4) `px_metrics.data_status`
+  (Admin checkbox "Real data not available yet"; 4, 6, 8, 10, 23, 26 = NOT_AVAILABLE at boot where NULL) -> N/A everywhere, data kept, evidence still downloadable. Tests: Modules 58 (12) / 59 (10) /
+  60 (2) -> SQL 376/376, 16 skipped; suite 462 by count (434 in the v2.54.0 note missed Module 57's 4 -> was 438); JSON full suite not run; the suite fixture flips the six N/A metrics to AVAILABLE
+  during a run. Live: 7 real files uploaded by the main session via the API (temp `claude-maint`). Open: reminders still check per-respondent rows for 5/7/12; old CSV upload for 5/7/12 still
+  works via API and Manage Questions still lists them; no Admin UI for `outcome_aggregation`/parts; `px_metric_parts` not in the config-guard snapshot; `getAvailableSurveyYears` ignores part years.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

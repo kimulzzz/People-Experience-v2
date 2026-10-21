@@ -5,7 +5,9 @@ import { monthName } from '../utils/months';
 // Monthly values of an OUTCOME metric (v2.54.0, Admin only - every route is under /api/admin, the server answers 403 to a User).
 // 1. Template (.xlsx: Year | Month | Value | Notes), 2. Upload (validated as a whole: any error -> nothing stored, every
 // error listed with its row and column), 3. History of the metric's uploads (with the original file).
-// metric = { metric_id, metric_name, unit }; onUploaded() lets the opener reload its data.
+// metric = { metric_id, metric_name, unit, outcome_aggregation }; onUploaded() lets the opener reload its data.
+// v2.55.0: an AVERAGE metric (metrics 1 and 3) is uploaded one YEAR at a time as a row of months (Metrics | Jan .. Dec | Target |
+// 1 .. 5); the file has no year, so the year is chosen here and the upload replaces the stored months of that year.
 
 const formatDateTime = (iso) => (iso ? new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
 const periodText = (code) => (code ? `${monthName(code.slice(5, 7))} ${code.slice(0, 4)}` : '—');
@@ -17,7 +19,10 @@ export default function OutcomeUploadModal({ isOpen, metric, onClose, onUploaded
   const [result, setResult] = useState(null);           // success body, or { refused: true, error, errors }
   const [errorMessage, setErrorMessage] = useState('');
   const [history, setHistory] = useState([]);
+  const currentYear = new Date().getFullYear();
+  const [year, setYear] = useState(String(currentYear));
   const metricId = metric ? metric.metric_id : null;
+  const isYearly = !!metric && metric.outcome_aggregation === 'AVERAGE';
 
   const loadHistory = useCallback(async () => {
     if (!metricId) return;
@@ -34,6 +39,7 @@ export default function OutcomeUploadModal({ isOpen, metric, onClose, onUploaded
       setResult(null);
       setErrorMessage('');
       setHistory([]);
+      setYear(String(new Date().getFullYear()));
       loadHistory();
     }
   }, [isOpen, loadHistory]);
@@ -49,6 +55,7 @@ export default function OutcomeUploadModal({ isOpen, metric, onClose, onUploaded
     try {
       const formData = new FormData();
       formData.append('file', file);
+      if (isYearly) formData.append('year', year);
       const res = await fetch(`/api/admin/outcome-values/${metric.metric_id}/upload`, { method: 'POST', body: formData });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -79,7 +86,7 @@ export default function OutcomeUploadModal({ isOpen, metric, onClose, onUploaded
             <div>
               <h3 className="text-base font-extrabold text-[#231F20]">Monthly Values: Metric {metric.metric_id}</h3>
               <p className="text-[11px] text-gray-500 font-medium">
-                {metric.metric_name} • one bankwide value per month{metric.unit ? ` (${metric.unit})` : ''}. YTD uses the latest month in the period, MTD that month.
+                {metric.metric_name} • one bankwide value per month{metric.unit ? ` (${metric.unit})` : ''}. {isYearly ? 'YTD uses the average of the uploaded months in the period, MTD that month.' : 'YTD uses the latest month in the period, MTD that month.'}
               </p>
             </div>
           </div>
@@ -111,10 +118,14 @@ export default function OutcomeUploadModal({ isOpen, metric, onClose, onUploaded
             <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="text-[11px] text-gray-600 space-y-1">
                 <div className="font-bold text-gray-800">1. Download the template</div>
+                {isYearly ? (
+                  <div>One row for the metric: <strong>Metrics | Jan ... Dec</strong> (Target and the tier columns 1-5 are information only). Each month as a percentage such as <strong>3.87%</strong>, or <strong>-</strong> when there is no value. The file has no year: choose it below. The upload <strong>replaces every stored month of that year</strong>; future months are refused.</div>
+                ) : (
                 <div>Columns: <strong>Year | Month | Value | Notes</strong> (Notes optional). One row per month; month as a name (March, Maret, Mar) or 1-12. Future months are refused; a month that is uploaded again is updated.</div>
+                )}
               </div>
               <a
-                href={`/api/admin/outcome-values/${metric.metric_id}/template`}
+                href={`/api/admin/outcome-values/${metric.metric_id}/template${isYearly ? `?year=${year}` : ''}`}
                 download={`Template_Outcome_Metric_${metric.metric_id}.xlsx`}
                 className="inline-flex items-center space-x-1 px-3 py-1.5 text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-md transition shadow-2xs shrink-0"
               >
@@ -122,6 +133,21 @@ export default function OutcomeUploadModal({ isOpen, metric, onClose, onUploaded
                 <span>Template</span>
               </a>
             </div>
+
+            {isYearly && (
+              <div className="flex items-center gap-2 text-[11px] text-gray-700">
+                <label htmlFor="outcome-upload-year" className="font-bold text-gray-800">Year of the data</label>
+                <select
+                  id="outcome-upload-year"
+                  value={year}
+                  onChange={(e) => { setYear(e.target.value); setResult(null); setErrorMessage(''); }}
+                  className="px-2 py-1 border border-gray-300 rounded-md text-xs font-bold bg-white"
+                >
+                  {[currentYear, currentYear - 1, currentYear - 2].map(y => <option key={y} value={String(y)}>{y}</option>)}
+                </select>
+                <span className="text-gray-500">The template shows the stored values of this year.</span>
+              </div>
+            )}
 
             <div className="border-2 border-dashed border-gray-300 hover:border-[#ED1C24] bg-gray-50/50 rounded-2xl p-6 text-center space-y-3 transition">
               <Upload className="w-8 h-8 text-gray-400 mx-auto" />
@@ -178,8 +204,8 @@ export default function OutcomeUploadModal({ isOpen, metric, onClose, onUploaded
                   <CheckCircle2 className="w-5 h-5 text-emerald-600" />
                   <span>Monthly values stored</span>
                 </div>
-                <div className="grid grid-cols-3 gap-2 text-xs">
-                  {[['Months', result.rows_imported], ['New', result.inserted_rows], ['Updated', result.updated_rows]].map(([label, value]) => (
+                <div className={`grid ${result.year ? 'grid-cols-4' : 'grid-cols-3'} gap-2 text-xs`}>
+                  {[['Months', result.rows_imported], ['New', result.inserted_rows], ['Updated', result.updated_rows], ...(result.year ? [['Removed', result.deleted_rows]] : [])].map(([label, value]) => (
                     <div key={label} className="bg-white p-2 rounded-lg border border-emerald-100 text-center">
                       <span className="text-[10px] text-gray-400 block font-bold">{label}</span>
                       <strong className="text-gray-800 text-sm">{value}</strong>
@@ -187,6 +213,9 @@ export default function OutcomeUploadModal({ isOpen, metric, onClose, onUploaded
                   ))}
                 </div>
                 <div className="text-[11px] text-emerald-900">Periods: <strong>{(result.period_labels || []).join(', ')}</strong></div>
+                {result.year && result.average_label && (
+                  <div className="text-[11px] text-emerald-900">{result.average_label}: <strong>{result.average_value}{metric.unit === '%' ? '%' : ''}</strong></div>
+                )}
               </div>
             )}
 

@@ -26,6 +26,7 @@ import { formatMetricValue } from '../utils/formatMetricValue';
 import { monthName } from '../utils/months';
 import SocialMediaUploadModal from './SocialMediaUploadModal';
 import OutcomeUploadModal from './OutcomeUploadModal';
+import PartSummaryModal from './PartSummaryModal';
 
 function normalizeDateString(dateVal) {
   if (!dateVal) return null;
@@ -96,6 +97,7 @@ export default function Calculator({
   const { isAdmin } = useAuth();
   const [isSocialUploadOpen, setIsSocialUploadOpen] = useState(false); // v2.52.0: social media data of metric 1 (Admin)
   const [outcomeUploadMetric, setOutcomeUploadMetric] = useState(null); // v2.54.0: monthly values of an OUTCOME metric (Admin)
+  const [partSummaryMetric, setPartSummaryMetric] = useState(null); // v2.55.0: summary parts of a composite metric (Admin)
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('ALL'); // ALL, SURVEY, OUTCOME
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -507,6 +509,16 @@ export default function Calculator({
                             <div className="text-xs font-black text-gray-900">
                               {formatMetricValue(m.raw_value, m.unit, m.scale_type)}
                             </div>
+                            {/* v2.55.0: an AVERAGE metric shows which months its value averages, e.g. "Average of 7 months (Mar-Sep 2026)" */}
+                            {m.outcome_aggregation === 'AVERAGE' && m.outcome_average_label && (
+                              <span className="text-[9.5px] text-blue-700 block leading-tight">{m.outcome_average_label}</span>
+                            )}
+                            {/* v2.55.0: composite summary metric - how many parts carry a value */}
+                            {m.data_upload === 'PART_SUMMARY' && (m.metric_parts || []).length > 1 && (
+                              <span className="text-[9.5px] text-blue-700 block leading-tight" title={(m.metric_parts || []).map(p => `${p.part_name}: ${p.has_data ? p.value : 'N/A'}`).join(' | ')}>
+                                Average of {m.parts_with_data} of {m.metric_parts.length} parts
+                              </span>
+                            )}
                             <span className="text-[9.5px] text-gray-400 block leading-tight">Tgt: {m.target_display}</span>
                           </>
                         )}
@@ -519,7 +531,7 @@ export default function Calculator({
                             Exempted (0%)
                           </div>
                         ) : isNoData ? (
-                          <div className="text-center py-1 text-[10px] font-bold text-gray-400 bg-gray-100 rounded" title={m.not_applicable ? (m.manual_override ? 'Bankwide-only value - N/A under a directorate filter, not counted' : 'Score tiers not configured yet - not counted in the PX Index') : 'No data in the selected period'}>
+                          <div className="text-center py-1 text-[10px] font-bold text-gray-400 bg-gray-100 rounded" title={m.not_applicable ? `${m.not_applicable_reason || 'Score tiers not configured yet'} - not counted in the PX Index` : 'No data in the selected period'}>
                             {m.not_applicable ? 'N/A' : '—'}
                           </div>
                         ) : (
@@ -553,7 +565,7 @@ export default function Calculator({
                             Exempted
                           </span>
                         ) : isNoData ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold bg-gray-200 text-gray-500" title={m.not_applicable ? (m.manual_override ? 'Bankwide-only value - N/A under a directorate filter, not counted in the PX Index' : 'Score tiers not configured yet - N/A, not counted in the PX Index') : 'No data in the selected period - left out of the index'}>
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold bg-gray-200 text-gray-500" title={m.not_applicable ? `${m.not_applicable_reason || 'Score tiers not configured yet'} - N/A, not counted in the PX Index` : 'No data in the selected period - left out of the index'}>
                             {m.not_applicable ? 'N/A' : 'No Data'}
                           </span>
                         ) : (
@@ -575,6 +587,24 @@ export default function Calculator({
                             <span className="text-[10px] font-semibold text-gray-400 italic px-2 py-1">
                               Exempted from Directorate
                             </span>
+                          ) : m.data_upload === 'PART_SUMMARY' ? (
+                            /* v2.55.0: composite summary metric (7, 5, 12) - Template / Evidence / Upload per part (one modal with a part
+                               selector, Admin only); its old per-respondent CSV upload is not offered (not used for the score) */
+                            isAdmin ? (
+                              <>
+                                {[['Template', Download], ['Evidence', FileText], ['Upload', FileSpreadsheet]].map(([label, Icon]) => (
+                                  <button
+                                    key={label}
+                                    onClick={(e) => { e.stopPropagation(); setPartSummaryMetric(m); }}
+                                    className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
+                                    title={`${label} of the summary parts of ${m.metric_name} (choose the part)`}
+                                  >
+                                    <Icon className="w-3 h-3 text-slate-500 shrink-0" />
+                                    <span>{label}</span>
+                                  </button>
+                                ))}
+                              </>
+                            ) : null
                           ) : isSurvey ? (
                             <>
                               {(isAdmin || m.can_upload) && (<>
@@ -716,6 +746,15 @@ export default function Calculator({
           isOpen={Boolean(outcomeUploadMetric)}
           metric={outcomeUploadMetric}
           onClose={() => setOutcomeUploadMetric(null)}
+          onUploaded={() => { if (onDataUploaded) onDataUploaded(); }}
+        />
+      )}
+      {isAdmin && (
+        <PartSummaryModal
+          isOpen={Boolean(partSummaryMetric)}
+          metric={partSummaryMetric}
+          period={evidencePeriod}
+          onClose={() => setPartSummaryMetric(null)}
           onUploaded={() => { if (onDataUploaded) onDataUploaded(); }}
         />
       )}

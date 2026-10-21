@@ -4,9 +4,11 @@ const { getQuestionsForMetric } = require('./metricQuestionService');
 const { isEssMetric } = require('../db/surveySource');
 const { selectEssResult, essOrgFor, essOriginalFilePath } = require('./essSummaryService');
 const { periodWindow } = require('../db/filterUtils');
-const { isSocialMediaMetric, getSocialMediaDrilldown } = require('./socialMediaService');
+const { isSocialMediaMetric, hasSocialMediaDrilldown, getSocialMediaDrilldown } = require('./socialMediaService');
 const { readTierConfig, tieredScore } = require('../db/scoreTiers');
-const { isOutcomeUploadMetric, evidenceTypeOf, selectOutcomeValue, loadLastUpdateContext, lastUpdateFor } = require('./outcomeValueService');
+const { isOutcomeUploadMetric, evidenceTypeOf, selectOutcomeValue, loadLastUpdateContext, lastUpdateFor, aggregationOf } = require('./outcomeValueService');
+const { isDataNotAvailable, DATA_NOT_AVAILABLE_REASON } = require('../db/dataStatus');
+const { partsByMetric, compositeValue } = require('./metricPartsService');
 
 // Default year for YTD/unparseable period requests, derived from the real server clock
 // instead of a hardcoded literal — this dataset happens to be seeded for 2026 (today's real
@@ -118,6 +120,8 @@ function tierInfo(metric, rawValue) {
 
 // v2.54.0: the extra fields of an OUTCOME metric - which evidence it offers, whether the Admin can upload monthly values,
 // and (when it has stored months) the month the period is scored with.
+// v2.55.0: outcome_aggregation LATEST | AVERAGE (AVERAGE: the average of the months in the window, e.g. "Average of 7 months
+// (Mar-Sep 2026)"; the Admin uploads one year as a row of months).
 function outcomeFields(m, { basis = null, pick = null } = {}) {
   if (m.metric_type !== 'OUTCOME') return {};
   return {
@@ -125,9 +129,12 @@ function outcomeFields(m, { basis = null, pick = null } = {}) {
     outcome_upload: isOutcomeUploadMetric(m),
     ...(isOutcomeUploadMetric(m) ? {
       value_basis: basis,                                    // 'MONTHLY_VALUES' (uploaded months) | 'STATIC_SNAPSHOT' (raw_value)
+      outcome_aggregation: aggregationOf(m),
       outcome_period: pick ? pick.period : null,
       outcome_period_label: pick ? pick.period_label : null,
-      outcome_value_source: pick ? pick.row.source : null
+      outcome_value_source: pick ? pick.row.source : null,
+      outcome_months_count: pick ? pick.months : null,
+      outcome_average_label: pick ? pick.average_label : null
     } : {})
   };
 }
@@ -177,7 +184,9 @@ async function syncLiveEventMetrics() {
     await storage.updateMetricScore(11, avgAttendance, normScore, 'Calculated from live event registrations');
   }
 
-  if (totalRatingCount > 0) {
+  // v2.55.0: metric 12 is scored from its uploaded summary (composite part) - the event feedback no longer overwrites it
+  const metric12Summary = (await storage.getMetricParts(12)).length > 0;
+  if (totalRatingCount > 0 && !metric12Summary) {
     const avgRating = totalRatingSum / totalRatingCount;
     const normScore = (avgRating / 5.0) * 100;
     await storage.updateMetricScore(12, avgRating.toFixed(2), normScore.toFixed(2), 'Calculated from live event evaluations');
@@ -414,7 +423,9 @@ async function computeMonthlyTrends(filterOptions = {}) {
 // its end is used, see essSummaryService.selectEssResult).
 const essWindow = mp => ({ ...(periodWindow(mp) || { from: null, to: null }), basis: 'LATEST_RESULT' });
 // The window of an OUTCOME metric with uploaded monthly values (v2.54.0): the latest stored month inside it (MTD = that month)
-const outcomeWindow = mp => ({ ...(periodWindow(mp) || { from: null, to: null }), basis: String(mp.mode).toUpperCase() === 'MTD' ? 'MONTH' : 'LATEST_MONTH' });
+// basis: MONTH (MTD) | LATEST_MONTH (YTD, LATEST metrics) | AVERAGE_OF_MONTHS (YTD, AVERAGE metrics, v2.55.0)
+const outcomeWindow = (mp, aggregation = 'LATEST') => ({ ...(periodWindow(mp) || { from: null, to: null }),
+  basis: String(mp.mode).toUpperCase() === 'MTD' ? 'MONTH' : (aggregation === 'AVERAGE' ? 'AVERAGE_OF_MONTHS' : 'LATEST_MONTH') });
 
 async function essDirectorateFor(directorate, subDirectorate, scopes) {
   if (scopes || (directorate && directorate !== 'ALL') || !subDirectorate || subDirectorate === 'ALL') return directorate;
@@ -495,15 +506,18 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
   const isDirectorateFiltered = (directorate && directorate !== 'ALL') || !!scopes;
   const queryFilter = { mode, year, month, directorate, sub_directorate: subDirectorate, period: periodString, endMonth, scopes };
 
-  const [metrics, journeys, checkpoints, targets, essResults, pxWeights, outcomeRows] = await Promise.all([
+  const [metrics, journeys, checkpoints, targets, essResults, pxWeights, outcomeRows, metricParts, partResults] = await Promise.all([
     storage.getMetrics(),
     storage.getJourneys(),
     storage.getCheckpoints(),
     storage.getMetricTargets(),
     storage.getEssResults(null), // ESS summaries (v2.32.0): small table, read once per calculation
     getPxWeights(),
-    storage.getOutcomeValues()   // monthly OUTCOME values (v2.54.0): small table, read once per calculation
+    storage.getOutcomeValues(),  // monthly OUTCOME values (v2.54.0): small table, read once per calculation
+    storage.getMetricParts(),    // composite summary metrics (v2.55.0): parts + their summary rows, read once per calculation
+    storage.getMetricPartResults()
   ]);
+  const partsMap = partsByMetric(metricParts);
   const manualOverrides = await loadManualOverrides(); // v2.54.2
   // "Last update" of every metric (v2.54.0) - only for the scorecard itself, not for its per-month / per-directorate inner calls
   const lastUpdateCtx = options.skipTrends ? null : await loadLastUpdateContext({ essResults, outcomeRows });
@@ -540,6 +554,8 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
     let outcomePick = null;
     const isEss = m.metric_type === 'SURVEY' && isEssMetric(m);
     let essResult = null;
+    let composite = null; // v2.55.0: composite summary metric (metric 7, metric 5)
+    const metricPartList = partsMap.get(m.metric_id) || [];
     // The period this metric is read for (v2.37.0): exactly the selected period for every SYSTEM survey metric - MTD =
     // that month only; update_frequency does not change the period (reminders only). ESS: see selectEssResult (v2.50.0).
     const mp = { mode, year, month, endMonth };
@@ -557,6 +573,18 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       } else {
         hasData = false;
         sampleSize = 0;
+      }
+    } else if (metricPartList.length && (m.metric_type !== 'OUTCOME' || partResults.some(r => r.metric_id === m.metric_id))) {
+      // (an OUTCOME metric - 19, 20 - keeps its static raw_value until its first summary upload)
+      // v2.55.0: composite summary metric - the average of its parts (each: the average of its months in the window); the
+      // org rule of ESS (a division filter reads its directorate, a USER scope its directorates, a non-employee metric bankwide)
+      composite = compositeValue(metricPartList, partResults.filter(r => r.metric_id === m.metric_id), mp,
+        essOrgFor({ directorate: essDirectorate, scopes, bankwide: isBankwideValue }));
+      sampleSize = composite.respondents;
+      if (composite.value === null) hasData = false;
+      else {
+        rawVal = composite.value;
+        lastSurveyDate = `${composite.last_period}-01`;
       }
     } else if (m.metric_type === 'SURVEY') {
       const responses = await storage.getResponsesByMetricAndPeriod(m.metric_id, isBankwideValue ? { ...metricFilter, directorate: 'ALL', sub_directorate: 'ALL', scopes: null } : metricFilter);
@@ -579,13 +607,14 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       lastSurveyDate = normalizeDateString(rawDate) || todayDateString();
       // v2.54.0: a metric with uploaded monthly values takes the latest stored month inside the window (MTD = that month);
       // none inside the window -> NO_DATA. Without any stored month the static raw_value above stays (bankwide either way).
+      // v2.55.0: an AVERAGE metric takes the average of the stored months inside the window instead.
       if (isOutcomeUploadMetric(m)) {
         const own = outcomeRows.filter(r => r.metric_id === m.metric_id);
         outcomeBasis = own.length ? 'MONTHLY_VALUES' : 'STATIC_SNAPSHOT';
         if (own.length) {
-          outcomePick = selectOutcomeValue(own, mp);
+          outcomePick = selectOutcomeValue(own, mp, aggregationOf(m));
           if (outcomePick) {
-            rawVal = outcomePick.row.value;
+            rawVal = outcomePick.value;
             lastSurveyDate = `${outcomePick.period}-01`;
           } else {
             hasData = false;
@@ -601,17 +630,27 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
 
     // v2.54.2: temporary manual value (bankwide only: N/A under a directorate filter / USER scope)
     const manual = manualOverrideFor(manualOverrides, m.metric_id);
+    let notApplicableReason = notApplicable ? 'Score tiers not configured yet' : null;
     if (manual) {
       if (manual.bankwide_only && isDirectorateFiltered) {
         hasData = false;
         notApplicable = true;
+        notApplicableReason = 'Bankwide-only value - N/A under a directorate filter';
       } else {
         hasData = true;
         rawVal = manual.value;
       }
     }
+    // v2.55.0: Admin switch "Real data not available yet" - N/A whatever is stored (the stored data is kept)
+    const dataNotAvailable = isDataNotAvailable(m);
+    if (dataNotAvailable) {
+      hasData = false;
+      notApplicable = true;
+      notApplicableReason = DATA_NOT_AVAILABLE_REASON;
+      sampleSize = 0;
+    }
 
-    const normScore = hasData ? (manual ? manual.score : normalizeScore({ ...m, ...targetConfig }, rawVal)) : null;
+    const normScore = hasData ? (manual && !dataNotAvailable ? manual.score : normalizeScore({ ...m, ...targetConfig }, rawVal)) : null;
     const minThreshold = parseFloat(targetConfig.min_threshold || 75);
     // v2.54.2: a manual entry may carry its own target in % (e.g. metric 11: 87% >= 80% = on target)
     const normalizedTarget = manual && manual.target_score !== null ? manual.target_score : normalizeTarget(m, targetConfig);
@@ -652,8 +691,9 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       // the dates this SURVEY metric was read for (OUTCOME = current snapshot, no window)
       // ESS (v2.50.0): basis LATEST_RESULT - the result of ess_period is used for the whole selected window
       // OUTCOME with uploaded months (v2.54.0): basis LATEST_MONTH (YTD) / MONTH (MTD)
-      period_window: m.metric_type === 'SURVEY' ? (isEss ? essWindow(mp) : periodWindow(mp))
-        : (outcomeBasis === 'MONTHLY_VALUES' ? outcomeWindow(mp) : null),
+      period_window: composite ? { ...(periodWindow(mp) || { from: null, to: null }), basis: 'AVERAGE_OF_MONTHS' }
+        : m.metric_type === 'SURVEY' ? (isEss ? essWindow(mp) : periodWindow(mp))
+        : (outcomeBasis === 'MONTHLY_VALUES' ? outcomeWindow(mp, aggregationOf(m)) : null),
       sample_size: sampleSize,
       last_survey_date: lastSurveyDate,
       gap: hasData ? parseFloat((normalizedTarget - normScore).toFixed(2)) : null,
@@ -665,12 +705,23 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       disabled_reason: null,
       is_bankwide_value: isBankwideValue,
       // v2.52.0: metric 1 takes social media statistics (Admin .xlsx upload) - the UI offers Template + Upload
-      ...(isSocialMediaMetric(m) ? { data_upload: 'SOCIAL_MEDIA' } : {}),
+      // (switched off since v2.55.0: socialMediaService.SOCIAL_MEDIA_DRILLDOWN_ENABLED)
+      ...(hasSocialMediaDrilldown(m) ? { data_upload: 'SOCIAL_MEDIA' } : {}),
       ...outcomeFields(m, { basis: outcomeBasis, pick: outcomePick }),
       score_tiers: tierCfg,
       not_applicable: notApplicable, // tiers not configured yet: value N/A (status NO_DATA, out of the index)
+      not_applicable_reason: notApplicable ? notApplicableReason : null,
+      data_not_available: dataNotAvailable, // v2.55.0: Admin switch "Real data not available yet"
       tier_info: hasData ? tierInfo(m, rawVal) : null,
       ...(lastUpdateCtx ? lastUpdateFor(m, lastUpdateCtx) : {}),
+      // v2.55.0: composite summary metric - its parts (value 1-5 / score %, N/A when a part has no month with a value)
+      ...(metricPartList.length ? {
+        data_upload: 'PART_SUMMARY',
+        metric_parts: (composite ? composite.parts : metricPartList).map(p => ({ part_key: p.part_key, part_name: p.part_name,
+          value: p.value === undefined || dataNotAvailable ? null : p.value, score: p.score === undefined || dataNotAvailable ? null : p.score,
+          has_data: !!p.has_data && !dataNotAvailable, months_count: dataNotAvailable ? 0 : (p.months_count || 0), months_label: dataNotAvailable ? null : (p.months_label || null) })),
+        parts_with_data: composite && !dataNotAvailable ? composite.parts_with_data : 0
+      } : {}),
       ...(isEss ? {
         ess_period: essResult ? essResult.period : null,
         ess_period_label: essResult ? essResult.period_label : null,
@@ -838,7 +889,33 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
   if (!detail) return detail;
   // v2.54.0: the latest data period of the metric (bankwide, any window) - "Last update: <Month Year>"
   const metric = (await storage.getMetrics()).find(m => m.metric_id === detail.metric_id);
-  return { ...detail, ...lastUpdateFor(metric, await loadLastUpdateContext()) };
+  const out = { ...detail, ...lastUpdateFor(metric, await loadLastUpdateContext()) };
+  // v2.55.0: an OUTCOME composite metric (19, 20) before its first summary upload: static value, but the summary upload is offered
+  if (!out.data_upload && (await storage.getMetricParts(metric.metric_id)).length) {
+    Object.assign(out, { data_upload: 'PART_SUMMARY', outcome_upload: false, evidence_type: null, parts: [], composite: null });
+  }
+  if (!isDataNotAvailable(metric)) {
+    return { ...out, not_applicable_reason: out.not_applicable ? (out.manual_override ? 'Bankwide-only value - N/A under a directorate filter' : 'Score tiers not configured yet') : null, data_not_available: false };
+  }
+  // v2.55.0: "Real data not available yet" - N/A, and no stored row is shown (records, responses, question scores, parts)
+  return {
+    ...out,
+    has_data: false,
+    not_applicable: true,
+    not_applicable_reason: DATA_NOT_AVAILABLE_REASON,
+    data_not_available: true,
+    status: 'NO_DATA',
+    current_raw_value: null,
+    normalized_score: null,
+    tier_info: null,
+    total_respondents: out.is_survey ? 0 : out.total_respondents,
+    questions: [],
+    questions_breakdown: [],
+    responses: [],
+    operational_records: [],
+    ...(out.ess_summary ? { ess_summary: null } : {}),
+    ...(out.parts ? { parts: [], composite: null } : {})
+  };
 }
 
 async function buildMetricDetail(metricId, filterInput = 'YTD') {
@@ -915,11 +992,81 @@ async function buildMetricDetail(metricId, filterInput = 'YTD') {
   const windowInfo = { update_frequency: metric.update_frequency || 'MONTHLY', period_window: isSurvey ? (isEss ? essWindow(mp) : periodWindow(mp)) : null,
     is_bankwide_value: isBankwideValue, px_weights: await getPxWeights() };
 
+  // v2.55.0: composite summary metric (7, 5, 12, 19, 20): per part the months used + value, the metric = average of the parts.
+  // An OUTCOME metric (19, 20) keeps its static raw_value until its first summary upload.
+  const detailParts = await storage.getMetricParts(id);
+  const detailPartRows = detailParts.length ? await storage.getMetricPartResults(id) : [];
+  if (detailParts.length && (isSurvey || detailPartRows.length)) {
+    const essDirectorateC = await essDirectorateFor(directorate, subDirectorate, scopes);
+    const comp = compositeValue(detailParts, detailPartRows, mp,
+      essOrgFor({ directorate: essDirectorateC, scopes, bankwide: isBankwideValue }));
+    const uploads = await storage.getMetricPartUploads(id);
+    const hasData = comp.value !== null;
+    const normalized = hasData ? normalizeScore({ ...metric, ...targetConfig }, comp.value) : null;
+    const normalizedTarget = normalizeTarget(metric, targetConfig);
+    return {
+      ...windowInfo,
+      period_window: { ...(periodWindow(mp) || { from: null, to: null }), basis: 'AVERAGE_OF_MONTHS' },
+      metric: { metric_id: id, metric_name: metric.metric_name, metric_type: metric.metric_type, scale_type: metric.scale_type, unit: metric.unit,
+        target_value: targetConfig.target_value, target_value_normalized: round2(normalizedTarget), target_display: targetConfig.target_display, min_threshold: targetConfig.min_threshold },
+      metric_id: id,
+      metric_name: metric.metric_name,
+      metric_type: metric.metric_type,
+      is_survey: isSurvey,
+      is_outcome: !isSurvey,
+      is_ess: false,
+      evidence_type: null,   // OUTCOME composite (19, 20): no monthly-value upload / evidence - the summary parts instead
+      outcome_upload: false,
+      operational_records: [],
+      is_employee_metric: isEmployeeMetric,
+      target_audience: metric.target_audience || (isEmployeeMetric ? 'EMPLOYEE' : 'EXTERNAL_MARKET'),
+      is_disabled: isDisabled,
+      disabled_reason: disabledReason,
+      scale_type: metric.scale_type,
+      experience_owner: metric.experience_owner,
+      source_of_data: metric.source_of_data,
+      survey_source: metric.survey_source || null,
+      journey_name: journey?.journey_name || '',
+      journey_color: journey?.color || '#ED1C24',
+      checkpoint_name: checkpoint?.checkpoint_name || '',
+      target_value: targetConfig.target_value,
+      target_value_normalized: round2(normalizedTarget),
+      target_display: targetConfig.target_display,
+      min_threshold: targetConfig.min_threshold,
+      current_raw_value: hasData ? parseFloat(comp.value.toFixed(4)) : null,
+      unit: metric.unit,
+      normalized_score: hasData ? parseFloat(normalized.toFixed(2)) : null,
+      has_data: hasData,
+      score_tiers: null,
+      not_applicable: false,
+      tier_info: null,
+      status: !hasData ? 'NO_DATA' : (normalized < targetConfig.min_threshold ? 'CRITICAL' : (normalized < normalizedTarget ? 'WARNING' : 'HEALTHY')),
+      period: periodString,
+      filter_options: queryFilter,
+      total_respondents: comp.respondents,
+      last_survey_date: comp.last_period ? `${comp.last_period}-01` : null,
+      data_upload: 'PART_SUMMARY',
+      composite: { value: hasData ? parseFloat(comp.value.toFixed(4)) : null, parts_with_data: comp.parts_with_data, parts_total: detailParts.length },
+      parts: comp.parts.map(p => {
+        const u = uploads.find(x => x.part_key === p.part_key);
+        return { ...p, last_upload: u ? { file_name: u.file_name, uploaded_at: u.uploaded_at, uploaded_by: u.uploaded_by, periods: u.periods } : null };
+      }),
+      // the per-respondent survey rows / questions of this metric are not used for its score any more (kept, not shown)
+      questions: [],
+      questions_breakdown: [],
+      responses: []
+    };
+  }
+
   if (!isSurvey) {
     // Outcome metric: Internal HR system data
     let operationalRecords = [];
     let socialMedia = null;
-    if (isSocialMediaMetric(metric)) {
+    let recordsHidden = false;
+    if (isSocialMediaMetric(metric) && !hasSocialMediaDrilldown(metric)) {
+      // v2.55.0 (user request): metric 1's social media drilldown is switched off for now - no Internal Transaction Records tab
+      recordsHidden = true;
+    } else if (hasSocialMediaDrilldown(metric)) {
       // v2.52.0: social media statistics per platform per month of the selected period (bankwide - no directorate filter);
       // the score below stays the Admin's raw_value
       socialMedia = await getSocialMediaDrilldown({ mode, year, month });
@@ -948,7 +1095,8 @@ async function buildMetricDetail(metricId, filterInput = 'YTD') {
       operationalRecords = await storage.getOperationalRecords(id);
     }
 
-    // v2.54.0: uploaded monthly values (same rule as calculatePEIndex): latest stored month inside the window, none -> NO_DATA
+    // v2.54.0: uploaded monthly values (same rule as calculatePEIndex): latest stored month inside the window (v2.55.0: AVERAGE
+    // metrics the average of the months inside the window), none -> NO_DATA
     let rawVal = parseFloat(metric.raw_value || 0);
     let hasData = true;
     let basis = null;
@@ -957,8 +1105,8 @@ async function buildMetricDetail(metricId, filterInput = 'YTD') {
       const own = await storage.getOutcomeValues(id);
       basis = own.length ? 'MONTHLY_VALUES' : 'STATIC_SNAPSHOT';
       if (own.length) {
-        pick = selectOutcomeValue(own, mp);
-        if (pick) rawVal = pick.row.value; else hasData = false;
+        pick = selectOutcomeValue(own, mp, aggregationOf(metric));
+        if (pick) rawVal = pick.value; else hasData = false;
       }
     }
     const tierCfg = readTierConfig(metric.score_tiers);
@@ -1012,14 +1160,14 @@ async function buildMetricDetail(metricId, filterInput = 'YTD') {
       target_value_normalized: round2(normalizedTargetOutcome),
       target_display: targetConfig.target_display,
       min_threshold: targetConfig.min_threshold,
-      current_raw_value: hasData ? rawVal : null,
+      current_raw_value: hasData ? parseFloat(Number(rawVal).toFixed(4)) : null,
       unit: metric.unit,
       normalized_score: hasData ? parseFloat(normalizedScore.toFixed(2)) : null,
       manual_override: manual ? { value: manual.value, score: manual.score, note: manual.note, bankwide_only: manual.bankwide_only } : null,
       has_data: hasData,
       status: !hasData ? 'NO_DATA' : (normalizedScore < targetConfig.min_threshold ? 'CRITICAL' : (normalizedScore < normalizedTargetOutcome ? 'WARNING' : 'HEALTHY')),
       update_frequency: metric.update_frequency || 'MONTHLY',
-      period_window: basis === 'MONTHLY_VALUES' ? outcomeWindow(mp) : null,
+      period_window: basis === 'MONTHLY_VALUES' ? outcomeWindow(mp, aggregationOf(metric)) : null,
       is_bankwide_value: isBankwideValue,
       ...outcomeFields(metric, { basis, pick }),
       score_tiers: tierCfg,
@@ -1032,6 +1180,7 @@ async function buildMetricDetail(metricId, filterInput = 'YTD') {
       questions_breakdown: [],
       responses: [],
       operational_records: operationalRecords,
+      operational_records_hidden: recordsHidden, // v2.55.0: true = the UI shows no Internal Transaction Records tab (metric 1)
       ...(socialMedia ? {
         data_upload: 'SOCIAL_MEDIA',
         social_media: {

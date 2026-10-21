@@ -38,6 +38,12 @@ const COUNT_FIELDS = ['followers', 'reach', 'engagement'];
 const FIELD_TITLES = Object.fromEntries(HEADERS.map(h => [h.key, h.title]));
 
 const isSocialMediaMetric = m => !!m && m.metric_id === SOCIAL_MEDIA_METRIC_ID && m.metric_type === 'OUTCOME';
+// v2.55.0 (user request 2026-10-22): metric 1's social media drilldown ("Internal Transaction Records" + the Social Media
+// Template / Upload / Evidence buttons) is switched off FOR NOW. The tables, rows, routes and this service stay as they are
+// (dormant); set this back to true to show them again. While false the metric detail sends operational_records_hidden and
+// no data_upload / social_media fields, and "Last update" no longer falls back to the social media months.
+const SOCIAL_MEDIA_DRILLDOWN_ENABLED = false;
+const hasSocialMediaDrilldown = m => SOCIAL_MEDIA_DRILLDOWN_ENABLED && isSocialMediaMetric(m);
 const periodCode = (year, month) => `${year}-${String(month).padStart(2, '0')}`;
 const periodLabel = (year, month) => `${MONTH_NAMES[month - 1]} ${year}`;
 const labelOfCode = code => periodLabel(parseInt(code.slice(0, 4), 10), parseInt(code.slice(5, 7), 10));
@@ -302,6 +308,8 @@ module.exports = {
   PLATFORMS,
   SOCIAL_UPLOAD_DIR,
   isSocialMediaMetric,
+  SOCIAL_MEDIA_DRILLDOWN_ENABLED,
+  hasSocialMediaDrilldown,
   parsePlatform,
   validateSocialSheet,
   importSocialMediaXlsx,

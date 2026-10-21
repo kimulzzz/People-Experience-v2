@@ -76,7 +76,7 @@ Lalu set `STORAGE_BACKEND=sql` di `.env` dan restart server.
 | **Windows Authentication** | di SSMS pilih *Windows Authentication* (akun Windows administrator) — akses penuh ke seluruh server |
 | **Cek dari aplikasi** | `http://localhost:5000/api/health` → bagian `database` (server, edisi, jumlah baris tabel kunci) |
 
-Tabel aplikasi berawalan `px_` (38 tabel sejak v2.54.0). Yang paling sering dilihat: `px_metrics`, `px_metric_targets`, `px_survey_uploaded_responses`, `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` (kolom `file_path` + `transcript`).
+Tabel aplikasi berawalan `px_` (41 tabel sejak v2.55.0). Yang paling sering dilihat: `px_metrics`, `px_metric_targets`, `px_survey_uploaded_responses`, `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` (kolom `file_path` + `transcript`).
 
 > Jangan mengubah data langsung lewat SSMS tanpa alasan kuat — validasi dan perhitungan skor berjalan di aplikasi.
 
@@ -276,3 +276,11 @@ Kolom `px_users.menu_access` (`NVARCHAR(400) NULL`, JSON berisi 6 menu `true`/`f
 - Nilai bulanan diisi lewat upload Excel Admin (Explore Metrics -> Upload), bukan langsung di tabel - upload memvalidasi, mencatat batch dan audit `OUTCOME_UPLOAD`. File asli di `server/data/outcome-uploads/` (gitignored, **tidak** ikut `.bak` - salin terpisah).
 - Ikut `.bak`, `npm run db:export` dan import `migrate.js`; dihapus `migrate --reset`. Nilai awal metrik 1 (0.66, September 2026) dan metrik 3 (75.04, September 2026) hanya ada di SQL Server sampai diekspor.
 - Pemeriksaan: `SELECT metric_id, stat_year, stat_month, value, source, upload_id FROM dbo.px_outcome_values ORDER BY metric_id, stat_year, stat_month;`
+
+## 27. Rata-rata bulan, ringkasan per bagian & saklar N/A (v2.55.0)
+
+- Dua kolom baru `px_metrics.outcome_aggregation` (`LATEST`|`AVERAGE`; metrik 1 dan 3 = `AVERAGE`) dan `px_metrics.data_status` (`AVAILABLE`|`NOT_AVAILABLE`; metrik 4, 6, 8, 10, 23, 26 = `NOT_AVAILABLE`), diisi boot sekali hanya bila masih `NULL`.
+- Tiga tabel baru `px_metric_parts`, `px_metric_part_uploads`, `px_metric_part_results` (metrik 5, 7, 12, 19, 20). Dibuat otomatis saat server start. Jumlah tabel kini **41**. Rincian: `docs/08` §28.
+- Ubah lewat aplikasi (Admin Parameters / upload ringkasan), bukan langsung di tabel - upload memvalidasi, mencatat batch (SHA-256) dan audit `METRIC_PART_UPLOAD`. File asli ringkasan **tidak** disimpan di server (data pribadi); simpan arsipnya sesuai aturan unit.
+- Ikut `.bak`, `npm run db:export` dan import `migrate.js`; dihapus `migrate --reset`.
+- Pemeriksaan: `SELECT metric_id, part_key, stat_year, stat_month, org_level, directorate, score, respondents FROM dbo.px_metric_part_results ORDER BY metric_id, part_key, stat_year, stat_month;`

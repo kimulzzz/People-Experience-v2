@@ -220,6 +220,30 @@ Contoh metrik 14 (batas `>=` 4000/5000/6000/7500): 6400 -> tier 4 -> 4 + (6400 -
 
 **N/A**: metrik bertier dengan `bounds: null` -> `status: NO_DATA`, `not_applicable: true`, nilai/skor/target persen `null`; diperlakukan seperti `NO_DATA` (§4): tidak masuk pembilang maupun penyebut Survey/Outcome/PX Index, rollup journey/checkpoint, alert, dan trend. `score_tiers` `NULL` = normalisasi menurut `scale_type` seperti sebelumnya. Status tetap memakai aturan biasa (< `min_threshold` = CRITICAL, < target persen = WARNING).
 
+### 3.10 Rata-rata Bulan, Metrik Ringkasan per Bagian & Saklar Data N/A (sejak v2.55.0)
+
+**Agregasi nilai bulanan OUTCOME** (`px_metrics.outcome_aggregation`, `server/db/outcomeAggregation.js`):
+
+| Nilai | Metrik | YTD | MTD |
+| :--- | :--- | :--- | :--- |
+| `LATEST` (juga `NULL`) | OUTCOME lain dengan nilai bulanan (v2.54.0) | bulan tersimpan terakhir di jendela | bulan itu |
+| `AVERAGE` | 1, 3 | rata-rata semua bulan tersimpan di jendela (Jan..akhir jendela) | bulan itu |
+
+Tanpa bulan di jendela -> `NO_DATA`. Hasil rata-rata lalu dinilai lewat tier §3.9 (contoh data uji Modul 58 dengan tier metrik 1: rata-rata 3,1929% -> tier 4 -> 93,86%).
+
+**Metrik ringkasan per bagian** (`px_metric_parts`, `metricPartsService.js`; metrik 5, 7, 12, 19, 20):
+
+$$\text{Nilai bulan} = \begin{cases} \text{baris Bankwide} & \text{tanpa filter direktorat} \\ \text{baris direktorat} & \text{satu direktorat} \\ \dfrac{\sum_d V_d \cdot n_d}{\sum_d n_d} & \text{beberapa direktorat (cakupan User)} \end{cases}$$
+
+$$\text{Nilai bagian} = \text{rata-rata nilai bulan di jendela} \qquad \text{Nilai metrik} = \text{rata-rata bagian yang bernilai}$$
+
+- $n_d$ = jumlah responden; metrik 19/20 tidak punya kolom responden -> rata-rata biasa. Sel "-" atau 0 responden = tidak ada nilai (tidak dihitung).
+- Bagian tanpa data (mis. Welcome Session, Infrastructure & Application di metrik 7) = N/A, tidak masuk penyebut.
+- Normalisasi: skala 1-5 -> nilai / 5 x 100 (5 = 100%); metrik 12 sudah persen (dipakai apa adanya).
+- Metrik SURVEY tanpa bagian bernilai -> `NO_DATA`; metrik OUTCOME 19/20 memakai `raw_value` statis sampai upload pertama. Metrik 5 (non-karyawan) bernilai bankwide di bawah filter direktorat (§6).
+
+**Saklar data N/A** (`px_metrics.data_status = NOT_AVAILABLE`, `server/db/dataStatus.js`): metrik 4, 6, 8, 10, 23, 26 (boot, sekali). Diperlakukan seperti N/A §3.9: `NO_DATA` + `not_applicable`, alasan "Real data not available yet", tidak masuk Survey/Outcome/PX Index, rollup, alert, trend, maupun PX Index per direktorat. Data tersimpan tidak dihapus; hapus centang = metrik dihitung lagi.
+
 ---
 
 ## ⏳ 4. Model Agregasi Waktu: Period Filter (YTD vs MTD)

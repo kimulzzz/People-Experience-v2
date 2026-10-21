@@ -578,3 +578,21 @@ Metrik 1 "Career website & social media follower, reach & engagement growth" ber
 5. Metrik 1: tombol **Upload** = nilai engagement rate yang dinilai; tombol **Social Media** = data Instagram/LinkedIn/TikTok (drilldown, v2.52.0).
 
 **Evidence** (Admin saja): tombol **Evidence** di Explore Metrics/detail mengunduh CSV untuk periode yang dipilih - metrik OUTCOME: bulan tersimpan dengan kolom `Used_In_Score`; metrik 1 juga baris social media; metrik 11: daftar absensi event dengan identitas peserta (data pribadi - simpan sesuai aturan). File asli upload ada di `server/data/outcome-uploads/` (tidak ikut git maupun `.bak`; salin terpisah). Menghapus metrik ikut menghapus nilai bulanan, riwayat, dan file aslinya.
+
+### Template Ringkasan Metrik & Saklar N/A (v2.55.0)
+
+Template asli user: `docs/Template Survey/`. Format kolom: `docs/SURVEY_IMPORT_GUIDE.md`.
+
+**Metrik 1 dan 3 (satu baris bulan per tahun)**
+1. Explore Metrics -> baris metrik -> **Template**, pilih tahun. File: baris bulan Jan..Des, isi "-" untuk bulan tanpa data. Metrik %: tulis `3.87%` / `3.87`, atau sel angka Excel berformat persen.
+2. **Upload** -> pilih tahun dan file. Upload tahun itu **mengganti semua bulan tahun itu**. Bulan setelah bulan berjalan yang berisi nilai ditolak.
+3. Nilai metrik = rata-rata bulan terisi dalam periode (YTD) atau bulan itu (MTD), lalu dinilai lewat tier. Drilldown social media metrik 1 disembunyikan sementara.
+
+**Metrik 5, 7, 12, 19, 20 (ringkasan per bagian)**
+1. Explore Metrics -> baris metrik -> Template / Evidence / Upload (atau dari detail metrik) membuka modal **Summary Upload**; pilih bagian (metrik 7: Meet and Greet Satisfaction, Welcome Session, Onboarding Survey Day 1, Infrastructure & Application).
+2. Upload file ringkasan `.xlsx` (maks. 5 MB). Data dibaca dari sheet "Pivot" (atau sheet pertama); sheet "Raw Data" tidak pernah dibaca. Metrik 19 dan 20 memakai file gabungan yang sama (`Mandatory & Non Mandatory Learning_PX.xlsx`) - unggah ke masing-masing metrik.
+3. Upload ulang mengganti bulan-bulan yang ada di file untuk bagian itu saja. Satu kesalahan = seluruh file ditolak dengan daftar error.
+4. **File asli tidak disimpan** (bisa memuat data pribadi di "Raw Data"): yang tercatat nama file, SHA-256, dan baris ringkasan; simpan file asli sesuai aturan unit. Upload tercatat di Audit Trail (`METRIC_PART_UPLOAD`).
+5. Bagian tanpa data = N/A dan tidak dihitung; nilai metrik = rata-rata bagian yang punya data.
+
+**Saklar "Real data not available yet"**: Admin Parameters -> Metric Parameters -> Edit -> centang **Real data not available yet (N/A, excluded from the PX Index)**. Metrik tampil N/A dan tidak dihitung; data tidak dihapus; Evidence tetap bisa diunduh. Saat ini aktif untuk metrik 4, 6, 8, 10, 23, 26 - hapus centang setelah data riil tersedia. Perubahan tercatat (`METRIC_UPDATE`).

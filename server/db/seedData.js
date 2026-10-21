@@ -113,6 +113,8 @@ const initialMetrics = [
     scale_type: 'NUMERIC',
     // v2.54.0: social media engagement rate (%) scored by tiers: <= 1% / > 1% / > 2% / > 2.5% / > 3.5%
     score_tiers: { unit: 'percent', bounds: [{ min: 1, op: '>' }, { min: 2, op: '>' }, { min: 2.5, op: '>' }, { min: 3.5, op: '>' }] },
+    // v2.55.0: scored with the AVERAGE of the uploaded months of the year (one row of months per year, see outcomeAggregation.js)
+    outcome_aggregation: 'AVERAGE',
     source_of_data: 'Website & Social Media Analytics',
     experience_owner: 'Talent Partnership',
     target_value: 2.00,
@@ -157,6 +159,8 @@ const initialMetrics = [
     scale_type: 'PERCENTAGE',
     // v2.54.0: scored by tiers: < 30% / >= 30% / >= 45% / >= 60% / > 75%
     score_tiers: { unit: 'percent', bounds: [{ min: 30, op: '>=' }, { min: 45, op: '>=' }, { min: 60, op: '>=' }, { min: 75, op: '>' }] },
+    // v2.55.0: scored with the AVERAGE of the uploaded months of the year (one row of months per year, see outcomeAggregation.js)
+    outcome_aggregation: 'AVERAGE',
     source_of_data: 'Internal Report (Talent Partnership)',
     experience_owner: 'Talent Partnership',
     target_value: 70.00,
@@ -176,6 +180,7 @@ const initialMetrics = [
     checkpoint_id: 2,
     metric_name: 'Success ratio candidate by channel (Career Website, Jobstreet, LinkedIn)',
     metric_type: 'OUTCOME',
+    data_status: 'NOT_AVAILABLE', // v2.55.0: real data not available yet -> N/A, not in the PX Index (Admin switch)
     scale_type: 'PERCENTAGE',
     source_of_data: 'Arjuna',
     experience_owner: 'Talent Partnership',
@@ -219,6 +224,7 @@ const initialMetrics = [
     checkpoint_id: 3,
     metric_name: 'Pre-boarding Engagement Index',
     metric_type: 'SURVEY',
+    data_status: 'NOT_AVAILABLE', // v2.55.0: real data not available yet -> N/A, not in the PX Index (Admin switch)
     scale_type: 'PERCENTAGE',
     source_of_data: 'Onboarding Survey (from Arjuna)',
     experience_owner: 'HR Onboarding',
@@ -271,6 +277,7 @@ const initialMetrics = [
     checkpoint_id: 5,
     metric_name: 'Onboarding 30/60/90 Satisfaction Index',
     metric_type: 'SURVEY',
+    data_status: 'NOT_AVAILABLE', // v2.55.0: real data not available yet -> N/A, not in the PX Index (Admin switch)
     scale_type: 'RATING_5',
     source_of_data: 'Onboarding Survey (from Arjuna)',
     experience_owner: 'HR Onboarding',
@@ -315,6 +322,7 @@ const initialMetrics = [
     checkpoint_id: 6,
     metric_name: 'Internal Transition Satisfaction Index',
     metric_type: 'SURVEY',
+    data_status: 'NOT_AVAILABLE', // v2.55.0: real data not available yet -> N/A, not in the PX Index (Admin switch)
     scale_type: 'RATING_5',
     source_of_data: 'Internal Transition Survey',
     experience_owner: 'HRBP, PXCWB',
@@ -614,6 +622,7 @@ const initialMetrics = [
     checkpoint_id: 13,
     metric_name: 'Mentee / Coachee satisfaction score',
     metric_type: 'SURVEY',
+    data_status: 'NOT_AVAILABLE', // v2.55.0: real data not available yet -> N/A, not in the PX Index (Admin switch)
     scale_type: 'RATING_5',
     source_of_data: 'Internal TLD',
     experience_owner: 'Leadership, Talent Development',
@@ -684,6 +693,7 @@ const initialMetrics = [
     checkpoint_id: 16,
     metric_name: 'Exit Survey — resignation experience',
     metric_type: 'SURVEY',
+    data_status: 'NOT_AVAILABLE', // v2.55.0: real data not available yet -> N/A, not in the PX Index (Admin switch)
     scale_type: 'RATING_5',
     source_of_data: 'Exit Interview Survey (Arjuna, will be developed)',
     experience_owner: 'HR Exit Management',
@@ -1959,7 +1969,101 @@ const initialEmailSettings = {
   from_email: ''
 };
 
+// v2.55.0: composite SUMMARY metrics - metric 7 "Day 1 Onboarding Satisfaction Index" is the average of its parts (each part:
+// the average of its uploaded monthly summary values, 1-5). Written to px_metric_parts once (boot: only while the metric has no
+// part). template = the columns of the part's summary file (the user's templates in docs/Template Survey/), used for the
+// template download; a part without a known file layout gets the generic Directorate | Level | Year | Month | Score | Q1.. layout.
+const initialMetricParts = [
+  {
+    metric_id: 7, part_key: 'MEET_GREET', part_name: 'Meet and Greet Satisfaction', sort_order: 1,
+    template: {
+      score_label: 'Meet & Greet',
+      question_labels: [
+        'Sesi Meet & Greet berlangsung dengan terorganisir dan lancar?',
+        'Durasi sesi sudah sesuai dengan kebutuhan saya sebagai karyawan baru?',
+        'Materi dan aktivitas yang diberikan selama sesi berjalan dengan baik?',
+        'Sesi ini membantu saya memahami CIMB Niaga terkait budaya, nilai-nilai, cara kerja serta informasi penting yang perlu saya ketahui sebagai karyawan baru?',
+        'Setelah mengikuti sesi ini, saya merasa siap untuk memulai perjalanan saya di CIMB Niaga',
+        'Fasilitator menyampaikan materi dengan jelas dan menarik.',
+        'Fasilitator menguasai materi yang disampaikan.',
+        'Fasilitator menciptakan suasana yang nyaman dan interaktif.',
+        'Fasilitator memberikan kesempatan yang cukup untuk bertanya atau berdiskusi.',
+        'Fasilitator menjawab pertanyaan peserta dengan baik.',
+        'Secara keseluruhan, saya puas dengan pelaksanaan sesi Meet & Greet'
+      ],
+      respondents_label: 'Jumlah Responden',
+      period_label: 'Periode (Tanggal Absen)'
+    }
+  },
+  { metric_id: 7, part_key: 'WELCOME_SESSION', part_name: 'Welcome Session', sort_order: 2, template: null },
+  {
+    metric_id: 7, part_key: 'DAY1_SURVEY', part_name: 'Onboarding Survey Day 1', sort_order: 3,
+    template: {
+      score_label: 'Onboarding Survey Day 1',
+      question_labels: [
+        '1.How was your overall first day of work experience?',
+        '2.What makes you interested in joining CIMB Niaga?',
+        '3.How was your overall recruitment experience from being contacted by the Recruiter until signing the agreement?',
+        '4.How would you rate your interview experience with the Business Unit?',
+        '5.How was your experience with the Meet & Greet session at CIMB Niaga?'
+      ],
+      respondents_label: 'Jumlah Responden',
+      period_label: 'Periode (Join Date)'
+    }
+  },
+  { metric_id: 7, part_key: 'INFRA_APP', part_name: 'Infrastructure & Application', sort_order: 4, template: null },
+  // metric 12 "Signature Program event satisfaction": one part, its score is ALREADY a percentage (score_scale PERCENT); the file
+  // has an event block per Signature Program event (event score column with a blue header + its 3 questions)
+  {
+    metric_id: 12, part_key: 'EVENT_SATISFACTION', part_name: 'Signature Program Event Satisfaction', sort_order: 1,
+    template: {
+      score_label: 'Satisfaction Event',
+      score_scale: 'PERCENT',
+      question_labels: ['EPICC Podcast', 'Perspektif', 'DLC', 'Young', 'EVD'].flatMap(e => [e,
+        'Saya mendapatkan makna dari pelaksanaan event ini.',
+        'Saya bersedia untuk hadir kembali di penyelenggaraan event ini berikutnya.',
+        'Saya bersedia merekomendasikan event ini kepada orang yang saya kenal.']),
+      event_labels: ['EPICC Podcast', 'Perspektif', 'DLC', 'Young', 'EVD'],
+      respondents_label: 'Jumlah Responden Valid',
+      period_label: 'Periode (Start time)',
+      period_before_respondents: true
+    }
+  },
+  // metrics 19 / 20 (OUTCOME): one part each, read from ONE combined file ("Mandatory & Non Mandatory Learning_PX.xlsx", sheet
+  // "Score": Directorate | Level | Year | Month | Mandatory Learning | Non Mandatory Learning) - score_column = the column of this
+  // metric (matched by header text), no respondents column (respondents_column false), no question columns
+  {
+    metric_id: 19, part_key: 'MANDATORY_LEARNING', part_name: 'Mandatory Learning', sort_order: 1,
+    template: { score_label: 'Mandatory Learning', score_column: 'Mandatory Learning', respondents_column: false, question_labels: [] }
+  },
+  {
+    metric_id: 20, part_key: 'NON_MANDATORY_LEARNING', part_name: 'Non Mandatory Learning', sort_order: 1,
+    template: { score_label: 'Non Mandatory Learning', score_column: 'Non Mandatory Learning', respondents_column: false, question_labels: [] }
+  },
+  // metric 5 "Candidate Experience Survey Score": one part (the user's "Candidate Experience Survey Score Template.xlsx")
+  {
+    metric_id: 5, part_key: 'CANDIDATE_EXPERIENCE', part_name: 'Candidate Experience Survey', sort_order: 1,
+    template: {
+      score_label: 'Candidate Experience Survey',
+      question_labels: [
+        '1.How was your overall recruitment experience from being contacted by the Recruiter until signing the agreement?',
+        '2.How would you rate your interview experience with the Business Unit?'
+      ],
+      respondents_label: 'Jumlah Responden',
+      period_label: 'Periode (Join Date)'
+    }
+  }
+];
+
+// v2.55.0: the configuration a metric gets ONCE, when the boot gives it its summary parts - only where the values are still the
+// old seed values (an Admin's later edit is never overwritten). Metric 12's summary score is a percentage, not a 1-5 rating.
+const METRIC_PART_UPGRADES = {
+  12: { scale_type: { from: 'RATING_5', to: 'PERCENTAGE' }, unit: { from: '/ 5', to: '%' }, target: { from: 4, to: 80, display: '> 80%' } }
+};
+
 module.exports = {
+  initialMetricParts,
+  METRIC_PART_UPGRADES,
   initialAppSettings,
   LEGACY_OPTION_LABELS,
   upgradeLegacyOptionLabels,

@@ -142,6 +142,37 @@ Contoh (nilai dari file user):
 
 ---
 
+## 📥 Template Ringkasan Metrik (.xlsx) (sejak v2.55.0)
+
+Admin saja, lewat Explore Metrics / detail metrik. Semua file `.xlsx` maks. 5 MB; satu kesalahan = seluruh file ditolak dengan daftar error baris + kolom.
+
+### A. Metrik 1 dan 3 - satu baris bulan per tahun
+
+| Bagian | Aturan |
+| :--- | :--- |
+| Header | Baris dengan nama bulan terbanyak di 10 baris pertama (Jan..Dec); baris "Score Asli" di atasnya diabaikan |
+| Data | Tepat **satu** baris metrik di bawah header; kolom info lain (Target, tier, contoh) diabaikan |
+| Sel bulan | "-", "n/a", kosong = tidak ada nilai; U+200B/NBSP dibuang. Metrik %: teks `3.87%` / `3.87` = 3,87%; sel angka = pecahan Excel x 100 (0.0349 = 3,49%); > 100% ditolak |
+| Tahun | Dipilih saat upload (field `year`, 2000..tahun berjalan), bukan dari file. Bulan setelah bulan berjalan yang berisi nilai ditolak; semua bulan "-" ditolak |
+| Efek | Mengganti semua bulan tahun itu. Nilai = rata-rata bulan terisi dalam periode |
+
+### B. Metrik 5, 7, 12, 19, 20 - ringkasan per bagian
+
+Sheet "Pivot" (atau sheet pertama); sheet "Raw Data" tidak pernah dibaca (bila sheet yang akan dibaca bernama "Raw Data", file ditolak).
+
+| Kolom | Isi | Aturan |
+| :---: | :--- | :--- |
+| **A** | Directorate | "CIMB Niaga" / Level `Bankwide` = baris bankwide; lainnya nama direktorat master atau former name-nya |
+| **B** | Level | `Bankwide` / `Directorate` |
+| **C** | Year | 2000-2100 |
+| **D** | Month | Nama bulan Inggris/Indonesia, singkatan (termasuk "Sept"), atau 1-12; beberapa bulan boleh bertumpuk |
+| **E** | Skor bagian | Skala 1-5 (5 = 100%); metrik 12 "Satisfaction Event" sudah % (0-100). "-" = tidak ada nilai |
+| **F..** | Pertanyaan | Hanya untuk evidence. Metrik 12: kolom event dikenali dari header biru (fill `FF0070C0`), kolom pertanyaan sesudahnya |
+| | Jumlah Responden (Valid) | 0 = baris tidak dihitung; dipakai sebagai bobot untuk gabungan direktorat. Metrik 19/20 tidak punya kolom ini |
+| | Periode (...) | Teks, disimpan apa adanya |
+
+Metrik 19/20: satu file gabungan (`Mandatory & Non Mandatory Learning_PX.xlsx`), kolom skor dicari dari teks header "Mandatory Learning" / "Non Mandatory Learning"; unggah ke masing-masing metrik. Bulan masa depan berisi skor ditolak; baris masa depan berisi "-" dilewati. Upload ulang mengganti bulan-bulan di file untuk bagian itu. File asli tidak disimpan (nama file + SHA-256 + baris tersimpan = jejak audit).
+
 ## 🔒 Keamanan & Air-Gapped Compliance
 - Seluruh pemrosesan file CSV berjalan 100% di server lokal (On-Premise).
 - Tidak ada data NIP atau data karyawan yang dikirim ke cloud pihak ketiga.

@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    56 MODUL PENGUJIAN    │     434 AUTOMATED TESTS     │       100% PASS RATE          │
+│    60 MODUL PENGUJIAN    │     462 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -1327,3 +1327,56 @@ Run suite penuh SQL akhir (main session, backend kedua, `TEST_SKIP_MODULES=8,24,
 ## 44. v2.54.2 - Modul 57: nilai manual sementara per metrik
 
 4 tes (metrik sementara buatan modul; setting `metric_manual_overrides` dipulihkan persis di `finally`, juga dicakup config guard): bankwide memakai nilai/skor manual (+ detail), filter direktorat -> N/A, entri tidak valid diabaikan dan hapus key kembali ke hitungan live, metrik 11 live mengikuti entrinya. Modul di-skip bila setting tidak ada di database. Hasil suite: **352/352 lulus, 0 gagal, 16 tes dilewati** (modul media/event di-skip).
+
+## 45. v2.55.0 - Rata-rata bulan metrik 1/3, metrik ringkasan per bagian, saklar data N/A
+
+### Modul 58 - Metrik 1: upload tahunan (baris bulan), AVERAGE lewat tier, drilldown social media disembunyikan (12 tes)
+
+Data tahun 2003/2004 pada metrik sementara agar tidak bersinggungan dengan data asli; tes terakhir memastikan bulan tersimpan metrik 1 tidak berubah. Cek paritas JSON in-process hanya di SQL.
+
+| # | Jenis | Yang diuji |
+| :-: | :---: | :--- |
+| 1 | Positif | Metrik 1 = `AVERAGE` (top-up boot kolom `NULL`, kolom `px_metrics`, admin parameters); detail tanpa Internal Transaction Records (`operational_records_hidden`) |
+| 2 | Positif | Template metrik 1 = tata letak user (A1 metrik + tahun, B1:M1 "Score Asli" merged, Metrics \| Jan..Dec \| Target \| tier, nilai tersimpan) |
+| 3 | Positif | `outcome_aggregation` saat create/edit: tersimpan, nilai salah 400, metrik SURVEY tidak pernah menyimpan, edit tanpa field tetap |
+| 4 | Positif | Upload tata letak user 2004 (U+200B, "-", kolom info diabaikan): 7 bulan, rata-rata 3,1929, file asli, riwayat, audit |
+| 5 | Positif | Skor rata-rata lewat tier: YTD 2004 3,1929% -> 93,86% + label; MTD satu bulan; bulan/tahun kosong `NO_DATA` |
+| 6 | Positif | Upload tahun Y mengganti tahun Y saja; sel angka pecahan Excel, NBSP, "–"/"n/a"/kosong |
+| 7 | Positif | Tata letak metrik 3 (pecahan Excel, bulan kosong/"-") dengan tier metrik 3 |
+| 8 | Positif | Evidence CSV: bulan `Used_In_Score` + baris "Average" per tahun; `ALL` per tahun |
+| 9 | Negatif | Sel bulan salah (negatif, teks, angka terbaca 387%) -> 400 seluruh file, error per sel |
+| 10 | Negatif | Tahun/tata letak salah (tanpa tahun, "20x4", 1999, tahun depan, bulan masa depan, tanpa header bulan, dua baris data, semua "-") -> 400 |
+| 11 | Positif | Backend JSON in-process: `outcome_aggregation` dan `saveOutcomeValues` dengan `replaceYear` sama dengan SQL |
+| 12 | Positif | Bulan tersimpan metrik 1 byte-identik sebelum/sesudah modul |
+
+### Modul 59 - Metrik ringkasan per bagian (5, 7, 12, 19, 20) (10 tes)
+
+| # | Jenis | Yang diuji |
+| :-: | :---: | :--- |
+| 1 | Positif | Konfigurasi live: metrik 7 punya 4 bagian, 5/12/19/20 satu bagian; metrik 12 metrik % |
+| 2 | Positif | File template user dibaca in-process (tidak diunggah): Meet & Greet Pivot ("Raw Data" tidak dibaca), Day 1 (baris "-" Nov/Des dilewati), Candidate Experience, event Signature Program, Learning |
+| 3 | Positif | Upload bagian (bulan bertumpuk, "Sept", former name direktorat, jawaban teks, baris "-"): baris tersimpan dengan nama direktorat saat ini |
+| 4 | Positif | Skor: bagian = rata-rata bulan bernilai, bagian tanpa data N/A, metrik = rata-rata bagian, nilai / 5 x 100; MTD |
+| 5 | Positif | Upload ulang mengganti bulan di file saja; template; evidence CSV |
+| 6 | Negatif | File salah ditolak utuh (direktorat tak dikenal, skor 6, bulan salah, bulan masa depan berskor, baris ganda, responden salah) |
+| 7 | Positif | Bagian % dengan blok event (fallback struktural tanpa fill header): rata-rata per event, skor = % apa adanya; evidence Event \| Question \| Value |
+| 8 | Positif | Bagian kolom-skor OUTCOME (19/20, file gabungan tanpa kolom responden): `raw_value` statis sampai upload pertama, lalu rata-rata bulan |
+| 9 | Positif | Backend JSON in-process: `saveMetricPartUpload` mengganti bulan file, `respondents null` tetap; `store.json`/`auth.json` dipulihkan |
+| 10 | Positif | Hapus metrik ringkasan ikut menghapus bagian, baris, upload; bagian live 5/7/12/19/20 tidak tersentuh |
+
+### Modul 60 - Saklar "Real data not available yet" (2 tes)
+
+| # | Jenis | Yang diuji |
+| :-: | :---: | :--- |
+| 1 | Positif | Live: metrik 4, 6, 8, 10, 23, 26 N/A, di luar Survey/Outcome Index, detail tanpa records/responses/skor pertanyaan |
+| 2 | Positif/Negatif | Centang -> N/A dan keluar Outcome Index, hapus centang -> kembali (data tetap); audit `METRIC_UPDATE`; nilai salah 400 |
+
+### Modul lama disesuaikan (jumlah tes tidak berubah)
+
+Modul 5, 9, 18, 26, 35, 46, 50, 53, 55, 56 disesuaikan dengan aturan baru (metrik N/A, metrik 1 `AVERAGE`, drilldown social media disembunyikan, metrik 12 %, metrik ringkasan). Fixture suite mengubah enam metrik N/A menjadi `AVAILABLE` selama run dan mengembalikannya setelah setiap pemulihan konfigurasi (Modul 60 memeriksa keadaan live).
+
+### Hasil
+
+Run suite penuh SQL (developer, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **376/376 lulus, 0 gagal, 16 tes dilewati**. Suite JSON penuh tidak dijalankan. Ukuran suite = **462** menurut hitungan: `await runTest(` statis 449 (v2.54.3: 425; +24 = Modul 58-60) + selisih 13 yang sama sejak v2.30.2. Catatan: angka 434 di §43 belum memasukkan 4 tes Modul 57 (v2.54.2), sehingga ukuran sebenarnya sebelum versi ini 438, bukan 434. 376 + 16 = 392; 70 tes sisanya ada di modul media/event yang di-skip (sama dengan selisih di v2.54.0: 434 - 364 = 70).
+
+**Tidak diuji otomatis**: tampilan UI (`PartSummaryModal`, tab Summary Parts, centang N/A); upload 7 file riil di database utama dilakukan main session lewat API, bukan oleh suite.

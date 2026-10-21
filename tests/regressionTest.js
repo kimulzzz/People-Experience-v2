@@ -262,6 +262,28 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
   });
 }
 
+// v2.55.0: metric 4 and the seed survey metrics with per-respondent rows (6, 8, 10, 23, 26) are N/A live ("real data not available yet");
+// many older modules use them (metric 8 above all) as their per-respondent fixture. For the run they are switched AVAILABLE
+// through the Admin API (audited as test-run rows) and switched back at the end (the configuration guard also restores
+// px_metrics). Re-applied after every configuration restore; Module 60 switches them back to check the live state.
+const LEGACY_FIXTURE_METRICS = [4, 6, 8, 10, 23, 26];
+let legacyFixturesOn = [];
+async function setLegacyFixtures(on) {
+  if (on) {
+    for (const id of LEGACY_FIXTURE_METRICS) {
+      const m = await (await fetch(`${BASE_URL}/api/admin/parameters`)).json().then(p => p.metrics.find(x => x.metric_id === id)).catch(() => null);
+      if (!m || m.data_status !== 'NOT_AVAILABLE') continue;
+      const r = await fetch(`${BASE_URL}/api/admin/metrics/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data_status: 'AVAILABLE' }) });
+      if (r.status === 200 && !legacyFixturesOn.includes(id)) legacyFixturesOn.push(id);
+    }
+    if (legacyFixturesOn.length) console.log(`  🧩 Test fixtures: metrics ${legacyFixturesOn.join(', ')} counted (AVAILABLE) for this run.`);
+  } else {
+    for (const id of legacyFixturesOn) await fetch(`${BASE_URL}/api/admin/metrics/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data_status: 'NOT_AVAILABLE' }) });
+    if (legacyFixturesOn.length) console.log(`  🧩 Test fixtures: metrics ${legacyFixturesOn.join(', ')} back to N/A.`);
+    legacyFixturesOn = [];
+  }
+}
+
 async function runRegressionSuite() {
   console.log('\n================================================================');
   console.log('🧪 CIMB NIAGA PEOPLE EXPERIENCE (PX) - REGRESSION TESTING SUITE');
@@ -277,8 +299,10 @@ async function runRegressionSuite() {
   await setupSuiteLogin();
   await startConfigGuard();
   try {
+    await setLegacyFixtures(true);
     await runAllModules();
   } finally {
+    await setLegacyFixtures(false);
     await finishConfigGuard();
   }
 
@@ -567,7 +591,7 @@ async function runAllModules() {
     assert(data.operational_records !== undefined, 'Outcome metrics should have operational records');
   });
 
-  await runTest('Verify OUTCOME metric #1 (career website & social media) is Internal HR data with social media records (v2.52.0: no recruitment-SLA rows)', async () => {
+  await runTest('Verify OUTCOME metric #1 (career website & social media) is Internal HR data without records (v2.52.0: no recruitment-SLA rows; v2.55.0: social media drilldown hidden)', async () => {
     const res = await fetch(`${BASE_URL}/api/metrics/1/detail?mode=YTD&year=2026`);
     assert.strictEqual(res.status, 200);
     const data = await res.json();
@@ -575,19 +599,21 @@ async function runAllModules() {
     assert.strictEqual(data.is_survey, false);
     assert.strictEqual(data.is_outcome, true);
     assert.strictEqual(data.total_respondents, null);
-    assert(data.operational_records.length > 0, 'metric 1 should have social media records for 2026 (seed or real)');
-    assert(data.operational_records.every(r => r.platform && r.unit === undefined), 'social media rows per platform, no SLA unit rows');
+    // v2.55.0: the social media drilldown is switched off for now (dormant) - no Internal Transaction Records for metric 1
+    assert.deepStrictEqual([data.operational_records, data.operational_records_hidden, data.social_media], [[], true, undefined]);
   });
 
-  await runTest('Verify SURVEY metric #5 (Candidate Experience Index) is pure survey with respondent count', async () => {
+  await runTest('Verify SURVEY metric #5 (Candidate Experience Survey Score) is a survey summary metric (v2.55.0: one uploaded summary part, respondents from the summary)', async () => {
     const res = await fetch(`${BASE_URL}/api/metrics/5/detail?period=YTD`);
     assert.strictEqual(res.status, 200);
     const data = await res.json();
     assert.strictEqual(data.metric_type, 'SURVEY');
     assert.strictEqual(data.is_survey, true);
     assert.strictEqual(data.is_outcome, false);
-    assert(data.total_respondents > 0, 'Survey metric must have positive total_respondents count');
-    assert(data.questions_breakdown.length > 0, 'Survey metric must have question breakdown');
+    assert.strictEqual(data.data_upload, 'PART_SUMMARY');
+    assert.ok(Number.isInteger(data.total_respondents) && data.total_respondents >= 0, 'respondent count from the uploaded summary (0 before an upload)');
+    assert.deepStrictEqual(data.parts.map(p => p.part_name), ['Candidate Experience Survey']);
+    assert.strictEqual(data.questions_breakdown.length, 0, 'the old per-respondent questions are not used for the score');
   });
 
   // --- 10. ADMIN SURVEY QUESTIONS & 4 QUESTION TYPES ENGINE ---
@@ -868,10 +894,9 @@ async function runAllModules() {
     assert.strictEqual(result.success, true);
     assert.strictEqual(result.target_audience, 'JOB_APPLICANTS');
 
-    // Check detail
-    const detailRes = await fetch(`${BASE_URL}/api/metrics/5/detail?period=YTD`);
-    const detail = await detailRes.json();
-    const cand = detail.responses.find(r => r.candidate_id === 'CAND-2026-888');
+    // Check the stored rows (v2.55.0: metric 5 is scored from its uploaded summary, its detail lists no respondent rows)
+    const stored = await (await fetch(`${BASE_URL}/api/surveys/responses/5`)).json();
+    const cand = (Array.isArray(stored) ? stored : (stored.responses || [])).find(r => r.candidate_id === 'CAND-2026-888');
     assert(cand !== undefined, 'Uploaded candidate record must exist');
     assert.strictEqual(cand.applied_position, 'Senior Backend Engineer');
     assert.strictEqual(cand.recruitment_channel, 'LinkedIn');
@@ -946,7 +971,8 @@ async function runAllModules() {
     assert(journey1 !== undefined);
     assert.strictEqual(journey1.disabled_metrics_count, 0, 'no metric of Journey 1 is exempted any more');
     assert.strictEqual(journey1.active_metrics_count, journey1.metrics.filter(m => m.has_data).length, 'every Journey 1 metric with data is active');
-    assert(journey1.active_metrics_count >= 5, 'Journey 1 counts the bankwide non-employee metrics');
+    // v2.55.0: metrics 5 / 7 are summary metrics (no data before an upload) - the bankwide non-employee metrics with data still count
+    assert(journey1.metrics.some(m => m.has_data && m.is_bankwide_value), 'Journey 1 counts the bankwide non-employee metrics');
     assert(journey1.overall_score > 0, 'Journey 1 score should be calculated from active metrics');
     assert.strictEqual(data.disabled_metrics_count, 0);
     assert.strictEqual(data.bankwide_value_metrics_count, data.metrics.filter(m => m.is_employee_metric === false).length);
@@ -1018,6 +1044,8 @@ async function runAllModules() {
   });
   // v2.51.0: the reset above changed the LIVE Admin configuration (shared database) - put it back at once
   await restoreConfigGuard('after the Module 16 reset test');
+  legacyFixturesOn = [];
+  await setLegacyFixtures(true); // the restore put the N/A flags back
 
   // --- 17. OLLAMA-POWERED SCORE DEFICIT ALERT NARRATIVES ---
   console.log('\n📦 MODULE 17: Ollama-Powered Score Deficit Alert Narratives');
@@ -1567,12 +1595,11 @@ async function runAllModules() {
   // --- 26. HARDCODE AUDIT FOLLOW-UP: OPERATIONAL RECORDS, LIVE EVENT QUOTA & RESPONDENT COUNTS (POSITIVE TESTING) ---
   console.log('\n📦 MODULE 26: Hardcode Audit Follow-up — Operational Records, Live Quota & Respondent Counts (Positive Testing)');
   await runTest('[POSITIVE] OUTCOME metrics\' operational_records drilldown tables are sourced from the database (storage.getOperationalRecords), not frozen inline in calculationEngine.js', async () => {
-    // v2.52.0: metric 1's records are its social media statistics (px_social_media_stats), not recruitment-SLA rows
+    // v2.52.0: metric 1's records were its social media statistics; v2.55.0: that drilldown is hidden (no records, no SLA rows)
     const res1 = await fetch(`${BASE_URL}/api/metrics/1/detail?mode=YTD&year=2026`);
     assert.strictEqual(res1.status, 200);
     const data1 = await res1.json();
-    assert(Array.isArray(data1.operational_records) && data1.operational_records.length > 0, 'Metric #1 must expose its social media rows');
-    assert(data1.operational_records[0].platform && Number.isInteger(data1.operational_records[0].followers), 'Metric #1 records must have the platform / followers shape');
+    assert(Array.isArray(data1.operational_records) && data1.operational_records.length === 0 && data1.operational_records_hidden === true, 'Metric #1 shows no records (social media drilldown hidden)');
 
     const res14 = await fetch(`${BASE_URL}/api/metrics/14/detail?period=YTD`);
     assert.strictEqual(res14.status, 200);
@@ -2934,8 +2961,10 @@ async function runAllModules() {
     const uget = (u, q) => rawFetch(`${BASE_URL}${q}`, asUser(u.cookie));
     const uj = async (u, q) => (await uget(u, q)).json();
     const aj = async q => (await adminJson('GET', q)).json();
+    // v2.55.0: metric 8 is N/A (real data not available yet) - the scope checks use a SYSTEM employee survey metric that has rows
+    const SM35 = ((await aj('/api/metrics/calculate?period=YTD')).metrics.find(x => x.metric_type === 'SURVEY' && x.survey_source === 'SYSTEM' && x.is_employee_metric && x.has_data && !x.data_upload) || { metric_id: 8 }).metric_id;
     const dq = (dir, div) => `directorate=${enc(dir)}${div ? `&sub_directorate=${enc(div)}` : ''}`;
-    const respondents = async (dir, div) => (await aj(`/api/metrics/8/detail?period=YTD&${dq(dir, div)}`)).total_respondents;
+    const respondents = async (dir, div) => (await aj(`/api/metrics/${SM35}/detail?period=YTD&${dq(dir, div)}`)).total_respondents;
 
     // Directories that really hold survey data: A has two divisions with data (X, Y), B and C are other directorates with data.
     let dirA = null, divX = null, divY = null; const withData = [];
@@ -2987,7 +3016,8 @@ async function runAllModules() {
       assert.strictEqual(user.filter_options.is_directorate_filtered, true);
       assert.strictEqual(user.filter_options.scopes.length, 2);
       let checked = 0;
-      for (const m of empMetrics(a).filter(x => x.metric_type === 'SURVEY')) {
+      // v2.55.0: summary-part metrics (7, 12) pool per month (respondent-weighted) and then average the months - Module 59
+      for (const m of empMetrics(a).filter(x => x.metric_type === 'SURVEY' && x.data_upload !== 'PART_SUMMARY')) {
         const mb = b.metrics.find(k => k.metric_id === m.metric_id);
         const mu = user.metrics.find(k => k.metric_id === m.metric_id);
         assert.strictEqual(mu.sample_size, m.sample_size + mb.sample_size, `metric ${m.metric_id} sample`);
@@ -3013,15 +3043,15 @@ async function runAllModules() {
 
     await runTest('[POSITIVE/NEGATIVE] A subset of divisions limits the data to those divisions; a division/directorate outside the scope is 403 on calculate, trends, detail and alerts', async () => {
       const u = await scopeUser('s3', [{ directorate: A, divisions: [divX] }]);
-      assert.strictEqual((await uj(u, '/api/metrics/8/detail?period=YTD')).total_respondents, await respondents(A, divX), 'only the allowed division counts');
+      assert.strictEqual((await uj(u, `/api/metrics/${SM35}/detail?period=YTD`)).total_respondents, await respondents(A, divX), 'only the allowed division counts');
       assert.ok((await respondents(A, divX)) < (await respondents(A)), 'guard: subset really is smaller than the whole directorate');
       const own = await uj(u, `/api/metrics/calculate?period=YTD&${dq(A, divX)}`);
       const adm = await aj(`/api/metrics/calculate?period=YTD&${dq(A, divX)}`);
       assert.strictEqual(own.px_index, adm.px_index);
       assert.strictEqual((await uget(u, `/api/metrics/calculate?period=YTD&sub_directorate=${enc(divX)}`)).status, 200, 'division with directorate ALL = inside the scope');
-      for (const q of [`/api/metrics/calculate?period=YTD&${dq(A, divY)}`, `/api/metrics/8/detail?${dq(A, divY)}`, `/api/metrics/trends?${dq(A, divY)}`, `/api/alerts?${dq(A, divY)}`,
+      for (const q of [`/api/metrics/calculate?period=YTD&${dq(A, divY)}`, `/api/metrics/${SM35}/detail?${dq(A, divY)}`, `/api/metrics/trends?${dq(A, divY)}`, `/api/alerts?${dq(A, divY)}`,
         `/api/metrics/calculate?period=YTD&sub_directorate=${enc(divY)}`, `/api/metrics/calculate?period=YTD&${dq(B)}`, `/api/metrics/trends?${dq(B)}`, `/api/alerts?${dq(C)}`,
-        `/api/metrics/8/detail?${dq(B)}`, '/api/metrics/calculate?directorate=Direktorat%20Fiktif']) {
+        `/api/metrics/${SM35}/detail?${dq(B)}`, '/api/metrics/calculate?directorate=Direktorat%20Fiktif']) {
         const r = await uget(u, q);
         assert.strictEqual(r.status, 403, q);
         assert.ok((await r.json()).error);
@@ -3031,7 +3061,7 @@ async function runAllModules() {
 
     await runTest('[POSITIVE] Mixed scope (some divisions of A + all of B) is the union; a user with a scope sees the SAME bankwide read-only values for #1-#5 and nothing of other directorates', async () => {
       const u = await scopeUser('s4', [{ directorate: A, divisions: [divX] }, { directorate: B, divisions: null }]);
-      assert.strictEqual((await uj(u, '/api/metrics/8/detail?period=YTD')).total_respondents, (await respondents(A, divX)) + (await respondents(B)));
+      assert.strictEqual((await uj(u, `/api/metrics/${SM35}/detail?period=YTD`)).total_respondents, (await respondents(A, divX)) + (await respondents(B)));
       assert.strictEqual((await uget(u, `/api/metrics/calculate?period=YTD&${dq(A, divX)}`)).status, 200);
       assert.strictEqual((await uget(u, `/api/metrics/calculate?period=YTD&${dq(A, divY)}`)).status, 403);
       assert.strictEqual((await uget(u, `/api/metrics/calculate?period=YTD&${dq(C)}`)).status, 403);
@@ -3087,11 +3117,11 @@ async function runAllModules() {
       assert.strictEqual((await adminJson('PUT', `/api/admin/users/${u.id}`, { menu_access: { events: false } })).status, 200);
       assert.strictEqual((await uget(u, '/api/events')).status, 403, 'switched off again: effective on the next request');
       const names = new Set();
-      [...(await aj('/api/metrics/8/detail?period=YTD')).responses, ...(await aj('/api/metrics/5/detail?period=YTD')).questions.flatMap(q => q.verbatim_samples || [])]
+      [...(await aj(`/api/metrics/${SM35}/detail?period=YTD`)).responses, ...(await aj('/api/metrics/5/detail?period=YTD')).questions.flatMap(q => q.verbatim_samples || [])]
         .forEach(r => { if (typeof r.employee_name === 'string' && r.employee_name.length >= 5 && r.employee_name !== 'Respondent') names.add(r.employee_name); });
       adm.attendances.forEach(a => { if (a.employee_name && a.employee_name.length >= 5) names.add(a.employee_name); });
       assert.ok(names.size > 3);
-      const payload = [await (await uget(u, '/api/metrics/8/detail?period=YTD')).text(), await (await uget(u, '/api/metrics/5/detail?period=YTD')).text(),
+      const payload = [await (await uget(u, `/api/metrics/${SM35}/detail?period=YTD`)).text(), await (await uget(u, '/api/metrics/5/detail?period=YTD')).text(),
         await (await uget(u, '/api/alerts')).text()].join('\n');
       for (const n of names) assert.ok(!payload.includes(JSON.stringify(n).slice(1, -1)), `name "${n}" leaked`);
     });
@@ -6127,7 +6157,8 @@ async function runAllModules() {
       const b = await calc46('mode=MTD&year=2025&month=03');
       const c = await calc46(`mode=YTD&year=${Y46 + 1}`);
       // v2.54.0: an OUTCOME metric with uploaded monthly values follows the window instead (Module 56)
-      const outA = a.metrics.filter(m => m.metric_type === 'OUTCOME' && m.value_basis !== 'MONTHLY_VALUES');
+      // v2.55.0: and so does an OUTCOME summary-part metric with uploaded summaries (19, 20 - Module 59)
+      const outA = a.metrics.filter(m => m.metric_type === 'OUTCOME' && m.value_basis !== 'MONTHLY_VALUES' && m.data_upload !== 'PART_SUMMARY');
       assert.ok(outA.length > 0);
       for (const m of outA) {
         for (const other of [b, c]) {
@@ -6135,7 +6166,7 @@ async function runAllModules() {
           assert.deepStrictEqual([x.status === 'NO_DATA', x.raw_value, x.period_window], [false, m.raw_value, null], `metric ${m.metric_id}`);
         }
       }
-      if (!a.metrics.some(m => m.value_basis === 'MONTHLY_VALUES')) assert.strictEqual(a.outcome_index, c.outcome_index);
+      if (!a.metrics.some(m => m.value_basis === 'MONTHLY_VALUES' || m.data_upload === 'PART_SUMMARY')) assert.strictEqual(a.outcome_index, c.outcome_index);
     });
 
     await runTest('[POSITIVE] Survey Index = weighted mean of the survey metrics WITH data only; PX = the configured weights (default 70/30) with basis BOTH; journeys / checkpoints only roll up metrics with data', async () => {
@@ -6143,7 +6174,7 @@ async function runAllModules() {
       const live = c.metrics.filter(m => !m.is_disabled && !m.excluded_from_index);
       const noData = live.filter(m => m.status === 'NO_DATA');
       // v2.54.0: OUTCOME metrics with uploaded monthly values but none in October 2025 (and N/A metrics) are NO_DATA too
-      assert.ok(noData.length > 0 && noData.every(m => (m.metric_type === 'SURVEY' || m.value_basis === 'MONTHLY_VALUES') && m.normalized_score === null), 'the ESS metrics have no data in October 2025');
+      assert.ok(noData.length > 0 && noData.every(m => (m.metric_type === 'SURVEY' || m.value_basis === 'MONTHLY_VALUES' || m.not_applicable || m.data_upload === 'PART_SUMMARY') && m.normalized_score === null), 'the ESS metrics have no data in October 2025');
       assert.strictEqual(c.no_data_metrics_count, noData.length);
       const surveys = live.filter(m => m.metric_type === 'SURVEY' && m.has_data);
       const w = surveys.reduce((s, m) => s + m.weight, 0);
@@ -6986,14 +7017,17 @@ async function runAllModules() {
         near(dir.outcome_index, O, 0.02, 'outcome index = all outcome metrics');
         // outcome metrics are bankwide snapshots; a bankwide-only manual value (v2.54.2) is N/A per directorate, so compare with the
         // bankwide values of the outcome metrics that count under this filter
-        const bankO = wmean(bank.metrics.filter(m => m.metric_type === 'OUTCOME' && live.some(l => l.metric_id === m.metric_id)));
-        near(dir.outcome_index, bankO, 0.01, 'outcome index equals the bankwide values of the same outcome metrics');
+        // v2.55.0: an employee OUTCOME summary-part metric (19, 20) reads the directorate's own rows - only the others equal bankwide
+        const bankLike = live.filter(m => m.metric_type === 'OUTCOME' && !(m.data_upload === 'PART_SUMMARY' && m.is_employee_metric !== false));
+        const bankO = wmean(bank.metrics.filter(m => bankLike.some(l => l.metric_id === m.metric_id)));
+        near(wmean(bankLike), bankO, 0.01, 'the outcome metrics without directorate data equal their bankwide values');
         near(dir.px_index, 0.7 * S + 0.3 * O, 0.02, 'px index');
         // the employee-only index differs: proves the bankwide-only survey metrics really are inside
         const empOnly = wmean(live.filter(m => m.metric_type === 'SURVEY' && m.is_employee_metric !== false));
-        assert.ok(Math.abs(empOnly - S) > 0.001, 'guard: including the bankwide-only survey metrics changes the survey index');
+        // (v2.55.0: metric 2 is N/A and metric 5 a summary metric without an upload yet - only when one has data)
+        if (live.some(m => m.metric_type === 'SURVEY' && m.is_employee_metric === false)) assert.ok(Math.abs(empOnly - S) > 0.001, 'guard: including the bankwide-only survey metrics changes the survey index');
         // detail of a non-employee metric under the filter = bankwide detail (Admin too)
-        const sm = nonEmp.find(m => m.metric_type === 'SURVEY' && m.has_data);
+        const sm = nonEmp.find(m => m.metric_type === 'SURVEY' && m.has_data) || nonEmp.find(m => m.metric_type === 'SURVEY');
         const dDir = await aj50(`/api/metrics/${sm.metric_id}/detail?${q}`);
         const dBank = await aj50(`/api/metrics/${sm.metric_id}/detail?mode=YTD`);
         assert.strictEqual(dDir.is_bankwide_value, true);
@@ -7525,7 +7559,7 @@ async function runAllModules() {
         assert.deepStrictEqual(r.body.directorates.map(d => d.directorate_id), pub.map(d => d.directorate_id), 'the public list carries the same ids');
         const d = r.body.directorates[0];
         assert.ok(Number.isInteger(d.directorate_id) && Array.isArray(d.divisions) && Array.isArray(d.former_names));
-        assert.deepStrictEqual(Object.keys(d.usage).sort(), ['attendances', 'ess_results', 'exit_interviews', 'operational_records', 'settings', 'survey_responses', 'user_scopes', 'users']);
+        assert.deepStrictEqual(Object.keys(d.usage).sort(), ['attendances', 'ess_results', 'exit_interviews', 'operational_records', 'part_results', 'settings', 'survey_responses', 'user_scopes', 'users']);
         assert.strictEqual(d.total_references, Object.values(d.usage).reduce((a, b) => a + b, 0));
         assert.strictEqual(r.body.max_length, 200);
         assert.ok(['ALL', 'Bankwide', 'General'].every(x => r.body.reserved_directorate_names.includes(x)));
@@ -8475,7 +8509,7 @@ async function runAllModules() {
         if (r.status !== 200) console.error(`     Module 54 cleanup: could not delete "${d.name}" (${r.status}: ${JSON.stringify(r.body.references || r.body.error)})`);
       }
       // the flag and anything else of the configuration: the guard puts the whole snapshot back (SQL); JSON: only the flag
-      if (configGuard) await restoreConfigGuard('end of Module 54');
+      if (configGuard) { await restoreConfigGuard('end of Module 54'); legacyFixturesOn = []; await setLegacyFixtures(true); }
       else if (flag54 !== true && typeof st54.setSetting === 'function' && isSql54) await st54.setSetting('directory_admin_managed', flag54 === undefined ? false : flag54);
     }
   }
@@ -8512,9 +8546,23 @@ async function runAllModules() {
       return cookie ? realFetch(`${BASE_URL}/api/admin/social-media/upload`, { method: 'POST', body: fd, headers: { Cookie: cookie } })
         : fetch(`${BASE_URL}/api/admin/social-media/upload`, { method: 'POST', body: fd });
     };
-    const detail55 = async (q, cookie = null) => {
+    // v2.55.0: the social media drilldown is switched off in the metric detail (SOCIAL_MEDIA_DRILLDOWN_ENABLED false) but kept
+    // dormant - its table is checked in-process through socialMediaService.getSocialMediaDrilldown (same period parsing as the
+    // detail: mode, year, month padded); the HTTP detail of metric 1 is checked to carry none of it.
+    const detail55 = async q => {
+      const p = new URLSearchParams(q);
+      const sm = await sm55.getSocialMediaDrilldown({ mode: p.get('mode') || 'YTD', year: p.get('year'), month: String(p.get('month') || '01').padStart(2, '0') });
+      return { status: 200, body: { operational_records: sm.rows, social_media: sm } };
+    };
+    const httpDetail55 = async (q, cookie = null) => {
       const r = cookie ? await realFetch(`${BASE_URL}/api/metrics/1/detail?${q}`, { headers: { Cookie: cookie } }) : await fetch(`${BASE_URL}/api/metrics/1/detail?${q}`);
       return { status: r.status, body: await r.json() };
+    };
+    const assertHidden55 = (d, label) => {
+      assert.strictEqual(d.operational_records_hidden, true, `${label}: no Internal Transaction Records tab`);
+      assert.deepStrictEqual(d.operational_records, [], `${label}: no records`);
+      assert.strictEqual(d.data_upload, undefined, `${label}: no social media upload flag`);
+      assert.strictEqual(d.social_media, undefined, `${label}: no social media block`);
     };
     const rowsOf = d => d.operational_records.map(r => [r.platform, r.period, r.followers, r.follower_growth_pct, r.reach, r.engagement, r.engagement_rate_pct]);
     const yearCount55 = async y => (await q55('SELECT COUNT(*) AS n FROM dbo.px_social_media_stats WHERE stat_year = @y', { y }))[0].n;
@@ -8523,7 +8571,7 @@ async function runAllModules() {
     try {
       preExisting55 = (await yearCount55(2018)) + (await yearCount55(2097)) + (await yearCount55(2099));
 
-      await runTest('[POSITIVE] Metric 1 has no recruitment-SLA rows any more (boot cleanup idempotent), the other drilldown tables are untouched, and calculate + detail flag metric 1 as data_upload SOCIAL_MEDIA', async () => {
+      await runTest('[POSITIVE] Metric 1 has no recruitment-SLA rows any more (boot cleanup idempotent), the other drilldown tables are untouched; v2.55.0: the social media drilldown is off - no data_upload flag in calculate, the metric-1 detail has no records / social block (operational_records_hidden), the dormant drilldown still reads the platforms', async () => {
         assert.strictEqual(preExisting55, 0, 'the fixture years 2018 / 2097 / 2099 must be empty before the module runs (nothing of somebody else is touched)');
         assert.strictEqual((await q55('SELECT COUNT(*) AS n FROM dbo.px_recruitment_sla_by_unit WHERE metric_id = 1'))[0].n, 0);
         assert.strictEqual(await st55.removeMetric1SlaRows(), 0, 'a second cleanup removes nothing');
@@ -8533,14 +8581,16 @@ async function runAllModules() {
         }
         assert.strictEqual((await q55('SELECT COUNT(*) AS n FROM dbo.px_attrition_by_tenure WHERE metric_id = 25'))[0].n, 3, 'metric 25 keeps its attrition rows');
         const calc = await (await fetch(`${BASE_URL}/api/metrics/calculate?period=YTD`)).json();
-        assert.deepStrictEqual(calc.metrics.filter(m => m.data_upload).map(m => [m.metric_id, m.data_upload]), [[1, 'SOCIAL_MEDIA']]);
+        assert.deepStrictEqual(calc.metrics.filter(m => m.data_upload === 'SOCIAL_MEDIA').map(m => m.metric_id), [], 'no metric offers the social media upload');
+        const h1 = (await httpDetail55('mode=YTD&year=2026')).body;
+        assertHidden55(h1, 'metric 1 YTD 2026');
         const d1 = (await detail55('mode=YTD&year=2026')).body;
-        assert.strictEqual(d1.data_upload, 'SOCIAL_MEDIA');
         assert.ok(d1.operational_records.length > 0 && d1.operational_records.every(r => r.platform && r.unit === undefined && r.sla_achievement === undefined));
         assert.deepStrictEqual(d1.social_media.platforms, ['Instagram', 'LinkedIn', 'TikTok']);
-        // v2.54.0: the value of metric 1 = its uploaded monthly value (latest month of the period), else the Admin raw_value
-        const months1 = (await st55.getOutcomeValues(1)).filter(r => r.year === 2026);
-        assert.strictEqual(d1.current_raw_value, months1.length ? months1[months1.length - 1].value : parseFloat((await st55.getMetricById(1)).raw_value || 0));
+        // v2.55.0: the value of metric 1 = the AVERAGE of its uploaded months of the period, else the Admin raw_value
+        const months1 = (await st55.getOutcomeValues(1)).filter(r => r.year === 2026 && r.month <= new Date().getMonth() + 1);
+        const avg1 = months1.length ? months1.reduce((s, r) => s + r.value, 0) / months1.length : parseFloat((await st55.getMetricById(1)).raw_value || 0);
+        assert.ok(Math.abs(h1.current_raw_value - avg1) < 0.0001, `${h1.current_raw_value} vs ${avg1}`);
       });
 
       await runTest('[POSITIVE] Template download (.xlsx): header Platform | Year | Month | Followers | Reach | Engagement and one row per platform for the last complete month, numbers empty', async () => {
@@ -8598,14 +8648,14 @@ async function runAllModules() {
         assert.deepStrictEqual(feb.social_media.period_totals, [], 'one platform -> no total line');
       });
 
-      await runTest('[POSITIVE] The directorate filter does not change metric 1 (bankwide): same rows under a directorate and a division; a USER sees the same rows', async () => {
+      await runTest('[POSITIVE] v2.55.0: the metric-1 detail shows no social media rows under a directorate, a division or for a USER (drilldown off; the stored 2099 rows stay in the database)', async () => {
         const directory55 = await (await rawFetch(`${BASE_URL}/api/directorates`)).json();
         const dir = directory55.find(d => d.divisions.length > 0);
-        const all = rowsOf((await detail55('mode=MTD&year=2099&month=03')).body);
-        const byDir = await detail55(`mode=MTD&year=2099&month=03&directorate=${encodeURIComponent(dir.directorate_name)}`);
+        assert.ok(rowsOf((await detail55('mode=MTD&year=2099&month=03')).body).length === 3, 'the dormant drilldown still has the March 2099 rows');
+        const byDir = await httpDetail55(`mode=MTD&year=2099&month=03&directorate=${encodeURIComponent(dir.directorate_name)}`);
         assert.strictEqual(byDir.status, 200);
-        assert.deepStrictEqual(rowsOf(byDir.body), all);
-        assert.deepStrictEqual(rowsOf((await detail55(`mode=MTD&year=2099&month=03&directorate=${encodeURIComponent(dir.directorate_name)}&sub_directorate=${encodeURIComponent(dir.divisions[0])}`)).body), all);
+        assertHidden55(byDir.body, 'under a directorate');
+        assertHidden55((await httpDetail55(`mode=MTD&year=2099&month=03&directorate=${encodeURIComponent(dir.directorate_name)}&sub_directorate=${encodeURIComponent(dir.divisions[0])}`)).body, 'under a division');
         const username = `rt55u${stamp55}`;
         const created = await adminJson('POST', '/api/admin/users', { username, full_name: 'Regression Social User', email: `${username}@example.test`, role: 'USER', scopes: [{ directorate: dir.directorate_name, divisions: null }] });
         assert.strictEqual(created.status, 201);
@@ -8614,9 +8664,9 @@ async function runAllModules() {
         const { cookie } = await loginAs(username, cb.temporary_password);
         assert.strictEqual((await rawFetch(`${BASE_URL}/api/auth/change-password`, jsonBody('POST', { current_password: cb.temporary_password, new_password: STRONG }, cookie))).status, 200);
         userCookie55 = cookie;
-        const u = await detail55('mode=MTD&year=2099&month=03', cookie);
+        const u = await httpDetail55('mode=MTD&year=2099&month=03', cookie);
         assert.strictEqual(u.status, 200);
-        assert.deepStrictEqual(rowsOf(u.body), all);
+        assertHidden55(u.body, 'USER');
       });
 
       await runTest('[POSITIVE] Upsert: uploading March 2099 Instagram again UPDATES that row (1 updated, 0 new) and the growth follows (+21%)', async () => {
@@ -8978,23 +9028,39 @@ async function runAllModules() {
         assert.strictEqual(m14.target_value_normalized, 60);
         const m1 = byId(1);
         assert.deepStrictEqual(m1.score_tiers, { unit: 'percent', bounds: B1 });
-        // the live September 2026 value may be updated by the Admin (0.66% at v2.54.0, 3.19% since 2026-10-22): expect what is stored
-        const m1Sep = (await st56.getOutcomeValues(1)).find(r => r.year === 2026 && r.month === 9);
-        const m1Pct = Math.round(tiers56.tieredScore(Number(m1Sep.value), B1).percent * 100) / 100;
+        // the live 2026 values may be updated by the Admin (0.66% at v2.54.0, 3.19% since 2026-10-22, a whole year by upload):
+        // expect what is stored. v2.55.0: metric 1 = the AVERAGE of its 2026 months up to this month
+        const nowKey56 = new Date().getFullYear() * 100 + new Date().getMonth() + 1;
+        const m1Rows = (await st56.getOutcomeValues(1)).filter(r => r.year === 2026 && 2026 * 100 + r.month <= nowKey56);
+        const m1Avg = m1Rows.reduce((s, r) => s + Number(r.value), 0) / m1Rows.length;
+        const m1Pct = Math.round(tiers56.tieredScore(m1Avg, B1).percent * 100) / 100;
         const m1Status = m1Pct < m1.min_threshold ? 'CRITICAL' : (m1Pct < 60 ? 'WARNING' : 'HEALTHY');
-        assert.deepStrictEqual([m1.raw_value, m1.normalized_score, m1.outcome_period, m1.target_value, m1.target_value_normalized, m1.status], [Number(m1Sep.value), m1Pct, '2026-09', 2, 60, m1Status]);
+        const m1Last = m1Rows[m1Rows.length - 1];
+        assert.deepStrictEqual([m1.raw_value, m1.normalized_score, m1.outcome_period, m1.outcome_aggregation, m1.outcome_months_count, m1.target_value, m1.target_value_normalized, m1.status],
+          [parseFloat(m1Avg.toFixed(2)), m1Pct, `2026-${String(m1Last.month).padStart(2, '0')}`, 'AVERAGE', m1Rows.length, 2, 60, m1Status]);
         const m3 = byId(3);
         assert.deepStrictEqual(m3.score_tiers, { unit: 'percent', bounds: B3 });
-        assert.deepStrictEqual([m3.raw_value, m3.normalized_score, m3.tier_info.tier, m3.tier_info.capped, m3.target_value, m3.target_value_normalized, m3.status], [75.04, 100, 5, false, 70, 93.33, 'HEALTHY']);
+        // v2.55.0: metric 3 = the AVERAGE of its 2026 months too (75.04% Sept 2026 at v2.54.0; a whole year once uploaded)
+        const m3Rows = (await st56.getOutcomeValues(3)).filter(r => r.year === 2026 && 2026 * 100 + r.month <= nowKey56);
+        const m3Avg = m3Rows.reduce((s, r) => s + Number(r.value), 0) / m3Rows.length;
+        const m3t = tiers56.tieredScore(m3Avg, B3);
+        assert.deepStrictEqual([m3.raw_value, m3.normalized_score, m3.tier_info.tier, m3.tier_info.capped, m3.target_value, m3.target_value_normalized, m3.outcome_aggregation],
+          [parseFloat(m3Avg.toFixed(2)), Math.round(m3t.percent * 100) / 100, m3t.tier, false, 70, 93.33, 'AVERAGE']);
         for (const m of [m1, m3, m14]) {
           const expected = m.normalized_score < m.min_threshold ? 'CRITICAL' : (m.normalized_score < m.target_value_normalized ? 'WARNING' : 'HEALTHY');
           assert.strictEqual(m.status, expected, `metric ${m.metric_id}`);
           const d = await detail56(m.metric_id, 'mode=YTD&year=2026');
-          assert.deepStrictEqual([d.current_raw_value, d.normalized_score, d.status, d.target_value_normalized], [m.raw_value, m.normalized_score, m.status, m.target_value_normalized], `detail ${m.metric_id}`);
+          assert.deepStrictEqual([parseFloat(Number(d.current_raw_value).toFixed(2)), d.normalized_score, d.status, d.target_value_normalized], [m.raw_value, m.normalized_score, m.status, m.target_value_normalized], `detail ${m.metric_id}`);
           assert.deepStrictEqual(d.tier_info, m.tier_info);
         }
         const aug = (await calcMetric56('mode=MTD&year=2026&month=08', 1)).calc;
-        assert.deepStrictEqual([1, 3].map(id => aug.metrics.find(x => x.metric_id === id).status), ['NO_DATA', 'NO_DATA'], 'a month without an uploaded value is NO_DATA (agreed rule)');
+        const augRows = (await st56.getOutcomeValues()).filter(r => r.year === 2026 && r.month === 8);
+        for (const id of [1, 3]) {
+          const augRow = augRows.find(r => r.metric_id === id);
+          const am = aug.metrics.find(x => x.metric_id === id);
+          if (augRow) assert.strictEqual(am.raw_value, parseFloat(Number(augRow.value).toFixed(2)), `metric ${id}: MTD = that month's value`);
+          else assert.strictEqual(am.status, 'NO_DATA', `metric ${id}: a month without an uploaded value is NO_DATA (agreed rule)`);
+        }
         const s = await (await fetch(`${BASE_URL}/api/settings`)).json();
         assert.ok(!s.scale_types.some(o => o.value === 'TIERED_COUNT'), 'tiers are a per-metric configuration, not a scale type');
       });
@@ -9268,8 +9334,9 @@ async function runAllModules() {
       await runTest('[POSITIVE] Evidence of metric 1 (social media rows of the period) and metric 11 (event attendances of the period, with identity - Admin only); offered as evidence_type in calculate', async () => {
         const { calc } = await calcMetric56('mode=YTD', 1);
         const byId = id => calc.metrics.find(x => x.metric_id === id);
+        // v2.55.0: no data_upload SOCIAL_MEDIA any more (drilldown off); the social media evidence route stays (dormant, Admin API only)
         assert.deepStrictEqual([byId(1).evidence_type, byId(1).outcome_upload, byId(1).data_upload, byId(11).evidence_type, byId(11).outcome_upload, byId(14).evidence_type, byId(2).evidence_type],
-          ['OUTCOME_VALUES', true, 'SOCIAL_MEDIA', 'EVENT_ATTENDANCE', false, 'OUTCOME_VALUES', undefined]);
+          ['OUTCOME_VALUES', true, undefined, 'EVENT_ATTENDANCE', false, 'OUTCOME_VALUES', undefined]);
         const v1 = csvLines56(await (await fetch(`${BASE_URL}/api/admin/outcome-evidence/1?period=2026-09`)).text());
         assert.ok(v1[0].startsWith('Metric_ID,Metric_Name,Unit,Year,Month,Period,Value'), 'metric 1 default evidence = its monthly values');
         for (const [q, status] of [['1?kind=bogus', 400], ['14?kind=social_media', 400], ['14?kind=values', 200]]) {
@@ -9302,7 +9369,10 @@ async function runAllModules() {
         assert.deepStrictEqual([byId(legacy56.metric_id).last_update_period, byId(legacy56.metric_id).last_update_label], ['2004-05', 'May 2004']);
         const ov1 = await st56.getOutcomeValues(1);
         const stats = await st56.getSocialMediaStats();
-        const latest1 = ov1.length ? ov1.reduce((mx, r) => Math.max(mx, r.year * 100 + r.month), 0) : stats.reduce((mx, r) => Math.max(mx, r.year * 100 + r.month), 0);
+        // v2.55.0: no fallback to the social media months any more (drilldown off): latest stored month, else last_data_date
+        const ld1 = String((await st56.getMetricById(1)).last_data_date || '');
+        const latest1 = ov1.length ? ov1.reduce((mx, r) => Math.max(mx, r.year * 100 + r.month), 0) : parseInt(ld1.slice(0, 4), 10) * 100 + parseInt(ld1.slice(5, 7), 10);
+        assert.ok(stats.length >= 0);
         assert.strictEqual(byId(1).last_update_period, `${Math.floor(latest1 / 100)}-${String(latest1 % 100).padStart(2, '0')}`, 'metric 1: its latest uploaded value month');
         const atts = await st56.getAttendances();
         const latestAtt = atts.map(a => String(a.attendance_timestamp).slice(0, 7)).sort().pop() || null;
@@ -9455,6 +9525,649 @@ async function runAllModules() {
         await st57.setSetting('metric_manual_overrides', before57);
         if (metric57) await adminJson('DELETE', `/api/admin/metrics/${metric57.metric_id}`);
       }
+    }
+  }
+
+  // --- MODULE 58 (v2.55.0): METRIC 1 = AVERAGE OF THE UPLOADED MONTHS OF A YEAR (one row of months per year), SOCIAL MEDIA DRILLDOWN HIDDEN ---
+  // Uploads only go to metrics this module creates itself (deleted at the end with their monthly values, uploads and original
+  // files - the documented metric-delete cascade) and to far-past years (2003 / 2004); metric 1 is only read, its stored
+  // months are compared before / after. The JSON parity check restores store.json / auth.json byte-identically. SQL Server only.
+  console.log('\n📦 MODULE 58: Metric 1 - yearly upload (Metrics | Jan..Dec), AVERAGE of the months through the tiers, social media drilldown hidden (Positive & Negative Testing)');
+  if (require('../server/db/storage').backend !== 'sql') {
+    console.log('  ⏭️  SKIPPED: Module 58 needs the SQL Server backend (in-process JSON parity check)');
+  } else if (!skipModuleBlock(58)) {
+    const st58 = require('../server/db/storage');
+    const ov58 = require('../server/services/outcomeValueService');
+    const tiers58 = require('../server/db/scoreTiers');
+    const { buildXlsx: buildXlsx58, readFirstSheet: readSheet58 } = require('../server/services/xlsxUtils');
+    const fs58 = require('fs');
+    const path58 = require('path');
+    const ZW = String.fromCharCode(0x200B); // zero-width space, as in the user's template ("3.87%" + U+200B)
+    const NBSP = String.fromCharCode(0x00A0);
+    const B1_58 = [{ min: 1, op: '>' }, { min: 2, op: '>' }, { min: 2.5, op: '>' }, { min: 3.5, op: '>' }];
+    const MON58 = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const HEAD58 = ['Metrics', ...MON58, 'Target', 1, 2, 3, 4, 5, '(Contoh Pengisian)'];
+    const BANDS58 = ['<1%', '1.1-2.0%', '2.1-2.5%', '2.51%-3.5%', '>3.5%'];
+    // the user's layout: row 1 "Score Asli" over the months, row 2 the header, row 3 the metric (12 month cells + info columns)
+    const yearSheet = (months, { label = 'Social media engagement rate (IG)', extraRows = [], info = ['2-2.5%', ...BANDS58, 0.03] } = {}) => buildXlsx58([
+      [null, 'Score Asli'], HEAD58, [label, ...months, ...info], ...extraRows
+    ], { merges: ['B1:M1'] });
+    const USER_MONTHS = ['-', '-', `3.87%${ZW}`, `2.01%${ZW}`, `5.45%${ZW}`, `3.03%${ZW}`, `3.84%${ZW}`, `3.49%${ZW}`, `0.66%${ZW}`, '-', '-', '-'];
+    const metricIds58 = [];
+    const uploadIds58 = [];
+    const stamp58 = Date.now().toString(36);
+    const postYear = async (metricId, buf, year, fileName = 'module58.xlsx') => {
+      const fd = new FormData();
+      fd.append('file', new Blob([buf]), fileName);
+      if (year !== undefined) fd.append('year', String(year));
+      const r = await fetch(`${BASE_URL}/api/admin/outcome-values/${metricId}/upload`, { method: 'POST', body: fd });
+      const body = await r.json();
+      if (r.status === 200 && body.upload_id) uploadIds58.push(body.upload_id);
+      return { status: r.status, body };
+    };
+    const calc58 = async (q, id) => (await (await fetch(`${BASE_URL}/api/metrics/calculate?${q}`)).json()).metrics.find(x => x.metric_id === id);
+    const detail58 = async (id, q) => (await fetch(`${BASE_URL}/api/metrics/${id}/detail?${q}`)).json();
+    const csv58 = text => text.replace(/^﻿/, '').split('\r\n').filter(Boolean);
+    const values58 = async id => (await st58.getOutcomeValues(id)).map(r => [r.year, r.month, r.value]);
+    const pct58 = v => Math.round(tiers58.tieredScore(v, B1_58).percent * 100) / 100;
+    let am58 = null; // the AVERAGE test metric
+    let metric1Before = null;
+    try {
+      metric1Before = JSON.stringify(await st58.getOutcomeValues(1));
+
+      await runTest('[POSITIVE] Metric 1 reads its months as AVERAGE (boot top-up of a NULL column; px_metrics column + admin parameters), its detail has no Internal Transaction Records (operational_records_hidden, no social media block / upload flag), and metric 14 stays LATEST', async () => {
+        assert.strictEqual((await st58.getMetricById(1)).outcome_aggregation, 'AVERAGE');
+        const params = await (await fetch(`${BASE_URL}/api/admin/parameters`)).json();
+        assert.strictEqual(params.metrics.find(m => m.metric_id === 1).outcome_aggregation, 'AVERAGE');
+        const m1 = await calc58('mode=YTD', 1);
+        assert.deepStrictEqual([m1.outcome_aggregation, m1.data_upload], ['AVERAGE', undefined]);
+        const m14 = await calc58('mode=YTD', 14);
+        assert.strictEqual(m14.outcome_aggregation, 'LATEST', 'NULL = LATEST');
+        // metric 3 gets the same yearly upload + AVERAGE (boot top-up), but keeps its Internal Transaction Records
+        assert.strictEqual((await st58.getMetricById(3)).outcome_aggregation, 'AVERAGE');
+        assert.strictEqual((await calc58('mode=YTD', 3)).outcome_aggregation, 'AVERAGE');
+        assert.strictEqual((await detail58(3, 'mode=YTD')).operational_records_hidden, false);
+        const t3 = await readSheet58(Buffer.from(await (await fetch(`${BASE_URL}/api/admin/outcome-values/3/template`)).arrayBuffer()));
+        assert.deepStrictEqual(t3[1].cells.slice(0, 14).map(c => c.value), ['Metrics', ...MON58, 'Target']);
+        assert.deepStrictEqual(t3[2].cells.slice(14, 19).map(c => c.value), ['< 30%', '>= 30% - < 45%', '>= 45% - < 60%', '>= 60% - <= 75%', '> 75%'], 'metric 3 tier bands (>= / >)');
+        for (const q of ['mode=YTD', 'mode=MTD&year=2026&month=09']) {
+          const d = await detail58(1, q);
+          assert.deepStrictEqual([d.operational_records_hidden, d.operational_records, d.data_upload, d.social_media], [true, [], undefined, undefined], q);
+        }
+        const d14 = await detail58(14, 'mode=YTD');
+        assert.strictEqual(d14.operational_records_hidden, false, 'other OUTCOME metrics keep their records tab');
+      });
+
+      await runTest('[POSITIVE] Template of metric 1 = the user layout: A1 metric + year, B1:M1 "Score Asli" (merged), row 2 Metrics | Jan..Dec | Target | 1..5 | (Contoh Pengisian), row 3 metric name, stored values of the year as "x%" or "-", target, tier bands from score_tiers', async () => {
+        const year = new Date().getFullYear();
+        const r = await fetch(`${BASE_URL}/api/admin/outcome-values/1/template`);
+        assert.strictEqual(r.status, 200);
+        const buf = Buffer.from(await r.arrayBuffer());
+        const rows = await readSheet58(buf);
+        assert.deepStrictEqual(rows[0].cells.filter(Boolean).map(c => c.value), [`Metric 1 - ${year}`, 'Score Asli']);
+        assert.deepStrictEqual(rows[1].cells.map(c => c.value), [...['Metrics', ...MON58, 'Target'], 1, 2, 3, 4, 5, '(Contoh Pengisian)']);
+        const stored = (await st58.getOutcomeValues(1)).filter(x => x.year === year);
+        const now = new Date();
+        const expectMonths = MON58.map((_, i) => {
+          const s = stored.find(x => x.month === i + 1);
+          return s && (year * 100 + i + 1) <= now.getFullYear() * 100 + now.getMonth() + 1 ? `${Math.round(s.value * 10000) / 10000}%` : '-';
+        });
+        const metric1 = await st58.getMetricById(1);
+        assert.deepStrictEqual(rows[2].cells.map(c => c.value), [metric1.metric_name, ...expectMonths, (await st58.getMetricTargetById(1)).target_display,
+          '<= 1%', '> 1% - <= 2%', '> 2% - <= 2.5%', '> 2.5% - <= 3.5%', '> 3.5%', `${(await st58.getMetricTargetById(1)).target_value}%`]);
+        const zip = await require('jszip').loadAsync(buf);
+        assert.ok(/<mergeCell ref="B1:M1"\/>/.test(await zip.file('xl/worksheets/sheet1.xml').async('string')), 'B1:M1 merged');
+        assert.strictEqual(ov58.validateOutcomeYearSheet(rows, metric1, year).errors.length, stored.length ? 0 : 1, 'the template reads back (only "-" -> "no month holds a value")');
+        assert.strictEqual((await fetch(`${BASE_URL}/api/admin/outcome-values/1/template?year=20x6`)).status, 400);
+        assert.strictEqual((await fetch(`${BASE_URL}/api/admin/outcome-values/1/template?year=${year + 1}`)).status, 400, 'a future year');
+      });
+
+      await runTest('[POSITIVE] outcome_aggregation on a created / edited metric: OUTCOME AVERAGE stored; bad value -> 400 (create and edit); a SURVEY metric never stores one; an edit without the field keeps it', async () => {
+        const bad = await adminJson('POST', '/api/admin/metrics', { metric_name: `RT58 bad ${stamp58}`, metric_type: 'OUTCOME', journey_id: 1, checkpoint_id: 1, outcome_aggregation: 'MEDIAN' });
+        assert.strictEqual(bad.status, 400);
+        assert.ok(/LATEST or AVERAGE/.test((await bad.json()).error));
+        const r = await adminJson('POST', '/api/admin/metrics', { metric_name: `RT58 Average ${stamp58}`, metric_type: 'OUTCOME', scale_type: 'NUMERIC', journey_id: 1, checkpoint_id: 1,
+          is_employee_metric: false, unit: '%', raw_value: 0.5, target_value: 2, target_display: '2%', min_threshold: 20, score_tiers: { unit: 'percent', bounds: B1_58 }, outcome_aggregation: 'average' });
+        const b = await r.json();
+        assert.strictEqual(r.status, 201, JSON.stringify(b).slice(0, 300));
+        am58 = b.metric;
+        metricIds58.push(am58.metric_id);
+        assert.strictEqual((await st58.getMetricById(am58.metric_id)).outcome_aggregation, 'AVERAGE');
+        assert.strictEqual((await adminJson('PUT', `/api/admin/metrics/${am58.metric_id}`, { outcome_aggregation: 'bogus' })).status, 400);
+        assert.strictEqual((await adminJson('PUT', `/api/admin/metrics/${am58.metric_id}`, { notes: 'rt58' })).status, 200);
+        assert.strictEqual((await st58.getMetricById(am58.metric_id)).outcome_aggregation, 'AVERAGE', 'kept by an edit without the field');
+        const s = await adminJson('POST', '/api/admin/metrics', { metric_name: `RT58 Survey ${stamp58}`, metric_type: 'SURVEY', journey_id: 1, checkpoint_id: 1, outcome_aggregation: 'AVERAGE' });
+        const sb = await s.json();
+        assert.strictEqual(s.status, 201);
+        metricIds58.push(sb.metric.metric_id);
+        assert.strictEqual((await st58.getMetricById(sb.metric.metric_id)).outcome_aggregation, null);
+      });
+
+      await runTest('[POSITIVE] Upload of the user layout for 2004 (U+200B after "x%", "-" = no value, info columns ignored): 200, 7 months stored as percent numbers, average 3.1929, original kept, history, audit OUTCOME_UPLOAD names the year', async () => {
+        assert.ok(am58, 'metric from the previous test');
+        const { status, body } = await postYear(am58.metric_id, await yearSheet(USER_MONTHS), 2004, 'module58_user_layout.xlsx');
+        assert.strictEqual(status, 200, JSON.stringify(body).slice(0, 400));
+        assert.deepStrictEqual([body.year, body.aggregation, body.rows_imported, body.inserted_rows, body.updated_rows, body.deleted_rows], [2004, 'AVERAGE', 7, 7, 0, 0]);
+        assert.deepStrictEqual(body.periods, ['2004-03', '2004-04', '2004-05', '2004-06', '2004-07', '2004-08', '2004-09']);
+        assert.strictEqual(body.average_value, 3.1929);
+        assert.strictEqual(body.average_label, 'Average of 7 months (Mar-Sep 2004)');
+        assert.deepStrictEqual(await values58(am58.metric_id), [[2004, 3, 3.87], [2004, 4, 2.01], [2004, 5, 5.45], [2004, 6, 3.03], [2004, 7, 3.84], [2004, 8, 3.49], [2004, 9, 0.66]]);
+        assert.ok(fs58.existsSync(path58.join(ov58.OUTCOME_UPLOAD_DIR, `${body.upload_id}.xlsx`)), 'original kept');
+        const hist = await (await fetch(`${BASE_URL}/api/admin/outcome-values/${am58.metric_id}/uploads`)).json();
+        assert.ok(hist.some(h => h.upload_id === body.upload_id && h.period_from === '2004-03' && h.period_to === '2004-09' && h.has_original_file));
+        const a = (await st58.getAuditLog(30, { includeTest: true })).find(x => x.action === 'OUTCOME_UPLOAD' && String(x.target).includes(body.upload_id));
+        assert.ok(a && /year 2004 replaced, 0 removed; average 3\.1929/.test(a.target), JSON.stringify(a));
+        // the user's own template file, read as it is (not changed), gives the same months
+        const userFile = path58.join(__dirname, '..', 'docs', 'Template Survey', 'Metrics #1 Template.xlsx');
+        if (fs58.existsSync(userFile)) {
+          const v = ov58.validateOutcomeYearSheet(await readSheet58(fs58.readFileSync(userFile)), am58, 2004);
+          assert.deepStrictEqual([v.errors, v.rows.map(x => [x.month, x.value]), v.label], [[], [[3, 3.87], [4, 2.01], [5, 5.45], [6, 3.03], [7, 3.84], [8, 3.49], [9, 0.66]], 'Social media engagement rate (IG)']);
+        }
+      });
+
+      await runTest('[POSITIVE] Scoring = AVERAGE of the months in the window through the tiers: YTD 2004 = 3.1929% -> tier 4 -> 93.86% ("Average of 7 months (Mar-Sep 2004)"), MTD Apr 2004 = 2.01% only, MTD Jan 2004 / YTD 2005 = NO_DATA; detail agrees, Last update = September 2004', async () => {
+        const avg = (3.87 + 2.01 + 5.45 + 3.03 + 3.84 + 3.49 + 0.66) / 7;
+        const y = await calc58('mode=YTD&year=2004', am58.metric_id);
+        assert.deepStrictEqual([y.raw_value, y.normalized_score, y.tier_info.tier, y.outcome_aggregation, y.outcome_months_count, y.outcome_average_label, y.outcome_period, y.period_window.basis, y.status],
+          [3.19, 93.86, 4, 'AVERAGE', 7, 'Average of 7 months (Mar-Sep 2004)', '2004-09', 'AVERAGE_OF_MONTHS', 'HEALTHY']);
+        assert.strictEqual(pct58(avg), 93.86);
+        assert.deepStrictEqual([y.last_update_period, y.last_update_label], ['2004-09', 'September 2004']);
+        const apr = await calc58('mode=MTD&year=2004&month=04', am58.metric_id);
+        assert.deepStrictEqual([apr.raw_value, apr.normalized_score, apr.outcome_months_count, apr.period_window.basis], [2.01, pct58(2.01), 1, 'MONTH']);
+        for (const q of ['mode=MTD&year=2004&month=01', 'mode=YTD&year=2005']) {
+          const n = await calc58(q, am58.metric_id);
+          assert.deepStrictEqual([n.status, n.raw_value, n.normalized_score, n.outcome_average_label], ['NO_DATA', null, null, null], q);
+        }
+        const d = await detail58(am58.metric_id, 'mode=YTD&year=2004');
+        assert.deepStrictEqual([d.current_raw_value, d.normalized_score, d.outcome_average_label, d.tier_info.tier, d.operational_records_hidden],
+          [Math.round(avg * 10000) / 10000, 93.86, 'Average of 7 months (Mar-Sep 2004)', 4, false]);
+      });
+
+      await runTest('[POSITIVE] An upload for a year REPLACES that year only: 2003 stays, 2004 re-uploaded with Jan "1%", Mar numeric 0.0349 (Excel percent -> 3.49%), Jun "2,5 %" with NBSP, "–" / "n/a" / empty = no value -> 2004 = Jan, Mar, Jun (5 months removed)', async () => {
+        const y2003 = await postYear(am58.metric_id, await yearSheet(['4%', ...Array(11).fill('-')]), 2003, 'module58_2003.xlsx');
+        assert.strictEqual(y2003.status, 200, JSON.stringify(y2003.body).slice(0, 300));
+        const months = ['1%', '-', 0.0349, String.fromCharCode(0x2013), 'n/a', `2,5${NBSP}%`, null, '-', '-', '-', '-', '-'];
+        const { status, body } = await postYear(am58.metric_id, await yearSheet(months), '2004', 'module58_replace.xlsx');
+        assert.strictEqual(status, 200, JSON.stringify(body).slice(0, 300));
+        assert.deepStrictEqual([body.rows_imported, body.inserted_rows, body.updated_rows, body.deleted_rows], [3, 1, 2, 5]);
+        assert.deepStrictEqual(await values58(am58.metric_id), [[2003, 1, 4], [2004, 1, 1], [2004, 3, 3.49], [2004, 6, 2.5]]);
+        const y = await calc58('mode=YTD&year=2004', am58.metric_id);
+        assert.deepStrictEqual([y.raw_value, y.outcome_months_count, y.outcome_average_label], [2.33, 3, 'Average of 3 months (Jan-Jun 2004)']);
+        const t = await fetch(`${BASE_URL}/api/admin/outcome-values/${am58.metric_id}/template?year=2004`);
+        const rows = await readSheet58(Buffer.from(await t.arrayBuffer()));
+        assert.deepStrictEqual(rows[2].cells.slice(1, 13).map(c => c.value), ['1%', '-', '3.49%', '-', '-', '2.5%', '-', '-', '-', '-', '-', '-'], 'the template shows the stored months of the chosen year');
+      });
+
+      await runTest('[POSITIVE] Metric-3 layout (numeric Excel fractions 0.69 / 0.7504, Jan-Jul BLANK, Oct-Dec "-", info columns with an en dash, example 0.65) on a metric with metric 3 tiers: 2004 = Aug 69%, Sep 75.04% -> average 72.02% -> tier 4 -> 96.03%; the user file reads the same', async () => {
+        const B3_58 = [{ min: 30, op: '>=' }, { min: 45, op: '>=' }, { min: 60, op: '>=' }, { min: 75, op: '>' }];
+        const r = await adminJson('POST', '/api/admin/metrics', { metric_name: `RT58 Ratio ${stamp58}`, metric_type: 'OUTCOME', scale_type: 'PERCENTAGE', journey_id: 1, checkpoint_id: 2,
+          is_employee_metric: false, unit: '%', raw_value: 50, target_value: 70, target_display: '> 70%', min_threshold: 70, score_tiers: { unit: 'percent', bounds: B3_58 }, outcome_aggregation: 'AVERAGE' });
+        const b = await r.json();
+        assert.strictEqual(r.status, 201, JSON.stringify(b).slice(0, 300));
+        metricIds58.push(b.metric.metric_id);
+        const ND = String.fromCharCode(0x2013);
+        const months = [null, null, null, null, null, null, null, 0.69, 0.7504, '-', '-', '-'];
+        const info = ['>70%', '< 30%', `30 ${ND} 44%`, `45 ${ND} 59 %`, `60 ${ND} 75%`, '>75%', 0.65];
+        const up = await postYear(b.metric.metric_id, await yearSheet(months, { label: 'Success ratio candidate from targeted university', info }), 2004, 'module58_metric3_layout.xlsx');
+        assert.strictEqual(up.status, 200, JSON.stringify(up.body).slice(0, 300));
+        assert.deepStrictEqual(await values58(b.metric.metric_id), [[2004, 8, 69], [2004, 9, 75.04]]);
+        const y = await calc58('mode=YTD&year=2004', b.metric.metric_id);
+        const expected = Math.round(tiers58.tieredScore((69 + 75.04) / 2, B3_58).percent * 100) / 100;
+        assert.deepStrictEqual([y.raw_value, y.normalized_score, y.tier_info.tier, y.outcome_average_label, y.status], [72.02, 96.03, 4, 'Average of 2 months (Aug-Sep 2004)', 'HEALTHY']);
+        assert.strictEqual(expected, 96.03);
+        const userFile3 = path58.join(__dirname, '..', 'docs', 'Template Survey', 'Metrics #3 Template.xlsx');
+        if (fs58.existsSync(userFile3)) {
+          const v = ov58.validateOutcomeYearSheet(await readSheet58(fs58.readFileSync(userFile3)), b.metric, 2004);
+          assert.deepStrictEqual([v.errors, v.rows.map(x => [x.month, x.value]), v.label], [[], [[8, 69], [9, 75.04]], 'Success ratio candidate from targeted university']);
+        }
+      });
+
+      await runTest('[POSITIVE] Evidence CSV of an AVERAGE metric: the months of the period marked Used_In_Score YES plus an "Average" line (CALCULATED) per year; ALL lists every year with its own average', async () => {
+        const lines = csv58(await (await fetch(`${BASE_URL}/api/admin/outcome-evidence/${am58.metric_id}?period=2004`)).text());
+        assert.strictEqual(lines.length, 5, 'header + 3 months + average');
+        assert.ok(lines.slice(1, 4).every(l => l.split(',')[9] === 'YES'));
+        assert.ok(lines[4].startsWith(`${am58.metric_id},RT58 Average ${stamp58},%,2004,,Average,2.33,Average of 3 months (Jan-Jun 2004),CALCULATED,YES,`), lines[4]);
+        const mar = csv58(await (await fetch(`${BASE_URL}/api/admin/outcome-evidence/${am58.metric_id}?period=2004-03`)).text());
+        assert.deepStrictEqual(mar.slice(1).map(l => l.split(',')[5]), ['2004-03', 'Average']);
+        const all = csv58(await (await fetch(`${BASE_URL}/api/admin/outcome-evidence/${am58.metric_id}`)).text());
+        assert.deepStrictEqual(all.filter(l => l.includes(',Average,')).map(l => l.split(',').slice(3, 7)), [['2003', '', 'Average', '4'], ['2004', '', 'Average', '2.33']]);
+      });
+
+      await runTest('[NEGATIVE] Bad month cells refuse the whole file (400, one error per cell with column + month, nothing stored): negative, text, a number cell read as 387%, "%" text on a non-% metric is checked separately', async () => {
+        const before = await values58(am58.metric_id);
+        const months = ['-1%', 'abc', 3.87, '2%', '-', '-', '-', '-', '-', '-', '-', '-'];
+        const { status, body } = await postYear(am58.metric_id, await yearSheet(months), 2004, 'module58_bad.xlsx');
+        assert.strictEqual(status, 400);
+        assert.ok(/nothing was stored/.test(body.error));
+        assert.deepStrictEqual(body.errors.map(e => [e.row_number, e.column]), [[3, 'B'], [3, 'C'], [3, 'D']]);
+        assert.ok(/^January: .*must not be negative/.test(body.errors[0].reason), body.errors[0].reason);
+        assert.ok(/^February: .*percentage such as 3\.87%.*"abc"/.test(body.errors[1].reason), body.errors[1].reason);
+        assert.ok(/^March: .*387% - above 100%/.test(body.errors[2].reason), body.errors[2].reason);
+        assert.deepStrictEqual(await values58(am58.metric_id), before);
+        // a metric that is not a percentage: "%" text is refused, a number cell is read as written
+        const num = { metric_id: 0, metric_type: 'OUTCOME', unit: 'pax', outcome_aggregation: 'AVERAGE', score_tiers: null };
+        const v = ov58.validateOutcomeYearSheet(await readSheet58(await yearSheet(['5%', 12, ...Array(10).fill('-')])), num, 2004);
+        assert.deepStrictEqual([v.errors.length, v.errors[0].column, /not a percentage/.test(v.errors[0].reason)], [1, 'B', true]);
+        assert.deepStrictEqual(ov58.validateOutcomeYearSheet(await readSheet58(await yearSheet(['-', 12, ...Array(10).fill('-')])), num, 2004).rows.map(x => x.value), [12]);
+      });
+
+      await runTest('[NEGATIVE] Year and layout: no year / "20x4" / 1999 / next year -> 400; a month after the current month of this year -> 400 naming it; no month header row, two metric rows, every month "-" -> 400; nothing stored', async () => {
+        const before = await values58(am58.metric_id);
+        const ok = await yearSheet(USER_MONTHS);
+        const now = new Date();
+        for (const y of [undefined, '', '20x4', 1999, now.getFullYear() + 1]) {
+          const r = await postYear(am58.metric_id, ok, y);
+          assert.strictEqual(r.status, 400, String(y));
+          assert.ok(/year/i.test(r.body.error), r.body.error);
+        }
+        if (now.getMonth() < 11) {
+          const fut = Array(12).fill('-');
+          fut[now.getMonth()] = '1%';
+          fut[now.getMonth() + 1] = '2%';
+          const r = await postYear(am58.metric_id, await yearSheet(fut), now.getFullYear());
+          assert.strictEqual(r.status, 400);
+          const nextName = require('../server/services/essSummaryService').MONTH_NAMES[now.getMonth() + 1];
+          assert.strictEqual(r.body.errors.length, 1, 'only the month after the current one');
+          assert.ok(r.body.errors[0].reason.startsWith(`${nextName} ${now.getFullYear()} is in the future`), r.body.errors[0].reason);
+        }
+        const noHeader = await postYear(am58.metric_id, await buildXlsx58([['Metrics', 'Year', 'Value'], ['x', 2004, 1]]), 2004);
+        assert.deepStrictEqual([noHeader.status, /No header row with the month columns/.test(noHeader.body.errors[0].reason)], [400, true]);
+        const two = await postYear(am58.metric_id, await yearSheet(USER_MONTHS, { extraRows: [['Second metric', '1%']] }), 2004);
+        assert.deepStrictEqual([two.status, /ONE metric row.*rows 3, 4/.test(two.body.errors[0].reason)], [400, true]);
+        const empty = await postYear(am58.metric_id, await yearSheet(Array(12).fill('-')), 2004);
+        assert.deepStrictEqual([empty.status, /No month of row 3 holds a value/.test(empty.body.errors[0].reason)], [400, true]);
+        assert.deepStrictEqual(await values58(am58.metric_id), before, 'nothing stored by any refused upload');
+      });
+
+      await runTest('[POSITIVE] JSON backend in-process (same contract): outcome_aggregation create / edit / bad value, saveOutcomeValues with replaceYear (deleted count, other years kept) give the same results as SQL Server; store.json and auth.json restored byte-identically', async () => {
+        const dataDir = path58.join(__dirname, '..', 'server', 'data');
+        const files = ['store.json', 'auth.json'].map(f => path58.join(dataDir, f));
+        const saved = files.map(f => (fs58.existsSync(f) ? fs58.readFileSync(f) : null));
+        const run = async (st, label) => {
+          const m = await st.addMetric({ metric_name: `RT58 parity ${label} ${stamp58}`, metric_type: 'OUTCOME', journey_id: 1, checkpoint_id: 1, outcome_aggregation: 'AVERAGE' });
+          const out = { created: (await st.getMetricById(m.metric_id)).outcome_aggregation };
+          await st.updateMetric(m.metric_id, { outcome_aggregation: 'LATEST' });
+          out.edited = (await st.getMetricById(m.metric_id)).outcome_aggregation;
+          try { await st.updateMetric(m.metric_id, { outcome_aggregation: 'X' }); out.bad = 'accepted'; } catch (e) { out.bad = e.message; }
+          const meta = (id, from, to) => ({ upload_id: `rt58-parity-${id}-${stamp58}`, metric_id: m.metric_id, file_name: 'p.xlsx', uploaded_by: 'RT58', period_from: from, period_to: to });
+          const s1 = await st.saveOutcomeValues(meta('a', '2003-01', '2004-02'), [{ year: 2003, month: 1, value: 1, notes: null }, { year: 2004, month: 1, value: 2, notes: null }, { year: 2004, month: 2, value: 3, notes: null }]);
+          const s2 = await st.saveOutcomeValues(meta('b', '2004-02', '2004-03'), [{ year: 2004, month: 2, value: 4, notes: null }, { year: 2004, month: 3, value: 5, notes: null }], { replaceYear: 2004 });
+          out.saves = [s1, s2].map(x => [x.inserted, x.updated, x.deleted || 0]);
+          out.values = (await st.getOutcomeValues(m.metric_id)).map(r => [r.year, r.month, r.value]);
+          await st.deleteMetric(m.metric_id);
+          out.afterDelete = (await st.getOutcomeValues(m.metric_id)).length;
+          return out;
+        };
+        let jsonOut;
+        let sqlOut;
+        try {
+          jsonOut = await run(require('../server/db/jsonStorage'), 'json');
+          sqlOut = await run(st58, 'sql');
+        } finally {
+          files.forEach((f, i) => { if (saved[i] === null) { if (fs58.existsSync(f)) fs58.unlinkSync(f); } else fs58.writeFileSync(f, saved[i]); });
+        }
+        files.forEach((f, i) => assert.ok(saved[i] === null ? !fs58.existsSync(f) : Buffer.compare(fs58.readFileSync(f), saved[i]) === 0, `${path58.basename(f)} restored byte-identically`));
+        assert.deepStrictEqual(jsonOut, sqlOut);
+        assert.deepStrictEqual(sqlOut, { created: 'AVERAGE', edited: 'LATEST', bad: 'outcome_aggregation must be LATEST or AVERAGE.', saves: [[3, 0, 0], [1, 1, 1]],
+          values: [[2003, 1, 1], [2004, 2, 4], [2004, 3, 5]], afterDelete: 0 });
+      });
+
+      await runTest('[POSITIVE] Metric 1 untouched by this module: its stored months are byte-for-byte the same as before', async () => {
+        assert.strictEqual(JSON.stringify(await st58.getOutcomeValues(1)), metric1Before);
+      });
+    } finally {
+      for (const id of [...metricIds58].reverse()) await adminJson('DELETE', `/api/admin/metrics/${id}`);
+      for (const u of uploadIds58) { const f = path58.join(ov58.OUTCOME_UPLOAD_DIR, `${u}.xlsx`); if (fs58.existsSync(f)) fs58.unlinkSync(f); }
+    }
+  }
+
+  // --- MODULE 59 (v2.55.0): COMPOSITE SUMMARY METRICS (7 = 4 parts, 5, 12, 19, 20) - PART UPLOAD, AVERAGE PER PART, N/A PARTS ---
+  // Uploads only go to metrics this module creates itself (parts inserted through SQL; deleted at the end with their parts, rows
+  // and uploads - the metric-delete cascade) and to far-past months (2004). The live metrics 5 / 7 / 12 / 19 / 20 are only read;
+  // their part rows are compared before / after. The user's template files are read in-process only (never uploaded). SQL only.
+  console.log('\n📦 MODULE 59: Composite summary metrics - part summary upload, per-part average, N/A parts, events, score column (Positive & Negative Testing)');
+  if (require('../server/db/storage').backend !== 'sql') {
+    console.log('  ⏭️  SKIPPED: Module 59 needs the SQL Server backend (its fixture parts are inserted through SQL)');
+  } else if (!skipModuleBlock(59)) {
+    const st59 = require('../server/db/storage');
+    const mp59 = require('../server/services/metricPartsService');
+    const { buildXlsx: buildXlsx59, readFirstSheet: readSheet59 } = require('../server/services/xlsxUtils');
+    const { buildResolver: buildResolver59 } = require('../server/db/directoryNames');
+    const seed59 = require('../server/db/seedData');
+    const fs59 = require('fs');
+    const path59 = require('path');
+    const sql59 = require('mssql');
+    const pool59 = await new sql59.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
+      user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
+    const q59 = async (text, params = {}) => {
+      const r = pool59.request();
+      Object.entries(params).forEach(([k, v]) => r.input(k, v));
+      return (await r.query(text)).recordset || [];
+    };
+    const stamp59 = Date.now().toString(36);
+    const metricIds59 = [];
+    const TPL = path59.join(__dirname, '..', 'docs', 'Template Survey');
+    const live59 = async () => JSON.stringify(await q59('SELECT metric_id, part_key, COUNT(*) AS n FROM dbo.px_metric_part_results WHERE metric_id IN (5, 7, 12, 19, 20) GROUP BY metric_id, part_key ORDER BY metric_id, part_key'));
+    const addPart = (metricId, key, name, order, template = null) => q59('INSERT INTO dbo.px_metric_parts (metric_id, part_key, part_name, sort_order, template_json) VALUES (@m, @k, @n, @o, @t)',
+      { m: metricId, k: key, n: name, o: order, t: template ? JSON.stringify(template) : null });
+    const createMetric59 = async body => {
+      const r = await adminJson('POST', '/api/admin/metrics', { journey_id: 1, checkpoint_id: 4, metric_type: 'SURVEY', scale_type: 'RATING_5', target_value: 4, target_display: '> 4.00 / 5', min_threshold: 75, is_employee_metric: true, ...body });
+      const b = await r.json();
+      assert.strictEqual(r.status, 201, JSON.stringify(b).slice(0, 300));
+      metricIds59.push(b.metric.metric_id);
+      return b.metric;
+    };
+    const postPart = async (metricId, key, buf, fileName = 'module59.xlsx') => {
+      const fd = new FormData();
+      fd.append('file', new Blob([buf]), fileName);
+      const r = await fetch(`${BASE_URL}/api/admin/metric-parts/${metricId}/${key}/upload`, { method: 'POST', body: fd });
+      return { status: r.status, body: await r.json() };
+    };
+    const calc59 = async (q, id) => (await (await fetch(`${BASE_URL}/api/metrics/calculate?${q}`)).json()).metrics.find(x => x.metric_id === id);
+    const detail59 = async (id, q) => (await fetch(`${BASE_URL}/api/metrics/${id}/detail?${q}`)).json();
+    const csv59 = text => text.replace(/^./, c => (c.charCodeAt(0) === 0xFEFF ? '' : c)).split('\r\n').filter(Boolean);
+    const HEAD = ['Directorate', 'Level', 'Year', 'Month', 'Part Score', 'Q1 rating', 'Q2 reason', 'Jumlah Responden', 'Periode (Join Date)'];
+    let liveBefore59 = null;
+    let dirA = null;
+    let dirB = null;
+    let alias59 = null;
+    let am59 = null; // 3-part RATING_5 metric
+    try {
+      liveBefore59 = await live59();
+      const dirs = (await st59.getDirectorates()).map(d => d.directorate_name);
+      [dirA, dirB] = dirs;
+      const aliases = await st59.getDirectoryAliases();
+      alias59 = (aliases.directorates || []).find(x => x.directorate_name !== dirA && x.directorate_name !== dirB) || null; // a former name (e.g. "Consumer & Emerging Business Banking")
+
+      await runTest('[POSITIVE] Live configuration: metric 7 has the 4 parts (Meet and Greet / Welcome Session / Onboarding Survey Day 1 / Infrastructure & Application), 5 / 12 / 19 / 20 one part each; metric 12 is a % metric (PERCENTAGE, target 80); calculate flags them PART_SUMMARY and the detail of 7 shows no respondent rows / questions', async () => {
+        const parts = await st59.getMetricParts();
+        const of = id => parts.filter(p => p.metric_id === id).map(p => p.part_name);
+        assert.deepStrictEqual(of(7), ['Meet and Greet Satisfaction', 'Welcome Session', 'Onboarding Survey Day 1', 'Infrastructure & Application']);
+        assert.deepStrictEqual([of(5), of(12), of(19), of(20)], [['Candidate Experience Survey'], ['Signature Program Event Satisfaction'], ['Mandatory Learning'], ['Non Mandatory Learning']]);
+        const m12 = await st59.getMetricById(12);
+        assert.deepStrictEqual([m12.scale_type, m12.unit, Number((await st59.getMetricTargetById(12)).target_value)], ['PERCENTAGE', '%', 80]);
+        for (const id of [5, 7, 12, 19, 20]) assert.strictEqual((await calc59('mode=YTD', id)).data_upload, 'PART_SUMMARY', `metric ${id}`);
+        const d7 = await detail59(7, 'mode=YTD');
+        assert.deepStrictEqual([d7.data_upload, d7.responses.length, d7.questions_breakdown.length, d7.parts.length], ['PART_SUMMARY', 0, 0, 4]);
+        await st59.topUpMetricParts();
+        assert.strictEqual((await st59.getMetricParts(7)).length, 4, 'the boot top-up never adds parts twice');
+      });
+
+      await runTest('[POSITIVE] The user templates (read in-process, never uploaded): Meet & Greet Pivot (Raw Data sheet never read) Jun-Oct, Day 1 Sept-Oct (Nov/Dec "-" rows skipped), Candidate Experience, Signature Program events (blue header fill), Mandatory / Non Mandatory Learning columns -> 92.37% / 91.07% / 99.1746% / 97.00% / 96.46%', async () => {
+        const files = {
+          MEET_GREET: '1. Meet & Greet Satisfaction_update.xlsx', DAY1_SURVEY: 'Onboarding Day 1 Survey.xlsx', CANDIDATE_EXPERIENCE: 'Candidate Experience Survey Score Template.xlsx',
+          EVENT_SATISFACTION: 'Signature Program Event Satisfaction Score Template.xlsx', MANDATORY_LEARNING: 'Mandatory & Non Mandatory Learning_PX.xlsx', NON_MANDATORY_LEARNING: 'Mandatory & Non Mandatory Learning_PX.xlsx'
+        };
+        if (!Object.values(files).every(f => fs59.existsSync(path59.join(TPL, f)))) return; // the user's files are not in the repository
+        const resolver = buildResolver59(await st59.getDirectorates(), await st59.getDirectoryAliases());
+        const rows = [];
+        const now = new Date(2026, 9, 21);
+        for (const [key, f] of Object.entries(files)) {
+          const part = seed59.initialMetricParts.find(p => p.part_key === key);
+          const sheet = await readSheet59(fs59.readFileSync(path59.join(TPL, f)), { preferSheet: 'Pivot', refuseSheet: /^\s*raw\s*data\s*$/i, withFill: true });
+          const tpl = part.template || {};
+          const v = mp59.validatePartSheet(sheet, resolver, now, { scale: mp59.scaleOf(part), scoreColumn: tpl.score_column || null, respondentsColumn: tpl.respondents_column !== false });
+          assert.deepStrictEqual(v.errors, [], key);
+          v.rows.forEach(r => rows.push({ ...r, part_key: key, metric_id: part.metric_id }));
+          if (key === 'DAY1_SURVEY') assert.deepStrictEqual(v.periods, ['2026-09', '2026-10'], 'Nov / Dec rows without a score are skipped');
+          if (key === 'EVENT_SATISFACTION') assert.deepStrictEqual(v.columns.event_labels, ['EPICC Podcast', 'Perspektif', 'DLC', 'Young', 'EVD']);
+          if (key === 'DAY1_SURVEY') assert.ok(v.rows.some(r => r.questions.some(q => q.value === 'Suitable role')), 'text answers kept');
+        }
+        const ytd = { mode: 'YTD', year: '2026', month: '01' };
+        const pct = (metricId, scale = 5) => {
+          const c = mp59.compositeValue(seed59.initialMetricParts.filter(p => p.metric_id === metricId), rows.filter(r => r.metric_id === metricId), ytd, null);
+          return Math.round((scale === 100 ? c.value : c.value / 5 * 100) * 100) / 100;
+        };
+        assert.deepStrictEqual([pct(7), pct(5), pct(12, 100), pct(19), pct(20)], [92.37, 91.07, 99.17, 97, 96.46]);
+        const c12 = mp59.compositeValue(seed59.initialMetricParts.filter(p => p.metric_id === 12), rows.filter(r => r.metric_id === 12), ytd, null);
+        assert.strictEqual(Math.round(c12.value * 10000) / 10000, 99.1746);
+        assert.deepStrictEqual(c12.parts[0].events.map(e => [e.event, e.value === null ? null : Math.round(e.value * 100) / 100]), [['EPICC Podcast', 99.17], ['Perspektif', null], ['DLC', null], ['Young', null], ['EVD', null]]);
+        // a workbook whose only sheet is "Raw Data" is refused (personal data is never parsed)
+        await assert.rejects(readSheet59(await buildXlsx59([['NIP', 'Name'], ['123', 'X']], { sheetName: 'Raw Data' }), { preferSheet: 'Pivot', refuseSheet: /^\s*raw\s*data\s*$/i }), /is not read/);
+      });
+
+      await runTest('[POSITIVE] Upload of a part (stacked months 2004, "Sept" month name, a former directorate name, a text answer, "-" rows): 200, rows stored with the current directorate name, Nov+ months refused only when scored, history + audit METRIC_PART_UPLOAD; the file is not kept', async () => {
+        am59 = await createMetric59({ metric_name: `RT59 Composite ${stamp59}` });
+        await addPart(am59.metric_id, 'P1', 'Part One', 1, { score_label: 'Part One', question_labels: ['Q1 rating', 'Q2 reason'], respondents_label: 'Jumlah Responden', period_label: 'Periode (Join Date)' });
+        await addPart(am59.metric_id, 'P2', 'Part Two', 2, null);
+        await addPart(am59.metric_id, 'P3', 'Part Three', 3, null);
+        const aliasName = alias59 ? alias59.alias_name : dirB;
+        const aliasTarget = alias59 ? alias59.directorate_name : dirB;
+        const buf = await buildXlsx59([HEAD,
+          ['CIMB Niaga', 'Bankwide', 2004, 'Jan', 4, 4, 'Suitable role', 10, 38000],
+          [dirA, 'Directorate', 2004, 'Jan', 3, 3, '=cmd', 4, 38000],
+          [aliasName, 'Directorate', 2004, 'Jan', 5, 5, 'Career', 6, 38000],
+          ['CIMB Niaga', 'Bankwide', 2004, 'Feb', '-', '-', '-', 0, 38031],
+          [dirA, 'Directorate', 2004, 'Feb', 4.5, 4.5, 'x', 2, 38031],
+          ['CIMB Niaga', 'Bankwide', 2004, 'Sept', 4.6, 4.6, 'y', 5, 38231]
+        ]);
+        const { status, body } = await postPart(am59.metric_id, 'P1', buf, 'module59_p1.xlsx');
+        assert.strictEqual(status, 200, JSON.stringify(body).slice(0, 400));
+        assert.deepStrictEqual([body.rows_imported, body.replaced_rows, body.periods], [6, 0, ['2004-01', '2004-02', '2004-09']]);
+        assert.deepStrictEqual(body.bankwide_by_month.map(b => [b.period, b.value]), [['2004-01', 4], ['2004-02', null], ['2004-09', 4.6]]);
+        const stored = await st59.getMetricPartResults(am59.metric_id, 'P1');
+        assert.ok(stored.some(r => r.directorate === aliasTarget && r.score === 5), 'a former name is stored as the current directorate');
+        assert.ok(stored.find(r => r.directorate === dirA && r.month === 1).questions.some(q => q.value === '=cmd'));
+        assert.strictEqual(stored.find(r => r.directorate === dirA && r.month === 1).period_text, '2004-01-14', 'Excel date serial -> date');
+        const hist = (await (await fetch(`${BASE_URL}/api/admin/metric-parts/${am59.metric_id}`)).json()).parts.find(p => p.part_key === 'P1').uploads;
+        assert.ok(hist.length === 1 && hist[0].file_name === 'module59_p1.xlsx' && /^[0-9a-f]{64}$/.test(hist[0].file_sha256));
+        const a = (await st59.getAuditLog(30, { includeTest: true })).find(x => x.action === 'METRIC_PART_UPLOAD' && String(x.target).includes(body.upload_id));
+        assert.ok(a && a.is_test === true && /P1; 6 rows \(0 replaced\); 2004-01 2004-02 2004-09/.test(a.target), JSON.stringify(a));
+      });
+
+      await runTest('[POSITIVE] Scoring: part = average of its months with a value (bankwide rows; "-" month not counted), parts without data are N/A, metric = average of the parts with a value, score = value / 5 x 100; MTD = that month; a directorate filter reads that directorate; several directorates = respondent-weighted', async () => {
+        const y = await calc59('mode=YTD&year=2004', am59.metric_id);
+        assert.deepStrictEqual([y.raw_value, y.normalized_score, y.parts_with_data, y.metric_parts.map(p => [p.part_key, p.value, p.has_data, p.months_label])],
+          [4.3, 86, 1, [['P1', 4.3, true, 'Jan-Sep 2004'], ['P2', null, false, null], ['P3', null, false, null]]]);
+        const p2 = await postPart(am59.metric_id, 'P2', await buildXlsx59([HEAD, ['CIMB Niaga', 'Bankwide', 2004, 'Mar', 3.5, 3.5, '-', 8, '']]), 'module59_p2.xlsx');
+        assert.strictEqual(p2.status, 200, JSON.stringify(p2.body).slice(0, 300));
+        const y2 = await calc59('mode=YTD&year=2004', am59.metric_id);
+        assert.deepStrictEqual([y2.raw_value, y2.normalized_score, y2.parts_with_data], [3.9, 78, 2], '(4.3 + 3.5) / 2');
+        const feb = await calc59('mode=MTD&year=2004&month=02', am59.metric_id);
+        assert.deepStrictEqual([feb.status, feb.raw_value], ['NO_DATA', null], 'February bankwide is "-"');
+        const dir = await calc59(`mode=YTD&year=2004&directorate=${encodeURIComponent(dirA)}`, am59.metric_id);
+        assert.deepStrictEqual([dir.raw_value, dir.parts_with_data], [3.75, 1], `${dirA}: (3 + 4.5) / 2`);
+        const pooled = mp59.compositeValue(await st59.getMetricParts(am59.metric_id), await st59.getMetricPartResults(am59.metric_id), { mode: 'MTD', year: '2004', month: '01' },
+          { directorates: [dirA, alias59 ? alias59.directorate_name : dirB] });
+        assert.strictEqual(pooled.parts[0].value, (3 * 4 + 5 * 6) / 10, 'respondent-weighted mean of two directorates');
+        const d = await detail59(am59.metric_id, 'mode=YTD&year=2004');
+        assert.deepStrictEqual([d.current_raw_value, d.normalized_score, d.composite.parts_with_data, d.parts.map(p => p.months_count), d.last_update_label, d.total_respondents],
+          [3.9, 78, 2, [2, 1, 0], 'September 2004', 23]);
+      });
+
+      await runTest('[POSITIVE] Re-upload of a part replaces only the months in the file (January 2004 replaced, September kept); template = the part layout (latest upload columns / generic Q1..Q3); evidence CSV = stored rows with question headers, formula-escaped', async () => {
+        const { status, body } = await postPart(am59.metric_id, 'P1', await buildXlsx59([HEAD, ['CIMB Niaga', 'Bankwide', 2004, 'January', 2, 2, '-', 3, '']]), 'module59_p1_again.xlsx');
+        assert.strictEqual(status, 200, JSON.stringify(body).slice(0, 300));
+        assert.strictEqual(body.replaced_rows, 3, 'the 3 January rows');
+        const rows = await st59.getMetricPartResults(am59.metric_id, 'P1');
+        assert.deepStrictEqual(rows.map(r => `${r.month}:${r.org_level}`).sort(), ['1:BANKWIDE', '2:BANKWIDE', '2:DIRECTORATE', '9:BANKWIDE']);
+        const t = await fetch(`${BASE_URL}/api/admin/metric-parts/${am59.metric_id}/P1/template`);
+        assert.strictEqual(t.status, 200);
+        const tr = await readSheet59(Buffer.from(await t.arrayBuffer()));
+        assert.deepStrictEqual(tr[0].cells.map(c => c.value), HEAD.slice(0, 4).concat(['Part Score', 'Q1 rating', 'Q2 reason', 'Jumlah Responden', 'Periode (Join Date)']));
+        assert.deepStrictEqual(tr[1].cells.slice(0, 2).map(c => c.value), ['CIMB Niaga', 'Bankwide']);
+        const t3 = await readSheet59(Buffer.from(await (await fetch(`${BASE_URL}/api/admin/metric-parts/${am59.metric_id}/P3/template`)).arrayBuffer()));
+        assert.deepStrictEqual(t3[0].cells.map(c => c.value), ['Directorate', 'Level', 'Year', 'Month', 'Part Three', 'Q1', 'Q2', 'Q3', 'Jumlah Responden', 'Periode']);
+        const lines = csv59(await (await fetch(`${BASE_URL}/api/admin/metric-parts/${am59.metric_id}/P1/evidence?period=2004`)).text());
+        assert.strictEqual(lines[0], 'Metric_ID,Metric_Name,Part,Directorate,Level,Year,Month,Period,Part_Score,Q1 rating,Q2 reason,Jumlah_Responden,Periode,Has_Value,Upload_ID,File_Name,File_SHA256,Uploaded_By,Uploaded_At');
+        assert.strictEqual(lines.length, 5);
+        const feb = csv59(await (await fetch(`${BASE_URL}/api/admin/metric-parts/${am59.metric_id}/P1/evidence?period=2004-02`)).text());
+        assert.ok(feb.some(l => l.includes(',Bankwide,2004,February,2004-02,-,-,-,0,') && l.includes(',NO,')), feb.join('\n'));
+        const all = await (await fetch(`${BASE_URL}/api/admin/metric-parts/${am59.metric_id}/P1/evidence`)).text();
+        assert.ok(!all.includes(',=cmd'), 'the January row with "=cmd" was replaced');
+        const rowsP1 = await st59.getMetricPartResults(am59.metric_id, 'P1');
+        assert.ok(rowsP1.every(r => !r.questions.some(q => q.value === '=cmd')));
+      });
+
+      await runTest('[NEGATIVE] A bad summary file is refused as a whole (400, every error with row + column, nothing stored): unknown directorate, score 6, bad month, a future month with a score, a duplicate row, respondents -1, no "Jumlah Responden" header; .csv -> 415; unknown part / metric without parts -> 404; bad id -> 400', async () => {
+        const before = (await st59.getMetricPartResults(am59.metric_id)).length;
+        const now = new Date();
+        const bad = await postPart(am59.metric_id, 'P1', await buildXlsx59([HEAD,
+          ['Nowhere Directorate', 'Directorate', 2004, 'Jan', 4, 4, '', 1, ''],
+          ['CIMB Niaga', 'Bankwide', 2004, 'Jan', 6, 4, '', 1, ''],
+          ['CIMB Niaga', 'Bankwide', 2004, 'Smarch', 4, 4, '', 1, ''],
+          ['CIMB Niaga', 'Bankwide', now.getFullYear() + 1, 'Jan', 4, 4, '', 1, ''],
+          [dirA, 'Directorate', 2004, 'Apr', 4, 4, '', 1, ''],
+          [dirA, 'Directorate', 2004, 'April', 4, 4, '', 1, ''],
+          [dirA, 'Directorate', 2004, 'May', 4, 4, '', -1, '']
+        ]), 'module59_bad.xlsx');
+        assert.strictEqual(bad.status, 400);
+        assert.ok(/nothing was stored/.test(bad.body.error));
+        const got = bad.body.errors.map(e => [e.row_number, e.column]);
+        assert.deepStrictEqual(got, [[2, 'A'], [3, 'E'], [4, 'D'], [5, 'D'], [7, 'A'], [8, 'H']], JSON.stringify(bad.body.errors));
+        assert.ok(/not in the directorate master/.test(bad.body.errors[0].reason) && /between 1 and 5|from 1 to 5/.test(bad.body.errors[1].reason) && /in the future/.test(bad.body.errors[3].reason) && /more than once/.test(bad.body.errors[4].reason));
+        const noResp = await postPart(am59.metric_id, 'P1', await buildXlsx59([['Directorate', 'Level', 'Year', 'Month', 'Score', 'Q1'], ['CIMB Niaga', 'Bankwide', 2004, 'Jan', 4, 4]]));
+        assert.deepStrictEqual([noResp.status, /Jumlah Responden/.test(noResp.body.errors[0].reason)], [400, true]);
+        const fd = new FormData();
+        fd.append('file', new Blob(['a,b']), 'x.csv');
+        assert.strictEqual((await fetch(`${BASE_URL}/api/admin/metric-parts/${am59.metric_id}/P1/upload`, { method: 'POST', body: fd })).status, 415);
+        assert.strictEqual((await fetch(`${BASE_URL}/api/admin/metric-parts/${am59.metric_id}/NOPE/template`)).status, 404);
+        assert.strictEqual((await fetch(`${BASE_URL}/api/admin/metric-parts/14`)).status, 404, 'metric 14 has no parts');
+        assert.strictEqual((await fetch(`${BASE_URL}/api/admin/metric-parts/abc`)).status, 400);
+        assert.strictEqual((await st59.getMetricPartResults(am59.metric_id)).length, before, 'nothing stored');
+      });
+
+      await runTest('[POSITIVE] A % part with event blocks (structural fallback without header fill): per-event averages, the part score is the % itself (no / 5); evidence in long format Event | Question | Value', async () => {
+        const m = await createMetric59({ metric_name: `RT59 Events ${stamp59}`, scale_type: 'PERCENTAGE', target_value: 80, target_display: '> 80%' });
+        await addPart(m.metric_id, 'EV', 'Events', 1, { score_scale: 'PERCENT' });
+        const Q = ['Makna', 'Hadir lagi'];
+        const head = ['Directorate', 'Level', 'Year', 'Month', 'Satisfaction Event', 'Event A', ...Q, 'Event B', ...Q, 'Periode (Start time)', 'Jumlah Responden Valid'];
+        const up = await postPart(m.metric_id, 'EV', await buildXlsx59([head,
+          ['CIMB Niaga', 'Bankwide', 2004, 'Sep', 90, 90, 100, 80, '-', '-', '-', 38231, 20],
+          ['CIMB Niaga', 'Bankwide', 2004, 'Oct', 96, 94, 100, 88, 98, 100, 96, 38261, 10]
+        ]), 'module59_events.xlsx');
+        assert.strictEqual(up.status, 200, JSON.stringify(up.body).slice(0, 300));
+        assert.deepStrictEqual(up.body.columns.event_labels, ['Event A', 'Event B']);
+        const y = await calc59('mode=YTD&year=2004', m.metric_id);
+        assert.deepStrictEqual([y.raw_value, y.normalized_score], [93, 93]);
+        const d = await detail59(m.metric_id, 'mode=YTD&year=2004');
+        assert.deepStrictEqual(d.parts[0].events.map(e => [e.event, e.value, e.months_count]), [['Event A', 92, 2], ['Event B', 98, 1]]);
+        const lines = csv59(await (await fetch(`${BASE_URL}/api/admin/metric-parts/${m.metric_id}/EV/evidence?period=2004-10`)).text());
+        assert.ok(lines[0].includes(',Event,Question,Value,'));
+        assert.strictEqual(lines.length, 1 + 6, 'one line per event / question of the October row');
+        assert.ok(lines.some(l => l.includes(',Event B,(event score),98,')) && lines.some(l => l.includes(',Event A,Hadir lagi,88,')));
+      });
+
+      await runTest('[POSITIVE] OUTCOME score-column part (metrics 19 / 20 layout: one combined file, no respondents column): static raw_value until the first upload, then the average of the months; each metric reads its own column by header text; several directorates = plain mean', async () => {
+        const m = await createMetric59({ metric_name: `RT59 Learning ${stamp59}`, metric_type: 'OUTCOME', raw_value: 4.2 });
+        await addPart(m.metric_id, 'ML', 'Mandatory', 1, { score_label: 'Mandatory Learning', score_column: 'Mandatory Learning', respondents_column: false, question_labels: [] });
+        const before = await calc59('mode=YTD&year=2004', m.metric_id);
+        assert.deepStrictEqual([before.raw_value, before.has_data, before.data_upload, before.parts_with_data], [4.2, true, 'PART_SUMMARY', 0], 'static value before any upload');
+        const dBefore = await detail59(m.metric_id, 'mode=YTD&year=2004');
+        assert.deepStrictEqual([dBefore.data_upload, dBefore.outcome_upload, dBefore.current_raw_value], ['PART_SUMMARY', false, 4.2]);
+        const head = ['Directorate', 'Level', 'Year', 'Month', 'Mandatory Learning', 'Non Mandatory Learning'];
+        const up = await postPart(m.metric_id, 'ML', await buildXlsx59([head,
+          ['CIMB Niaga', 'Bankwide', 2004, 'Jun', 4.8, 1.0],
+          ['CIMB Niaga', 'Bankwide', 2004, 'Jul', 4.6, 1.0],
+          [dirA, 'Directorate', 2004, 'Jun', 4.0, '-'],
+          [dirB, 'Directorate', 2004, 'Jun', 5.0, '-'],
+          [dirA, 'Directorate', 2004, 'Jul', '-', 2]
+        ]), 'module59_learning.xlsx');
+        assert.strictEqual(up.status, 200, JSON.stringify(up.body).slice(0, 300));
+        const y = await calc59('mode=YTD&year=2004', m.metric_id);
+        assert.deepStrictEqual([y.raw_value, y.normalized_score], [4.7, 94]);
+        const two = mp59.compositeValue(await st59.getMetricParts(m.metric_id), await st59.getMetricPartResults(m.metric_id), { mode: 'MTD', year: '2004', month: '06' }, { directorates: [dirA, dirB] });
+        assert.strictEqual(two.parts[0].value, 4.5, 'plain mean (no respondents column)');
+        const t = await readSheet59(Buffer.from(await (await fetch(`${BASE_URL}/api/admin/metric-parts/${m.metric_id}/ML/template`)).arrayBuffer()));
+        assert.deepStrictEqual(t[0].cells.map(c => c.value), ['Directorate', 'Level', 'Year', 'Month', 'Mandatory Learning']);
+        const miss = await postPart(m.metric_id, 'ML', await buildXlsx59([['Directorate', 'Level', 'Year', 'Month', 'Other'], ['CIMB Niaga', 'Bankwide', 2004, 'Jun', 4]]));
+        assert.deepStrictEqual([miss.status, /no column "Mandatory Learning"/.test(miss.body.errors[0].reason)], [400, true]);
+      });
+
+      await runTest('[POSITIVE] JSON backend in-process (same contract): saveMetricPartUpload replaces the months of the file, results / uploads read back like SQL Server, respondents null kept; store.json and auth.json restored byte-identically', async () => {
+        const dataDir = path59.join(__dirname, '..', 'server', 'data');
+        const files = ['store.json', 'auth.json'].map(f => path59.join(dataDir, f));
+        const saved = files.map(f => (fs59.existsSync(f) ? fs59.readFileSync(f) : null));
+        const fakeId = 990000 + Math.floor(Math.random() * 9000);
+        const row = (y, m, score, respondents, extra = {}) => ({ org_level: 'BANKWIDE', directorate: null, year: y, month: m, score, respondents, questions: [{ label: 'Q', value: 'txt' }], period_text: null, ...extra });
+        const run = async st => {
+          const a = await st.saveMetricPartUpload({ upload_id: `rt59-a-${stamp59}`, metric_id: fakeId, part_key: 'K', file_name: 'a.xlsx', file_sha256: 'f'.repeat(64), uploaded_by: 'RT59', periods: ['2004-01', '2004-02'], columns: { score_label: 'S' } },
+            [row(2004, 1, 4, 3), row(2004, 2, null, 0), row(2004, 1, 3.5, null, { org_level: 'DIRECTORATE', directorate: dirA })]);
+          const b = await st.saveMetricPartUpload({ upload_id: `rt59-b-${stamp59}`, metric_id: fakeId, part_key: 'K', file_name: 'b.xlsx', uploaded_by: 'RT59', periods: ['2004-02'], columns: null }, [row(2004, 2, 4.25, 7)]);
+          return {
+            saves: [a.replaced, b.replaced, a.record.total_rows, b.record.total_rows],
+            rows: (await st.getMetricPartResults(fakeId)).map(r => [r.part_key, r.org_level, r.directorate, r.year, r.month, r.score, r.respondents, r.questions, r.upload_id.replace(stamp59, '')]),
+            uploads: (await st.getMetricPartUploads(fakeId, 'K')).map(u => [u.upload_id.replace(stamp59, ''), u.total_rows, u.replaced_rows, u.periods, u.columns])
+          };
+        };
+        let jsonOut;
+        let sqlOut;
+        try {
+          jsonOut = await run(require('../server/db/jsonStorage'));
+          sqlOut = await run(st59);
+        } finally {
+          files.forEach((f, i) => { if (saved[i] === null) { if (fs59.existsSync(f)) fs59.unlinkSync(f); } else fs59.writeFileSync(f, saved[i]); });
+          await q59('DELETE FROM dbo.px_metric_part_results WHERE metric_id = @id; DELETE FROM dbo.px_metric_part_uploads WHERE metric_id = @id', { id: fakeId });
+        }
+        files.forEach((f, i) => assert.ok(saved[i] === null ? !fs59.existsSync(f) : Buffer.compare(fs59.readFileSync(f), saved[i]) === 0, `${path59.basename(f)} restored byte-identically`));
+        assert.deepStrictEqual(jsonOut, sqlOut);
+        assert.deepStrictEqual(sqlOut.saves, [0, 1, 3, 1]);
+        assert.deepStrictEqual(sqlOut.rows.map(r => [r[1], r[4], r[5], r[6]]), [['BANKWIDE', 1, 4, 3], ['DIRECTORATE', 1, 3.5, null], ['BANKWIDE', 2, 4.25, 7]]);
+      });
+
+      await runTest('[POSITIVE] Deleting a composite metric deletes its parts, summary rows and uploads (documented cascade); the live metrics 5 / 7 / 12 / 19 / 20 part rows are untouched by this module', async () => {
+        const id = am59.metric_id;
+        assert.strictEqual((await adminJson('DELETE', `/api/admin/metrics/${id}`)).status, 200);
+        metricIds59.splice(metricIds59.indexOf(id), 1);
+        assert.deepStrictEqual([(await st59.getMetricParts(id)).length, (await st59.getMetricPartResults(id)).length, (await st59.getMetricPartUploads(id)).length], [0, 0, 0]);
+        assert.strictEqual(await live59(), liveBefore59);
+      });
+    } finally {
+      for (const id of [...metricIds59].reverse()) await adminJson('DELETE', `/api/admin/metrics/${id}`);
+      await pool59.close();
+    }
+  }
+
+  // --- MODULE 60 (v2.55.0): "REAL DATA NOT AVAILABLE YET" SWITCH (px_metrics.data_status; live 4, 6, 8, 10, 23, 26 = N/A) ---
+  // Switches only a metric this module creates; the six live metrics are only read.
+  console.log('\n📦 MODULE 60: "Real data not available yet" switch - N/A, out of every index, records hidden (Positive & Negative Testing)');
+  if (!skipModuleBlock(60)) {
+    const st60 = require('../server/db/storage');
+    let m60 = null;
+    await setLegacyFixtures(false); // the live N/A state of 4, 6, 8, 10, 23, 26
+    try {
+      await runTest('[POSITIVE] Live: metrics 4, 6, 8, 10, 23, 26 are N/A ("Real data not available yet"), out of the Survey / Outcome index; their detail shows no records / responses / question scores', async () => {
+        const calc = await (await fetch(`${BASE_URL}/api/metrics/calculate?mode=YTD`)).json();
+        for (const id of [4, 6, 8, 10, 23, 26]) {
+          const m = calc.metrics.find(x => x.metric_id === id);
+          assert.strictEqual((await st60.getMetricById(id)).data_status, 'NOT_AVAILABLE', `metric ${id}`);
+          assert.deepStrictEqual([m.status, m.not_applicable, m.not_applicable_reason, m.data_not_available, m.raw_value, m.normalized_score], ['NO_DATA', true, 'Real data not available yet', true, null, null], `metric ${id}`);
+        }
+        const surveys = calc.metrics.filter(x => x.metric_type === 'SURVEY' && x.has_data);
+        assert.ok(!surveys.some(x => [6, 8, 10, 23, 26].includes(x.metric_id)));
+        const expected = surveys.reduce((a, x) => a + x.normalized_score * x.weight, 0) / surveys.reduce((a, x) => a + x.weight, 0);
+        assert.ok(Math.abs(calc.survey_index - expected) < 0.01, 'Survey Index without the N/A metrics');
+        const d8 = await (await fetch(`${BASE_URL}/api/metrics/8/detail?mode=YTD`)).json();
+        assert.deepStrictEqual([d8.not_applicable_reason, d8.responses.length, d8.questions_breakdown.length, d8.total_respondents, d8.current_raw_value], ['Real data not available yet', 0, 0, 0, null]);
+        const d4 = await (await fetch(`${BASE_URL}/api/metrics/4/detail?mode=YTD`)).json();
+        assert.deepStrictEqual([d4.operational_records.length, d4.status, d4.data_not_available], [0, 'NO_DATA', true]);
+      });
+
+      await runTest('[POSITIVE] The switch on a metric: ticked -> N/A and out of the Outcome Index (and back in when unticked, data kept); audited METRIC_UPDATE; bad value -> 400', async () => {
+        const r = await adminJson('POST', '/api/admin/metrics', { metric_name: `RT60 Switch ${Date.now().toString(36)}`, metric_type: 'OUTCOME', scale_type: 'PERCENTAGE', journey_id: 1, checkpoint_id: 1, raw_value: 10, target_value: 85, min_threshold: 75, weight: 1 });
+        const b = await r.json();
+        assert.strictEqual(r.status, 201, JSON.stringify(b).slice(0, 200));
+        m60 = b.metric;
+        const idx = async () => (await (await fetch(`${BASE_URL}/api/metrics/calculate?mode=YTD`)).json());
+        const on = await idx();
+        assert.strictEqual(on.metrics.find(x => x.metric_id === m60.metric_id).raw_value, 10);
+        assert.strictEqual((await adminJson('PUT', `/api/admin/metrics/${m60.metric_id}`, { data_not_available: true })).status, 200);
+        const off = await idx();
+        const mo = off.metrics.find(x => x.metric_id === m60.metric_id);
+        assert.deepStrictEqual([mo.status, mo.not_applicable, mo.not_applicable_reason], ['NO_DATA', true, 'Real data not available yet']);
+        assert.ok(off.outcome_index > on.outcome_index, 'a 10% metric left the Outcome Index');
+        const a = (await st60.getAuditLog(20, { includeTest: true })).find(x => x.action === 'METRIC_UPDATE' && String(x.target).startsWith(`#${m60.metric_id}`));
+        assert.ok(a && /data_status/.test(a.target), JSON.stringify(a));
+        assert.strictEqual((await adminJson('PUT', `/api/admin/metrics/${m60.metric_id}`, { data_status: 'MAYBE' })).status, 400);
+        assert.strictEqual((await adminJson('PUT', `/api/admin/metrics/${m60.metric_id}`, { data_not_available: 'yes' })).status, 400);
+        assert.strictEqual((await adminJson('PUT', `/api/admin/metrics/${m60.metric_id}`, { data_status: 'AVAILABLE' })).status, 200);
+        const back = await idx();
+        assert.strictEqual(back.metrics.find(x => x.metric_id === m60.metric_id).raw_value, 10);
+        assert.ok(Math.abs(back.outcome_index - on.outcome_index) < 0.01);
+        assert.strictEqual((await st60.getMetricById(m60.metric_id)).data_status, 'AVAILABLE', 'stored explicitly, so the boot never sets it back');
+      });
+    } finally {
+      if (m60) await adminJson('DELETE', `/api/admin/metrics/${m60.metric_id}`);
     }
   }
 }

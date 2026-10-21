@@ -38,6 +38,7 @@ import { monthName } from '../utils/months';
 import { surveySourceLabel, surveySourceBadgeClass, surveyTemplateFileName } from '../utils/surveySource';
 import SocialMediaUploadModal from './SocialMediaUploadModal';
 import OutcomeUploadModal from './OutcomeUploadModal';
+import PartSummaryModal from './PartSummaryModal';
 import { tierBandsText, tierValue } from '../utils/scoreTiers';
 
 function normalizeDateString(dateVal) {
@@ -129,6 +130,7 @@ export default function MetricDetailModal({
   const [essViewMode, setEssViewMode] = useState('table'); // 'table' | 'cards'
   const [isSocialUploadOpen, setIsSocialUploadOpen] = useState(false); // v2.52.0: social media data of metric 1 (Admin)
   const [isOutcomeUploadOpen, setIsOutcomeUploadOpen] = useState(false); // v2.54.0: monthly values of an OUTCOME metric (Admin)
+  const [isPartSummaryOpen, setIsPartSummaryOpen] = useState(false); // v2.55.0: summary parts of a composite metric (Admin)
 
   useEffect(() => {
     if (isOpen && metricId) {
@@ -178,6 +180,9 @@ export default function MetricDetailModal({
   const isNoData = detailData?.status === 'NO_DATA';
   // v2.54.0: a tier-scored metric whose tiers are not configured yet: value N/A (status NO_DATA, not counted in the PX Index)
   const isNotApplicable = isNoData && !!detailData?.not_applicable;
+  // v2.55.0: composite summary metric (7, 5, 12): scored from the uploaded part summaries, not from respondent rows
+  const isPartSummary = detailData?.data_upload === 'PART_SUMMARY';
+  const summaryParts = detailData?.parts || [];
 
   const isCampus = detailData?.metric_id === 2 || detailData?.target_audience === 'CAMPUS_STUDENTS';
   const isCandidate = detailData?.metric_id === 5 || detailData?.target_audience === 'JOB_APPLICANTS';
@@ -315,7 +320,7 @@ export default function MetricDetailModal({
                   </div>
                   <div className="text-[10px] text-gray-500 mt-0.5">
                     {isNotApplicable
-                      ? <>Score tiers not configured yet - N/A, not counted in the PX Index</>
+                      ? <>{detailData.not_applicable_reason || 'Score tiers not configured yet'} - N/A, not counted in the PX Index</>
                       : isNoData
                       ? <>No data in this period - left out of the index</>
                       : <>Calculated Index Score: <strong className="text-[#ED1C24]">{detailData.normalized_score}%</strong></>}
@@ -326,9 +331,17 @@ export default function MetricDetailModal({
                       {tierValue(detailData.tier_info.value, detailData.tier_info.unit)} → tier {detailData.tier_info.tier} → <strong>{detailData.tier_info.score.toFixed(2)} / 5</strong> = {detailData.tier_info.percent.toFixed(2)}%{detailData.tier_info.capped ? ' (capped)' : ''}
                     </div>
                   )}
+                  {isPartSummary && !isNoData && summaryParts.length > 1 && (
+                    <div className="text-[10px] text-blue-700 mt-0.5">
+                      Average of {detailData.composite?.parts_with_data} of {summaryParts.length} parts (parts without data are N/A, not counted)
+                    </div>
+                  )}
                   {isOutcome && detailData.value_basis === 'MONTHLY_VALUES' && (
                     <div className="text-[10px] text-blue-700 mt-0.5">
-                      {isNoData ? 'No uploaded month in this period' : `Value of ${detailData.outcome_period_label} (latest uploaded month in the period)`}
+                      {isNoData ? 'No uploaded month in this period'
+                        : detailData.outcome_aggregation === 'AVERAGE'
+                          ? `${detailData.outcome_average_label}: ${formatMetricValue(detailData.current_raw_value, detailData.unit, detailData.scale_type)}`
+                          : `Value of ${detailData.outcome_period_label} (latest uploaded month in the period)`}
                     </div>
                   )}
                 </div>
@@ -374,7 +387,23 @@ export default function MetricDetailModal({
                     </div>
 
                     {/* Survey: Quick Actions (template / evidence / upload = Admin or the PIC of this metric; can_upload comes from the server) */}
-                    {(isAdmin || detailData.can_upload) && <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-xl">
+                    {isPartSummary && isAdmin && <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-xl">
+                      <div className="text-[11px] font-bold text-gray-500 uppercase">Summary Data Operations</div>
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        {[['Template', Download], ['Evidence', FileText], ['Upload', FileSpreadsheet]].map(([label, Icon]) => (
+                          <button
+                            key={label}
+                            onClick={() => setIsPartSummaryOpen(true)}
+                            className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
+                            title={`${label} of a summary part (choose the part)`}
+                          >
+                            <Icon className="w-3 h-3 text-slate-500 shrink-0" />
+                            <span>{label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>}
+                    {!isPartSummary && (isAdmin || detailData.can_upload) && <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-xl">
                       <div className="text-[11px] font-bold text-gray-500 uppercase flex items-center justify-between">
                         <span>Survey Data Operations</span>
                       </div>
@@ -459,6 +488,19 @@ export default function MetricDetailModal({
 
               {/* v2.54.0: OUTCOME data operations (Admin): Template / Evidence / Upload - monthly values, metric 1 social media,
                   metric 11 event attendance (Evidence only) */}
+              {isOutcome && isPartSummary && isAdmin && (
+                <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-[11px] font-bold text-gray-500 uppercase">Summary Data Operations{!detailData.parts?.length ? ' (no summary uploaded yet - static value)' : ''}</div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {[['Template', Download], ['Evidence', FileText], ['Upload', FileSpreadsheet]].map(([label, Icon]) => (
+                      <button key={label} onClick={() => setIsPartSummaryOpen(true)} className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs" title={`${label} of the summary (${detailData.metric_name})`}>
+                        <Icon className="w-3 h-3 text-slate-500 shrink-0" />
+                        <span>{label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {isOutcome && isAdmin && detailData.evidence_type && (
                 <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl flex flex-wrap items-center justify-between gap-2">
                   <div className="text-[11px] font-bold text-gray-500 uppercase">Outcome Data Operations</div>
@@ -556,7 +598,7 @@ export default function MetricDetailModal({
 
               {/* Navigation Sub-Menu Tabs */}
               <div className="flex border-b border-gray-200">
-                {isSurvey ? (
+                {isSurvey || isPartSummary ? (
                   <>
                     <button
                       onClick={() => setActiveTab('primary')}
@@ -567,9 +609,9 @@ export default function MetricDetailModal({
                       }`}
                     >
                       <HelpCircle className="w-4 h-4" />
-                      <span>Question Breakdown & Average Scores ({detailData.questions_breakdown?.length || 0})</span>
+                      <span>{isPartSummary ? `Summary Parts (${summaryParts.length})` : `Question Breakdown & Average Scores (${detailData.questions_breakdown?.length || 0})`}</span>
                     </button>
-                    {!isEss && (
+                    {!isEss && !isPartSummary && (
                     <button
                       onClick={() => setActiveTab('secondary')}
                       className={`pb-2.5 px-4 text-xs font-bold transition flex items-center space-x-2 border-b-2 ${
@@ -596,6 +638,8 @@ export default function MetricDetailModal({
                       <SlidersHorizontal className="w-4 h-4" />
                       <span>HR Measurement Specifications & Targets</span>
                     </button>
+                    {/* v2.55.0: no Internal Transaction Records tab when the server says so (metric 1: social media drilldown off for now) */}
+                    {!detailData.operational_records_hidden && (
                     <button
                       onClick={() => setActiveTab('secondary')}
                       className={`pb-2.5 px-4 text-xs font-bold transition flex items-center space-x-2 border-b-2 ${
@@ -607,12 +651,54 @@ export default function MetricDetailModal({
                       <Database className="w-4 h-4" />
                       <span>Internal Transaction Records ({operationalRecords.length})</span>
                     </button>
+                    )}
                   </>
                 )}
               </div>
 
+              {/* v2.55.0: TAB 1 FOR A COMPOSITE SUMMARY METRIC - per part its value (average of its months), months used, N/A */}
+              {isPartSummary && activeTab === 'primary' && (
+                <div className="space-y-3">
+                  <div className="text-xs text-gray-500">
+                    Each part = the average of its months with a value in {periodLabel}{summaryParts.length > 1 ? '; the metric = the average of the parts with a value' : ''}:
+                  </div>
+                  <div className="border border-gray-200 rounded-xl overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-gray-100 text-gray-700 font-bold uppercase text-[10.5px]">
+                        <tr><th className="py-2 px-3">Part</th><th className="py-2 px-3 text-right">Value</th><th className="py-2 px-3 text-right">Score</th><th className="py-2 px-3">Months used</th><th className="py-2 px-3">Last upload</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 bg-white">
+                        {summaryParts.length === 0 ? (
+                          <tr><td colSpan="5" className="text-center py-6 text-gray-400">{detailData.data_not_available ? 'Real data not available yet.' : 'No summary uploaded yet (the static value is shown).'}</td></tr>
+                        ) : summaryParts.map(p => (
+                          <React.Fragment key={p.part_key}>
+                            <tr>
+                              <td className="py-2 px-3 font-bold text-gray-800">{p.part_name}</td>
+                              <td className="py-2 px-3 text-right font-mono">{p.has_data ? (p.scale === 'PERCENT' ? `${p.value}%` : `${p.value} / 5`) : <span className="px-1.5 py-0.5 rounded bg-gray-200 text-gray-600 text-[10px] font-bold">N/A</span>}</td>
+                              <td className="py-2 px-3 text-right font-mono">{p.has_data ? `${p.score}%` : '—'}</td>
+                              <td className="py-2 px-3 text-gray-600">
+                                {p.has_data ? `${p.months_count} month${p.months_count === 1 ? '' : 's'} (${p.months_label}): ${p.months.map(m => `${m.period_label.slice(0, 3)} ${m.value}`).join(', ')}` : 'No month with a value in this period - not counted'}
+                              </td>
+                              <td className="py-2 px-3 text-gray-500 text-[11px]">{p.last_upload ? `${p.last_upload.file_name || '—'} (${new Date(p.last_upload.uploaded_at).toLocaleDateString('en-GB')})` : 'No upload yet'}</td>
+                            </tr>
+                            {(p.events || []).map(ev => (
+                              <tr key={`${p.part_key}-${ev.event}`} className="bg-gray-50/60">
+                                <td className="py-1.5 px-3 pl-8 text-gray-600">{ev.event}</td>
+                                <td className="py-1.5 px-3 text-right font-mono text-gray-600">{ev.value === null ? 'N/A' : (p.scale === 'PERCENT' ? `${ev.value}%` : ev.value)}</td>
+                                <td className="py-1.5 px-3 text-right font-mono text-gray-600">{ev.score === null ? '—' : `${ev.score}%`}</td>
+                                <td className="py-1.5 px-3 text-gray-500" colSpan="2">{ev.value === null ? 'No value in this period' : `${ev.months_count} month${ev.months_count === 1 ? '' : 's'}`}</td>
+                              </tr>
+                            ))}
+                          </React.Fragment>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               {/* TAB 1 FOR SURVEY: QUESTIONS & AVERAGE BREAKDOWN */}
-              {isSurvey && activeTab === 'primary' && (
+              {isSurvey && !isPartSummary && activeTab === 'primary' && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <div className="text-xs text-gray-500">
@@ -1096,7 +1182,7 @@ export default function MetricDetailModal({
               )}
 
               {/* TAB 1 FOR OUTCOME: HR MEASUREMENT SPECIFICATIONS */}
-              {isOutcome && activeTab === 'primary' && (
+              {isOutcome && !isPartSummary && activeTab === 'primary' && (
                 <div className="space-y-4">
                   <div className="p-4 bg-blue-50/60 border border-blue-200 rounded-xl space-y-2">
                     <div className="flex items-center space-x-2 text-blue-900 font-bold text-sm">
@@ -1156,7 +1242,7 @@ export default function MetricDetailModal({
                         <div className="flex items-center justify-between p-2.5 bg-white rounded-lg border border-gray-200">
                           <span className="text-gray-600">Current Performance Status:</span>
                           <span className={`font-black ${isNoData ? 'text-gray-500' : detailData.status === 'CRITICAL' ? 'text-red-600' : (detailData.status === 'WARNING' ? 'text-amber-600' : 'text-emerald-600')}`}>
-                            {isNotApplicable ? 'N/A (score tiers not configured)' : isNoData ? 'NO DATA (no data in this period)' : `${detailData.status} (${detailData.normalized_score}% Index Score)`}
+                            {isNotApplicable ? `N/A (${(detailData.not_applicable_reason || 'score tiers not configured').toLowerCase()})` : isNoData ? 'NO DATA (no data in this period)' : `${detailData.status} (${detailData.normalized_score}% Index Score)`}
                           </span>
                         </div>
                       </div>
@@ -1166,7 +1252,7 @@ export default function MetricDetailModal({
               )}
 
               {/* TAB 2 FOR OUTCOME: TRANSACTION LOGS & OPERATIONAL RECORDS */}
-              {isOutcome && activeTab === 'secondary' && (
+              {isOutcome && !isPartSummary && activeTab === 'secondary' && !detailData.operational_records_hidden && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     {isSocialMedia ? (
@@ -1392,6 +1478,15 @@ export default function MetricDetailModal({
           isOpen={isSocialUploadOpen}
           onClose={() => setIsSocialUploadOpen(false)}
           onUploaded={() => fetchDetail({ keepTab: true })}
+        />
+      )}
+      {isAdmin && isPartSummary && (
+        <PartSummaryModal
+          isOpen={isPartSummaryOpen}
+          metric={detailData}
+          period={period || 'YTD'}
+          onClose={() => setIsPartSummaryOpen(false)}
+          onUploaded={() => { fetchDetail({ keepTab: true }); if (onDataUploaded) onDataUploaded(); }}
         />
       )}
       {isAdmin && detailData?.outcome_upload && (

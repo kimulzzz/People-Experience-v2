@@ -70,7 +70,11 @@ CREATE TABLE dbo.px_metrics (
   unit                   NVARCHAR(30)   NULL,                -- display unit of the actual value ('%', '/ 5', 'pax', ...); NULL = not set yet (filled at boot)
   survey_source          VARCHAR(10)    NULL CONSTRAINT CK_px_metrics_survey_source CHECK (survey_source IN ('SYSTEM', 'ESS')),
                                                              -- SURVEY metrics only: SYSTEM (other system/form) | ESS (Employee Sentiment Survey); OUTCOME = NULL
-  score_tiers            NVARCHAR(400)  NULL                 -- v2.54.0: tier configuration JSON { unit, bounds } (NULL = scored by its scale)
+  score_tiers            NVARCHAR(400)  NULL,                -- v2.54.0: tier configuration JSON { unit, bounds } (NULL = scored by its scale)
+  outcome_aggregation    VARCHAR(10)    NULL CONSTRAINT CK_px_metrics_outcome_agg CHECK (outcome_aggregation IN ('LATEST', 'AVERAGE')),
+                                                             -- v2.55.0: OUTCOME monthly values: LATEST (NULL = LATEST) | AVERAGE; SURVEY = NULL
+  data_status            VARCHAR(20)    NULL CONSTRAINT CK_px_metrics_data_status CHECK (data_status IN ('AVAILABLE', 'NOT_AVAILABLE'))
+                                                             -- v2.55.0: NOT_AVAILABLE = real data not available yet -> N/A, out of every index (NULL = AVAILABLE)
 );
 GO
 
@@ -93,6 +97,18 @@ ALTER TABLE dbo.px_metrics ADD score_tiers NVARCHAR(400) NULL;
 GO
 IF COL_LENGTH(N'dbo.px_metrics', N'score_tiers') < 800
 ALTER TABLE dbo.px_metrics ALTER COLUMN score_tiers NVARCHAR(400) NULL;
+GO
+
+-- v2.55.0: how an OUTCOME metric's uploaded months are read (server/db/outcomeAggregation.js): LATEST = the latest month in the
+-- window (NULL means the same), AVERAGE = the average of the months in the window. init() sets metrics 1 and 3 to AVERAGE once while NULL.
+IF COL_LENGTH(N'dbo.px_metrics', N'outcome_aggregation') IS NULL
+ALTER TABLE dbo.px_metrics ADD outcome_aggregation VARCHAR(10) NULL CONSTRAINT CK_px_metrics_outcome_agg CHECK (outcome_aggregation IN ('LATEST', 'AVERAGE'));
+GO
+
+-- v2.55.0: "Real data not available yet" switch (server/db/dataStatus.js): NOT_AVAILABLE = N/A, left out of every index; NULL = AVAILABLE.
+-- init() sets the seed metrics 4, 6, 8, 10, 23 and 26 to NOT_AVAILABLE once while NULL (an Admin change stores AVAILABLE / NOT_AVAILABLE).
+IF COL_LENGTH(N'dbo.px_metrics', N'data_status') IS NULL
+ALTER TABLE dbo.px_metrics ADD data_status VARCHAR(20) NULL CONSTRAINT CK_px_metrics_data_status CHECK (data_status IN ('AVAILABLE', 'NOT_AVAILABLE'));
 GO
 
 IF OBJECT_ID(N'dbo.px_metric_targets', N'U') IS NULL
@@ -689,4 +705,64 @@ CREATE TABLE dbo.px_outcome_values (
   updated_at   DATETIME2(3)   NULL,
   CONSTRAINT UQ_px_outcome_metric_period UNIQUE (metric_id, stat_year, stat_month)
 );
+GO
+
+-- v2.55.0: composite SUMMARY metrics (metric 7 "Day 1 Onboarding Satisfaction Index" = 4 parts). A metric with rows here is scored from
+-- the uploaded part summaries (per part: the average of its months in the window; the metric: the average of the parts with a
+-- value; 1-5 scale), not from per-respondent survey rows. template_json = the columns of the part's summary file (score label,
+-- question headers, respondents / period headers) for the template download. init() seeds the parts of metric 7 once.
+IF OBJECT_ID(N'dbo.px_metric_parts', N'U') IS NULL
+CREATE TABLE dbo.px_metric_parts (
+  part_id        INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_px_metric_parts PRIMARY KEY,
+  metric_id      INT            NOT NULL,
+  part_key       VARCHAR(40)    NOT NULL,
+  part_name      NVARCHAR(200)  NOT NULL,
+  sort_order     INT            NOT NULL CONSTRAINT DF_px_mp_sort DEFAULT (0),
+  template_json  NVARCHAR(MAX)  NULL,
+  created_at     DATETIME2(3)   NOT NULL CONSTRAINT DF_px_mp_created DEFAULT (SYSUTCDATETIME()),
+  CONSTRAINT UQ_px_metric_parts UNIQUE (metric_id, part_key)
+);
+GO
+-- One upload of a part summary file. The original file is NOT kept (such files carry a "Raw Data" sheet with personal data
+-- that is never read): file name + SHA-256 + the stored rows are the audit trail.
+IF OBJECT_ID(N'dbo.px_metric_part_uploads', N'U') IS NULL
+CREATE TABLE dbo.px_metric_part_uploads (
+  upload_id             NVARCHAR(64)   NOT NULL CONSTRAINT PK_px_metric_part_uploads PRIMARY KEY,
+  metric_id             INT            NOT NULL,
+  part_key              VARCHAR(40)    NOT NULL,
+  file_name             NVARCHAR(260)  NULL,
+  file_sha256           CHAR(64)       NULL,
+  uploaded_by           NVARCHAR(200)  NOT NULL,
+  total_rows            INT            NOT NULL CONSTRAINT DF_px_mpu_total DEFAULT (0),
+  replaced_rows         INT            NOT NULL CONSTRAINT DF_px_mpu_repl DEFAULT (0),
+  periods               NVARCHAR(400)  NULL,     -- 'YYYY-MM YYYY-MM ...' of the file
+  columns_json          NVARCHAR(MAX)  NULL,     -- { score_label, question_labels, respondents_label, period_label }
+  uploaded_at           DATETIME2(3)   NOT NULL CONSTRAINT DF_px_mpu_ts DEFAULT (SYSUTCDATETIME())
+);
+GO
+-- Summary rows of a part: the Bankwide row and one row per directorate per month. score NULL = "-" (no value); a row with
+-- respondents 0 has no value either (respondents NULL = not given: the row counts, directorates are pooled by a plain mean). questions_json = [{ label, value }] (value: number, text answer or null) - evidence only.
+IF OBJECT_ID(N'dbo.px_metric_part_results', N'U') IS NULL
+CREATE TABLE dbo.px_metric_part_results (
+  result_id     INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_px_metric_part_results PRIMARY KEY,
+  metric_id     INT            NOT NULL,
+  part_key      VARCHAR(40)    NOT NULL,
+  upload_id     NVARCHAR(64)   NULL,
+  org_level     VARCHAR(20)    NOT NULL CONSTRAINT CK_px_mpr_level CHECK (org_level IN ('BANKWIDE', 'DIRECTORATE')),
+  directorate   NVARCHAR(200)  NULL,
+  stat_year     INT            NOT NULL CONSTRAINT CK_px_mpr_year CHECK (stat_year BETWEEN 2000 AND 2100),
+  stat_month    INT            NOT NULL CONSTRAINT CK_px_mpr_month CHECK (stat_month BETWEEN 1 AND 12),
+  score         DECIMAL(18,8)  NULL,
+  respondents   INT            NULL,           -- NULL = the file has no respondents column (metrics 19 / 20): plain mean
+  questions_json NVARCHAR(MAX) NULL,
+  period_text   NVARCHAR(100)  NULL,
+  created_at    DATETIME2(3)   NOT NULL CONSTRAINT DF_px_mpr_created DEFAULT (SYSUTCDATETIME())
+);
+GO
+-- a table created by a v2.55.0 pre-release kept 4 decimals: widen (the scores of a summary are averages, e.g. 99.0791896869)
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.px_metric_part_results') AND name = N'score' AND scale < 8)
+ALTER TABLE dbo.px_metric_part_results ALTER COLUMN score DECIMAL(18,8) NULL;
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_px_mpr_metric_part_period' AND object_id = OBJECT_ID(N'dbo.px_metric_part_results'))
+  CREATE INDEX IX_px_mpr_metric_part_period ON dbo.px_metric_part_results(metric_id, part_key, stat_year, stat_month);
 GO

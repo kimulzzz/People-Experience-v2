@@ -605,6 +605,23 @@ Pengujian: `docs/07` §31 (Modul 46).
 
 ---
 
+## Catatan v2.55.0 - Rata-rata Bulan (metrik 1, 3), Metrik Ringkasan per Bagian & Saklar Data N/A
+
+**Endpoint baru (Admin saja; USER 403, tanpa login 401)**:
+
+| Endpoint | Respons / aturan |
+| :--- | :--- |
+| `GET /api/admin/metric-parts/:metric_id` | `{ metric_id, metric_name, parts: [{ part_key, part_name, sort_order, scale, uploads }] }`; id bukan angka 400, metrik tak ada / tanpa bagian 404 |
+| `GET /api/admin/metric-parts/:metric_id/:part_key/template` | `.xlsx` (sheet "Pivot"): A-D Directorate/Level/Year/Month, E skor, kolom pertanyaan, Jumlah Responden, Periode; bagian tak dikenal 404 |
+| `POST /api/admin/metric-parts/:metric_id/:part_key/upload` | multipart `file`; bukan `.xlsx`/MIME Excel 415; > 5 MB 413; file tidak valid 400 (semua error baris+kolom, tidak ada yang tersimpan); sukses = `rows_imported`, `replaced_rows`, `periods`, `upload_id`; audit `METRIC_PART_UPLOAD`. File diproses di memori dan **tidak disimpan** |
+| `GET /api/admin/metric-parts/:metric_id/:part_key/evidence?period=` | CSV baris tersimpan (`ALL` default, `YTD`, `YYYY`, `YYYY-MM`; lainnya 400), `nosniff` |
+
+**Endpoint yang berubah** (metrik `outcome_aggregation = AVERAGE`, yaitu 1 dan 3): `GET /api/admin/outcome-values/:metric_id/template?year=` (default tahun berjalan; tata letak baris bulan); `POST /api/admin/outcome-values/:metric_id/upload` butuh field `year` (2000..tahun berjalan) dan mengganti semua bulan tahun itu. Evidence menambah baris "Average" per tahun.
+
+**Field baru** di `GET /api/metrics/calculate` / `GET /api/metrics/:id/detail` / `GET /api/admin/parameters`: `outcome_aggregation`, `outcome_months_count`, `outcome_average_label`, `period_window.basis` `AVERAGE_OF_MONTHS` (metrik `AVERAGE` di YTD dan metrik ringkasan), `data_status`, `data_not_available`, `metric_parts` + `parts_with_data`, `data_upload: 'PART_SUMMARY'`, detail `parts` / `composite` / `operational_records_hidden`. Admin metric create/edit menerima `outcome_aggregation` (`LATEST`|`AVERAGE`, OUTCOME saja; nilai lain 400) dan `data_status` atau boolean `data_not_available` (nilai lain 400).
+
+**Service**: `metricPartsService.js` baru (parser, `compositeValue`, template, evidence); `outcomeValueService.js` (parser baris bulan, `parseUploadYear`, template tahunan); `socialMediaService.SOCIAL_MEDIA_DRILLDOWN_ENABLED = false` (drilldown metrik 1 dorman); `calculationEngine.syncLiveEventMetrics` tidak lagi menimpa metrik 12. `xlsxUtils.readFirstSheet` mendapat opsi `preferSheet`, `refuseSheet`, `withFill`. Storage (SQL dan JSON): `getMetricParts`, `getMetricPartResults`, `getMetricPartUploads`, `saveMetricPartUpload`. Rumus: `docs/01` §3.10.
+
 ## Catatan v2.54.2 - Nilai manual sementara per metrik (metrik 11)
 
 Setting baru `metric_manual_overrides` di `px_app_settings` (JSON per `metric_id`: `value`, `score` 0-100, `note`, `bankwide_only` default `true`). `calculationEngine.loadManualOverrides()` / `manualOverrideFor()` dibaca `calculatePEIndex` (dan semua pemanggilnya: trend, by-directorate, alerts) serta detail metrik: nilai = `value`, normalized score = `score`; `bankwide_only` + filter direktorat / cakupan User -> `NO_DATA` + `not_applicable: true`. Field baru `manual_override` (`{ value, score, note, bankwide_only }` atau `null`) di `GET /api/metrics/calculate` dan `GET /api/metrics/:id/detail`. Tidak ada endpoint baru; setting diubah langsung di database (sementara untuk presentasi direksi 2026-10-22: metrik 11 = 714 pax / 87%). Hapus key metrik untuk kembali ke perhitungan live.

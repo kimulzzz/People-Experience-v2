@@ -64,6 +64,10 @@ async function main() {
     // monthly values of OUTCOME metrics (v2.54.0)
     outcomeValues: await storage.getOutcomeValues(),
     outcomeUploads: (await storage.getOutcomeUploads()).reverse(),
+    // composite summary metrics (v2.55.0): parts, their summary rows and upload history
+    metricParts: await storage.getMetricParts(),
+    metricPartResults: await storage.getMetricPartResults(),
+    metricPartUploads: (await storage.getMetricPartUploads()).reverse(),
     media: await storage.getAllMedia(),
     customSurveyQuestions,
     acknowledgedAlerts: await storage.getAcknowledgedAlerts(),

@@ -125,6 +125,22 @@ Rumus tier dan aturan N/A: `docs/01` §3.9. Definisi yang berlaku di database (k
 
 Baris header dicari di 10 baris pertama (template punya judul di atasnya). Upload bulan yang sudah ada = memperbarui nilainya.
 
+### 8. Sumber Data Riil per Metrik (sejak v2.55.0)
+
+Template asli user ada di `docs/Template Survey/`. Format kolom: `docs/SURVEY_IMPORT_GUIDE.md` bagian "Template Ringkasan Metrik".
+
+| Metrik | Nama di database | Template | Cara nilai |
+| :-: | :--- | :--- | :--- |
+| 1 | Career website & social media follower, reach & engagement growth | `Metrics #1 Template.xlsx` | baris bulan Jan-Des per tahun, `AVERAGE` -> tier; drilldown social media disembunyikan |
+| 3 | Success ratio candidate from targeted university | `Metrics #3 Template.xlsx` | sama dengan metrik 1 |
+| 5 | Candidate Experience Survey Score | `Candidate Experience Survey Score Template.xlsx` | 1 bagian `CANDIDATE_EXPERIENCE`, skala 1-5 |
+| 7 | Day 1 Onboarding Satisfaction Index | `1. Meet & Greet Satisfaction_update.xlsx`, `Onboarding Day 1 Survey.xlsx` | rata-rata 4 bagian: Meet and Greet Satisfaction, Welcome Session (N/A), Onboarding Survey Day 1, Infrastructure & Application (N/A); skala 1-5 |
+| 12 | Signature Program event satisfaction | `Signature Program Event Satisfaction Score Template.xlsx` | 1 bagian `EVENT_SATISFACTION`, kolom E "Satisfaction Event" sudah % (unit `%`, target 80 "> 80%"); header biru = event, kuning = pertanyaan |
+| 19 | Mandatory Learning Satisfaction Score | `Mandatory & Non Mandatory Learning_PX.xlsx` | kolom "Mandatory Learning", skala 1-5, tanpa responden |
+| 20 | Non-Mandatory Learning Satisfaction | `Mandatory & Non Mandatory Learning_PX.xlsx` | kolom "Non Mandatory Learning", skala 1-5, tanpa responden |
+
+**Belum ada data riil (N/A, `data_status = NOT_AVAILABLE`)**: metrik 4, 6, 8, 10, 23, 26 - tidak ikut PX Index, detail tanpa records. Admin mengaktifkannya lewat Admin Parameters setelah data tersedia.
+
 ---
 
 ## 📝 4. Spesifikasi Resmi Pertanyaan Survei
