@@ -282,6 +282,7 @@ Menu per role (penegakan sebenarnya di server, lihat `docs/04`):
 ## 🎯 Catatan v2.27.0 — Cakupan Data User
 
 - **`UserManagementModal.jsx` — editor cakupan**: untuk role User, bagian "Cakupan Data" menampilkan satu kartu per direktorat dengan pilihan radio **Semua divisi** / **Divisi tertentu** (daftar centang divisi), tombol hapus per direktorat, dan dropdown "+ Tambah direktorat ke cakupan ..." (direktorat yang sudah dipakai tidak muncul lagi). Simpan ditolak di UI bila tidak ada direktorat atau "Divisi tertentu" tanpa satu pun divisi dicentang. Untuk Admin, bagian ini diganti keterangan "Admin membaca semua data" dan cakupan dikirim kosong. Tabel user menampilkan ringkasan cakupan (`ScopeSummary`).
+  - **Sejak v2.53.1** cakupan User hanya level direktorat: pilihan radio dan centang divisi dihapus, form selalu mengirim `divisions: null`; akun lama dengan batas divisi diberi catatan "old division limit" dan menjadi seluruh direktorat bila disimpan ulang. Backend tetap mendukung scope divisi.
 - **`Header.jsx` — filter**: untuk User, dropdown Direktorat hanya menawarkan direktorat dalam `user.scopes`, opsi pertama berlabel **"Semua cakupan saya"** (Admin: "Direktorat: All (Bankwide)"), dan dropdown divisi hanya menawarkan divisi yang diizinkan pada direktorat terpilih. Label akun: "User - <direktorat>" bila satu direktorat, "User - N direktorat" bila lebih (tooltip memuat daftar lengkap). Penegakan tetap di server.
 - Tidak diuji: tampilan mobile.
 

@@ -766,6 +766,9 @@ domain model, not just descriptive:
   unchanged = only way in. Gotchas: social media `source` CHECKs still allow 'INTEGRATION' (nothing writes it); old `INTEGRATION_TOKEN_*`/`SOCIAL_MEDIA_INGEST` audit rows (test runs) kept.
   Tests: Module 55 -5 +3 (now 15) -> SQL 327/327, 16 skipped (suite 413 by count); JSON full suite not run.
 
+- **v2.53.1** (2026-10-21, see `CHANGELOG.md` [2.53.1], `docs/05`, `docs/06`): Manage Users no longer offers divisions - a User's scope is whole directorates
+  (`divisions: null`); old division limits are flagged and widened on save. Backend division scopes still work (API/tests). Frontend only.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan

@@ -214,6 +214,7 @@ mengubahnya; sudah diperbaiki di v2.12.0 (lihat `CHANGELOG.md`).
 **Mengatur cakupan data User** (v2.27.0, di form tambah/ubah user):
 1. Pilih role **User**, lalu di "Cakupan Data" pilih direktorat dari dropdown "+ Tambah direktorat ke cakupan". Ulangi untuk direktorat lain (satu User boleh banyak direktorat).
 2. Untuk tiap direktorat pilih **Semua divisi** atau **Divisi tertentu** lalu centang divisi yang boleh dilihat. Hapus direktorat dengan ikon tempat sampah.
+   - **Sejak v2.53.1** langkah ini tidak ada lagi: cakupan User cukup memilih direktorat (seluruh direktorat). Akun lama yang masih dibatasi divisi diberi catatan "old division limit" dan menjadi seluruh direktorat saat disimpan ulang.
 3. Simpan. Perubahan berlaku pada request User berikutnya — User tidak perlu login ulang. Perubahan tercatat di riwayat audit sebagai `USER_SCOPE_CHANGE`.
 
 Yang dilihat User: pilihan filter "Semua cakupan saya" menampilkan **data gabungan** seluruh cakupan (sampel digabung, bukan rata-rata dari rata-rata). Skor, trend, detail metrik dan alert dibatasi ke cakupan; metrik non-karyawan/OUTCOME tetap tampil sebagai angka bankwide read-only. Sampai v2.48.0 User yang cakupannya memuat direktorat pengelola event (setting `event_manager_directorates`, default Human Resources) dapat mengelola Signature Event; sejak v2.49.0 hak itu diberikan per user lewat **Menu Access**. Mengubah role ke Admin menghapus cakupan; menurunkan ke User wajib mengisi cakupan.

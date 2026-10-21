@@ -2,6 +2,17 @@
 
 Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Management & Scoring System dicatat di dalam dokumen ini mengikuti standar [Semantic Versioning](https://semver.org/).
 
+## [2.53.1] - 2026-10-21
+
+### 🧹 Manage Users: cakupan User cukup level direktorat (Changed)
+
+- **Permintaan user**: saat menambah/mengubah akun role User tidak perlu lagi memilih divisi, karena filter Sub-Dir sudah dihapus (v2.52.2) - cukup sampai level direktorat.
+- **`src/components/UserManagementModal.jsx`**: kartu cakupan per direktorat tidak lagi punya pilihan "All divisions" / "Specific divisions" dan daftar centang divisi; form selalu menyimpan `{ directorate, divisions: null }` (seluruh direktorat). Akun lama yang masih punya batas divisi ditampilkan dengan catatan "old division limit" di tabel dan form; bila disimpan ulang, akun itu mendapat seluruh direktorat. Database utama saat ini tidak punya akun User / scope divisi (0 baris `px_user_scopes`), jadi tidak ada akun yang berubah.
+- **Tidak diubah**: backend tetap menerima dan menegakkan scope per divisi (`divisions: [..]` di API, tes Modul 35/36/53) - hanya UI yang tidak lagi menawarkannya. Divisi tetap ada di Admin Parameters -> Directorates dan di data upload.
+- **Tes**: `npx vite build` lulus; suite penuh SQL sebelum commit (modul media dan event di-skip karena tidak tersentuh): **327/327 lulus, 0 gagal, 16 tes dilewati**. Form Add User dicek di browser: cakupan hanya direktorat.
+
+---
+
 ## [2.53.0] - 2026-10-21
 
 ### 🧹 Fitur integrasi token (v2.52.0) dihapus seluruhnya (Changed / Removed)

@@ -6,13 +6,14 @@ import { MENU_TABS, DEFAULT_USER_MENU_ACCESS } from '../utils/menuAccess';
 // "Manage Users" (Admin only): accounts that may log in. Directorate / division choices come from the
 // directory in SQL Server (/api/directorates). Passwords are never shown except the one-time
 // temporary password after creating an account or resetting a password.
-// A USER's data scope = any number of directorates; for each one "all divisions" or a ticked subset
-// (form shape { directorate, all, divisions[] } <-> API shape { directorate, divisions: null | [..] }).
+// A USER's data scope = any number of whole directorates (v2.53.1: no division level any more - the Sub-Dir filter
+// is gone). The form always saves { directorate, divisions: null }; an older account that still has a division subset
+// is shown as such and becomes the whole directorate when it is saved again (form keeps `legacyDivisions` only to say so).
 // menu_access (v2.49.0): the menus a USER may open; an Admin always has all of them.
 const EMPTY_FORM = { username: '', full_name: '', email: '', role: 'USER', scopes: [], menu_access: { ...DEFAULT_USER_MENU_ACCESS } };
 
-const scopesToForm = (scopes) => (scopes || []).map(s => ({ directorate: s.directorate, all: s.divisions === null, divisions: s.divisions || [] }));
-const scopesToApi = (rows) => rows.map(r => ({ directorate: r.directorate, divisions: r.all ? null : r.divisions }));
+const scopesToForm = (scopes) => (scopes || []).map(s => ({ directorate: s.directorate, legacyDivisions: s.divisions || null }));
+const scopesToApi = (rows) => rows.map(r => ({ directorate: r.directorate, divisions: null }));
 
 // One-line summary of a scope list for the user table.
 const ScopeSummary = ({ scopes }) => (
@@ -20,7 +21,9 @@ const ScopeSummary = ({ scopes }) => (
     {(scopes || []).map(s => (
       <div key={s.directorate}>
         <span className="font-semibold text-gray-800">{s.directorate}</span>
-        <span className="text-[10px] text-gray-500"> {s.divisions === null ? '(all divisions)' : `(${s.divisions.length} ${s.divisions.length === 1 ? 'division' : 'divisions'}: ${s.divisions.join(', ')})`}</span>
+        {s.divisions !== null && (
+          <span className="text-[10px] text-amber-700" title="Set before v2.53.1; saving this account gives it the whole directorate"> (old division limit: {s.divisions.join(', ')})</span>
+        )}
       </div>
     ))}
   </div>
@@ -101,12 +104,9 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId, em
 
   if (!isOpen) return null;
 
-  const divisionsOf = (dirName) => (directory.find(d => d.name === dirName) || { divisions: [] }).divisions;
   const unusedDirectorates = directory.filter(d => !form.scopes.some(r => r.directorate === d.name));
-  const setScope = (dirName, patch) => setForm({ ...form, scopes: form.scopes.map(r => (r.directorate === dirName ? { ...r, ...patch } : r)) });
-  const addScope = (dirName) => { if (dirName) setForm({ ...form, scopes: [...form.scopes, { directorate: dirName, all: true, divisions: [] }] }); };
+  const addScope = (dirName) => { if (dirName) setForm({ ...form, scopes: [...form.scopes, { directorate: dirName, legacyDivisions: null }] }); };
   const removeScope = (dirName) => setForm({ ...form, scopes: form.scopes.filter(r => r.directorate !== dirName) });
-  const toggleDivision = (row, div) => setScope(row.directorate, { divisions: row.divisions.includes(div) ? row.divisions.filter(v => v !== div) : [...row.divisions, div] });
   const inputCls = 'w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-[var(--theme-base)] focus:outline-none disabled:bg-gray-100 disabled:text-gray-500';
 
   const openCreate = () => { setEditingId(null); setForm(EMPTY_FORM); setShowForm(true); setMessage(null); };
@@ -132,8 +132,6 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId, em
       const payload = { full_name: form.full_name, email: form.email, role: form.role };
       if (form.role === 'USER') {
         if (form.scopes.length === 0) throw new Error('A User must have at least one directorate in their data scope.');
-        const empty = form.scopes.find(r => !r.all && r.divisions.length === 0);
-        if (empty) throw new Error(`Select at least one division for ${empty.directorate}, or choose "All divisions".`);
         payload.scopes = scopesToApi(form.scopes);
         payload.menu_access = form.menu_access;
       } else {
@@ -304,17 +302,8 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId, em
                         <span className="font-bold text-gray-900">{row.directorate}</span>
                         <button type="button" onClick={() => removeScope(row.directorate)} className="p-1 text-red-600 hover:bg-red-50 rounded-md" title="Remove directorate from scope"><Trash2 className="w-3.5 h-3.5" /></button>
                       </div>
-                      <div className="flex items-center space-x-4">
-                        <label className="flex items-center space-x-1.5 cursor-pointer"><input type="radio" checked={row.all} onChange={() => setScope(row.directorate, { all: true })} /><span>All divisions</span></label>
-                        <label className="flex items-center space-x-1.5 cursor-pointer"><input type="radio" checked={!row.all} onChange={() => setScope(row.directorate, { all: false })} /><span>Specific divisions</span></label>
-                      </div>
-                      {!row.all && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1 max-h-40 overflow-y-auto p-2 bg-gray-50 rounded-md">
-                          {divisionsOf(row.directorate).map(v => (
-                            <label key={v} className="flex items-center space-x-1.5 cursor-pointer"><input type="checkbox" checked={row.divisions.includes(v)} onChange={() => toggleDivision(row, v)} /><span>{v}</span></label>
-                          ))}
-                          {divisionsOf(row.directorate).length === 0 && <span className="text-gray-400">This directorate has no divisions yet.</span>}
-                        </div>
+                      {row.legacyDivisions && (
+                        <div className="text-[10.5px] text-amber-700">Old division limit ({row.legacyDivisions.join(', ')}): saving gives this account the whole directorate.</div>
                       )}
                     </div>
                   ))}
