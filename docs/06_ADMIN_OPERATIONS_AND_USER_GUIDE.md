@@ -522,3 +522,39 @@ Template non-ESS di zip yang sama (Onboarding Day 1 Survey, Mandatory & Non Mand
 - **Jangan mengedit Admin Parameters selama suite berjalan**: edit itu tertimpa saat konfigurasi dikembalikan di akhir run. Pengaman ini hanya untuk backend SQL; di backend JSON backup `server/data/store.json` sendiri sebelum menjalankan suite.
 - **Audit**: perubahan metrik (field lama -> baru), journey, reset parameter, target, pertanyaan survei dan Email Settings (tanpa password) kini tercatat di Audit Trail (`METRIC_UPDATE`, `JOURNEY_UPDATE`, `PARAMETERS_RESET`, `METRIC_TARGETS_UPDATE`, `SURVEY_QUESTIONS_UPDATE`, `SETTINGS_CHANGE`, dst.). Action library dan master questions belum diaudit.
 - **Perlu dicek**: edit Admin Parameters lain yang dibuat sebelum 2026-10-21 bisa sudah tereset oleh run suite sebelumnya dan saat itu tidak tercatat di audit. Periksa nilai yang pernah Anda ubah (nama/target/PIC metrik, pertanyaan, bobot) dan setel ulang bila perlu.
+
+### Data Social Media Metrik 1 & Token Integrasi (v2.52.0)
+
+Metrik 1 "Career website & social media follower, reach & engagement growth" bersifat **bankwide** (tanpa direktorat). Detailnya (tab **Internal Transaction Records**) menampilkan per platform per bulan: Followers, Follower growth %, Reach, Engagement, Engagement rate %, plus baris **All platforms** per bulan. **Skor metrik 1 tetap nilai yang Anda isi** di Admin Parameters (`raw_value`); data social media belum dipakai untuk menghitung skor.
+
+**Arti kolom** (isi per platform per bulan): **Followers** = jumlah pengikut di akhir bulan; **Reach** = jangkauan selama bulan itu; **Engagement** = jumlah interaksi selama bulan itu. Follower growth % dan Engagement rate % dihitung aplikasi (growth dibanding bulan sebelumnya platform yang sama; rate = engagement / reach).
+
+**Mengunggah Excel**
+1. Buka **Explore Metrics** -> baris metrik 1 -> **Template** (atau dari detail metrik 1 -> tab Internal Transaction Records -> **Template**). File `Template_Social_Media_Metric_1.xlsx` berisi kolom Platform | Year | Month | Followers | Reach | Engagement dan satu baris per platform untuk bulan lengkap terakhir.
+2. Isi angkanya. Boleh menambah baris untuk bulan lain (satu baris per platform per bulan). Platform: Instagram, LinkedIn, TikTok (IG, Insta, Linked In, TT juga dikenali). Month: nama bulan Inggris/Indonesia (March, Maret, Mar) atau 1-12. Angka bulat tanpa desimal; pemisah ribuan boleh.
+3. Klik **Upload** -> pilih file `.xlsx` (maks. 5 MB; CSV dan `.xls` ditolak) -> **Upload**.
+4. Bila ada kesalahan, **tidak ada yang disimpan**; daftar Row | Column | Problem menunjukkan sel yang harus diperbaiki. Perbaiki lalu unggah ulang seluruh file.
+5. Bila sukses, tampil jumlah baris baru/diperbarui dan bulan yang diisi. Tab **History** menampilkan semua upload dan kiriman integrasi; file asli upload bisa diunduh lagi.
+
+**Data asli menggantikan dummy**: Januari-September 2026 berisi data **fiktif** (badge **Dummy**). Begitu satu bulan diunggah (atau dikirim lewat integrasi), semua baris dummy bulan itu (ketiga platform) dihapus, jadi bulan itu hanya berisi data asli - unggah ketiga platform untuk bulan yang sama. Mengunggah ulang bulan yang sudah ada **memperbarui** angkanya. `SEED_DEMO_DATA=false` mencegah dummy ditambahkan saat server start; baris dummy yang sudah ada tetap sampai bulannya diisi data asli.
+
+**Membuat token integrasi** (sistem internal lain mengirim data otomatis)
+1. **Admin Parameters** -> tab **Integrations**.
+2. Isi nama token (mis. nama sistem pengirim) -> **Create Token**.
+3. Token tampil **sekali saja** di kotak kuning. Klik **Copy**, simpan, lalu **I have stored the token - hide it**. Aplikasi hanya menyimpan sidik jari (hash) token; token yang hilang tidak bisa ditampilkan lagi - buat token baru dan cabut yang lama.
+4. Tab ini juga menampilkan alamat endpoint dan contoh curl (`Authorization: Bearer <token>`) untuk tim sistem pengirim.
+
+**Menyerahkan token ke tim sistem lain secara aman**
+- Kirim token lewat saluran internal yang aman (mis. password manager/vault tim, atau langsung ke admin sistem tersebut), **bukan** lewat e-mail biasa, chat grup, tiket, atau dokumen bersama. Jangan pernah menempelkan token ke dokumentasi, kode, atau screenshot.
+- Satu token per sistem pengirim, agar bisa dicabut satu per satu dan Audit Trail menunjukkan siapa yang mengirim (`integration:<nama token>`).
+- Minta tim itu menyimpan token di konfigurasi rahasia sistemnya (bukan di repository kode).
+- Batas: maks. 500 baris per request dan 30 request per menit per token; token hanya bisa dipakai untuk endpoint data social media ini.
+
+**Mencabut & menghapus token**: klik **Revoke** -> token langsung tidak berlaku (sistem pengirim mendapat 401). Token yang sudah dicabut bisa dihapus dari daftar dengan **Delete** (token aktif tidak bisa dihapus). Cabut segera bila token mungkin bocor, lalu buat token baru. Kolom **Last used** menunjukkan kapan token terakhir dipakai.
+
+**Yang perlu diketahui**
+- Aplikasi hanya **menerima** data; tidak pernah mengambil data sendiri dari Instagram, LinkedIn atau TikTok (tetap 100% on-premise). Sistem pengirim harus berada di jaringan internal.
+- Upload, kiriman integrasi, pembuatan/pencabutan/penghapusan token tercatat di Audit Trail (`SOCIAL_MEDIA_UPLOAD`, `SOCIAL_MEDIA_INGEST`, `INTEGRATION_TOKEN_CREATE`/`REVOKE`/`DELETE`).
+- Hanya Admin yang bisa mengunggah dan mengelola token; User melihat tabel yang sama (tanpa tombol), dan filter direktorat tidak mengubah isinya.
+- Upload tidak mengubah tanggal data terakhir (`last_data_date`) metrik 1; ubah sendiri di Admin Parameters bila perlu.
+- Token tidak ikut `npm run db:export`; setelah pindah database buat token baru. Menghapus metrik 1 tidak menghapus data social media-nya.

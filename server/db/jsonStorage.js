@@ -16,6 +16,7 @@ const {
   initialOperationalRecords,
   EXIT_SEED_MONTHS,
   generateExitInterviewDummy,
+  generateSocialMediaSeed,
   initialAppSettings,
   initialEmailSettings,
   LEGACY_OPTION_LABELS,
@@ -232,6 +233,35 @@ function topUpStoreExitSeed(s) {
   return added;
 }
 
+// ------------------------------------------------------------------ social media statistics of metric 1 (v2.52.0)
+// Same contract and rules as sqlStorage (px_social_media_stats / px_social_media_uploads).
+const SOCIAL_PLATFORMS = ['Instagram', 'LinkedIn', 'TikTok'];
+const socialKey = r => r.year * 100 + r.month;
+const sortSocial = rows => rows.sort((a, b) => socialKey(a) - socialKey(b) || SOCIAL_PLATFORMS.indexOf(a.platform) - SOCIAL_PLATFORMS.indexOf(b.platform));
+const nextSocialId = s => (s.socialMediaStats || []).reduce((mx, r) => Math.max(mx, r.stat_id || 0), 0) + 1;
+// Demo rows for every (platform, month) without a row, skipping a month that already has a real row (same rule as
+// sqlStorage.topUpSocialMediaSeed). Returns the months that got rows ('YYYY-MM').
+function topUpStoreSocialSeed(s, seedRows = generateSocialMediaSeed()) {
+  s.socialMediaStats = s.socialMediaStats || [];
+  s.socialMediaUploads = s.socialMediaUploads || [];
+  const have = new Set(s.socialMediaStats.map(r => `${r.platform}|${r.year}-${r.month}`));
+  const realMonths = new Set(s.socialMediaStats.filter(r => r.source !== 'SEED').map(r => `${r.year}-${r.month}`));
+  const todo = seedRows.filter(r => !have.has(`${r.platform}|${r.year}-${r.month}`) && !realMonths.has(`${r.year}-${r.month}`));
+  if (!todo.length) return [];
+  const now = new Date().toISOString();
+  let id = nextSocialId(s);
+  todo.forEach(r => s.socialMediaStats.push({ stat_id: id++, platform: r.platform, year: r.year, month: r.month, followers: r.followers, reach: r.reach,
+    engagement: r.engagement, source: 'SEED', upload_id: null, created_at: now, updated_at: null }));
+  return [...new Set(todo.map(r => `${r.year}-${String(r.month).padStart(2, '0')}`))].sort();
+}
+// v2.52.0: metric 1 is bankwide social media data - its old recruitment-SLA rows were wrong data (same as
+// sqlStorage.removeMetric1SlaRows; every load, idempotent). Returns the rows removed.
+function removeStoreMetric1SlaRows(s) {
+  const rows = ((s.operationalRecords || {})[1]) || [];
+  if (s.operationalRecords && s.operationalRecords[1] !== undefined) delete s.operationalRecords[1];
+  return rows.length;
+}
+
 function getStore() {
   if (!store) {
     if (fs.existsSync(DATA_FILE)) {
@@ -325,6 +355,8 @@ function getStore() {
         if (!store.operationalRecords) {
           store.operationalRecords = JSON.parse(JSON.stringify(initialOperationalRecords));
         }
+        const slaRemoved = removeStoreMetric1SlaRows(store);
+        if (slaRemoved) console.log(`[jsonStorage] Metric 1 is social media data: removed ${slaRemoved} old recruitment-SLA row(s) of metric 1.`);
         if (!store.surveyUploadedResponses || store.surveyUploadedResponses.length < 50) {
           store.surveyUploadedResponses = initialSurveyUploadedResponses;
         } else {
@@ -369,7 +401,11 @@ function getStore() {
           if (seededEss.length) console.log(`[jsonStorage] Seeded demo ESS summaries: ${seededEss.join(', ')}.`);
           const seededExit = topUpStoreExitSeed(store);
           if (seededExit.length) console.log(`[jsonStorage] Seeded demo Exit Interview rows for: ${seededExit.join(', ')}.`);
+          const seededSocial = topUpStoreSocialSeed(store);
+          if (seededSocial.length) console.log(`[jsonStorage] Seeded demo social media rows (metric 1) for: ${seededSocial.join(', ')}.`);
         }
+        store.socialMediaStats = store.socialMediaStats || [];
+        store.socialMediaUploads = store.socialMediaUploads || [];
         saveStore();
       } catch (err) {
         console.error('Error loading store.json, falling back to seed data:', err);
@@ -380,7 +416,7 @@ function getStore() {
     } else {
       store = loadInitialStore();
       normalizeStoreDirectory(store);
-      if (String(process.env.SEED_DEMO_DATA || 'true').toLowerCase() !== 'false') topUpStoreExitSeed(store);
+      if (String(process.env.SEED_DEMO_DATA || 'true').toLowerCase() !== 'false') { topUpStoreExitSeed(store); topUpStoreSocialSeed(store); }
       saveStore();
     }
   }
@@ -619,6 +655,9 @@ function saveAuth() {
   try { fs.writeFileSync(AUTH_FILE, JSON.stringify(authStore, null, 2), 'utf8'); }
   catch (err) { console.error('Failed to save auth.json:', err); }
 }
+
+// an integration token without its hash (v2.52.0)
+const publicToken = t => { const { token_hash, ...rest } = t; return { ...rest, is_test: t.is_test === true }; }; // eslint-disable-line no-unused-vars
 
 const copyUser = u => (u ? { ...u, scopes: normalizeScopes(u.scopes), is_test_account: u.is_test_account === true,
   menu_access: u.menu_access && typeof u.menu_access === 'object' ? { ...u.menu_access } : null } : null);
@@ -1886,6 +1925,120 @@ const storage = {
     const added = topUpStoreExitSeed(getStore());
     if (added.length) saveStore();
     return added;
+  },
+
+  // --- SOCIAL MEDIA STATISTICS OF METRIC 1 (v2.52.0) --- same contract as sqlStorage
+  getSocialMediaStats({ from, to } = {}) {
+    const key = code => parseInt(code.slice(0, 4), 10) * 100 + parseInt(code.slice(5, 7), 10);
+    const lo = from ? key(from) : null;
+    const hi = to ? key(to) : null;
+    return sortSocial((getStore().socialMediaStats || []).filter(r => (lo === null || socialKey(r) >= lo) && (hi === null || socialKey(r) <= hi))
+      .map(r => ({ upload_id: null, updated_at: null, ...r })));
+  },
+  getLatestSocialMediaPeriod() {
+    const rows = getStore().socialMediaStats || [];
+    if (!rows.length) return null;
+    const top = rows.reduce((mx, r) => (socialKey(r) > socialKey(mx) ? r : mx), rows[0]);
+    return { year: top.year, month: top.month };
+  },
+  getSocialMediaUploads() {
+    return [...(getStore().socialMediaUploads || [])]
+      .sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : a.uploaded_at > b.uploaded_at ? -1 : (a.upload_id < b.upload_id ? 1 : -1)))
+      .map(u => ({ ...u }));
+  },
+  saveSocialMediaStats(meta, rows) {
+    const s = getStore();
+    s.socialMediaStats = s.socialMediaStats || [];
+    s.socialMediaUploads = s.socialMediaUploads || [];
+    const months = new Set(rows.map(r => `${r.year}-${r.month}`));
+    const before = s.socialMediaStats.length;
+    s.socialMediaStats = s.socialMediaStats.filter(r => !(r.source === 'SEED' && months.has(`${r.year}-${r.month}`)));
+    const replaced = before - s.socialMediaStats.length;
+    const now = new Date().toISOString();
+    let inserted = 0;
+    let updated = 0;
+    let id = nextSocialId(s);
+    rows.forEach(r => {
+      const values = { followers: r.followers, reach: r.reach, engagement: r.engagement, source: meta.source, upload_id: meta.upload_id };
+      const existing = s.socialMediaStats.find(x => x.platform === r.platform && x.year === r.year && x.month === r.month);
+      if (existing) {
+        Object.assign(existing, values, { updated_at: now });
+        updated++;
+      } else {
+        s.socialMediaStats.push({ stat_id: id++, platform: r.platform, year: r.year, month: r.month, ...values, created_at: now, updated_at: null });
+        inserted++;
+      }
+    });
+    const record = { ...meta, file_name: meta.file_name || null, total_rows: rows.length, inserted_rows: inserted, updated_rows: updated,
+      replaced_seed_rows: replaced, period_from: meta.period_from || null, period_to: meta.period_to || null, uploaded_at: now };
+    s.socialMediaUploads.push(record);
+    saveStore();
+    return { record: { ...record }, inserted, updated, replaced_seed: replaced };
+  },
+  topUpSocialMediaSeed(seedRows) {
+    const added = topUpStoreSocialSeed(getStore(), seedRows);
+    if (added.length) saveStore();
+    return added;
+  },
+  removeMetric1SlaRows() {
+    const n = removeStoreMetric1SlaRows(getStore());
+    if (n) saveStore();
+    return n;
+  },
+
+  // --- INTEGRATION TOKENS (v2.52.0, server/data/auth.json like the login accounts) - only token_hash is stored
+  getIntegrationTokens() {
+    return [...(getAuth().integrationTokens || [])]
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : b.token_id - a.token_id))
+      .map(publicToken);
+  },
+  getIntegrationTokenByHash(token_hash) {
+    const t = (getAuth().integrationTokens || []).find(x => x.token_hash === String(token_hash));
+    return t ? publicToken(t) : null;
+  },
+  createIntegrationToken(t) {
+    const a = getAuth();
+    a.integrationTokens = a.integrationTokens || [];
+    const record = {
+      token_id: a.integrationTokens.reduce((mx, x) => Math.max(mx, x.token_id), 0) + 1,
+      name: String(t.name).slice(0, 100),
+      token_hash: t.token_hash,
+      token_hint: String(t.token_hint).slice(0, 20),
+      scope: t.scope,
+      created_by: String(t.created_by || 'Admin').slice(0, 200),
+      created_at: new Date().toISOString(),
+      last_used_at: null,
+      revoked_at: null,
+      revoked_by: null,
+      is_test: t.is_test === true
+    };
+    a.integrationTokens.push(record);
+    saveAuth();
+    return publicToken(record);
+  },
+  touchIntegrationToken(token_id) {
+    const t = (getAuth().integrationTokens || []).find(x => x.token_id === parseInt(token_id, 10));
+    if (!t) return;
+    t.last_used_at = new Date().toISOString();
+    saveAuth();
+  },
+  revokeIntegrationToken(token_id, revoked_by) {
+    const t = (getAuth().integrationTokens || []).find(x => x.token_id === parseInt(token_id, 10));
+    if (!t) return null;
+    if (!t.revoked_at) {
+      t.revoked_at = new Date().toISOString();
+      t.revoked_by = String(revoked_by || 'Admin').slice(0, 200);
+      saveAuth();
+    }
+    return publicToken(t);
+  },
+  deleteIntegrationToken(token_id) {
+    const a = getAuth();
+    const idx = (a.integrationTokens || []).findIndex(x => x.token_id === parseInt(token_id, 10));
+    if (idx === -1) return null;
+    const [removed] = a.integrationTokens.splice(idx, 1);
+    saveAuth();
+    return publicToken(removed);
   },
 
   deleteEssResultsForMetric(metric_id) {

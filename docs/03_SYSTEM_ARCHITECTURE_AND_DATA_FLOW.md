@@ -136,6 +136,7 @@ flowchart TD
 
 1. **Zero External Dependency (On-Premise Ready)**:
    - Seluruh backend berjalan di lingkungan intranet Bank tanpa memerlukan koneksi internet aktif atau layanan cloud SaaS.
+   - **Integrasi masuk (sejak v2.52.0)**: data social media metrik 1 (Instagram, LinkedIn, TikTok) dapat **dikirim ke** aplikasi oleh sistem internal lain lewat `POST /api/integrations/social-media` dengan token integrasi (Bearer, dibuat Admin, hanya hash SHA-256 yang disimpan, hanya berlaku untuk endpoint itu). Arahnya hanya masuk: aplikasi tidak pernah memanggil Instagram/LinkedIn/TikTok atau layanan luar. Alternatifnya upload `.xlsx` oleh Admin. Rincian: `docs/04` "Catatan v2.52.0".
 2. **Validasi Karyawan Berbasis NIP**:
    - NIP diverifikasi pada setiap baris data survei maupun absensi event untuk memastikan tidak terjadi duplikasi respon dari karyawan yang sama dalam satu periode penilaian.
 3. **Standar Berkas CSV UTF-8 BOM**:

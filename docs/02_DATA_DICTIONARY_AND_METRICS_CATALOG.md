@@ -64,10 +64,21 @@ Dalam framework People Experience CIMB Niaga, seluruh 27 metrik dibagi secara te
 
 Setiap metrik Outcome tidak merepresentasikan kuesioner individual, melainkan **agregat kinerja operasional sistem perbankan internal**:
 
-### 1. Metrik #1: % SLA of Candidate Fulfillment
-- **Pengukuran**: Persentase pemenuhan lowongan pekerjaan sesuai dengan batas waktu *Service Level Agreement* (SLA) rekrutmen.
-- **Logika Nilai**: $\frac{\text{Jumlah Posisi Terpenuhi Tepat Waktu}}{\text{Total Posisi Dibuka}} \times 100\%$.
-- **Tabel Log**: Mencatat rincian SLA per unit (seed sejak v2.31.0: Operations, Technology, Analytics & AI; Consumer & EBB; Risk Management; Corporate Banking & Markets; Operations & Support).
+### 1. Metrik #1: Career Website & Social Media Follower, Reach & Engagement Growth (tabel log sejak v2.52.0)
+- **Catatan**: katalog §2 di atas masih memuat definisi lama "% SLA of candidate fulfillment"; nama metrik di seed/database = "Career website & social media follower, reach & engagement growth", sumber "Website & Social Media Analytics", bankwide (tanpa dimensi direktorat).
+- **Logika Nilai**: **manual** - skor = `raw_value` yang diisi Admin di Admin Parameters (keputusan user v2.52.0; mungkin dihitung dari data social media kemudian).
+- **Tabel Log** (tab Internal Transaction Records, tabel `px_social_media_stats`): satu baris per platform per bulan, diisi upload `.xlsx` Admin atau injeksi integrasi (`docs/04` "Catatan v2.52.0"). Baris SLA rekrutmen per unit metrik 1 (seed lama) dihapus sejak v2.52.0.
+
+| Kolom file / field JSON | Tipe | Arti |
+| :--- | :--- | :--- |
+| Platform / `platform` | teks | `Instagram`, `LinkedIn`, `TikTok` (alias IG, Insta, Linked In, TT) |
+| Year / `year` | bilangan bulat | 2000-2100 |
+| Month / `month` | teks atau 1-12 | nama bulan Inggris/Indonesia, singkatan, atau angka |
+| Followers / `followers` | bilangan bulat >= 0 | jumlah pengikut pada akhir bulan |
+| Reach / `reach` | bilangan bulat >= 0 | jangkauan selama bulan itu |
+| Engagement / `engagement` | bilangan bulat >= 0 | interaksi selama bulan itu |
+
+Dihitung aplikasi (tidak disimpan): **Follower growth %** = (followers bulan ini - followers bulan kalender sebelumnya platform yang sama) / followers bulan sebelumnya x 100; **Engagement rate %** = engagement / reach x 100; baris "All platforms" = jumlah ketiga platform per bulan.
 
 ### 2. Metrik #3: Candidate Offering Lead Time (TAT H-14)
 - **Pengukuran**: Persentase penerbitan surat penawaran kerja (*Offering Letter*) yang diselesaikan minimal 14 hari sebelum tanggal mulai bekerja.

@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    54 MODUL PENGUJIAN    │     398 AUTOMATED TESTS     │       100% PASS RATE          │
+│    55 MODUL PENGUJIAN    │     415 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -52,7 +52,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 
 ### 📦 Modul 9: Outcome vs Survey Metrics Separation & Validation (3 Test Cases)
 16. **Outcome Metric #11 Validation**: Memverifikasi metrik Kehadiran Event adalah data HR Internal dengan `total_respondents: null`.
-17. **Outcome Metric #1 Validation**: Memverifikasi metrik SLA Rekrutmen memuat log operasional departemen.
+17. **Outcome Metric #1 Validation**: Memverifikasi metrik #1 adalah data HR Internal dengan log operasional. Sejak v2.52.0 (`mode=YTD&year=2026`): baris log = statistik social media per platform, tanpa baris SLA rekrutmen (`unit`); butuh data 2026 (seed atau asli). Sampai v2.51.1: log SLA rekrutmen per unit.
 18. **Survey Metric #5 Validation**: Memverifikasi metrik survei murni memiliki `total_respondents > 0` dan `questions_breakdown`.
 
 ### 📦 Modul 10: Admin Survey Questions & Multi-Type Questions Engine (5 Test Cases)
@@ -176,7 +176,7 @@ WARNING nyaris tidak pernah tercapai untuk metrik RATING_5/QUOTA_COUNT.
 Regression guard untuk temuan sub agent Auditor [2.16.0] — tabel drilldown operasional metrik
 OUTCOME, kuota partisipasi Metrik #11, dan jumlah responden ESS yang sebelumnya hardcode.
 
-86. **[POSITIVE] Operational Records Bersumber dari Database**: Memverifikasi `operational_records` metrik #1 (5 unit) dan #14 (3 kategori) sesuai tabel seed di database, dan metrik OUTCOME tanpa tabel seeded (#19) mengembalikan array kosong tanpa crash.
+86. **[POSITIVE] Operational Records Bersumber dari Database**: Memverifikasi `operational_records` metrik #1 (sejak v2.52.0: baris social media `platform`/`followers` YTD 2026, dulu 5 unit SLA) dan #14 (3 kategori) sesuai tabel seed di database, dan metrik OUTCOME tanpa tabel seeded (#19) mengembalikan array kosong tanpa crash.
 87. **[POSITIVE] Kuota Metrik #11 Memakai Target Admin-Editable**: Mengubah `target_value` Metrik #11 via `PUT /api/admin/metrics/11`, memverifikasi `normalized_score` di `/api/metrics/calculate` benar-benar bergeser mengikuti target baru — regression guard untuk bug kuota hardcode `500`.
 88. **[POSITIVE] `total_respondents` Jujur ke Database**: Membuat metrik SURVEY/ESS baru dengan nol respons, memverifikasi `total_respondents` = 0 (bukan placeholder fiktif `1250`).
 
@@ -1213,3 +1213,47 @@ Run suite penuh SQL terakhir (developer, modul media 27/32/38/41/42/43 di-skip, 
 **Cara menangani snapshot sisa**: bila run sebelumnya mati keras, suite berikutnya berhenti (exit code 2) dan menampilkan selisihnya. Jalankan ulang dengan `TEST_DISCARD_STALE_SNAPSHOT=1` bila konfigurasi live sekarang yang benar (umumnya), atau `TEST_RESTORE_STALE_SNAPSHOT=1` bila run yang mati memang meninggalkan konfigurasi rusak.
 
 **Tidak diuji otomatis / tidak terverifikasi**: suite JSON penuh; modul media; render tab Directorates, dialog merge/adopt dan urutan panel PX by directorate (tidak ada tes render).
+
+
+## 41. v2.52.0 - Data social media metrik 1, upload Excel, token integrasi
+
+### Modul 55 - Social media metrik 1 (17 tes, SQL saja)
+
+Di backend JSON seluruh modul di-skip ("needs the SQL Server backend"). Fixture memakai tahun yang tidak dipakai data lain (2097, 2099; YTD tahun lampau: 2018) dan dihapus di akhir lewat `upload_id` run ini, baris seed yang disisipkan modul sendiri, dan id token yang dibuat run ini. Tes pertama gagal bila tahun fixture tidak kosong sebelum modul berjalan.
+
+| # | Jenis | Yang diuji |
+| :---: | :---: | :--- |
+| 1 | Positif | Metrik 1 tanpa baris SLA rekrutmen (cleanup boot idempoten), tabel drilldown metrik 3, 4, 14, 25 utuh; `data_upload: 'SOCIAL_MEDIA'` hanya pada metrik 1 di calculate dan detail; skor tetap `raw_value` |
+| 2 | Positif | Template `.xlsx`: header Platform \| Year \| Month \| Followers \| Reach \| Engagement, satu baris per platform untuk bulan lengkap terakhir, angka kosong |
+| 3 | Positif | Upload valid (alias IG / Linked In / TT, bulan "Maret" / "Feb" / 3, "1,500"): 200, jumlah + periode, file asli disimpan, riwayat, audit `SOCIAL_MEDIA_UPLOAD` (baris tes) |
+| 4 | Positif | Detail MTD Maret 2099: baris per platform, follower growth vs Februari (Instagram +10%, LinkedIn tanpa Februari -> `null`), engagement rate (reach 0 -> `null`), total "All platforms"; MTD Februari tanpa Januari -> growth `null` |
+| 5 | Positif | Filter direktorat/divisi tidak mengubah metrik 1 (bankwide); USER melihat baris yang sama |
+| 6 | Positif | Upsert: upload ulang Maret 2099 Instagram = 1 diperbarui, 0 baru; growth ikut (+21%) |
+| 7 | Positif | Data asli satu bulan menggantikan SEMUA baris seed bulan itu; top-up seed hanya menambah (platform, bulan) bila bulan itu tanpa baris asli, tidak pernah dua kali |
+| 8 | Positif | YTD vs MTD tahun lampau (2018): YTD = Januari..Desember urut periode, MTD Februari = satu baris dengan growth vs Januari; YTD tahun depan (2099) = tanpa baris |
+| 9 | Negatif | Validasi upload menolak seluruh file (400, setiap error dengan baris + kolom, tidak ada yang disimpan): platform tak dikenal, tahun/bulan salah, negatif, bukan angka, desimal, angka kosong, platform+bulan ganda, kolom hilang, tanpa baris data |
+| 10 | Negatif | Bukan `.xlsx`: `.csv` / `.xls` -> 415, nama `.xlsx` dengan MIME `text/csv` -> 415, byte acak bernama `.xlsx` -> 400, tanpa file -> 400, > 5 MB -> 413 |
+| 11 | Negatif | USER: template / upload / riwayat / file asli / token -> 403; tanpa login -> 401 |
+| 12 | Positif | Token: dibuat (201, `pxi_` + 64 hex, tampil sekali - daftar hanya memuat petunjuk), dipakai tanpa sesi (200, `source` INTEGRATION, `last_used_at` terisi), riwayat + audit `SOCIAL_MEDIA_INGEST` menyebut nama token, tidak pernah token-nya |
+| 13 | Negatif | Token hanya membuka endpoint ingest (di route lain diabaikan -> 401 tanpa sesi); tanpa / salah bentuk / tidak dikenal -> 401; sesi USER -> 403; sesi Admin boleh ingest |
+| 14 | Negatif | Validasi ingest (400, tidak ada yang disimpan): tanpa array `rows`, body bukan JSON, `rows` kosong, > 500 baris, per baris platform tak dikenal / bulan 13 / negatif / bukan angka / desimal / ganda - setiap error dengan nomor baris dan field |
+| 15 | Negatif | Revoke: token langsung tidak berlaku (401); revoke kedua tidak mengubah apa pun; token aktif tidak bisa dihapus (409), yang dicabut bisa (200); id tak dikenal 404, id salah 400; audit REVOKE / DELETE |
+| 16 | Negatif | Rate limit: 30 request/menit per token, berikutnya 429 + `Retry-After` (token dicabut tidak pernah sampai ke limiter) |
+| 17 | Positif | Backend JSON in-process (kontrak sama): save / upsert / penggantian seed / top-up / stats / uploads / token sama hasilnya dengan SQL Server; `store.json` dan `auth.json` dipulihkan byte-identik |
+
+### Modul lama disesuaikan (jumlah tes tidak berubah)
+
+| Modul | Perubahan |
+| :--- | :--- |
+| 9 (#17) | Detail metrik 1 `mode=YTD&year=2026`: baris per `platform`, tanpa `unit` SLA |
+| 26 (#86) | Metrik 1: baris > 0 dengan `platform` dan `followers` bilangan bulat (dulu tepat 5 unit SLA) |
+
+Kedua tes membutuhkan data social media 2026 (seed atau asli); dengan `SEED_DEMO_DATA=false` dan tanpa data asli 2026 keduanya akan gagal.
+
+### Hasil
+
+Run suite penuh SQL (developer, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **329/329 lulus, 0 gagal, 16 tes dilewati**. Suite JSON penuh tidak dijalankan (laporan developer: probe API ke server JSON berperilaku sama; Modul 55 #17 menguji kontrak JSON in-process). Ukuran suite penuh SQL kini **415** = 329 lulus + 16 dilewati + 70 tes modul media yang di-skip seluruh bloknya (sama dengan v2.51.1: 312 + 16 + 70 = 398), atau 398 + 17 Modul 55 - hitungan, bukan angka cetakan suite.
+
+QC: LULUS DENGAN CATATAN - nilai tabel dicek manual terhadap baris DB (growth, engagement rate, total), YTD/MTD, filter direktorat, empty state, upload valid/invalid (7 jenis error, 415/413), History (XSS ter-escape), token (tampil sekali, hint saja di daftar, revoke -> 401, delete), varian auth ingest, token ditolak di route lain, rate limit (X-Forwarded-For tidak mem-bypass), tidak ada kebocoran token, USER tanpa tombol/tab dan 403 di endpoint admin, config guard tidak memuat token. Bug rendah yang ditemukan dan **sudah diperbaiki** main session: unduhan file asli (social media DAN ESS `GET /api/surveys/ess-file/:upload_id`) gagal 500 bila nama file memuat karakter di luar Latin-1 - kini `attachmentDisposition()` mengirim nama ASCII + `filename*=UTF-8''...` dan header `X-Content-Type-Options: nosniff`. Catatan (tidak diubah): tahun/bulan masa depan (s.d. 2100) diterima sehingga "Latest data" bisa menunjuk bulan masa depan; 20 token salah dari IP yang sama memblokir integrasi dari IP itu 60 detik (by design).
+
+**Tidak diuji otomatis / tidak terverifikasi**: suite JSON penuh; modul media dan event (8, 24); batas 20 cek token gagal per menit per IP dan penolakan `Origin` host lain pada endpoint ingest (tidak ada tes khusus); render tabel social media, modal upload dan tab Integrations (tidak ada tes render).

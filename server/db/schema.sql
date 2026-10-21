@@ -601,3 +601,59 @@ GO
 IF COL_LENGTH(N'dbo.px_survey_uploads', N'questions_snapshot_json') IS NULL
 ALTER TABLE dbo.px_survey_uploads ADD questions_snapshot_json NVARCHAR(MAX) NULL;
 GO
+
+-- ---------------------------------------------------------------- social media statistics of metric 1 (v2.52.0)
+-- Metric 1 "Career website & social media follower, reach & engagement growth" is bankwide (no directorate). Its drilldown
+-- = one row per platform per month: followers (at month end), reach and engagement of the month. Loaded by the Admin
+-- (.xlsx upload, source UPLOAD), injected by another internal system (POST /api/integrations/social-media with an
+-- integration token, source INTEGRATION) or generated demo rows (source SEED: a month only gets them while it has no real
+-- row, and real rows of a month replace its seed rows). The metric score stays the Admin's raw_value (not calculated yet).
+IF OBJECT_ID(N'dbo.px_social_media_uploads', N'U') IS NULL
+CREATE TABLE dbo.px_social_media_uploads (
+  upload_id           NVARCHAR(64)   NOT NULL CONSTRAINT PK_px_sm_uploads PRIMARY KEY,
+  source              VARCHAR(20)    NOT NULL CONSTRAINT CK_px_sm_up_src CHECK (source IN ('UPLOAD', 'INTEGRATION')),
+  file_name           NVARCHAR(260)  NULL,      -- UPLOAD only (original kept in server/data/social-uploads/<upload_id>.xlsx)
+  uploaded_by         NVARCHAR(200)  NOT NULL,  -- "Name (username)" or "Integration: <token name>"
+  total_rows          INT            NOT NULL CONSTRAINT DF_px_sm_up_total DEFAULT (0),
+  inserted_rows       INT            NOT NULL CONSTRAINT DF_px_sm_up_ins DEFAULT (0),
+  updated_rows        INT            NOT NULL CONSTRAINT DF_px_sm_up_upd DEFAULT (0),
+  replaced_seed_rows  INT            NOT NULL CONSTRAINT DF_px_sm_up_seed DEFAULT (0),
+  period_from         CHAR(7)        NULL,      -- 'YYYY-MM'
+  period_to           CHAR(7)        NULL,
+  uploaded_at         DATETIME2(3)   NOT NULL CONSTRAINT DF_px_sm_up_ts DEFAULT (SYSUTCDATETIME())
+);
+GO
+IF OBJECT_ID(N'dbo.px_social_media_stats', N'U') IS NULL
+CREATE TABLE dbo.px_social_media_stats (
+  stat_id      INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_px_sm_stats PRIMARY KEY,
+  platform     NVARCHAR(20)   NOT NULL CONSTRAINT CK_px_sm_platform CHECK (platform IN (N'Instagram', N'LinkedIn', N'TikTok')),
+  stat_year    INT            NOT NULL CONSTRAINT CK_px_sm_year CHECK (stat_year BETWEEN 2000 AND 2100),
+  stat_month   INT            NOT NULL CONSTRAINT CK_px_sm_month CHECK (stat_month BETWEEN 1 AND 12),
+  followers    INT            NOT NULL CONSTRAINT CK_px_sm_followers CHECK (followers >= 0),
+  reach        INT            NOT NULL CONSTRAINT CK_px_sm_reach CHECK (reach >= 0),
+  engagement   INT            NOT NULL CONSTRAINT CK_px_sm_engagement CHECK (engagement >= 0),
+  source       VARCHAR(20)    NOT NULL CONSTRAINT CK_px_sm_src CHECK (source IN ('UPLOAD', 'INTEGRATION', 'SEED')),
+  upload_id    NVARCHAR(64)   NULL,           -- px_social_media_uploads.upload_id (NULL for SEED rows)
+  created_at   DATETIME2(3)   NOT NULL CONSTRAINT DF_px_sm_created DEFAULT (SYSUTCDATETIME()),
+  updated_at   DATETIME2(3)   NULL,
+  CONSTRAINT UQ_px_sm_platform_period UNIQUE (platform, stat_year, stat_month)
+);
+GO
+-- Integration tokens (v2.52.0): let another internal system push data without a user session. Created / revoked by the Admin
+-- (Admin Parameters -> Integrations); the token is shown ONCE, only its SHA-256 is stored (like px_sessions). scope = the one
+-- endpoint it opens. Not part of the configuration snapshot and not dropped by migrate --reset (like the login accounts).
+IF OBJECT_ID(N'dbo.px_integration_tokens', N'U') IS NULL
+CREATE TABLE dbo.px_integration_tokens (
+  token_id      INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_px_int_tokens PRIMARY KEY,
+  name          NVARCHAR(100)  NOT NULL,
+  token_hash    CHAR(64)       NOT NULL CONSTRAINT UQ_px_int_tokens_hash UNIQUE,
+  token_hint    NVARCHAR(20)   NOT NULL,      -- first characters of the token, to recognise it in the list
+  scope         VARCHAR(40)    NOT NULL CONSTRAINT CK_px_int_tokens_scope CHECK (scope IN ('SOCIAL_MEDIA_INGEST')),
+  created_by    NVARCHAR(200)  NOT NULL,
+  created_at    DATETIME2(3)   NOT NULL CONSTRAINT DF_px_int_tokens_created DEFAULT (SYSUTCDATETIME()),
+  last_used_at  DATETIME2(3)   NULL,
+  revoked_at    DATETIME2(3)   NULL,
+  revoked_by    NVARCHAR(200)  NULL,
+  is_test       BIT            NOT NULL CONSTRAINT DF_px_int_tokens_is_test DEFAULT (0)  -- made by a test-run account (audit rows hidden)
+);
+GO

@@ -303,7 +303,10 @@ const PUBLIC_ROUTES = [
   ['GET', /^\/api\/directorates$/],
   ['GET', /^\/api\/events\/by-code\/[^/]+$/],
   ['POST', /^\/api\/events\/[^/]+\/attendance$/],
-  ['POST', /^\/api\/events\/[^/]+\/feedback$/]
+  ['POST', /^\/api\/events\/[^/]+\/feedback$/],
+  // v2.52.0: another internal system pushes metric-1 social media data with an integration token (no session). Not open:
+  // the route itself requires a valid token (or an Admin session) and answers 401 / 403 otherwise.
+  ['POST', /^\/api\/integrations\/social-media$/]
 ];
 // A user who must still change the temporary password can only reach these.
 const PASSWORD_CHANGE_ROUTES = /^\/api\/auth\/(me|logout|change-password|activity)$/;

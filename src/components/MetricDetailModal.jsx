@@ -36,6 +36,7 @@ import {
 import { formatMetricValue } from '../utils/formatMetricValue';
 import { monthName } from '../utils/months';
 import { surveySourceLabel, surveySourceBadgeClass, surveyTemplateFileName } from '../utils/surveySource';
+import SocialMediaUploadModal from './SocialMediaUploadModal';
 
 function normalizeDateString(dateVal) {
   if (!dateVal) return null;
@@ -123,6 +124,7 @@ export default function MetricDetailModal({
   const [activeTab, setActiveTab] = useState('primary'); // 'primary' | 'secondary'
   const [selectedRespondent, setSelectedRespondent] = useState(null);
   const [essViewMode, setEssViewMode] = useState('table'); // 'table' | 'cards'
+  const [isSocialUploadOpen, setIsSocialUploadOpen] = useState(false); // v2.52.0: social media data of metric 1 (Admin)
 
   useEffect(() => {
     if (isOpen && metricId) {
@@ -130,7 +132,8 @@ export default function MetricDetailModal({
     }
   }, [isOpen, metricId, period, filterOptions?.mode, filterOptions?.year, filterOptions?.month, filterOptions?.directorate, filterOptions?.sub_directorate]);
 
-  const fetchDetail = async () => {
+  // keepTab: reload after a social media upload without leaving the records tab
+  const fetchDetail = async ({ keepTab = false } = {}) => {
     setIsLoading(true);
     try {
       // Same period + directorate scope as the dashboard scorecard, so the drilldown never disagrees with it.
@@ -148,7 +151,7 @@ export default function MetricDetailModal({
       if (res.ok) {
         const data = await res.json();
         setDetailData(data);
-        setActiveTab('primary');
+        if (!keepTab) setActiveTab('primary');
       }
     } catch (err) {
       console.error('Error fetching metric detail:', err);
@@ -194,6 +197,11 @@ export default function MetricDetailModal({
     return true;
   });
 
+  // v2.52.0: metric 1 = social media statistics per platform per month (bankwide; Excel upload / integration)
+  const isSocialMedia = detailData?.data_upload === 'SOCIAL_MEDIA';
+  const socialTotals = detailData?.social_media?.period_totals || [];
+  const fmtCount = v => (v === null || v === undefined ? '—' : Number(v).toLocaleString('en-US'));
+  const fmtPct = (v, signed = false) => (v === null || v === undefined ? '—' : `${signed && v > 0 ? '+' : ''}${Number(v).toFixed(2)}%`);
   const operationalRecords = detailData?.operational_records || [];
   const filteredOperationalRecords = operationalRecords.filter(rec => {
     if (searchQuery.trim()) {
@@ -1084,9 +1092,40 @@ export default function MetricDetailModal({
               {isOutcome && activeTab === 'secondary' && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
+                    {isSocialMedia ? (
+                      <div className="text-xs text-gray-500 font-medium space-y-0.5">
+                        <div>Social media statistics (bankwide) from <strong>{detailData.source_of_data}</strong>, {periodLabel}:</div>
+                        <div className="text-[10.5px] text-gray-400">
+                          Latest data: <strong>{detailData.social_media?.latest_period_label || '—'}</strong> • Follower growth = vs the previous month of the same platform • Engagement rate = engagement / reach
+                        </div>
+                      </div>
+                    ) : (
                     <div className="text-xs text-gray-500 font-medium">
                       Operational transaction data records from <strong>{detailData.source_of_data}</strong>:
                     </div>
+                    )}
+                    <div className="flex items-center gap-2">
+                    {isSocialMedia && isAdmin && (
+                      <>
+                        <a
+                          href="/api/admin/social-media/template"
+                          download="Template_Social_Media_Metric_1.xlsx"
+                          className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
+                          title="Download the social media template (.xlsx)"
+                        >
+                          <Download className="w-3 h-3 text-slate-500 shrink-0" />
+                          <span>Template</span>
+                        </a>
+                        <button
+                          onClick={() => setIsSocialUploadOpen(true)}
+                          className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
+                          title="Upload Instagram / LinkedIn / TikTok data (.xlsx)"
+                        >
+                          <FileSpreadsheet className="w-3 h-3 text-slate-500 shrink-0" />
+                          <span>Upload</span>
+                        </button>
+                      </>
+                    )}
                     <div className="relative w-64">
                       <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-2.5" />
                       <input
@@ -1097,11 +1136,67 @@ export default function MetricDetailModal({
                         className="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                     </div>
+                    </div>
                   </div>
 
                   {/* Outcome Operational Records Table */}
                   <div className="border border-gray-200 rounded-xl overflow-x-auto shadow-2xs">
-                    {detailData.metric_id === 11 ? (
+                    {isSocialMedia ? (
+                      /* Social media statistics per platform per month (v2.52.0) - an "All platforms" line per month while the search is empty */
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-gray-100 text-gray-700 font-bold uppercase tracking-wider border-b border-gray-200">
+                          <tr>
+                            <th className="py-2.5 px-3.5">Platform</th>
+                            <th className="py-2.5 px-3.5">Period</th>
+                            <th className="py-2.5 px-3.5 text-right">Followers</th>
+                            <th className="py-2.5 px-3.5 text-right">Follower growth %</th>
+                            <th className="py-2.5 px-3.5 text-right">Reach</th>
+                            <th className="py-2.5 px-3.5 text-right">Engagement</th>
+                            <th className="py-2.5 px-3.5 text-right">Engagement rate %</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 font-normal bg-white">
+                          {filteredOperationalRecords.length === 0 ? (
+                            <tr>
+                              <td colSpan="7" className="text-center py-8 text-gray-400">
+                                {operationalRecords.length === 0 ? 'No social media data for this period' : 'No records match the search.'}
+                              </td>
+                            </tr>
+                          ) : (
+                            filteredOperationalRecords.flatMap((item, idx) => {
+                              const isLastOfPeriod = idx === filteredOperationalRecords.length - 1 || filteredOperationalRecords[idx + 1].period !== item.period;
+                              const total = !searchQuery.trim() && isLastOfPeriod ? socialTotals.find(t => t.period === item.period) : null;
+                              const out = [(
+                                <tr key={`${item.period}-${item.platform}`} className="hover:bg-blue-50/30 transition">
+                                  <td className="py-2.5 px-3.5 font-bold text-gray-900">
+                                    {item.platform}
+                                    {item.is_dummy && <span className="ml-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-gray-200 text-gray-600" title="Fictional demo data - replaced as soon as real data of this month is uploaded">Dummy</span>}
+                                  </td>
+                                  <td className="py-2.5 px-3.5 text-gray-700 whitespace-nowrap">{item.period_label}</td>
+                                  <td className="py-2.5 px-3.5 text-right font-mono">{fmtCount(item.followers)}</td>
+                                  <td className={`py-2.5 px-3.5 text-right font-mono ${item.follower_growth_pct > 0 ? 'text-emerald-700' : item.follower_growth_pct < 0 ? 'text-red-700' : 'text-gray-500'}`}>{fmtPct(item.follower_growth_pct, true)}</td>
+                                  <td className="py-2.5 px-3.5 text-right font-mono">{fmtCount(item.reach)}</td>
+                                  <td className="py-2.5 px-3.5 text-right font-mono">{fmtCount(item.engagement)}</td>
+                                  <td className="py-2.5 px-3.5 text-right font-mono">{fmtPct(item.engagement_rate_pct)}</td>
+                                </tr>
+                              )];
+                              if (total) out.push(
+                                <tr key={`${item.period}-total`} className="bg-blue-50/50 font-bold">
+                                  <td className="py-2 px-3.5 text-blue-900">All platforms</td>
+                                  <td className="py-2 px-3.5 text-blue-900 whitespace-nowrap">{total.period_label}</td>
+                                  <td className="py-2 px-3.5 text-right font-mono">{fmtCount(total.followers)}</td>
+                                  <td className="py-2 px-3.5 text-right font-mono">{fmtPct(total.follower_growth_pct, true)}</td>
+                                  <td className="py-2 px-3.5 text-right font-mono">{fmtCount(total.reach)}</td>
+                                  <td className="py-2 px-3.5 text-right font-mono">{fmtCount(total.engagement)}</td>
+                                  <td className="py-2 px-3.5 text-right font-mono">{fmtPct(total.engagement_rate_pct)}</td>
+                                </tr>
+                              );
+                              return out;
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    ) : detailData.metric_id === 11 ? (
                       /* Live Event Attendance Table */
                       <table className="w-full text-left text-xs">
                         <thead className="bg-gray-100 text-gray-700 font-bold uppercase tracking-wider border-b border-gray-200">
@@ -1214,6 +1309,14 @@ export default function MetricDetailModal({
         </div>
 
       </div>
+
+      {isSocialMedia && isAdmin && (
+        <SocialMediaUploadModal
+          isOpen={isSocialUploadOpen}
+          onClose={() => setIsSocialUploadOpen(false)}
+          onUploaded={() => fetchDetail({ keepTab: true })}
+        />
+      )}
     </div>
   );
 }

@@ -567,15 +567,16 @@ async function runAllModules() {
     assert(data.operational_records !== undefined, 'Outcome metrics should have operational records');
   });
 
-  await runTest('Verify OUTCOME metric #1 (% SLA of candidate fulfillment) is Internal HR data with SLA records', async () => {
-    const res = await fetch(`${BASE_URL}/api/metrics/1/detail?period=YTD`);
+  await runTest('Verify OUTCOME metric #1 (career website & social media) is Internal HR data with social media records (v2.52.0: no recruitment-SLA rows)', async () => {
+    const res = await fetch(`${BASE_URL}/api/metrics/1/detail?mode=YTD&year=2026`);
     assert.strictEqual(res.status, 200);
     const data = await res.json();
     assert.strictEqual(data.metric_type, 'OUTCOME');
     assert.strictEqual(data.is_survey, false);
     assert.strictEqual(data.is_outcome, true);
     assert.strictEqual(data.total_respondents, null);
-    assert(data.operational_records.length > 0, 'SLA outcome metric should have departmental operational breakdown');
+    assert(data.operational_records.length > 0, 'metric 1 should have social media records for 2026 (seed or real)');
+    assert(data.operational_records.every(r => r.platform && r.unit === undefined), 'social media rows per platform, no SLA unit rows');
   });
 
   await runTest('Verify SURVEY metric #5 (Candidate Experience Index) is pure survey with respondent count', async () => {
@@ -1560,11 +1561,12 @@ async function runAllModules() {
   // --- 26. HARDCODE AUDIT FOLLOW-UP: OPERATIONAL RECORDS, LIVE EVENT QUOTA & RESPONDENT COUNTS (POSITIVE TESTING) ---
   console.log('\n📦 MODULE 26: Hardcode Audit Follow-up — Operational Records, Live Quota & Respondent Counts (Positive Testing)');
   await runTest('[POSITIVE] OUTCOME metrics\' operational_records drilldown tables are sourced from the database (storage.getOperationalRecords), not frozen inline in calculationEngine.js', async () => {
-    const res1 = await fetch(`${BASE_URL}/api/metrics/1/detail?period=YTD`);
+    // v2.52.0: metric 1's records are its social media statistics (px_social_media_stats), not recruitment-SLA rows
+    const res1 = await fetch(`${BASE_URL}/api/metrics/1/detail?mode=YTD&year=2026`);
     assert.strictEqual(res1.status, 200);
     const data1 = await res1.json();
-    assert(Array.isArray(data1.operational_records) && data1.operational_records.length === 5, 'Metric #1 (Recruitment SLA) must expose its 5-unit breakdown table');
-    assert(data1.operational_records[0].unit && data1.operational_records[0].sla_achievement, 'Metric #1 records must have the expected unit/sla_achievement shape');
+    assert(Array.isArray(data1.operational_records) && data1.operational_records.length > 0, 'Metric #1 must expose its social media rows');
+    assert(data1.operational_records[0].platform && Number.isInteger(data1.operational_records[0].followers), 'Metric #1 records must have the platform / followers shape');
 
     const res14 = await fetch(`${BASE_URL}/api/metrics/14/detail?period=YTD`);
     assert.strictEqual(res14.status, 200);
@@ -8457,6 +8459,440 @@ async function runAllModules() {
       // the flag and anything else of the configuration: the guard puts the whole snapshot back (SQL); JSON: only the flag
       if (configGuard) await restoreConfigGuard('end of Module 54');
       else if (flag54 !== true && typeof st54.setSetting === 'function' && isSql54) await st54.setSetting('directory_admin_managed', flag54 === undefined ? false : flag54);
+    }
+  }
+  // --- MODULE 55 (v2.52.0): SOCIAL MEDIA DATA OF METRIC 1 - EXCEL UPLOAD, INTEGRATION TOKENS, DRILLDOWN TABLE ---
+  // Fixtures live in years no other data uses (2097, 2099; YTD on a past year: 2018) and are removed at the end by this run's
+  // upload ids / the seed rows the module inserted itself; integration tokens by the ids this run created. SQL Server only
+  // (the cleanup goes through SQL; on SQL the JSON backend is also checked in-process, with store.json / auth.json restored
+  // byte-identically).
+  console.log('\n📦 MODULE 55: Social media data of metric 1 - template, .xlsx upload, integration tokens, drilldown table (Positive & Negative Testing)');
+  if (require('../server/db/storage').backend !== 'sql') {
+    console.log('  ⏭️  SKIPPED: Module 55 needs the SQL Server backend (its fixtures are removed through SQL)');
+  } else if (!skipModuleBlock(55)) {
+    const st55 = require('../server/db/storage');
+    const sm55 = require('../server/services/socialMediaService');
+    const { buildXlsx: buildXlsx55, readFirstSheet: readSheet55 } = require('../server/services/xlsxUtils');
+    const sql55 = require('mssql');
+    const fs55 = require('fs');
+    const path55 = require('path');
+    const pool55 = await new sql55.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
+      user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
+    const q55 = async (text, params = {}) => {
+      const r = pool55.request();
+      Object.entries(params).forEach(([k, v]) => r.input(k, v));
+      return (await r.query(text)).recordset || [];
+    };
+    const HEAD55 = ['Platform', 'Year', 'Month', 'Followers', 'Reach', 'Engagement'];
+    const xlsx55 = rows => buildXlsx55([HEAD55, ...rows]);
+    const uploadIds55 = [];
+    const tokenIds55 = [];
+    const userIds55 = [];
+    const stamp55 = Date.now().toString(36);
+    const postSocial = async (buf, fileName = 'module55.xlsx', cookie = null, type = undefined) => {
+      const fd = new FormData();
+      fd.append('file', new Blob([buf], type ? { type } : undefined), fileName);
+      return cookie ? realFetch(`${BASE_URL}/api/admin/social-media/upload`, { method: 'POST', body: fd, headers: { Cookie: cookie } })
+        : fetch(`${BASE_URL}/api/admin/social-media/upload`, { method: 'POST', body: fd });
+    };
+    const ingest55 = async (body, headers = {}) => {
+      const r = await realFetch(`${BASE_URL}/api/integrations/social-media`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: typeof body === 'string' ? body : JSON.stringify(body) });
+      let b = null;
+      try { b = await r.json(); } catch (_) { /* no body */ }
+      return { status: r.status, body: b, headers: r.headers };
+    };
+    const detail55 = async (q, cookie = null) => {
+      const r = cookie ? await realFetch(`${BASE_URL}/api/metrics/1/detail?${q}`, { headers: { Cookie: cookie } }) : await fetch(`${BASE_URL}/api/metrics/1/detail?${q}`);
+      return { status: r.status, body: await r.json() };
+    };
+    const rowsOf = d => d.operational_records.map(r => [r.platform, r.period, r.followers, r.follower_growth_pct, r.reach, r.engagement, r.engagement_rate_pct]);
+    const yearCount55 = async y => (await q55('SELECT COUNT(*) AS n FROM dbo.px_social_media_stats WHERE stat_year = @y', { y }))[0].n;
+    const mkToken55 = async name => {
+      const r = await adminJson('POST', '/api/admin/integration-tokens', { name });
+      const b = await r.json();
+      if (b.record) tokenIds55.push(b.record.token_id);
+      return { status: r.status, body: b };
+    };
+    let userCookie55 = null;
+    let preExisting55 = 0;
+    try {
+      preExisting55 = (await yearCount55(2018)) + (await yearCount55(2097)) + (await yearCount55(2099));
+
+      await runTest('[POSITIVE] Metric 1 has no recruitment-SLA rows any more (boot cleanup idempotent), the other drilldown tables are untouched, and calculate + detail flag metric 1 as data_upload SOCIAL_MEDIA', async () => {
+        assert.strictEqual(preExisting55, 0, 'the fixture years 2018 / 2097 / 2099 must be empty before the module runs (nothing of somebody else is touched)');
+        assert.strictEqual((await q55('SELECT COUNT(*) AS n FROM dbo.px_recruitment_sla_by_unit WHERE metric_id = 1'))[0].n, 0);
+        assert.strictEqual(await st55.removeMetric1SlaRows(), 0, 'a second cleanup removes nothing');
+        for (const [id, n] of [[3, 3], [4, 4], [14, 3]]) {
+          const d = await (await fetch(`${BASE_URL}/api/metrics/${id}/detail?period=YTD`)).json();
+          assert.strictEqual(d.operational_records.length, n, `metric ${id} keeps its ${n} drilldown rows`);
+        }
+        assert.strictEqual((await q55('SELECT COUNT(*) AS n FROM dbo.px_attrition_by_tenure WHERE metric_id = 25'))[0].n, 3, 'metric 25 keeps its attrition rows');
+        const calc = await (await fetch(`${BASE_URL}/api/metrics/calculate?period=YTD`)).json();
+        assert.deepStrictEqual(calc.metrics.filter(m => m.data_upload).map(m => [m.metric_id, m.data_upload]), [[1, 'SOCIAL_MEDIA']]);
+        const d1 = (await detail55('mode=YTD&year=2026')).body;
+        assert.strictEqual(d1.data_upload, 'SOCIAL_MEDIA');
+        assert.ok(d1.operational_records.length > 0 && d1.operational_records.every(r => r.platform && r.unit === undefined && r.sla_achievement === undefined));
+        assert.deepStrictEqual(d1.social_media.platforms, ['Instagram', 'LinkedIn', 'TikTok']);
+        assert.strictEqual(d1.current_raw_value, parseFloat((await st55.getMetricById(1)).raw_value || 0), 'the score stays the Admin raw_value');
+      });
+
+      await runTest('[POSITIVE] Template download (.xlsx): header Platform | Year | Month | Followers | Reach | Engagement and one row per platform for the last complete month, numbers empty', async () => {
+        const r = await fetch(`${BASE_URL}/api/admin/social-media/template`);
+        assert.strictEqual(r.status, 200);
+        assert.ok(/spreadsheetml/.test(r.headers.get('content-type')));
+        assert.ok(/Template_Social_Media_Metric_1\.xlsx/.test(r.headers.get('content-disposition')));
+        const rows = await readSheet55(Buffer.from(await r.arrayBuffer()));
+        assert.deepStrictEqual(rows[0].cells.map(c => c.value), HEAD55);
+        const now = new Date();
+        const y = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+        const m = now.getMonth() === 0 ? 12 : now.getMonth();
+        assert.deepStrictEqual(rows.slice(1).map(x => x.cells.filter(Boolean).map(c => c.value)), ['Instagram', 'LinkedIn', 'TikTok'].map(p => [p, y, require('../server/services/essSummaryService').MONTH_NAMES[m - 1]]));
+        const v = sm55.validateSocialSheet(rows);
+        assert.ok(v.errors.length === 9 && v.errors.every(e => /is empty/.test(e.reason)), 'only the empty numbers are reported');
+      });
+
+      await runTest('[POSITIVE] Admin uploads a valid .xlsx (aliases IG / Linked In / TT, months "Maret" / "Feb" / 3, "1,500"): 200, counts + periods, original kept, history entry, audit SOCIAL_MEDIA_UPLOAD (test-run row)', async () => {
+        const res = await postSocial(await xlsx55([
+          ['IG', 2099, 'Maret', 1100, 2000, 100],
+          ['Linked In', '2099', 3, '1,500', 0, 5],
+          ['TT', 2099, 'Mar', 10, 20, 30],
+          ['instagram', 2099, 'Feb', 1000, 1000, 10]
+        ]), 'module55_valid.xlsx');
+        const body = await res.json();
+        assert.strictEqual(res.status, 200, JSON.stringify(body).slice(0, 400));
+        uploadIds55.push(body.upload_id);
+        assert.deepStrictEqual([body.rows_imported, body.inserted_rows, body.updated_rows, body.replaced_seed_rows, body.source], [4, 4, 0, 0, 'UPLOAD']);
+        assert.deepStrictEqual(body.periods, ['2099-02', '2099-03']);
+        assert.ok(fs55.existsSync(path55.join(sm55.SOCIAL_UPLOAD_DIR, `${body.upload_id}.xlsx`)), 'original file kept (non-public folder)');
+        const hist = await (await fetch(`${BASE_URL}/api/admin/social-media/uploads`)).json();
+        const h = hist.find(u => u.upload_id === body.upload_id);
+        assert.ok(h && h.source === 'UPLOAD' && h.file_name === 'module55_valid.xlsx' && h.has_original_file && h.period_from === '2099-02' && h.period_to === '2099-03');
+        const file = await fetch(`${BASE_URL}/api/admin/social-media/file/${body.upload_id}`);
+        assert.strictEqual(file.status, 200);
+        assert.strictEqual((await fetch(`${BASE_URL}/api/admin/social-media/file/not-there`)).status, 404);
+        const audit = await st55.getAuditLog(30, { includeTest: true });
+        const a = audit.find(x => x.action === 'SOCIAL_MEDIA_UPLOAD' && String(x.target).includes(body.upload_id));
+        assert.ok(a && a.is_test === true && /4 rows \(4 new, 0 updated, 0 seed replaced\); 2099-02 2099-03/.test(a.target), JSON.stringify(a));
+      });
+
+      await runTest('[POSITIVE] Detail MTD March 2099: rows Instagram, LinkedIn, TikTok with follower growth vs February (Instagram +10%, LinkedIn no February -> null), engagement rate (reach 0 -> null), an "All platforms" total; MTD February: no January -> growth null', async () => {
+        const { status, body: d } = await detail55('mode=MTD&year=2099&month=03');
+        assert.strictEqual(status, 200);
+        assert.deepStrictEqual(rowsOf(d), [
+          ['Instagram', '2099-03', 1100, 10, 2000, 100, 5],
+          ['LinkedIn', '2099-03', 1500, null, 0, 5, null],
+          ['TikTok', '2099-03', 10, null, 20, 30, 150]
+        ]);
+        assert.ok(d.operational_records.every(r => r.is_dummy === false && r.source === 'UPLOAD' && r.period_label === 'March 2099'));
+        assert.deepStrictEqual(d.social_media.period_totals, [{ period: '2099-03', period_label: 'March 2099', platforms: 3, followers: 2610, follower_growth_pct: null, reach: 2020, engagement: 135, engagement_rate_pct: 6.68 }]);
+        assert.deepStrictEqual(d.social_media.window, { from: '2099-03-01', to: '2099-03-31', basis: 'MONTH' });
+        const feb = (await detail55('mode=MTD&year=2099&month=02')).body;
+        assert.deepStrictEqual(rowsOf(feb), [['Instagram', '2099-02', 1000, null, 1000, 10, 1]]);
+        assert.deepStrictEqual(feb.social_media.period_totals, [], 'one platform -> no total line');
+      });
+
+      await runTest('[POSITIVE] The directorate filter does not change metric 1 (bankwide): same rows under a directorate and a division; a USER sees the same rows', async () => {
+        const directory55 = await (await rawFetch(`${BASE_URL}/api/directorates`)).json();
+        const dir = directory55.find(d => d.divisions.length > 0);
+        const all = rowsOf((await detail55('mode=MTD&year=2099&month=03')).body);
+        const byDir = await detail55(`mode=MTD&year=2099&month=03&directorate=${encodeURIComponent(dir.directorate_name)}`);
+        assert.strictEqual(byDir.status, 200);
+        assert.deepStrictEqual(rowsOf(byDir.body), all);
+        assert.deepStrictEqual(rowsOf((await detail55(`mode=MTD&year=2099&month=03&directorate=${encodeURIComponent(dir.directorate_name)}&sub_directorate=${encodeURIComponent(dir.divisions[0])}`)).body), all);
+        const username = `rt55u${stamp55}`;
+        const created = await adminJson('POST', '/api/admin/users', { username, full_name: 'Regression Social User', email: `${username}@example.test`, role: 'USER', scopes: [{ directorate: dir.directorate_name, divisions: null }] });
+        assert.strictEqual(created.status, 201);
+        const cb = await created.json();
+        userIds55.push(cb.user.user_id);
+        const { cookie } = await loginAs(username, cb.temporary_password);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/auth/change-password`, jsonBody('POST', { current_password: cb.temporary_password, new_password: STRONG }, cookie))).status, 200);
+        userCookie55 = cookie;
+        const u = await detail55('mode=MTD&year=2099&month=03', cookie);
+        assert.strictEqual(u.status, 200);
+        assert.deepStrictEqual(rowsOf(u.body), all);
+      });
+
+      await runTest('[POSITIVE] Upsert: uploading March 2099 Instagram again UPDATES that row (1 updated, 0 new) and the growth follows (+21%)', async () => {
+        const res = await postSocial(await xlsx55([['Instagram', 2099, 'March', 1210, 2000, 120]]), 'module55_upsert.xlsx');
+        const body = await res.json();
+        assert.strictEqual(res.status, 200, JSON.stringify(body).slice(0, 300));
+        uploadIds55.push(body.upload_id);
+        assert.deepStrictEqual([body.inserted_rows, body.updated_rows], [0, 1]);
+        const ig = (await detail55('mode=MTD&year=2099&month=03')).body.operational_records.find(r => r.platform === 'Instagram');
+        assert.deepStrictEqual([ig.followers, ig.follower_growth_pct, ig.engagement_rate_pct], [1210, 21, 6]);
+        assert.strictEqual(await yearCount55(2099), 4, 'no duplicate row');
+      });
+
+      await runTest('[POSITIVE] Real data of a month replaces ALL seed rows of that month; the seed top-up adds a (platform, month) only while the month has no real row and never twice', async () => {
+        const seedRow = (platform, month, n) => ({ platform, year: 2099, month, followers: n, reach: n * 2, engagement: n / 10 });
+        assert.deepStrictEqual(await st55.topUpSocialMediaSeed([seedRow('Instagram', 6, 500), seedRow('LinkedIn', 6, 600), seedRow('TikTok', 6, 700)]), ['2099-06']);
+        assert.deepStrictEqual(await st55.topUpSocialMediaSeed([seedRow('Instagram', 6, 500)]), [], 'idempotent');
+        const before = (await detail55('mode=MTD&year=2099&month=06')).body;
+        assert.ok(before.operational_records.length === 3 && before.operational_records.every(r => r.is_dummy === true && r.source === 'SEED'));
+        const res = await postSocial(await xlsx55([['Instagram', 2099, 'June', 900, 1800, 90]]), 'module55_replace_seed.xlsx');
+        const body = await res.json();
+        assert.strictEqual(res.status, 200, JSON.stringify(body).slice(0, 300));
+        uploadIds55.push(body.upload_id);
+        assert.deepStrictEqual([body.inserted_rows, body.updated_rows, body.replaced_seed_rows], [1, 0, 3]);
+        assert.ok(/3 dummy rows of that month replaced/.test(body.message));
+        assert.deepStrictEqual(rowsOf((await detail55('mode=MTD&year=2099&month=06')).body), [['Instagram', '2099-06', 900, null, 1800, 90, 5]]);
+        // June has a real row now -> no seed for June; July (no row at all) gets its seed rows
+        assert.deepStrictEqual(await st55.topUpSocialMediaSeed([seedRow('LinkedIn', 6, 600), seedRow('TikTok', 7, 700)]), ['2099-07']);
+        const jul = (await detail55('mode=MTD&year=2099&month=07')).body.operational_records;
+        assert.deepStrictEqual(jul.map(r => [r.platform, r.is_dummy]), [['TikTok', true]]);
+      });
+
+      await runTest('[POSITIVE] YTD vs MTD on a past year (2018): YTD = January..December rows in period order, MTD February = one row with growth vs January; YTD of a future year (2099) = no rows', async () => {
+        const res = await postSocial(await xlsx55([['TikTok', 2018, 12, 300, 3000, 30], ['Instagram', 2018, 1, 200, 400, 4], ['Instagram', 2018, 2, 250, 500, 50], ['LinkedIn', 2018, 1, 100, 100, 1]]), 'module55_ytd.xlsx');
+        const body = await res.json();
+        assert.strictEqual(res.status, 200, JSON.stringify(body).slice(0, 300));
+        uploadIds55.push(body.upload_id);
+        const ytd = (await detail55('mode=YTD&year=2018')).body;
+        assert.deepStrictEqual(ytd.operational_records.map(r => [r.platform, r.period]), [['Instagram', '2018-01'], ['LinkedIn', '2018-01'], ['Instagram', '2018-02'], ['TikTok', '2018-12']]);
+        assert.deepStrictEqual(ytd.social_media.window, { from: '2018-01-01', to: '2018-12-31', basis: 'YEAR_TO_MONTH' });
+        assert.deepStrictEqual(ytd.social_media.period_totals.map(t => [t.period, t.followers, t.follower_growth_pct]), [['2018-01', 300, null]]);
+        const mtd = (await detail55('mode=MTD&year=2018&month=2')).body;
+        assert.deepStrictEqual(rowsOf(mtd), [['Instagram', '2018-02', 250, 25, 500, 50, 10]]);
+        const future = (await detail55('mode=YTD&year=2099')).body;
+        assert.deepStrictEqual([future.operational_records.length, future.social_media.window], [0, null], 'a future year has no elapsed month');
+        assert.ok(future.social_media.latest_period >= '2099-07', 'latest_period = the newest stored month');
+      });
+
+      await runTest('[NEGATIVE] Upload validation refuses the whole file (400, every error with row + column, nothing stored): unknown platform, bad year, bad month, negative, non-numeric, decimal, empty number, duplicate platform + month, missing column, no data rows', async () => {
+        const before = await yearCount55(2099);
+        const cases = [
+          ['platform', [['Facebook', 2099, 4, 1, 1, 1]], 2, 'A', /Platform "Facebook" is unknown/],
+          ['year', [['Instagram', '20x9', 4, 1, 1, 1]], 2, 'B', /Year must be a 4-digit year/],
+          ['old year', [['Instagram', 1999, 4, 1, 1, 1]], 2, 'B', /Year must be/],
+          ['month 13', [['Instagram', 2099, 13, 1, 1, 1]], 2, 'C', /Month must be a month name/],
+          ['month name', [['Instagram', 2099, 'Smarch', 1, 1, 1]], 2, 'C', /Month must be/],
+          ['negative', [['Instagram', 2099, 4, -5, 1, 1]], 2, 'D', /Followers must not be negative/],
+          ['non-numeric', [['Instagram', 2099, 4, 1, 'many', 1]], 2, 'E', /Reach must be a whole number/],
+          ['decimal', [['Instagram', 2099, 4, 1, 1, 2.5]], 2, 'F', /Engagement must be a whole number/],
+          ['empty', [['Instagram', 2099, 4, 1, null, 1]], 2, 'E', /Reach is empty/],
+          ['duplicate', [['Instagram', 2099, 4, 1, 1, 1], ['IG', 2099, 'April', 2, 2, 2]], 3, 'A', /Instagram April 2099 appears more than once \(rows 3 and 4\)/]
+        ];
+        for (const [name, rows, rowNo, col, re] of cases) {
+          const r = await postSocial(await xlsx55([['LinkedIn', 2099, 4, 1, 1, 1], ...rows]), `module55_bad_${name.replace(/\s+/g, '_')}.xlsx`);
+          const b = await r.json();
+          assert.strictEqual(r.status, 400, name);
+          assert.ok(/nothing was stored/.test(b.error), name);
+          assert.ok(b.errors.some(e => e.row_number === rowNo + 1 && e.column === col && re.test(e.reason)), `${name}: ${JSON.stringify(b.errors).slice(0, 300)}`);
+        }
+        const noCol = await postSocial(await buildXlsx55([['Platform', 'Year', 'Month', 'Followers', 'Reach'], ['Instagram', 2099, 4, 1, 1]]), 'module55_nocol.xlsx');
+        assert.strictEqual(noCol.status, 400);
+        assert.ok(/no column Engagement/.test(JSON.stringify(await noCol.json())));
+        const noRows = await postSocial(await buildXlsx55([HEAD55]), 'module55_norows.xlsx');
+        assert.strictEqual(noRows.status, 400);
+        assert.ok(/no data rows/.test(JSON.stringify(await noRows.json())));
+        assert.strictEqual(await yearCount55(2099), before, 'none of the refused files stored a row (not even the valid LinkedIn row)');
+        const hist = await (await fetch(`${BASE_URL}/api/admin/social-media/uploads`)).json();
+        assert.ok(!hist.some(u => /^module55_(bad|nocol|norows)/.test(u.file_name || '')), 'no upload record for a refused file');
+      });
+
+      await runTest('[NEGATIVE] Not an .xlsx: .csv / .xls -> 415, an .xlsx name sent as text/csv -> 415, garbage bytes named .xlsx -> 400, no file -> 400, over 5 MB -> 413', async () => {
+        const before = await yearCount55(2099);
+        assert.strictEqual((await postSocial(Buffer.from('Platform,Year\nIG,2099\n'), 'module55.csv')).status, 415);
+        assert.strictEqual((await postSocial(Buffer.from('xx'), 'module55.xls')).status, 415);
+        assert.strictEqual((await postSocial(await xlsx55([['Instagram', 2099, 4, 1, 1, 1]]), 'module55_mime.xlsx', null, 'text/csv')).status, 415);
+        const junk = await postSocial(Buffer.from('this is not a zip'), 'module55_junk.xlsx');
+        assert.strictEqual(junk.status, 400);
+        assert.ok(/not a valid Excel/i.test((await junk.json()).error));
+        assert.strictEqual((await fetch(`${BASE_URL}/api/admin/social-media/upload`, { method: 'POST', body: new FormData() })).status, 400);
+        assert.strictEqual((await postSocial(Buffer.alloc(5 * 1024 * 1024 + 10), 'module55_big.xlsx')).status, 413);
+        assert.strictEqual(await yearCount55(2099), before, 'no refused file stored a row');
+      });
+
+      await runTest('[NEGATIVE] USER: template / upload / history / original file / integration tokens -> 403; without login -> 401', async () => {
+        assert.ok(userCookie55, 'user from the directorate-filter test');
+        for (const p of ['/api/admin/social-media/template', '/api/admin/social-media/uploads', `/api/admin/social-media/file/${uploadIds55[0]}`, '/api/admin/integration-tokens']) {
+          assert.strictEqual((await realFetch(`${BASE_URL}${p}`, { headers: { Cookie: userCookie55 } })).status, 403, p);
+          assert.strictEqual((await realFetch(`${BASE_URL}${p}`)).status, 401, `${p} without login`);
+        }
+        assert.strictEqual((await postSocial(await xlsx55([['Instagram', 2099, 5, 1, 1, 1]]), 'module55_user.xlsx', userCookie55)).status, 403);
+        assert.strictEqual((await realFetch(`${BASE_URL}/api/admin/integration-tokens`, jsonBody('POST', { name: 'user token' }, userCookie55))).status, 403);
+        assert.strictEqual((await q55('SELECT COUNT(*) AS n FROM dbo.px_social_media_stats WHERE stat_year = 2099 AND stat_month = 5'))[0].n, 0, 'the USER upload stored nothing');
+      });
+
+      let token55 = null;
+      await runTest('[POSITIVE] Integration token: created (201, "pxi_" + 64 hex, shown once - the list holds only the hint), used without a session (200, source INTEGRATION, last_used_at set), history + audit SOCIAL_MEDIA_INGEST name the token, never the token itself', async () => {
+        const c = await mkToken55(`RT55 Analytics ${stamp55}`);
+        assert.strictEqual(c.status, 201, JSON.stringify(c.body));
+        assert.ok(/^pxi_[0-9a-f]{64}$/.test(c.body.token));
+        token55 = c.body.token;
+        assert.ok(c.body.record.token_hint.startsWith(token55.slice(0, 12)) && c.body.record.scope === 'SOCIAL_MEDIA_INGEST' && c.body.record.is_test === true);
+        const list = await (await fetch(`${BASE_URL}/api/admin/integration-tokens`)).json();
+        const listed = list.tokens.find(t => t.token_id === c.body.record.token_id);
+        assert.ok(listed && listed.last_used_at === null && listed.revoked_at === null);
+        assert.ok(!JSON.stringify(list).includes(token55) && !JSON.stringify(list).includes('token_hash'), 'neither the token nor its hash is listed');
+        assert.strictEqual(list.endpoint, '/api/integrations/social-media');
+        const r = await ingest55({ rows: [{ platform: 'TikTok', year: 2099, month: 4, followers: 50, reach: 100, engagement: 7 }] }, { Authorization: `Bearer ${token55}` });
+        assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+        uploadIds55.push(r.body.upload_id);
+        assert.deepStrictEqual([r.body.source, r.body.rows_imported, r.body.inserted_rows, r.body.periods], ['INTEGRATION', 1, 1, ['2099-04']]);
+        const row = (await detail55('mode=MTD&year=2099&month=04')).body.operational_records;
+        assert.deepStrictEqual(row.map(x => [x.platform, x.followers, x.source]), [['TikTok', 50, 'INTEGRATION']]);
+        const after = (await (await fetch(`${BASE_URL}/api/admin/integration-tokens`)).json()).tokens.find(t => t.token_id === c.body.record.token_id);
+        assert.ok(after.last_used_at, 'last_used_at set');
+        const hist = (await (await fetch(`${BASE_URL}/api/admin/social-media/uploads`)).json()).find(u => u.upload_id === r.body.upload_id);
+        assert.deepStrictEqual([hist.source, hist.uploaded_by, hist.file_name, hist.has_original_file], ['INTEGRATION', `Integration: RT55 Analytics ${stamp55}`, null, false]);
+        const audit = await st55.getAuditLog(50, { includeTest: true });
+        const a = audit.find(x => x.action === 'SOCIAL_MEDIA_INGEST' && String(x.target).includes(r.body.upload_id));
+        assert.ok(a && a.username === `integration:RT55 Analytics ${stamp55}` && a.user_id === null && a.is_test === true, JSON.stringify(a));
+        assert.ok(a.target.includes(`token "RT55 Analytics ${stamp55}"`) && a.target.includes('2099-04'));
+        assert.ok(audit.some(x => x.action === 'INTEGRATION_TOKEN_CREATE' && String(x.target).includes(`RT55 Analytics ${stamp55}`)));
+        assert.ok(!JSON.stringify(audit).includes(token55) && !/pxi_[0-9a-f]{64}/.test(JSON.stringify(audit)), 'the token never reaches the audit trail');
+        // a second active token with the same name -> 409; an empty / control-character name -> 400
+        assert.strictEqual((await mkToken55(`RT55 Analytics ${stamp55}`)).status, 409);
+        assert.strictEqual((await mkToken55('   ')).status, 400);
+        assert.strictEqual((await mkToken55('x'.repeat(101))).status, 400);
+      });
+
+      await runTest('[NEGATIVE] The token opens ONLY the ingest endpoint: on other routes it is ignored (401 without a session); no / malformed / unknown token -> 401; a USER session -> 403; an Admin session may ingest', async () => {
+        assert.ok(token55, 'token from the previous test');
+        const bearer = { Authorization: `Bearer ${token55}` };
+        for (const [m, p] of [['GET', '/api/metrics/calculate?period=YTD'], ['GET', '/api/admin/integration-tokens'], ['GET', '/api/admin/social-media/template'], ['GET', '/api/metrics/1/detail?period=YTD'], ['POST', '/api/admin/integration-tokens']]) {
+          assert.strictEqual((await realFetch(`${BASE_URL}${p}`, { method: m, headers: bearer })).status, 401, `${m} ${p}`);
+        }
+        const one = { rows: [{ platform: 'Instagram', year: 2099, month: 5, followers: 1, reach: 1, engagement: 1 }] };
+        assert.strictEqual((await ingest55(one)).status, 401, 'no token, no session');
+        for (const h of ['Bearer', 'Bearer abc', `Basic ${token55}`, token55, `Bearer ${token55.slice(0, -1)}X`, `Bearer pxi_${'0'.repeat(64)}`]) {
+          const r = await ingest55(one, { Authorization: h });
+          assert.strictEqual(r.status, 401, h.slice(0, 20));
+          assert.strictEqual(r.headers.get('www-authenticate'), 'Bearer');
+        }
+        assert.strictEqual((await ingest55(one, { Cookie: userCookie55 })).status, 403, 'USER session');
+        assert.strictEqual((await q55("SELECT COUNT(*) AS n FROM dbo.px_social_media_stats WHERE stat_year = 2099 AND stat_month = 5"))[0].n, 0, 'nothing stored by a refused call');
+        const admin = await (await fetch(`${BASE_URL}/api/integrations/social-media`, jsonBody('POST', one))).json();
+        assert.strictEqual(admin.success, true, JSON.stringify(admin).slice(0, 200));
+        uploadIds55.push(admin.upload_id);
+        const h = (await (await fetch(`${BASE_URL}/api/admin/social-media/uploads`)).json()).find(u => u.upload_id === admin.upload_id);
+        assert.ok(/ via API$/.test(h.uploaded_by), h.uploaded_by);
+      });
+
+      await runTest('[NEGATIVE] Ingest validation (400, nothing stored): no rows array, non-JSON body, empty rows, more than 500 rows, and per row unknown platform / month 13 / negative / non-numeric / decimal / duplicate - each error with its row number and field', async () => {
+        const bearer = { Authorization: `Bearer ${token55}` };
+        const before = await yearCount55(2099);
+        for (const body of [{}, { rows: 'x' }, [], { rows: [] }, 'not json at all']) {
+          const r = await ingest55(body, bearer);
+          assert.strictEqual(r.status, 400, JSON.stringify(body));
+        }
+        const many = await ingest55({ rows: Array.from({ length: 501 }, (_, i) => ({ platform: 'Instagram', year: 2000 + (i % 100), month: 1 + (i % 12), followers: 1, reach: 1, engagement: 1 })) }, bearer);
+        assert.strictEqual(many.status, 400);
+        assert.ok(/At most 500 rows/.test(JSON.stringify(many.body)));
+        const ok = { platform: 'LinkedIn', year: 2099, month: 9, followers: 1, reach: 1, engagement: 1 };
+        const cases = [
+          [{ ...ok, platform: 'Facebook' }, 'platform', /unknown/],
+          [{ ...ok, month: 13 }, 'month', /Month must be/],
+          [{ ...ok, followers: -1 }, 'followers', /must not be negative/],
+          [{ ...ok, reach: 'abc' }, 'reach', /whole number/],
+          [{ ...ok, engagement: 1.5 }, 'engagement', /whole number/],
+          [{ ...ok, year: 99 }, 'year', /4-digit year/],
+          [{ ...ok }, 'platform', /appears more than once \(rows 1 and 2\)/]
+        ];
+        for (const [row, field, re] of cases) {
+          const r = await ingest55({ rows: [ok, row] }, bearer);
+          assert.strictEqual(r.status, 400, field);
+          assert.ok(r.body.errors.some(e => e.row_number === 2 && e.column === field && re.test(e.reason)), `${field}: ${JSON.stringify(r.body.errors)}`);
+        }
+        assert.strictEqual(await yearCount55(2099), before, 'nothing stored (not even the valid first row)');
+      });
+
+      await runTest('[NEGATIVE] Revoke: the token stops working at once (401); a second revoke changes nothing; an active token cannot be deleted (409); a revoked one can (200); unknown id 404, bad id 400; audit REVOKE / DELETE', async () => {
+        const id = tokenIds55[0];
+        assert.strictEqual((await adminJson('DELETE', `/api/admin/integration-tokens/${id}`)).status, 409, 'active -> revoke first');
+        const r1 = await adminJson('POST', `/api/admin/integration-tokens/${id}/revoke`);
+        assert.strictEqual(r1.status, 200);
+        const rec = (await r1.json()).record;
+        assert.ok(rec.revoked_at && /Regression Suite Admin/.test(rec.revoked_by));
+        const one = { rows: [{ platform: 'Instagram', year: 2099, month: 9, followers: 1, reach: 1, engagement: 1 }] };
+        assert.strictEqual((await ingest55(one, { Authorization: `Bearer ${token55}` })).status, 401, 'revoked');
+        const r2 = await adminJson('POST', `/api/admin/integration-tokens/${id}/revoke`);
+        assert.strictEqual((await r2.json()).record.revoked_at, rec.revoked_at, 'revoked_at unchanged');
+        assert.strictEqual((await adminJson('POST', '/api/admin/integration-tokens/999999999/revoke')).status, 404);
+        assert.strictEqual((await adminJson('POST', '/api/admin/integration-tokens/abc/revoke')).status, 400);
+        assert.strictEqual((await adminJson('DELETE', `/api/admin/integration-tokens/${id}`)).status, 200);
+        assert.strictEqual((await adminJson('DELETE', `/api/admin/integration-tokens/${id}`)).status, 404);
+        const audit = await st55.getAuditLog(30, { includeTest: true });
+        assert.strictEqual(audit.filter(x => x.action === 'INTEGRATION_TOKEN_REVOKE' && String(x.target).startsWith(`#${id} `)).length, 1, 'one REVOKE row');
+        assert.ok(audit.some(x => x.action === 'INTEGRATION_TOKEN_DELETE' && String(x.target).startsWith(`#${id} `)));
+        assert.strictEqual((await q55("SELECT COUNT(*) AS n FROM dbo.px_social_media_stats WHERE stat_year = 2099 AND stat_month = 9"))[0].n, 0);
+      });
+
+      await runTest(`[NEGATIVE] Rate limit: ${sm55.INGEST_PER_MINUTE} requests a minute per token, the next one -> 429 with Retry-After (a revoked token never reaches the limiter)`, async () => {
+        const c = await mkToken55(`RT55 Rate ${stamp55}`);
+        assert.strictEqual(c.status, 201);
+        const bearer = { Authorization: `Bearer ${c.body.token}` };
+        const one = { rows: [{ platform: 'LinkedIn', year: 2099, month: 8, followers: 5, reach: 5, engagement: 1 }] };
+        for (let i = 0; i < sm55.INGEST_PER_MINUTE; i++) {
+          const r = await ingest55(one, bearer);
+          assert.strictEqual(r.status, 200, `request ${i + 1}: ${JSON.stringify(r.body).slice(0, 120)}`);
+          uploadIds55.push(r.body.upload_id);
+        }
+        const over = await ingest55(one, bearer);
+        assert.strictEqual(over.status, 429);
+        assert.ok(parseInt(over.headers.get('retry-after'), 10) >= 1);
+        assert.strictEqual((await q55("SELECT COUNT(*) AS n FROM dbo.px_social_media_stats WHERE stat_year = 2099 AND stat_month = 8"))[0].n, 1, 'one row, updated each time');
+        assert.strictEqual((await adminJson('POST', `/api/admin/integration-tokens/${c.body.record.token_id}/revoke`)).status, 200);
+      });
+
+      await runTest('[POSITIVE] JSON backend in-process (same contract): save / upsert / seed replacement / top-up / stats / uploads / tokens give the same results as SQL Server; store.json and auth.json are restored byte-identically', async () => {
+        const dataDir = path55.join(__dirname, '..', 'server', 'data');
+        const files = ['store.json', 'auth.json'].map(f => path55.join(dataDir, f));
+        const saved = files.map(f => (fs55.existsSync(f) ? fs55.readFileSync(f) : null));
+        const strip = rows => rows.map(({ stat_id, created_at, updated_at, upload_id, ...r }) => r); // eslint-disable-line no-unused-vars
+        const run = async st => {
+          const out = {};
+          out.seed = await st.topUpSocialMediaSeed([{ platform: 'TikTok', year: 2097, month: 1, followers: 10, reach: 20, engagement: 2 }, { platform: 'LinkedIn', year: 2097, month: 2, followers: 30, reach: 40, engagement: 4 }]);
+          const s1 = await st.saveSocialMediaStats({ upload_id: `rt55-parity-a-${stamp55}`, source: 'UPLOAD', file_name: 'parity.xlsx', uploaded_by: 'RT55', period_from: '2097-01', period_to: '2097-01' },
+            [{ platform: 'Instagram', year: 2097, month: 1, followers: 100, reach: 200, engagement: 20 }]);
+          const s2 = await st.saveSocialMediaStats({ upload_id: `rt55-parity-b-${stamp55}`, source: 'INTEGRATION', file_name: null, uploaded_by: 'RT55', period_from: '2097-01', period_to: '2097-02' },
+            [{ platform: 'Instagram', year: 2097, month: 1, followers: 110, reach: 200, engagement: 20 }, { platform: 'TikTok', year: 2097, month: 2, followers: 5, reach: 0, engagement: 0 }]);
+          out.saves = [s1, s2].map(x => [x.inserted, x.updated, x.replaced_seed, x.record.total_rows, x.record.source]);
+          out.stats = strip(await st.getSocialMediaStats({ from: '2097-01', to: '2097-12' }));
+          out.statsSources = (await st.getSocialMediaStats({ from: '2097-01', to: '2097-12' })).map(r => r.upload_id);
+          out.latestOk = !!(await st.getLatestSocialMediaPeriod());
+          out.uploads = (await st.getSocialMediaUploads()).filter(u => String(u.upload_id).startsWith('rt55-parity-')).map(u => [u.upload_id.replace(stamp55, ''), u.source, u.file_name, u.total_rows, u.inserted_rows, u.updated_rows, u.replaced_seed_rows, u.period_from, u.period_to]);
+          out.reseed = await st.topUpSocialMediaSeed([{ platform: 'TikTok', year: 2097, month: 1, followers: 1, reach: 1, engagement: 1 }]);
+          const t = await st.createIntegrationToken({ name: `RT55 parity ${stamp55}`, token_hash: 'f'.repeat(63) + 'e', token_hint: 'pxi_ffff…', scope: 'SOCIAL_MEDIA_INGEST', created_by: 'RT55', is_test: true });
+          const byHash = await st.getIntegrationTokenByHash('f'.repeat(63) + 'e');
+          const revoked = await st.revokeIntegrationToken(t.token_id, 'RT55');
+          const removed = await st.deleteIntegrationToken(t.token_id);
+          out.token = [Object.keys(t).sort().join(','), byHash.name, byHash.token_hash === undefined, !!revoked.revoked_at, revoked.revoked_by, removed.name, await st.getIntegrationTokenByHash('f'.repeat(63) + 'e')];
+          return out;
+        };
+        let jsonOut;
+        let sqlOut;
+        try {
+          const js = require('../server/db/jsonStorage');
+          jsonOut = await run(js);
+          sqlOut = await run(st55);
+        } finally {
+          files.forEach((f, i) => { if (saved[i] === null) { if (fs55.existsSync(f)) fs55.unlinkSync(f); } else fs55.writeFileSync(f, saved[i]); });
+          await q55("DELETE FROM dbo.px_social_media_stats WHERE stat_year = 2097; DELETE FROM dbo.px_social_media_uploads WHERE upload_id LIKE 'rt55-parity-%'");
+        }
+        files.forEach((f, i) => assert.ok(saved[i] === null ? !fs55.existsSync(f) : Buffer.compare(fs55.readFileSync(f), saved[i]) === 0, `${path55.basename(f)} restored byte-identically`));
+        assert.deepStrictEqual(jsonOut, sqlOut);
+        assert.deepStrictEqual(sqlOut.seed, ['2097-01', '2097-02']);
+        assert.deepStrictEqual(sqlOut.saves, [[1, 0, 1, 1, 'UPLOAD'], [1, 1, 1, 2, 'INTEGRATION']], 'Jan: seed TikTok replaced by Instagram; Feb: seed LinkedIn replaced by TikTok');
+        assert.deepStrictEqual(sqlOut.stats.map(r => [r.platform, r.year, r.month, r.followers, r.source]), [['Instagram', 2097, 1, 110, 'INTEGRATION'], ['TikTok', 2097, 2, 5, 'INTEGRATION']]);
+        assert.deepStrictEqual(sqlOut.reseed, [], 'a month with a real row gets no seed');
+      });
+    } finally {
+      try {
+        const ids = [...new Set(uploadIds55.filter(Boolean))];
+        for (const id of ids) {
+          await q55('DELETE FROM dbo.px_social_media_stats WHERE upload_id = @u; DELETE FROM dbo.px_social_media_uploads WHERE upload_id = @u', { u: id });
+          const f = path55.join(sm55.SOCIAL_UPLOAD_DIR, `${id}.xlsx`);
+          if (fs55.existsSync(f)) fs55.unlinkSync(f);
+        }
+        // the seed rows this module inserted itself (2099-06 replaced by the upload, 2099-07) - the fixture years were empty before
+        if (preExisting55 === 0) await q55("DELETE FROM dbo.px_social_media_stats WHERE stat_year IN (2018, 2097, 2099) AND source = 'SEED'");
+        for (const id of tokenIds55) await q55('DELETE FROM dbo.px_integration_tokens WHERE token_id = @id', { id });
+      } finally {
+        await pool55.close();
+      }
+      for (const id of userIds55) await adminJson('DELETE', `/api/admin/users/${id}`);
     }
   }
 }

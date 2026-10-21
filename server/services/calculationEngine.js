@@ -4,6 +4,7 @@ const { getQuestionsForMetric } = require('./metricQuestionService');
 const { isEssMetric } = require('../db/surveySource');
 const { selectEssResult, essOrgFor, essOriginalFilePath } = require('./essSummaryService');
 const { periodWindow } = require('../db/filterUtils');
+const { isSocialMediaMetric, getSocialMediaDrilldown } = require('./socialMediaService');
 
 // Default year for YTD/unparseable period requests, derived from the real server clock
 // instead of a hardcoded literal — this dataset happens to be seeded for 2026 (today's real
@@ -547,6 +548,8 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       excluded_from_index: false,
       disabled_reason: null,
       is_bankwide_value: isBankwideValue,
+      // v2.52.0: metric 1 takes social media statistics (Admin .xlsx upload / integration) - the UI offers Template + Upload
+      ...(isSocialMediaMetric(m) ? { data_upload: 'SOCIAL_MEDIA' } : {}),
       ...(isEss ? {
         ess_period: essResult ? essResult.period : null,
         ess_period_label: essResult ? essResult.period_label : null,
@@ -787,7 +790,13 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
   if (!isSurvey) {
     // Outcome metric: Internal HR system data
     let operationalRecords = [];
-    if (id === 11) {
+    let socialMedia = null;
+    if (isSocialMediaMetric(metric)) {
+      // v2.52.0: social media statistics per platform per month of the selected period (bankwide - no directorate filter);
+      // the score below stays the Admin's raw_value
+      socialMedia = await getSocialMediaDrilldown({ mode, year, month });
+      operationalRecords = socialMedia.rows;
+    } else if (id === 11) {
       // Live event attendance registrations from PXCWB
       const attendances = await storage.getAttendances();
       const events = await storage.getEvents();
@@ -865,7 +874,17 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
       questions: [],
       questions_breakdown: [],
       responses: [],
-      operational_records: operationalRecords
+      operational_records: operationalRecords,
+      ...(socialMedia ? {
+        data_upload: 'SOCIAL_MEDIA',
+        social_media: {
+          platforms: socialMedia.platforms,
+          window: socialMedia.window,
+          period_totals: socialMedia.period_totals,
+          latest_period: socialMedia.latest_period,
+          latest_period_label: socialMedia.latest_period_label
+        }
+      } : {})
     };
   }
 

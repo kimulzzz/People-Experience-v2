@@ -22,6 +22,7 @@ const { processSurveyCsv } = require('./services/surveyImportService');
 const { generateSurveyEvidence } = require('./services/surveyEvidenceService');
 const { importEssSummary, generateEssTemplateXlsx, generateEssEvidence, essOriginalFilePath } = require('./services/essSummaryService');
 const { importExitInterviews, resolveExitPeriod, getExitInterviewSummary, generateExitTemplateXlsx, generateExitExportCsv } = require('./services/exitInterviewService');
+const socialMedia = require('./services/socialMediaService');
 const { isEssMetric } = require('./db/surveySource');
 const { getPendingUploadReminders, sendPendingUploadReminders, startReminderScheduler } = require('./services/reminderService');
 const emailSettingsService = require('./services/emailSettingsService');
@@ -135,12 +136,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.51.1' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.52.0' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.51.1',
+    version: '2.52.0',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',
@@ -1090,6 +1091,14 @@ app.get('/api/surveys/history', async (req, res) => {
 });
 
 // Original ESS summary file of one upload (audit trail, v2.32.0): the Admin, or the PIC of that upload's metric.
+// Content-Disposition for an uploaded original file: an ASCII fallback name plus the UTF-8 name (RFC 6266 / 5987), so a
+// name with characters outside Latin-1 (e.g. "März 数据.xlsx") no longer makes Node refuse the header with a 500 (v2.52.0).
+function attachmentDisposition(fileName, fallback) {
+  const name = String(fileName || fallback).replace(/["\r\n\\/]/g, '_');
+  const ascii = name.normalize('NFKD').replace(/[^\x20-\x7E]/g, '_') || fallback;
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+}
+
 app.get('/api/surveys/ess-file/:upload_id', async (req, res) => {
   try {
     const upload = (await storage.getSurveyUploads()).find(u => u.upload_id === req.params.upload_id);
@@ -1100,7 +1109,8 @@ app.get('/api/surveys/ess-file/:upload_id', async (req, res) => {
     const filePath = essOriginalFilePath(upload.upload_id);
     if (!filePath) return res.status(404).json({ error: 'The original file of this upload is not stored (e.g. seed data).' });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="${String(upload.file_name || 'ESS_summary.xlsx').replace(/["\r\n\\/]/g, '_')}"`);
+    res.setHeader('Content-Disposition', attachmentDisposition(upload.file_name, 'ESS_summary.xlsx'));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.sendFile(filePath);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1193,6 +1203,169 @@ app.get('/api/exit-interview/export', ADMIN_ONLY, async (req, res) => {
     res.send(csv);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// 4d. Social media statistics of metric 1 (v2.52.0): Instagram / LinkedIn / TikTok followers, reach and engagement per
+// month (bankwide). The Admin uploads an .xlsx (routes under /api/admin = Admin only); another internal system pushes JSON
+// rows with an integration token. The metric score itself stays the Admin's raw_value.
+const SOCIAL_MAX_MB = 5;
+const XLSX_MIME_TYPES = ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/octet-stream', 'application/zip', 'application/x-zip-compressed'];
+const socialUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: SOCIAL_MAX_MB * 1024 * 1024 } }); // never written to /uploads
+const socialUploadSingle = (req, res, next) => socialUpload.single('file')(req, res, err => {
+  if (!err) return next();
+  if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: `The social media file exceeds the ${SOCIAL_MAX_MB} MB limit.` });
+  return res.status(400).json({ error: 'The uploaded file could not be processed (send one .xlsx file in the field "file").' });
+});
+
+app.get('/api/admin/social-media/template', async (req, res) => {
+  try {
+    const xlsx = await socialMedia.generateSocialTemplateXlsx();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Template_Social_Media_Metric_${socialMedia.SOCIAL_MEDIA_METRIC_ID}.xlsx"`);
+    res.send(xlsx);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/social-media/upload', socialUploadSingle, async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Choose the social media Excel file (.xlsx) to upload.' });
+    const fileName = repairUploadedName(req.file.originalname || 'social_media.xlsx');
+    const ext = path.extname(fileName).toLowerCase();
+    // the extension AND the (client-supplied) MIME type must both be an Excel workbook
+    if (ext !== '.xlsx' || !XLSX_MIME_TYPES.includes(String(req.file.mimetype || '').toLowerCase())) {
+      return res.status(415).json({ error: `Only the social media Excel file (.xlsx) is accepted, not ${ext || 'a file without extension'}${ext === '.xlsx' ? ` sent as ${req.file.mimetype}` : ''}. CSV and the old .xls format are not accepted.` });
+    }
+    const result = await socialMedia.importSocialMediaXlsx(req.file.buffer, fileName, { uploadedBy: `${req.user.full_name} (${req.user.username})`.slice(0, 200) });
+    if (!result.success) return res.status(result.status || 400).json(result);
+    await auth.audit(req, 'SOCIAL_MEDIA_UPLOAD', { target: `${result.rows_imported} rows (${result.inserted_rows} new, ${result.updated_rows} updated, ${result.replaced_seed_rows} seed replaced); ${result.periods.join(' ')}; batch ${result.upload_id}` });
+    const { status, ...body } = result;
+    res.json(body);
+  } catch (err) {
+    console.error('Social media upload error:', err.message);
+    res.status(500).json({ error: 'The social media file could not be stored; nothing was imported.' });
+  }
+});
+
+app.get('/api/admin/social-media/uploads', async (req, res) => {
+  try {
+    res.json(await socialMedia.getSocialMediaUploads());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/social-media/file/:upload_id', async (req, res) => {
+  try {
+    const upload = (await socialMedia.getSocialMediaUploads()).find(u => u.upload_id === req.params.upload_id);
+    const filePath = upload ? socialMedia.socialOriginalFilePath(upload.upload_id) : null;
+    if (!filePath) return res.status(404).json({ error: 'The original file of this upload is not stored.' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', attachmentDisposition(upload.file_name, 'social_media.xlsx'));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.sendFile(filePath);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Integration tokens (Admin): created / revoked in Admin Parameters -> Integrations. The token is answered ONCE, at creation.
+const tokenActor = u => `${u.full_name} (${u.username})`.slice(0, 200);
+app.get('/api/admin/integration-tokens', async (req, res) => {
+  try {
+    res.json({ tokens: await storage.getIntegrationTokens(), endpoint: '/api/integrations/social-media', max_rows: socialMedia.MAX_INGEST_ROWS,
+      rate_limit_per_minute: socialMedia.INGEST_PER_MINUTE });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/integration-tokens', async (req, res) => {
+  try {
+    // a token made by a test-run admin is a test token (its audit rows are hidden like the admin's own)
+    const out = await socialMedia.createIntegrationToken((req.body || {}).name, { createdBy: tokenActor(req.user), isTest: req.user.is_test_account === true });
+    if (out.error) return res.status(out.status || 400).json({ error: out.error });
+    await auth.audit(req, 'INTEGRATION_TOKEN_CREATE', { target: `#${out.record.token_id} "${out.record.name}" (${out.record.token_hint}, scope ${out.record.scope})` });
+    res.status(201).json({ token: out.token, record: out.record, message: 'Copy the token now - it is shown only once.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/integration-tokens/:id/revoke', async (req, res) => {
+  try {
+    if (!/^\d{1,9}$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid token id.' });
+    const before = (await storage.getIntegrationTokens()).find(t => t.token_id === parseInt(req.params.id, 10));
+    if (!before) return res.status(404).json({ error: 'Token not found.' });
+    const record = await storage.revokeIntegrationToken(before.token_id, tokenActor(req.user));
+    if (!before.revoked_at) await auth.audit(req, 'INTEGRATION_TOKEN_REVOKE', { target: `#${record.token_id} "${record.name}" (${record.token_hint})` });
+    res.json({ success: true, record });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/admin/integration-tokens/:id', async (req, res) => {
+  try {
+    if (!/^\d{1,9}$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid token id.' });
+    const before = (await storage.getIntegrationTokens()).find(t => t.token_id === parseInt(req.params.id, 10));
+    if (!before) return res.status(404).json({ error: 'Token not found.' });
+    if (!before.revoked_at) return res.status(409).json({ error: 'Revoke the token before deleting it.' });
+    await storage.deleteIntegrationToken(before.token_id);
+    await auth.audit(req, 'INTEGRATION_TOKEN_DELETE', { target: `#${before.token_id} "${before.name}" (${before.token_hint})` });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Automatic injection by another INTERNAL system (the app only receives; it never calls a social network).
+//   Authorization: Bearer <integration token>   (or an Admin session, for testing)
+//   { "rows": [{ "platform": "Instagram", "year": 2026, "month": 9, "followers": 211100, "reach": 548319, "engagement": 19505 }] }
+// The token is checked here only (scope SOCIAL_MEDIA_INGEST) - no other route accepts it. Never logged.
+app.post('/api/integrations/social-media', async (req, res) => {
+  try {
+    const ip = String(req.ip || (req.socket && req.socket.remoteAddress) || '').replace(/^::ffff:/, '');
+    const header = req.headers.authorization;
+    let actor;
+    if (header !== undefined) {
+      const wait = socialMedia.ingestAuthBlockedFor(ip);
+      if (wait) {
+        res.set('Retry-After', String(wait));
+        return res.status(429).json({ error: `Too many failed token checks from this address. Try again in ${wait} s.` });
+      }
+      const token = await socialMedia.authenticateIntegrationToken(header);
+      if (!token) {
+        socialMedia.recordIngestAuthFailure(ip);
+        res.set('WWW-Authenticate', 'Bearer');
+        return res.status(401).json({ error: 'Invalid, revoked or malformed integration token (Authorization: Bearer <token>).', code: 'INVALID_TOKEN' });
+      }
+      await storage.touchIntegrationToken(token.token_id);
+      actor = { key: `token:${token.token_id}`, uploadedBy: `Integration: ${token.name}`, label: `token "${token.name}"`,
+        user: { user_id: null, username: `integration:${token.name}`.slice(0, 100), is_test_account: token.is_test === true } };
+    } else if (req.user) {
+      if (req.user.role !== 'ADMIN' || req.user.must_change_password) return res.status(403).json({ error: 'Only an integration token or an Admin can send social media data.' });
+      actor = { key: `user:${req.user.user_id}`, uploadedBy: `${tokenActor(req.user)} via API`, label: 'Admin session', user: req.user };
+    } else {
+      res.set('WWW-Authenticate', 'Bearer');
+      return res.status(401).json({ error: 'An integration token is required: Authorization: Bearer <token>.', code: 'AUTH_REQUIRED' });
+    }
+    const wait = socialMedia.takeIngestSlot(actor.key);
+    if (wait) {
+      res.set('Retry-After', String(wait));
+      return res.status(429).json({ error: `Rate limit: at most ${socialMedia.INGEST_PER_MINUTE} requests a minute. Try again in ${wait} s.` });
+    }
+    const result = await socialMedia.ingestSocialMediaRows(req.body, { uploadedBy: actor.uploadedBy.slice(0, 200) });
+    if (!result.success) return res.status(result.status || 400).json(result);
+    await auth.audit(req, 'SOCIAL_MEDIA_INGEST', { user: actor.user,
+      target: `${actor.label}; ${result.rows_imported} rows (${result.inserted_rows} new, ${result.updated_rows} updated, ${result.replaced_seed_rows} seed replaced); ${result.periods.join(' ')}; batch ${result.upload_id}` });
+    const { status, ...body } = result;
+    res.json(body);
+  } catch (err) {
+    console.error('Social media ingest error:', err.message);
+    res.status(500).json({ error: 'The social media data could not be stored; nothing was imported.' });
   }
 });
 

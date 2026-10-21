@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(398-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(415-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,8 +75,8 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (398 cases on SQL; v2.51.0 run 319/319, 9 skipped, media modules 27/32/38/41/42/43 skipped, 8/24 ran; full JSON suite not re-run since v2.30.1) |
-| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (34 `px_*` tables), JSON→SQL migration, rollback |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (415 cases on SQL; v2.52.0 run 329/329, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
+| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (37 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
 ## Compliance constraints (do not violate)
@@ -736,6 +736,20 @@ domain model, not just descriptive:
 
 - **v2.51.1** (2026-10-21, see `CHANGELOG.md` [2.51.1], `docs/05`): Explore Metrics has one table view (Fit Screen; the Fit Screen / Wide toggle is gone) and the ESS
   rows' Template button reads "Template" like the others (also in the metric detail). Frontend only.
+
+- **v2.52.0** (2026-10-21, see `CHANGELOG.md` [2.52.0], `docs/02` §3, `docs/03` §4, `docs/04`/`05` "Catatan v2.52.0", `docs/06`, `docs/07` §41, `docs/08` §25, `SQLServerDB.md` §24): user: metric 1
+  "Career website & social media follower, reach & engagement growth" is bankwide (no directorate) and its Internal Transaction Records must be Instagram/LinkedIn/TikTok followers, reach & engagement,
+  fed by Excel upload or automatic injection from another system; score stays MANUAL (`raw_value`) for now. Before, the tab showed 5 seeded recruitment-SLA rows per unit (wrong data) - now deleted at
+  every boot (`removeMetric1SlaRows`, metric 1 only; seed `initialOperationalRecords[1]` removed). New `socialMediaService.js`, tables `px_social_media_stats` (unique platform+year+month = upsert,
+  source UPLOAD/INTEGRATION/SEED), `px_social_media_uploads`, `px_integration_tokens` (37 tables; JSON: store.json `socialMediaStats`/`socialMediaUploads`, tokens in auth.json). Admin: template/upload
+  (`.xlsx` only, 5 MB, atomic, errors per row+column; original in gitignored `server/data/social-uploads/`), history, Explore Metrics + detail Template/Upload, Admin Parameters -> **Integrations**
+  tab (tokens `pxi_`+64 hex shown ONCE, only SHA-256 stored, revoke then delete). `POST /api/integrations/social-media` (Bearer token or Admin session, 1-500 rows, 30/min per token, 20 failed
+  checks/min per IP -> 429, audit `integration:<name>`); the app only RECEIVES data (on-premise). Real rows of a month delete ALL seed rows of that month; boot never adds seed to such a month.
+  Detail: growth vs previous month same platform, engagement rate = engagement/reach, "All platforms" line, Dummy badge, YTD/MTD window, same rows under any directorate and for USER. Gotchas:
+  tokens are NOT exported, NOT dropped by `migrate --reset`, NOT in the config snapshot; never put a real token in docs/chat/commits; `last_data_date` not updated by uploads; deleting metric 1
+  keeps its social rows; Module 53 briefly inserts a metric-1 SLA row; Modules 9/26 need 2026 social data (seed or real). Tests: Module 55 (17, SQL only), Modules 9/26 adjusted -> SQL 329/329,
+  16 skipped (suite 415 by count); JSON full suite not run. QC: LULUS DENGAN CATATAN; fixed after QC: original-file downloads (social + ESS) 500 on non-Latin-1 names ->
+  `attachmentDisposition()` (ASCII + `filename*=UTF-8''`) + nosniff. Open: future months (to 2100) accepted, so "Latest data" can point to the future.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

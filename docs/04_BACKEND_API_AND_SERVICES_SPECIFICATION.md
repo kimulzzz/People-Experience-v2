@@ -605,6 +605,60 @@ Pengujian: `docs/07` §31 (Modul 46).
 
 ---
 
+## Catatan v2.52.0 - Data Social Media Metrik 1, Upload Excel & Token Integrasi
+
+**Ringkasan**: metrik 1 "Career website & social media follower, reach & engagement growth" (OUTCOME, bankwide) kini memakai statistik bulanan Instagram, LinkedIn dan TikTok (followers, reach, engagement) sebagai drilldown, bukan lagi 5 baris SLA rekrutmen (dihapus saat boot, metrik 1 saja). Data masuk lewat upload `.xlsx` Admin atau injeksi JSON dari sistem internal lain dengan token integrasi. **Skor tetap `raw_value` Admin** - baris social media belum dipakai perhitungan; `last_data_date` tidak diubah. Service baru `server/services/socialMediaService.js` (`SOCIAL_MEDIA_METRIC_ID = 1`, `isSocialMediaMetric` = metrik 1 bertipe OUTCOME). Tabel baru `px_social_media_stats`, `px_social_media_uploads`, `px_integration_tokens` (`docs/08` §25). Tidak ada env baru. `/api/health` `version` = `2.52.0`. Pengujian: `docs/07` §41 (Modul 55).
+
+**Endpoint baru**
+
+| Endpoint | Akses | Body / query | Respons sukses | Audit |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET /api/admin/social-media/template` | Admin | - | `Template_Social_Media_Metric_1.xlsx`: header Platform \| Year \| Month \| Followers \| Reach \| Engagement + satu baris per platform untuk bulan lengkap terakhir (angka kosong) | - |
+| `POST /api/admin/social-media/upload` | Admin | multipart `file` (`.xlsx`, maks. 5 MB) | `{ success, upload_id, source: 'UPLOAD', rows_imported, inserted_rows, updated_rows, replaced_seed_rows, periods, period_labels, errors: [], message, file_name }` | `SOCIAL_MEDIA_UPLOAD` |
+| `GET /api/admin/social-media/uploads` | Admin | - | riwayat batch UPLOAD dan INTEGRATION (terbaru dulu) + `has_original_file` | - |
+| `GET /api/admin/social-media/file/:upload_id` | Admin | - | file `.xlsx` asli upload itu; 404 bila tidak ada (mis. batch INTEGRATION) | - |
+| `GET /api/admin/integration-tokens` | Admin | - | `{ tokens: [{ token_id, name, token_hint, scope, created_by, created_at, last_used_at, revoked_at, revoked_by, is_test }], endpoint, max_rows: 500, rate_limit_per_minute: 30 }` - tanpa hash | - |
+| `POST /api/admin/integration-tokens` | Admin | `{ name }` | 201 `{ token, record, message }` - `token` hanya di respons ini | `INTEGRATION_TOKEN_CREATE` |
+| `POST /api/admin/integration-tokens/:id/revoke` | Admin | - | `{ success, record }`; cabut kedua kali tidak mengubah apa pun (tanpa audit kedua) | `INTEGRATION_TOKEN_REVOKE` |
+| `DELETE /api/admin/integration-tokens/:id` | Admin | - | `{ success }`; hanya token yang sudah dicabut | `INTEGRATION_TOKEN_DELETE` |
+| `POST /api/integrations/social-media` | Token integrasi atau sesi Admin | `{ "rows": [...] }` (JSON, 1-500 baris) | sama seperti upload, `source: 'INTEGRATION'` | `SOCIAL_MEDIA_INGEST` |
+
+Route `/api/admin/*` di atas: USER 403, tanpa sesi 401 (`requireRole('ADMIN')`). `POST /api/integrations/social-media` terdaftar di `PUBLIC_ROUTES` (`authService.js`) agar bisa dipanggil tanpa sesi, tetapi route itu sendiri mewajibkan token sah atau sesi Admin.
+
+**Kode error**
+
+| Status | Kapan |
+| :--- | :--- |
+| 400 | Upload: tidak ada file, file bukan workbook yang terbaca, tidak ada baris header / kolom wajib hilang / tidak ada baris data, atau error per baris. Ingest: body bukan `{ rows: [...] }`, `rows` kosong atau > 500, error per baris. Token: nama kosong / > 100 karakter / karakter kontrol; id bukan angka (revoke/delete). Bentuk: `{ success: false, error, errors: [{ row_number, column, reason }] }` - upload: `column` = huruf kolom Excel; ingest: `row_number` = posisi di array (1 = `rows[0]`), `column` = nama field |
+| 401 | Ingest tanpa header dan tanpa sesi (`code: AUTH_REQUIRED`), atau token salah bentuk / tidak dikenal / dicabut (`code: INVALID_TOKEN`); keduanya dengan `WWW-Authenticate: Bearer` |
+| 403 | Ingest dengan sesi USER (atau Admin yang wajib ganti password); request dengan header `Origin` host lain (pemeriksaan global `crossOriginWrite`; request tanpa `Origin`, mis. curl, tidak terpengaruh) |
+| 404 | Token / file upload tidak ada |
+| 409 | Nama token aktif sudah dipakai; hapus token yang masih aktif |
+| 413 | File upload > 5 MB |
+| 415 | Ekstensi bukan `.xlsx` atau MIME bukan Excel/zip/octet-stream (CSV dan `.xls` ditolak) |
+| 429 | > 30 request/menit per token atau per sesi Admin, atau > 20 cek token gagal/menit dari satu IP (lalu juga token yang benar ditolak sampai jendela lewat); dengan `Retry-After` (detik) |
+
+**Validasi baris** (sama untuk Excel dan JSON, atomik - satu error = tidak ada yang disimpan): `platform` Instagram/LinkedIn/TikTok, alias `ig`, `insta`, `tt`, huruf besar/kecil, spasi, titik, tanda hubung dan garis bawah diabaikan ("Linked In" = LinkedIn); `year` 4 digit 2000-2100; `month` angka 1-12 atau nama bulan Inggris/Indonesia/singkatan (`parseMonth` dari `essSummaryService`); `followers`/`reach`/`engagement` bilangan bulat 0..2.000.000.000 (teks boleh memakai spasi/koma pemisah ribuan; negatif, desimal, kosong, bukan angka, rumus tanpa nilai tersimpan ditolak); platform+bulan ganda dalam satu file/request ditolak. Excel: baris header = baris pertama (dari 10 baris teratas) yang berisi sel "Platform"; urutan kolom bebas; nama kolom alternatif `tahun`, `bulan`, `follower`/`pengikut`, `jangkauan`, `engagements`/`interaksi`.
+
+**Penyimpanan** (`storage.saveSocialMediaStats(meta, rows)`, satu transaksi): (1) hapus semua baris `SEED` di setiap bulan batch (ketiga platform); (2) per baris `MERGE` pada `(platform, stat_year, stat_month)` -> update atau insert dengan `source` batch; (3) catat batch di `px_social_media_uploads`. Top-up seed saat boot (`topUpSocialMediaSeed`, hanya bila `SEED_DEMO_DATA` bukan `false`): menambah baris dummy (`generateSocialMediaSeed`, Januari-September 2026, 27 baris fiktif deterministik) hanya untuk (platform, bulan) yang belum ada dan bulan tanpa baris asli.
+
+**Token integrasi**: `pxi_` + 64 karakter hex (32 byte acak). Disimpan hanya `token_hash` (SHA-256) dan `token_hint` (12 karakter pertama + "…"); token tidak pernah dikembalikan lagi dan tidak ditulis ke log; audit hanya memuat id, nama dan `token_hint`. `scope` hanya `SOCIAL_MEDIA_INGEST`: header `Authorization` hanya dibaca oleh route ingest; di route lain token diabaikan (401 tanpa sesi). `last_used_at` diperbarui setiap pemakaian sah. Token buatan akun tes (`is_test_account`) = `is_test` (audit-nya disembunyikan seperti akun tes). Rate limiter di memori proses (`createRateLimiter`, reset saat restart).
+
+**Contoh panggilan** (ganti `<server>` dan `<token>`):
+
+```
+curl -X POST "http://<server>:5000/api/integrations/social-media" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"rows":[{"platform":"Instagram","year":2026,"month":9,"followers":211100,"reach":548319,"engagement":19505}]}'
+```
+
+**Detail metrik 1** (`GET /api/metrics/1/detail`, juga USER): `operational_records` = baris per platform per bulan dalam jendela periode (`periodWindow`: YTD = Januari..bulan akhir YTD, MTD = bulan itu; tahun depan = jendela `null`, tanpa baris), field `platform`, `year`, `month`, `period`, `period_label`, `followers`, `previous_followers`, `follower_growth_pct` (vs bulan kalender sebelumnya platform yang sama; `null` bila tidak ada atau 0), `reach`, `engagement`, `engagement_rate_pct` (engagement / reach x 100; `null` bila reach 0), `source`, `is_dummy`. Objek tambahan `social_media { platforms, window, period_totals, latest_period, latest_period_label }`; `period_totals` = satu baris "semua platform" per bulan dengan >= 2 platform (jumlah; growth hanya bila semua platform punya bulan sebelumnya). `latest_period` = bulan terbaru yang tersimpan (sumber apa pun). Filter `directorate`/`sub_directorate` tidak berpengaruh (bankwide). `data_upload: 'SOCIAL_MEDIA'` ada pada metrik 1 di `metrics[]` `/api/metrics/calculate` dan di detail; skor, status dan `current_raw_value` tidak berubah.
+
+**Export / migrasi**: `exportToJson.js` menulis `socialMediaStats` dan `socialMediaUploads` (tanpa token); `migrate.js` mengimpornya (`social_media_stats`, `social_media_uploads` di hitungan verifikasi); `dropAllTables()` (`--reset`) menghapus kedua tabel social media tetapi tidak `px_integration_tokens`. Token tidak termasuk `CONFIG_TABLES` snapshot konfigurasi.
+
+---
+
 ## Catatan v2.51.0 - Admin Direktorat, `has_own_data`, Audit Parameter & Snapshot Konfigurasi
 
 **Ringkasan**: (1) master direktorat dikelola Admin (Admin Parameters -> Directorates): tambah/rename/hapus/merge direktorat, tambah/rename/hapus divisi, *former name* manual; rename/merge ikut mengubah nama di semua data; (2) `GET /api/metrics/by-directorate` mengirim `has_own_data`; (3) perubahan parameter Admin masuk Audit Trail; (4) `storage.snapshotConfiguration()` / `restoreConfiguration()` untuk config guard suite; (5) template pertanyaan default 11 metrik ESS = file template ESS. Tabel baru `px_directorate_aliases`, `px_division_aliases` dan setting `directory_admin_managed` (`docs/08` §24). Tidak ada env baru. `/api/health` `version` = `2.51.0`. Pengujian: `docs/07` §40 (Modul 53, 54).

@@ -1077,6 +1077,11 @@ async function importStore(store, log = () => {}) {
     counts.exit_interview_uploads = (store.exitInterviewUploads || []).length;
     await bulkInsertExitRows(tx, (store.exitInterviews || []).map(r => ({ ...r, source: r.source || 'UPLOAD' })));
     counts.exit_interviews = (store.exitInterviews || []).length;
+    // social media statistics of metric 1 (v2.52.0)
+    for (const u of store.socialMediaUploads || []) await insertSocialUpload(tx, u);
+    counts.social_media_uploads = (store.socialMediaUploads || []).length;
+    for (const r of store.socialMediaStats || []) await insertSocialStat(tx, r);
+    counts.social_media_stats = (store.socialMediaStats || []).length;
     // a store.json from before v2.32.0 still holds per-respondent ESS rows: same one-time cleanup as the upgrade boot
     if (!Array.isArray(store.essResults)) {
       const cleaned = await cleanupEssRespondentRows(tx);
@@ -1364,6 +1369,91 @@ async function topUpExitInterviewSeed() {
   });
   return added;
 }
+
+// ------------------------------------------------------------------ social media statistics of metric 1 (v2.52.0)
+const SOCIAL_PLATFORM_ORDER = "CASE s.platform WHEN N'Instagram' THEN 1 WHEN N'LinkedIn' THEN 2 ELSE 3 END";
+const rowToSocialStat = r => ({
+  stat_id: r.stat_id,
+  platform: r.platform,
+  year: r.stat_year,
+  month: r.stat_month,
+  followers: r.followers,
+  reach: r.reach,
+  engagement: r.engagement,
+  source: r.source,
+  upload_id: r.upload_id || null,
+  created_at: iso(r.created_at),
+  updated_at: iso(r.updated_at)
+});
+const rowToSocialUpload = r => ({
+  upload_id: r.upload_id,
+  source: r.source,
+  file_name: r.file_name || null,
+  uploaded_by: r.uploaded_by,
+  total_rows: r.total_rows,
+  inserted_rows: r.inserted_rows,
+  updated_rows: r.updated_rows,
+  replaced_seed_rows: r.replaced_seed_rows,
+  period_from: r.period_from || null,
+  period_to: r.period_to || null,
+  uploaded_at: iso(r.uploaded_at)
+});
+const periodKeyOf = code => parseInt(code.slice(0, 4), 10) * 100 + parseInt(code.slice(5, 7), 10);
+
+// Demo rows (seed.generateSocialMediaSeed) for every (platform, month) that has no row, skipping a month that already has a
+// real (UPLOAD / INTEGRATION) row - real data of a month is never mixed with dummy rows. seedRows: optional (regression
+// suite). Returns the months that got rows ('YYYY-MM').
+async function topUpSocialMediaSeed(seedRows = seed.generateSocialMediaSeed()) {
+  const existing = await run('SELECT platform, stat_year, stat_month, source FROM dbo.px_social_media_stats');
+  const have = new Set(existing.map(r => `${r.platform}|${r.stat_year}-${r.stat_month}`));
+  const realMonths = new Set(existing.filter(r => r.source !== 'SEED').map(r => `${r.stat_year}-${r.stat_month}`));
+  const todo = seedRows.filter(r => !have.has(`${r.platform}|${r.year}-${r.month}`) && !realMonths.has(`${r.year}-${r.month}`));
+  if (!todo.length) return [];
+  await inTransaction(async tx => {
+    for (const r of todo) await insertSocialStat(tx, { ...r, source: 'SEED', upload_id: null });
+  });
+  return [...new Set(todo.map(r => `${r.year}-${String(r.month).padStart(2, '0')}`))].sort();
+}
+
+async function insertSocialUpload(tx, u) {
+  await run(`INSERT INTO dbo.px_social_media_uploads (upload_id, source, file_name, uploaded_by, total_rows, inserted_rows, updated_rows, replaced_seed_rows, period_from, period_to${u.uploaded_at ? ', uploaded_at' : ''})
+             VALUES (@upload_id, @source, @file_name, @uploaded_by, @total_rows, @inserted_rows, @updated_rows, @replaced_seed_rows, @period_from, @period_to${u.uploaded_at ? ', @uploaded_at' : ''})`, {
+    upload_id: u.upload_id, source: u.source, file_name: u.file_name ? String(u.file_name).slice(0, 260) : null,
+    uploaded_by: String(u.uploaded_by || 'HR Admin').slice(0, 200), total_rows: u.total_rows || 0, inserted_rows: u.inserted_rows || 0,
+    updated_rows: u.updated_rows || 0, replaced_seed_rows: u.replaced_seed_rows || 0, period_from: u.period_from || null, period_to: u.period_to || null,
+    ...(u.uploaded_at ? { uploaded_at: toDateObj(u.uploaded_at) } : {})
+  }, tx);
+}
+
+async function insertSocialStat(tx, r) {
+  await run(`INSERT INTO dbo.px_social_media_stats (platform, stat_year, stat_month, followers, reach, engagement, source, upload_id${r.created_at ? ', created_at, updated_at' : ''})
+             VALUES (@platform, @y, @m, @followers, @reach, @engagement, @source, @upload_id${r.created_at ? ', @created_at, @updated_at' : ''})`, {
+    platform: r.platform, y: parseInt(r.year, 10), m: parseInt(r.month, 10), followers: r.followers, reach: r.reach, engagement: r.engagement,
+    source: r.source || 'UPLOAD', upload_id: r.upload_id || null,
+    ...(r.created_at ? { created_at: toDateObj(r.created_at), updated_at: r.updated_at ? toDateObj(r.updated_at) : null } : {})
+  }, tx);
+}
+
+// v2.52.0: metric 1 is bankwide social media data - its old recruitment-SLA rows per unit were wrong data. Removed at every
+// boot (idempotent; only metric 1, the other metrics' drilldown tables are untouched). Returns the rows deleted.
+async function removeMetric1SlaRows() {
+  const rows = await run('DELETE FROM dbo.px_recruitment_sla_by_unit WHERE metric_id = 1; SELECT @@ROWCOUNT AS n;');
+  return rows[0] ? rows[0].n : 0;
+}
+
+const rowToIntegrationToken = r => ({
+  token_id: r.token_id,
+  name: r.name,
+  token_hint: r.token_hint,
+  scope: r.scope,
+  created_by: r.created_by,
+  created_at: iso(r.created_at),
+  last_used_at: iso(r.last_used_at),
+  revoked_at: iso(r.revoked_at),
+  revoked_by: r.revoked_by || null,
+  is_test: r.is_test === true
+});
+const TOKEN_COLS = 'token_id, name, token_hint, scope, created_by, created_at, last_used_at, revoked_at, revoked_by, is_test';
 
 // ------------------------------------------------------------------ response filter -> SQL
 function nextMonthStart(year, monthNum) {
@@ -2027,6 +2117,8 @@ const storage = {
     await enforceEssManualUpload();
     await enforceEssPercentageQuestions();
     await cleanupRemovedEssDummySeed();
+    const slaRemoved = await removeMetric1SlaRows();
+    if (slaRemoved) console.log(`[sqlStorage] Metric 1 is social media data: removed ${slaRemoved} old recruitment-SLA row(s) of metric 1.`);
     if (essUpgrade) {
       const cleaned = await cleanupEssRespondentRows();
       console.log(`[sqlStorage] ESS now uses uploaded summaries: deleted ${cleaned.responses} per-respondent ESS rows and ${cleaned.uploads} upload batches left empty.`);
@@ -2048,6 +2140,8 @@ const storage = {
       if (seededEss.length) console.log(`[sqlStorage] Seeded demo ESS summaries: ${seededEss.join(', ')}.`);
       const seededExit = await topUpExitInterviewSeed();
       if (seededExit.length) console.log(`[sqlStorage] Seeded demo Exit Interview rows for: ${seededExit.join(', ')}.`);
+      const seededSocial = await topUpSocialMediaSeed();
+      if (seededSocial.length) console.log(`[sqlStorage] Seeded demo social media rows (metric 1) for: ${seededSocial.join(', ')}.`);
     }
     const info = await this.health();
     console.log(`[sqlStorage] Connected to ${info.server} / ${info.database} (${info.edition})`);
@@ -2076,7 +2170,8 @@ const storage = {
   // Drops every px_* table (children first). Used only by migrate.js --reset.
   async dropAllTables() {
     const tables = ['px_recruitment_sla_by_unit', 'px_approval_stage_compliance', 'px_hiring_channel_mix',
-      'px_recognition_categories', 'px_attrition_by_tenure', 'px_acknowledged_alerts', 'px_ess_results', 'px_exit_interviews', 'px_exit_interview_uploads', 'px_survey_uploaded_responses',
+      'px_recognition_categories', 'px_attrition_by_tenure', 'px_acknowledged_alerts', 'px_ess_results', 'px_exit_interviews', 'px_exit_interview_uploads',
+      'px_social_media_stats', 'px_social_media_uploads', 'px_survey_uploaded_responses',
       'px_survey_uploads', 'px_media', 'px_feedback_responses', 'px_attendances', 'px_event_questions', 'px_events',
       'px_reminder_log', 'px_email_settings', 'px_app_settings', 'px_survey_questions', 'px_custom_survey_questions', 'px_master_survey_questions', 'px_division_aliases', 'px_directorate_aliases', 'px_divisions', 'px_directorates', 'px_action_library',
       'px_metric_targets', 'px_metrics', 'px_checkpoints', 'px_journeys'];
@@ -2916,6 +3011,100 @@ const storage = {
     });
   },
   topUpExitInterviewSeed, // exposed for the regression suite (boot top-up of the demo exit rows)
+
+  // ---- social media statistics of metric 1 (v2.52.0)
+  // Rows with year-month inside [from, to] ('YYYY-MM', both optional, inclusive), oldest month first, then Instagram,
+  // LinkedIn, TikTok.
+  async getSocialMediaStats({ from, to } = {}) {
+    const where = [];
+    const params = {};
+    if (from) { where.push('s.stat_year * 100 + s.stat_month >= @from'); params.from = periodKeyOf(from); }
+    if (to) { where.push('s.stat_year * 100 + s.stat_month <= @to'); params.to = periodKeyOf(to); }
+    const rows = await run(`SELECT s.* FROM dbo.px_social_media_stats s ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+                            ORDER BY s.stat_year, s.stat_month, ${SOCIAL_PLATFORM_ORDER}`, params);
+    return rows.map(rowToSocialStat);
+  },
+  // { year, month } of the newest row (any source), or null
+  async getLatestSocialMediaPeriod() {
+    const rows = await run('SELECT TOP 1 stat_year, stat_month FROM dbo.px_social_media_stats ORDER BY stat_year DESC, stat_month DESC');
+    return rows[0] ? { year: rows[0].stat_year, month: rows[0].stat_month } : null;
+  },
+  // newest first
+  async getSocialMediaUploads() {
+    const rows = await run('SELECT * FROM dbo.px_social_media_uploads ORDER BY uploaded_at DESC, upload_id DESC');
+    return rows.map(rowToSocialUpload);
+  },
+  // One validated batch (upload or integration), atomic. Key (platform, year, month): an existing row is UPDATED, a new one
+  // inserted. The SEED rows of every month in the batch are removed first (all platforms: real data of a month is never
+  // mixed with dummy rows). Returns { record, inserted, updated, replaced_seed }.
+  async saveSocialMediaStats(meta, rows) {
+    return inTransaction(async tx => {
+      let replaced = 0;
+      const months = [...new Set(rows.map(r => `${r.year}-${r.month}`))];
+      for (const ym of months) {
+        const [y, m] = ym.split('-').map(n => parseInt(n, 10));
+        const del = await run(`DELETE FROM dbo.px_social_media_stats WHERE source = 'SEED' AND stat_year = @y AND stat_month = @m;
+                               SELECT @@ROWCOUNT AS n;`, { y, m }, tx);
+        replaced += del[0] ? del[0].n : 0;
+      }
+      let inserted = 0;
+      let updated = 0;
+      for (const r of rows) {
+        const res = await run(`MERGE dbo.px_social_media_stats WITH (HOLDLOCK) AS t
+                                 USING (SELECT @platform AS platform, @y AS stat_year, @m AS stat_month) AS s
+                                 ON t.platform = s.platform AND t.stat_year = s.stat_year AND t.stat_month = s.stat_month
+                               WHEN MATCHED THEN UPDATE SET followers = @followers, reach = @reach, engagement = @engagement, source = @source,
+                                 upload_id = @upload_id, updated_at = SYSUTCDATETIME()
+                               WHEN NOT MATCHED THEN INSERT (platform, stat_year, stat_month, followers, reach, engagement, source, upload_id)
+                                 VALUES (@platform, @y, @m, @followers, @reach, @engagement, @source, @upload_id)
+                               OUTPUT $action AS act;`, {
+          platform: r.platform, y: r.year, m: r.month, followers: r.followers, reach: r.reach, engagement: r.engagement,
+          source: meta.source, upload_id: meta.upload_id
+        }, tx);
+        if (res[0] && res[0].act === 'UPDATE') updated++; else inserted++;
+      }
+      const record = { ...meta, total_rows: rows.length, inserted_rows: inserted, updated_rows: updated, replaced_seed_rows: replaced };
+      await insertSocialUpload(tx, record);
+      return { record: { ...record }, inserted, updated, replaced_seed: replaced };
+    });
+  },
+  topUpSocialMediaSeed, // boot top-up of the demo rows, exposed for the regression suite (optional seed rows)
+  removeMetric1SlaRows, // boot cleanup, exposed for the regression suite
+
+  // ---- integration tokens (v2.52.0) - the token itself is never stored, only token_hash (SHA-256)
+  async getIntegrationTokens() {
+    return (await run(`SELECT ${TOKEN_COLS} FROM dbo.px_integration_tokens ORDER BY created_at DESC, token_id DESC`)).map(rowToIntegrationToken);
+  },
+  async getIntegrationTokenByHash(token_hash) {
+    const rows = await run(`SELECT ${TOKEN_COLS} FROM dbo.px_integration_tokens WHERE token_hash = @h`, { h: String(token_hash) });
+    return rows[0] ? rowToIntegrationToken(rows[0]) : null;
+  },
+  async createIntegrationToken(t) {
+    const rows = await run(`INSERT INTO dbo.px_integration_tokens (name, token_hash, token_hint, scope, created_by, is_test)
+                            OUTPUT INSERTED.token_id VALUES (@name, @hash, @hint, @scope, @created_by, @is_test)`, {
+      name: String(t.name).slice(0, 100), hash: t.token_hash, hint: String(t.token_hint).slice(0, 20), scope: t.scope,
+      created_by: String(t.created_by || 'Admin').slice(0, 200), is_test: t.is_test === true
+    });
+    return rowToIntegrationToken((await run(`SELECT ${TOKEN_COLS} FROM dbo.px_integration_tokens WHERE token_id = @id`, { id: rows[0].token_id }))[0]);
+  },
+  async touchIntegrationToken(token_id) {
+    await run('UPDATE dbo.px_integration_tokens SET last_used_at = SYSUTCDATETIME() WHERE token_id = @id', { id: parseInt(token_id, 10) });
+  },
+  // Sets revoked_at once; returns the record (null when the id does not exist).
+  async revokeIntegrationToken(token_id, revoked_by) {
+    const id = parseInt(token_id, 10);
+    await run('UPDATE dbo.px_integration_tokens SET revoked_at = SYSUTCDATETIME(), revoked_by = @by WHERE token_id = @id AND revoked_at IS NULL',
+      { id, by: String(revoked_by || 'Admin').slice(0, 200) });
+    const rows = await run(`SELECT ${TOKEN_COLS} FROM dbo.px_integration_tokens WHERE token_id = @id`, { id });
+    return rows[0] ? rowToIntegrationToken(rows[0]) : null;
+  },
+  // Returns the removed record, or null.
+  async deleteIntegrationToken(token_id) {
+    const id = parseInt(token_id, 10);
+    const rows = await run(`SELECT ${TOKEN_COLS} FROM dbo.px_integration_tokens WHERE token_id = @id;
+                            DELETE FROM dbo.px_integration_tokens WHERE token_id = @id;`, { id });
+    return rows[0] ? rowToIntegrationToken(rows[0]) : null;
+  },
 
   async deleteEssResultsForMetric(metric_id) {
     const rows = await run('DELETE FROM dbo.px_ess_results WHERE metric_id = @id; SELECT @@ROWCOUNT AS n;', { id: parseInt(metric_id, 10) });

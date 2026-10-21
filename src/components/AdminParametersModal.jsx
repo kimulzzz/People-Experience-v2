@@ -23,7 +23,8 @@ import {
   Bell,
   Send,
   UserCog,
-  Building2
+  Building2,
+  Plug
 } from 'lucide-react';
 import { formatMetricValue, defaultUnitForScale } from '../utils/formatMetricValue';
 import { SURVEY_SOURCE_OPTIONS, surveySourceLabel, surveySourceBadgeClass } from '../utils/surveySource';
@@ -32,6 +33,7 @@ import { MONTH_NAMES } from '../utils/months';
 import EmailSettingsModal from './EmailSettingsModal';
 import UserManagementModal from './UserManagementModal';
 import DirectoryManager from './DirectoryManager';
+import IntegrationTokensManager from './IntegrationTokensManager';
 
 // Converts a metric's raw Target Nilai (stored in its own native scale — e.g. 4.00 on a
 // RATING_5 1-5 scale) into the same 0-100 % scale as Min Threshold, mirroring the backend's
@@ -130,7 +132,7 @@ function IndexWeightsCard({ initial, onSaved, onError }) {
 }
 
 export default function AdminParametersModal({ isOpen, onClose, onParametersUpdated, onDirectoryChanged, currentUserId }) {
-  const [activeTab, setActiveTab] = useState('metrics'); // 'journeys' | 'metrics' | 'directorates' (v2.51.0) | 'email' | 'users' (v2.42.0)
+  const [activeTab, setActiveTab] = useState('metrics'); // 'journeys' | 'metrics' | 'directorates' (v2.51.0) | 'email' | 'users' (v2.42.0) | 'integrations' (v2.52.0)
   const [loading, setLoading] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -643,6 +645,20 @@ All survey data (responses) and question settings of this metric will also be de
               <UserCog className="w-4 h-4" />
               <span>Manage Users</span>
             </button>
+
+            {/* Integration tokens (v2.52.0): another internal system pushes the social media data of metric 1 */}
+            <button
+              onClick={() => setActiveTab('integrations')}
+              className={`py-3 text-xs sm:text-sm font-bold border-b-2 flex items-center space-x-2 transition ${
+                activeTab === 'integrations'
+                  ? 'border-white text-white'
+                  : 'border-transparent text-red-100 hover:text-white'
+              }`}
+              title="Integration tokens for systems that send social media data (metric 1)"
+            >
+              <Plug className="w-4 h-4" />
+              <span>Integrations</span>
+            </button>
           </div>
 
           <div className="py-2">
@@ -675,6 +691,7 @@ All survey data (responses) and question settings of this metric will also be de
           {activeTab === 'email' && <EmailSettingsModal isOpen embedded />}
           {activeTab === 'users' && <UserManagementModal isOpen embedded currentUserId={currentUserId} />}
           {activeTab === 'directorates' && <DirectoryManager onDirectoryChanged={onDirectoryChanged} />}
+          {activeTab === 'integrations' && <IntegrationTokensManager />}
 
           {/* ============================================================ */}
           {/* TAB 1: PARAMETER JOURNEY                                      */}

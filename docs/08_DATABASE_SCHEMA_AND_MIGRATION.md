@@ -40,7 +40,7 @@ Script `scripts/sqlserver/Setup-SqlServer.ps1` (idempoten, log di `scripts/sqlse
 
 ---
 
-## 3. Skema (`server/db/schema.sql` — 34 tabel sejak v2.51.0, prefix `px_`)
+## 3. Skema (`server/db/schema.sql` — 37 tabel sejak v2.52.0, prefix `px_`)
 
 | Kelompok | Tabel | Catatan |
 | :--- | :--- | :--- |
@@ -56,7 +56,9 @@ Script `scripts/sqlserver/Setup-SqlServer.ps1` (idempoten, log di `scripts/sqlse
 | Exit Interview (v2.38.0) | `px_exit_interviews`, `px_exit_interview_uploads` | Satu baris per exit karyawan dari file "Termination Report" `.xlsx` + direktorat/divisi; `UNIQUE (nik, effective_date)` (upload ulang = update). Berisi **data per karyawan** (NIK, nama, jawaban terbuka). Tidak dipakai perhitungan skor. Lihat §18. |
 | Login (v2.26.0) | `px_users`, `px_sessions`, `px_audit_log` | `px_users`: `username` UNIQUE (NIP/nama login), `password_hash` (scrypt, tidak pernah dikembalikan API), `role` CHECK `ADMIN`/`USER`, `directorate`/`division` (nama, NULL untuk Admin), `is_active`, `must_change_password`, `failed_attempts`, `locked_until`, `last_login_at`, `menu_access` (v2.49.0; JSON, NULL = default). `px_sessions`: PK `token_hash` (**SHA-256 token cookie**, bukan token-nya), `expires_at`, FK ke user `ON DELETE CASCADE`. `px_audit_log`: waktu, user, `action`, `target`, `ip` — tanpa secret. Dibuat idempoten saat boot/`applySchema()`. |
 | Cakupan User (v2.27.0) | `px_user_scopes` | `user_id` FK ke `px_users` `ON DELETE CASCADE`, `directorate`, `division` (**NULL = semua divisi** direktorat itu), `UNIQUE(user_id, directorate, division)`. Kolom `px_users.directorate`/`division` (v2.26.0) **legacy: tidak ditulis/dipakai lagi**. Dibuat idempoten saat boot. |
-| Drilldown OUTCOME | `px_recruitment_sla_by_unit`, `px_approval_stage_compliance`, `px_hiring_channel_mix`, `px_recognition_categories`, `px_attrition_by_tenure` | Menggantikan objek `operationalRecords` (5 bentuk kolom berbeda dalam satu objek). |
+| Drilldown OUTCOME | `px_recruitment_sla_by_unit`, `px_approval_stage_compliance`, `px_hiring_channel_mix`, `px_recognition_categories`, `px_attrition_by_tenure` | Menggantikan objek `operationalRecords` (5 bentuk kolom berbeda dalam satu objek). Sejak v2.52.0 `px_recruitment_sla_by_unit` tidak lagi berisi baris metrik 1 (dihapus saat boot). |
+| Social media metrik 1 (v2.52.0) | `px_social_media_stats`, `px_social_media_uploads` | Drilldown metrik 1: satu baris per platform (Instagram/LinkedIn/TikTok) per bulan, `UNIQUE (platform, stat_year, stat_month)`; riwayat batch upload `.xlsx` / integrasi. Tidak dipakai perhitungan skor. Lihat §25. |
+| Integrasi (v2.52.0) | `px_integration_tokens` | Token integrasi untuk sistem internal lain: hanya `token_hash` (SHA-256), `scope` `SOCIAL_MEDIA_INGEST`. Seperti tabel login: tidak dihapus `migrate --reset`, tidak ikut `db:export`. Lihat §25. |
 
 **Normalisasi responden** (`px_survey_uploaded_responses`): alias `nip` / `participant_id` / `candidate_id` (dan `directorate`/`university`/`applied_position`, `division`/`major`/`recruitment_channel`) diringkas menjadi `respondent_type` (`EMPLOYEE` | `CAMPUS_STUDENT` | `JOB_CANDIDATE`) + `respondent_id/name/email` + `org_unit_1/org_unit_2`. `sqlStorage.js › rowToResponse()` menurunkan kembali nama-nama field lama untuk `calculationEngine`, `alertEngine`, evidence CSV, dst. — sehingga tidak ada kode lain yang berubah.
 
@@ -366,3 +368,36 @@ SELECT setting_value FROM dbo.px_app_settings WHERE setting_key = 'directory_adm
 ```
 
 Diverifikasi oleh Modul 53 dan 54 (`docs/07` §40).
+
+## 25. Pembaruan v2.52.0 - Tabel Social Media Metrik 1 & Token Integrasi
+
+**Tabel baru** (dibuat idempoten saat boot, `IF OBJECT_ID(...) IS NULL` di `schema.sql`, tanpa ALTER tabel lama). Jumlah tabel 34 -> **37**. API: `docs/04` "Catatan v2.52.0".
+
+| Tabel | Kolom | Kunci / constraint |
+| :--- | :--- | :--- |
+| `px_social_media_stats` | `stat_id INT IDENTITY` PK, `platform NVARCHAR(20)`, `stat_year INT`, `stat_month INT`, `followers INT`, `reach INT`, `engagement INT`, `source VARCHAR(20)`, `upload_id NVARCHAR(64) NULL` (NULL untuk SEED), `created_at DATETIME2(3)` default `SYSUTCDATETIME()`, `updated_at DATETIME2(3) NULL` | `CHECK` platform `Instagram`/`LinkedIn`/`TikTok`, tahun 2000-2100, bulan 1-12, ketiga angka `>= 0`, source `UPLOAD`/`INTEGRATION`/`SEED`; `UQ_px_sm_platform_period (platform, stat_year, stat_month)` |
+| `px_social_media_uploads` | `upload_id NVARCHAR(64)` PK (`sm-<ts>-<acak>`), `source VARCHAR(20)` (`UPLOAD`/`INTEGRATION`), `file_name NVARCHAR(260) NULL` (UPLOAD saja), `uploaded_by NVARCHAR(200)` ("Nama (username)", "... via API" untuk sesi Admin, atau "Integration: <nama token>"), `total_rows`, `inserted_rows`, `updated_rows`, `replaced_seed_rows` (INT default 0), `period_from`/`period_to CHAR(7) NULL` ('YYYY-MM'), `uploaded_at DATETIME2(3)` | PK; `CHECK` source |
+| `px_integration_tokens` | `token_id INT IDENTITY` PK, `name NVARCHAR(100)`, `token_hash CHAR(64)` (SHA-256 hex), `token_hint NVARCHAR(20)`, `scope VARCHAR(40)`, `created_by NVARCHAR(200)`, `created_at DATETIME2(3)`, `last_used_at`, `revoked_at` (`DATETIME2(3) NULL`), `revoked_by NVARCHAR(200) NULL`, `is_test BIT` default 0 | `UQ_px_int_tokens_hash (token_hash)`; `CHECK` scope = `SOCIAL_MEDIA_INGEST` |
+
+Tanpa FK (`upload_id` dirujuk per nilai, seperti tabel survei lain). Token itu sendiri tidak pernah disimpan.
+
+**Aturan data** (`saveSocialMediaStats`, satu transaksi): baris `SEED` semua bulan dalam batch dihapus (ketiga platform), lalu `MERGE ... WITH (HOLDLOCK)` per (platform, tahun, bulan): ada -> `UPDATE` angka, `source`, `upload_id`, `updated_at`; belum -> `INSERT`; lalu satu baris `px_social_media_uploads`. File asli upload: `server/data/social-uploads/<upload_id>.xlsx` (gitignored, **tidak** ikut `.bak`).
+
+**Boot**: (1) `removeMetric1SlaRows()` setiap start - `DELETE FROM dbo.px_recruitment_sla_by_unit WHERE metric_id = 1` (idempoten; log "Metric 1 is social media data: removed n old recruitment-SLA row(s)"); seed `initialOperationalRecords[1]` dihapus. (2) Bila `SEED_DEMO_DATA` bukan `false`: `topUpSocialMediaSeed()` menyisipkan baris dummy fiktif Januari-September 2026 (`generateSocialMediaSeed`, 27 baris, deterministik) untuk (platform, bulan) yang belum ada, kecuali bulan yang sudah punya baris `UPLOAD`/`INTEGRATION`.
+
+**Backend JSON**: `socialMediaStats` (field `year`/`month`, bukan `stat_year`/`stat_month`) dan `socialMediaUploads` di `store.json`; token di `server/data/auth.json` (`integrationTokens`, gitignored) seperti akun. Baris SLA metrik 1 (`operationalRecords[1]`) dihapus saat `store.json` dimuat.
+
+**Ekspor / migrasi / reset**: `exportToJson.js` membawa `socialMediaStats` dan `socialMediaUploads` (log `social media rows <n>`), **tanpa token**; `migrate.js` mengimpornya (`social_media_stats`, `social_media_uploads` di hitungan verifikasi). `dropAllTables()` (`--reset`) menghapus kedua tabel social media tetapi **tidak** `px_integration_tokens` (seperti tabel login). Token juga **tidak** termasuk `CONFIG_TABLES` snapshot konfigurasi suite (§24). Setelah `--reset` data social media asli hilang kecuali `store.json` sudah diekspor ulang; dummy diisi lagi saat start.
+
+**Rollback**: kode lama tidak membaca ketiga tabel (boleh dibiarkan). Baris SLA metrik 1 yang sudah dihapus hanya kembali dari backup; perilaku kode lama tanpa baris itu tidak diuji.
+
+Cek:
+
+```sql
+SELECT platform, stat_year, stat_month, followers, reach, engagement, source FROM dbo.px_social_media_stats ORDER BY stat_year, stat_month, platform;
+SELECT upload_id, source, file_name, uploaded_by, total_rows, inserted_rows, updated_rows, replaced_seed_rows, period_from, period_to, uploaded_at FROM dbo.px_social_media_uploads ORDER BY uploaded_at DESC;
+SELECT token_id, name, token_hint, scope, created_at, last_used_at, revoked_at FROM dbo.px_integration_tokens;
+SELECT COUNT(*) AS sla_rows_metric_1 FROM dbo.px_recruitment_sla_by_unit WHERE metric_id = 1;  -- harus 0
+```
+
+Diverifikasi oleh Modul 55 (`docs/07` §41).

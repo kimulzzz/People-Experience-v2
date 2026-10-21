@@ -472,6 +472,7 @@ module.exports = {
   readFirstSheet,
   validateEssSheet,
   parseScore,
+  parseMonth, // shared with the social media upload (v2.52.0): month names English / Indonesian / abbreviated or 1-12
   poolRows,
   selectEssResult,
   essPeriodEndKey,

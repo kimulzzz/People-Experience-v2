@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { formatMetricValue } from '../utils/formatMetricValue';
 import { monthName } from '../utils/months';
+import SocialMediaUploadModal from './SocialMediaUploadModal';
 
 function normalizeDateString(dateVal) {
   if (!dateVal) return null;
@@ -91,6 +92,7 @@ export default function Calculator({
   onOpenSurveyImport
 }) {
   const { isAdmin } = useAuth();
+  const [isSocialUploadOpen, setIsSocialUploadOpen] = useState(false); // v2.52.0: social media data of metric 1 (Admin)
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('ALL'); // ALL, SURVEY, OUTCOME
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -608,6 +610,31 @@ export default function Calculator({
 
                               </>)}
                             </>
+                          ) : (m.data_upload === 'SOCIAL_MEDIA' && isAdmin) ? (
+                            <>
+                              {/* v2.52.0: metric 1 takes social media statistics (Excel upload, Admin only; the server decides which metric) */}
+                              <a
+                                href="/api/admin/social-media/template"
+                                download="Template_Social_Media_Metric_1.xlsx"
+                                onClick={(e) => e.stopPropagation()}
+                                className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
+                                title={`Download the social media template (.xlsx) for ${m.metric_name}`}
+                              >
+                                <Download className="w-3 h-3 text-slate-500 shrink-0" />
+                                <span>Template</span>
+                              </a>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setIsSocialUploadOpen(true);
+                                }}
+                                className="inline-flex items-center space-x-1 px-2 py-1 text-[10.5px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-md transition shadow-2xs"
+                                title={`Upload Instagram / LinkedIn / TikTok data (.xlsx) for ${m.metric_name}`}
+                              >
+                                <FileSpreadsheet className="w-3 h-3 text-slate-500 shrink-0" />
+                                <span>Upload</span>
+                              </button>
+                            </>
                           ) : null /* v2.50.0: no Detail / View Data button - clicking the metric row opens the detail */}
                         </div>
                       </td>
@@ -644,6 +671,10 @@ export default function Calculator({
         </div>
 
       </div>
+
+      {isAdmin && (
+        <SocialMediaUploadModal isOpen={isSocialUploadOpen} onClose={() => setIsSocialUploadOpen(false)} />
+      )}
 
     </div>
   );

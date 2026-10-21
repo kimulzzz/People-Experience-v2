@@ -1591,19 +1591,13 @@ function exitDummyOrgUnit(directorates, key) {
 }
 
 // Per-metric operational drilldown records for OUTCOME metrics whose "raw data" is an internal
-// HR operational breakdown table (not individual survey responses) — e.g. recruitment SLA by
-// unit, approval-stage compliance, hiring channel mix, recognition categories, attrition by
-// tenure. Seeded here (like every other demo dataset in this file) so it lives in the database
-// layer and is admin-editable in principle, instead of being frozen directly inside
-// calculationEngine.js's business logic.
+// HR operational breakdown table (not individual survey responses) — e.g. approval-stage
+// compliance, hiring channel mix, recognition categories, attrition by tenure. Seeded here (like
+// every other demo dataset in this file) so it lives in the database layer and is admin-editable
+// in principle, instead of being frozen directly inside calculationEngine.js's business logic.
+// v2.52.0: metric 1 no longer has recruitment-SLA rows per unit (wrong data for a bankwide social media metric); its
+// records are the social media statistics below (px_social_media_stats).
 const initialOperationalRecords = {
-  1: [
-    { unit: 'Operations, Technology, Analytics & AI', target_headcount: 45, fulfilled: 42, sla_achievement: '93.3%', status: 'Achieved' },
-    { unit: 'Consumer & EBB', target_headcount: 80, fulfilled: 71, sla_achievement: '88.8%', status: 'Achieved' },
-    { unit: 'Risk Management', target_headcount: 25, fulfilled: 23, sla_achievement: '92.0%', status: 'Achieved' },
-    { unit: 'Corporate Banking & Markets', target_headcount: 30, fulfilled: 26, sla_achievement: '86.7%', status: 'Achieved' },
-    { unit: 'Operations & Support', target_headcount: 50, fulfilled: 46, sla_achievement: '92.0%', status: 'Achieved' }
-  ],
   3: [
     { stage: 'Directorate Head Approval', avg_sla_hours: 36, sla_target_hours: 48, compliance: '94.5%' },
     { stage: 'Talent Acquisition Review', avg_sla_hours: 24, sla_target_hours: 24, compliance: '96.0%' },
@@ -1626,6 +1620,33 @@ const initialOperationalRecords = {
     { tenure_bracket: 'Month 5 - 6 (Probation Review)', attrition_count: 12, rate: '1.2%', benchmark: '< 2.0%' }
   ]
 };
+
+// Social media statistics of metric 1 (v2.52.0), source 'SEED': FICTIONAL monthly Instagram / LinkedIn / TikTok numbers
+// (followers at month end, reach and engagement of the month) for January - September 2026, so the metric-1 drilldown has
+// something to show before real data is uploaded (.xlsx) or injected by another system. Deterministic (one seeded PRNG per
+// platform). The storage boot top-up adds a (platform, month) only while it has no row and the month has no real row; real
+// rows (UPLOAD / INTEGRATION) of a month replace that month's seed rows. The score of metric 1 stays the Admin's raw_value.
+const SOCIAL_MEDIA_SEED_MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(month => ({ year: 2026, month }));
+const SOCIAL_MEDIA_SEED_PROFILES = [ // [platform, followers in Dec 2025, monthly follower growth range, reach / followers, engagement / reach]
+  ['Instagram', 182000, [0.012, 0.024], [1.8, 2.6], [0.032, 0.046]],
+  ['LinkedIn', 405000, [0.008, 0.016], [0.9, 1.4], [0.018, 0.027]],
+  ['TikTok', 46500, [0.035, 0.065], [4.0, 6.5], [0.055, 0.085]]
+];
+
+function generateSocialMediaSeed(months = SOCIAL_MEDIA_SEED_MONTHS) {
+  const rows = [];
+  SOCIAL_MEDIA_SEED_PROFILES.forEach(([platform, start, growth, reachRatio, engRate], p) => {
+    const rnd = mulberry32(52000 + p);
+    const between = ([lo, hi]) => lo + (hi - lo) * rnd();
+    let followers = start;
+    months.forEach(({ year, month }) => {
+      followers = Math.round(followers * (1 + between(growth)));
+      const reach = Math.round(followers * between(reachRatio));
+      rows.push({ platform, year, month, followers, reach, engagement: Math.round(reach * between(engRate)) });
+    });
+  });
+  return rows;
+}
 
 // Admin-managed UI values (px_app_settings). Seeded once, then read from the database only.
 const initialAppSettings = {
@@ -1941,6 +1962,8 @@ module.exports = {
   initialEssResults,
   initialEssUploads,
   initialOperationalRecords,
+  SOCIAL_MEDIA_SEED_MONTHS,
+  generateSocialMediaSeed,
   EXIT_SEED_MONTHS,
   generateExitInterviewDummy,
   exitDummyOrgUnit,
