@@ -40,6 +40,7 @@ const { inferSurveySource, isEssMetric, resolveSurveySource, resolveRequiresManu
 const { buildInitialStore: loadInitialStore } = require('./initialStore');
 const { planDirectory, renamedDirectorate, migrateScopes, migrateDirectorateOptions, DIRECTORATE_SETTING_KEYS } = require('./directorateMigration');
 const dirNames = require('./directoryNames');
+const { seedQuestions: seedPartQuestions } = require('./partQuestions');
 const { nameKey, buildResolver, currentSeedName, directoryError } = dirNames;
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -444,6 +445,8 @@ function getStore() {
         store.metricPartResults = store.metricPartResults || [];
         store.metricPartUploads = store.metricPartUploads || [];
         topUpStoreMetricParts(store).forEach(([id, n]) => console.log(`[jsonStorage] Metric ${id} is now scored from ${n} uploaded summary part(s).`));
+        const configured = topUpStorePartQuestions(store);
+        if (configured) console.log(`[jsonStorage] Summary Questions: configured the questions of ${configured} summary part(s) from their latest upload / template.`);
         saveStore();
       } catch (err) {
         console.error('Error loading store.json, falling back to seed data:', err);
@@ -476,6 +479,21 @@ function saveStore() {
 // changed in memory only after every check passed, then saved. The audit trail is never rewritten.
 const sameName = (a, b) => nameKey(a) === nameKey(b);
 const DIRECTORY_FLAG = 'directory_admin_managed';
+
+// v2.57.0: every part without configured questions gets them ONCE from its latest upload's question headers (else its seeded
+// template, else none) - same rule as sqlStorage.topUpPartQuestions. Returns the number of parts configured.
+function topUpStorePartQuestions(s) {
+  let n = 0;
+  (s.metricParts || []).forEach(p => {
+    if (Array.isArray(p.questions)) return;
+    const latest = (s.metricPartUploads || []).filter(u => u.metric_id === p.metric_id && u.part_key === p.part_key)
+      .sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : a.uploaded_at > b.uploaded_at ? -1 : (a.upload_id < b.upload_id ? 1 : -1)))[0] || null;
+    const rows = latest ? (s.metricPartResults || []).filter(r => r.upload_id === latest.upload_id) : [];
+    p.questions = seedPartQuestions(p, latest, rows);
+    n++;
+  });
+  return n;
+}
 
 // v2.55.0: the seed parts of a composite summary metric that exists and has no part yet (once). Returns [[metric_id, parts added]].
 function topUpStoreMetricParts(s) {
@@ -656,8 +674,9 @@ function saveDirectoryChange(s) {
 
 // v2.51.0 configuration snapshot (same contract as sqlStorage.snapshotConfiguration / restoreConfiguration): everything an
 // Admin configures. Login accounts (auth.json) and the data collections are not part of it.
+// v2.57.0: metricParts (the parts and their configured Summary Questions) is Admin configuration too.
 const CONFIG_KEYS = ['journeys', 'checkpoints', 'metrics', 'weights', 'metricTargets', 'customSurveyQuestions', 'masterSurveyQuestions',
-  'actionLibrary', 'appSettings', 'directorates', 'directorateAliases', 'divisionAliases'];
+  'actionLibrary', 'appSettings', 'directorates', 'directorateAliases', 'divisionAliases', 'metricParts'];
 const deepCopy = v => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 
 // Database / Storage Adapter API
@@ -2085,8 +2104,23 @@ const storage = {
   getMetricParts(metric_id = null) {
     const id = metric_id === null || metric_id === undefined ? null : parseInt(metric_id, 10);
     return (getStore().metricParts || []).filter(p => id === null || p.metric_id === id)
-      .map(p => ({ metric_id: p.metric_id, part_key: p.part_key, part_name: p.part_name, sort_order: p.sort_order || 0, template: p.template ? JSON.parse(JSON.stringify(p.template)) : null }))
+      .map(p => ({ metric_id: p.metric_id, part_key: p.part_key, part_name: p.part_name, sort_order: p.sort_order || 0, template: p.template ? JSON.parse(JSON.stringify(p.template)) : null,
+        questions: Array.isArray(p.questions) ? JSON.parse(JSON.stringify(p.questions)) : null }))
       .sort((a, b) => a.metric_id - b.metric_id || a.sort_order - b.sort_order);
+  },
+  topUpPartQuestions() {
+    const n = topUpStorePartQuestions(getStore());
+    if (n) saveStore();
+    return n;
+  },
+  // v2.57.0: the configured questions of a part (validated by partQuestions.normalizeQuestions). Returns the part or null.
+  setMetricPartQuestions(metric_id, part_key, questions) {
+    const id = parseInt(metric_id, 10);
+    const p = (getStore().metricParts || []).find(x => x.metric_id === id && x.part_key === String(part_key));
+    if (!p) return null;
+    p.questions = JSON.parse(JSON.stringify(questions || []));
+    saveStore();
+    return this.getMetricParts(id).find(x => x.part_key === String(part_key)) || null;
   },
   getMetricPartResults(metric_id = null, part_key = null) {
     const id = metric_id === null || metric_id === undefined ? null : parseInt(metric_id, 10);

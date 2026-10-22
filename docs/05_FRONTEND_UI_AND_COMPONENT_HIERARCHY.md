@@ -404,6 +404,12 @@ API kini bisa mengirim indeks dan skor `null` serta status `NO_DATA` (lihat `doc
 | `MetricDetailModal.jsx` | Nilai "—", "No survey data in this period - left out of the index", badge abu-abu "No Data", pertanyaan berlabel "No Data" tanpa skor. Catatan "Annual metric: shows the result of Jan–Sep 2026" untuk metrik tahunan pada filter MTD **dihapus di v2.37.0** (MTD kini selalu satu bulan, `period_window.basis = 'MONTH'`). |
 | `TrendChart.jsx` | Titik `null` menjadi celah (garis dipotong per segmen), tooltip "—". |
 
+## Catatan v2.57.0 - Tab Summary Questions
+
+- **`AdminParametersModal.jsx`**: tab baru **Summary Questions** (ikon `ListOrdered`) setelah Directorates, sebelum Email Settings; `activeTab` `'summary-questions'`.
+- **`PartQuestionsManager.jsx` (baru)**: dropdown **Template** (optgroup per metrik, opsi per bagian dengan jumlah pertanyaan atau "no question columns") dari `GET /api/admin/part-questions`; kotak info sesuai `kind`, nama event upload terakhir (metrik 12), upload terakhir + "its questions differ from the configuration below; the next upload must follow the configuration." / "same questions as the configuration."; daftar pertanyaan (textarea teks, select tipe "Scale (1-5)" / "Scale (0-100%)" / "Text answer (not scored)", Move up / Move down / Remove question); **Add Question**, **Discard**, **Save Questions** (`PUT`). Ganti pilihan dengan perubahan belum disimpan -> konfirmasi "Discard the unsaved question changes?". Bagian `SCORE_TABLE` (19/20) tanpa editor.
+- **`MetricHistoryTable.jsx`**: setiap `history.notes` tampil sebagai banner amber "Question set changed: ..." di atas tabel.
+
 ## Catatan v2.56.0 - Tab History di detail metrik
 
 - **`MetricDetailModal.jsx`**: setiap metrik punya tab **History (n)** (data di balik tombol Evidence, dari `GET /api/metrics/:id/history` dengan periode detail); label "Internal Transaction Records" dan "Respondent Records & Answers" dihapus. Survei SYSTEM tetap memakai tabel responden lama (angka n = daftar responden detail, maks. 100); OUTCOME `OPERATIONAL` tetap memakai tabel records lama; jenis lain memakai `MetricHistoryTable`. Tabel absensi metrik 11 lama diganti tabel bersama. Metrik ringkasan tetap membuka "Summary Parts" lebih dulu. History diambil setiap kali modal dibuka; 403 -> "No access to the history of this metric.", error lain -> "The history could not be loaded."

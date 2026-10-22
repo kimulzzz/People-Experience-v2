@@ -167,11 +167,25 @@ Sheet "Pivot" (atau sheet pertama); sheet "Raw Data" tidak pernah dibaca (bila s
 | **C** | Year | 2000-2100 |
 | **D** | Month | Nama bulan Inggris/Indonesia, singkatan (termasuk "Sept"), atau 1-12; beberapa bulan boleh bertumpuk |
 | **E** | Skor bagian | Skala 1-5 (5 = 100%); metrik 12 "Satisfaction Event" sudah % (0-100). "-" = tidak ada nilai |
-| **F..** | Pertanyaan | Hanya untuk evidence. Metrik 12: kolom event dikenali dari header biru (fill `FF0070C0`), kolom pertanyaan sesudahnya |
+| **F..** | Pertanyaan | Hanya untuk evidence; sejak v2.57.0 dipetakan berdasarkan posisi ke Summary Questions (lihat C). Metrik 12: kolom event dikenali dari header biru (fill `FF0070C0`), kolom pertanyaan sesudahnya |
 | | Jumlah Responden (Valid) | 0 = baris tidak dihitung; dipakai sebagai bobot untuk gabungan direktorat. Metrik 19/20 tidak punya kolom ini |
 | | Periode (...) | Teks, disimpan apa adanya |
 
 Metrik 19/20: satu file gabungan (`Mandatory & Non Mandatory Learning_PX.xlsx`), kolom skor dicari dari teks header "Mandatory Learning" / "Non Mandatory Learning"; unggah ke masing-masing metrik. Bulan masa depan berisi skor ditolak; baris masa depan berisi "-" dilewati. Upload ulang mengganti bulan-bulan di file untuk bagian itu. File asli tidak disimpan (nama file + SHA-256 + baris tersimpan = jejak audit).
+
+### C. Pertanyaan terkonfigurasi (sejak v2.57.0)
+
+Kolom pertanyaan (setelah skor di kolom E) metrik 5, 7, 12 dipetakan **berdasarkan posisi** ke pertanyaan di Admin Parameters -> **Summary Questions**, bukan berdasarkan teks header (header file hanya disimpan sebagai `File_Header`).
+
+| Aturan | Isi |
+| :--- | :--- |
+| Jumlah kolom | Harus sama dengan jumlah pertanyaan terkonfigurasi; beda = file ditolak ("The file has N question columns ..., the configured template has M questions ...") |
+| Metrik 12 | Jumlah kolom event/pertanyaan = kelipatan blok (1 kolom skor event + N pertanyaan); header biru event harus di awal setiap blok |
+| Tipe Scale | Angka pada skala bagian (1-5; metrik 12 0-100) atau "-"/kosong; teks ditolak |
+| Tipe Text | Teks bebas, disimpan untuk evidence, tidak pernah dinilai |
+| Belum dikonfigurasi | Bagian tanpa konfigurasi (`questions` `NULL`) membaca kolom apa adanya seperti v2.55.0 |
+
+Unduh template terbaru setelah pertanyaan diubah.
 
 ## 🔒 Keamanan & Air-Gapped Compliance
 - Seluruh pemrosesan file CSV berjalan 100% di server lokal (On-Premise).

@@ -605,6 +605,25 @@ Pengujian: `docs/07` §31 (Modul 46).
 
 ---
 
+## Catatan v2.57.0 - Summary Questions (pertanyaan template ringkasan)
+
+**Endpoint baru (Admin saja; USER 403, tanpa login 401)**:
+
+| Endpoint | Respons / aturan |
+| :--- | :--- |
+| `GET /api/admin/part-questions` | `{ metrics: [{ metric_id, metric_name, parts: [...] }], question_types: ['SCALE','TEXT'], max_text: 500, max_questions: 60 }`. Per bagian: `part_key`, `part_name`, `sort_order`, `scale`, `kind` (`QUESTIONS` \| `EVENT_BLOCKS` \| `SCORE_TABLE`), `configured`, `questions`, `event_labels` (metrik 12: dari upload terakhir, else template), `uploads_count`, `latest_upload { upload_id, file_name, uploaded_at, question_texts }`, `differs_from_latest_upload` |
+| `PUT /api/admin/part-questions/:metric_id/:part_key` | Body `{ questions: [{ key?, text, type? }] }` mengganti seluruh daftar (`partQuestions.normalizeQuestions`): teks wajib maks. 500, `type` `SCALE`\|`TEXT` (default `SCALE`), kunci opsional `[A-Za-z0-9_-]{1,40}` unik (baru = `q<n>` bebas berikutnya), maks. 60; bagian `SCORE_TABLE` 400. Bagian tidak dikenal / metrik tanpa bagian 404. Respons `{ success, metric_id, changes, part }`. Audit `PART_QUESTIONS_UPDATE` dengan ringkasan `describeChanges` |
+
+`GET /api/admin/metric-parts/:metric_id` kini juga mengirim `kind` dan `questions` per bagian.
+
+**Modul `server/db/partQuestions.js` (baru)**: `partKind`, `isEventPart`, `isScoreTablePart`, `firstEventBlock`, `seedQuestions` (top-up boot), `normalizeQuestions`, `questionSetKey` (identitas set = teks berurutan), `describeChanges`. Storage (dua backend): `setMetricPartQuestions(metric_id, part_key, questions)`, `topUpPartQuestions()`; `getMetricParts()` mengembalikan `questions` (`null` = belum dikonfigurasi).
+
+**`metricPartsService.js`**: bila `part.questions` berupa list, `mapConfiguredColumns` memetakan kolom pertanyaan file **berdasarkan posisi** (jumlah harus sama; metrik 12: blok event = kolom skor event + N pertanyaan, header biru di awal blok), `SCALE` = angka pada skala atau "-", `TEXT` = teks bebas (tidak dinilai); setiap jawaban menyimpan `key`, `label` (teks terkonfigurasi), `file_label`, `type`; upload menyimpan `columns.questions_snapshot`. Template memakai teks terkonfigurasi. `partEvidenceTable` menomori set pertanyaan (Set 1 = tertua) dan, bila periode berisi lebih dari satu set, memakai tata letak panjang dengan `Question_Set` plus `note`; `metricHistoryService` meneruskan catatan itu sebagai `notes` di `GET /api/metrics/:id/history`. `part.questions` `null` = perilaku v2.55.0.
+
+Pengujian: `docs/07` §47 (Modul 62).
+
+---
+
 ## Catatan v2.56.0 - History metrik (`GET /api/metrics/:id/history`)
 
 | Endpoint | Respons / aturan |

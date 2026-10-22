@@ -15,12 +15,22 @@
 //                 is value / 5 x 100 (normalizeScore RATING_5). No part with a value -> NO_DATA.
 // The original file is NOT kept (such files carry personal data in a "Raw Data" sheet): file name + SHA-256 + the stored rows
 // are the audit trail; the evidence CSV lists the stored rows.
+// v2.57.0 Summary Questions: a part with configured questions (part.questions, Admin Parameters -> Summary Questions) maps the
+// file's question columns BY POSITION to them (like ESS, v2.50.0): the count must equal the configured count (metric 12: every event
+// block = the event score column + the configured per-event questions), each stored question carries the configured text as `label`
+// and the file's own header as `file_label`, SCALE columns must hold numbers on the part's scale, TEXT columns are free text (never
+// scored). The upload keeps the configured set as columns.questions_snapshot; the stored rows keep the texts used at upload, so
+// History / Evidence show them after the configuration changes (a period with more than one question set -> one line per question
+// with a Question_Set column). part.questions null (not configured) = the v2.55.0 behaviour (the file's columns as they are).
 const crypto = require('crypto');
 const storage = require('../db/storage');
 const { periodWindow } = require('../db/filterUtils');
 const { buildResolver, nameKey } = require('../db/directoryNames');
 const { colLetter, readFirstSheet, buildXlsx } = require('./xlsxUtils');
 const { parseMonth, MONTH_NAMES } = require('./essSummaryService');
+const { isEventPart, questionSetKey } = require('../db/partQuestions');
+
+const QUESTIONS_MENU = 'Admin Parameters -> Summary Questions';
 
 const PART_SCALE_MAX = 5;
 const MAX_TEXT = 500;
@@ -182,8 +192,42 @@ function questionColumns(header, respCol, periodCol) {
     const next = cols[i + 1];
     const isEvent = byFill ? isEventFill(c.fill) : (counts.get(c.label) === 1 && !!next && counts.get(next.label) > 1);
     if (isEvent) event = c.label;
-    return { idx: c.idx, label: c.label, is_event: isEvent, event: isEvent ? c.label : event };
+    return { idx: c.idx, label: c.label, is_event: isEvent, event: isEvent ? c.label : event, filled_event: isEventFill(c.fill) };
   });
+}
+
+/**
+ * v2.57.0: maps the question columns of a file BY POSITION to the configured questions of the part. cols = questionColumns(...);
+ * questions = [{ key, text, type }]; eventPart = metric 12 layout (blocks of event score + per-event questions). Returns { cols }
+ * (each with key / type / label = the configured text / file_label = the header) or { error }.
+ */
+function mapConfiguredColumns(cols, questions, eventPart) {
+  const m = questions.length;
+  const n = cols.length;
+  const plural = (k, w) => `${k} ${w}${k === 1 ? '' : 's'}`;
+  if (!eventPart) {
+    if (n !== m) {
+      return { error: `The file has ${plural(n, 'question column')} (after the score in column E), the configured template has ${plural(m, 'question')} - update the questions in ${QUESTIONS_MENU} or use the latest template.` };
+    }
+    return { cols: cols.map((c, i) => ({ idx: c.idx, label: questions[i].text, file_label: c.label, key: questions[i].key, type: questions[i].type, is_event: false, event: null })) };
+  }
+  const block = m + 1;
+  if (!n || n % block !== 0) {
+    return { error: `The file has ${plural(n, 'event / question column')}, which is not a whole number of event blocks of ${block} columns (the event score + the ${plural(m, 'configured per-event question')}) - update the questions in ${QUESTIONS_MENU} or use the latest template.` };
+  }
+  // a file with blue event headers: they must stand at the start of every block
+  const misplaced = cols.find((c, i) => c.filled_event !== (i % block === 0));
+  if (cols.some(c => c.filled_event) && misplaced) {
+    return { error: `Column ${colLetter(misplaced.idx)} ("${String(misplaced.label).slice(0, 60)}"): the blue event headers do not line up with event blocks of ${block} columns (the event score + the ${plural(m, 'configured per-event question')}) - update the questions in ${QUESTIONS_MENU} or use the latest template.` };
+  }
+  let event = null;
+  return {
+    cols: cols.map((c, i) => {
+      if (i % block === 0) { event = c.label; return { idx: c.idx, label: c.label, is_event: true, event: c.label }; }
+      const q = questions[(i % block) - 1];
+      return { idx: c.idx, label: q.text, file_label: c.label, key: q.key, type: q.type, is_event: false, event };
+    })
+  };
 }
 
 /**
@@ -193,7 +237,7 @@ function questionColumns(header, respCol, periodCol) {
  * nothing is stored here; any error refuses the whole file. Rows of a month after the current month are refused when they hold
  * a score; without a score they are skipped (the user's templates list the coming months with "-").
  */
-function validatePartSheet(sheetRows, resolver, now = new Date(), { scale = 'RATING_5', scoreColumn = null, respondentsColumn = true } = {}) {
+function validatePartSheet(sheetRows, resolver, now = new Date(), { scale = 'RATING_5', scoreColumn = null, respondentsColumn = true, questions = null, eventPart = false } = {}) {
   const errors = [];
   const err = (row_number, column, reason) => errors.push({ row_number, column, reason });
   const fail = reason => { err(1, null, reason); return { errors, rows: [], columns: null, periods: [] }; };
@@ -213,15 +257,23 @@ function validatePartSheet(sheetRows, resolver, now = new Date(), { scale = 'RAT
   if (errors.length) return { errors, rows: [], columns: null, periods: [] };
   const periodCol = scoreColumn ? -1 : header.cells.findIndex((c, i) => i >= 5 && i !== respCol && isPeriodHeader(cellText(c)));
   // a combined score table (score_column) has no question columns: the other columns belong to other metrics
-  const qCols = scoreColumn ? [] : questionColumns(header, respCol, periodCol);
+  let qCols = scoreColumn ? [] : questionColumns(header, respCol, periodCol);
+  // v2.57.0: configured questions -> by position (count checked)
+  const configured = !scoreColumn && Array.isArray(questions);
+  if (configured) {
+    const mapped = mapConfiguredColumns(qCols, questions, eventPart);
+    if (mapped.error) return fail(mapped.error);
+    qCols = mapped.cols;
+  }
   const columns = {
     score_label: cellText(cellAt(header, scoreCol)) || 'Score',
-    question_labels: qCols.map(q => q.label),
+    question_labels: qCols.map(q => (q.file_label === undefined ? q.label : q.file_label)), // the file's own headers
     event_labels: qCols.filter(q => q.is_event).map(q => q.label),
     respondents_label: respCol >= 0 ? cellText(cellAt(header, respCol)) : null,
     period_label: periodCol >= 0 ? cellText(cellAt(header, periodCol)) : null,
     period_before_respondents: periodCol >= 0 && periodCol < respCol,
-    score_scale: scale
+    score_scale: scale,
+    ...(configured ? { questions_snapshot: questions.map(q => ({ key: q.key, text: q.text, type: q.type })) } : {})
   };
   const [minScore, maxScore] = scale === 'PERCENT' ? [0, 100] : [1, PART_SCALE_MAX];
   const scaleText = scale === 'PERCENT' ? 'a percentage from 0 to 100' : 'a number from 1 to 5';
@@ -270,10 +322,25 @@ function validatePartSheet(sheetRows, resolver, now = new Date(), { scale = 'RAT
       if (v === null || !Number.isInteger(v) || v < 0) err(n, colLetter(respCol), `${columns.respondents_label} must be a whole number of 0 or more (found "${cellText(rc).slice(0, 30)}").`);
       else respondents = v;
     }
-    const questions = qCols.map(({ idx, label, is_event: isEvent, event }) => {
+    const answers = qCols.map(({ idx, label, is_event: isEvent, event, key, type, file_label: fileLabel }) => {
       const c = cellAt(r, idx);
-      const base = { label, ...(isEvent ? { is_event: true } : {}), ...(event ? { event } : {}) };
+      const base = { ...(key ? { key } : {}), label, ...(fileLabel !== undefined ? { file_label: fileLabel } : {}), ...(type ? { type } : {}), ...(isEvent ? { is_event: true } : {}), ...(event ? { event } : {}) };
       if (isEvent) return { ...base, value: scoreCell(c, `The score of event "${label.slice(0, 40)}"`, colLetter(idx)) };
+      if (type === 'SCALE') {
+        // a configured Scale question: a number on the part's scale, or "-" / empty
+        if (!c.formulaWithoutValue && c.type !== 'error' && !isBlank(c) && !isNoValueText(cellText(c)) && numberOf(c) === null) {
+          err(n, colLetter(idx), `"${label.slice(0, 60)}" is a Scale question (${scaleText}), found the text "${cellText(c).slice(0, 30)}" - if it is a free-text answer, set its type to Text in ${QUESTIONS_MENU}.`);
+          return { ...base, value: null };
+        }
+        const v = scoreCell(c, `"${label.slice(0, 60)}"`, colLetter(idx));
+        return { ...base, value: v === null ? null : round4(v) };
+      }
+      if (type === 'TEXT') {
+        if (c.formulaWithoutValue) { err(n, colLetter(idx), `"${label.slice(0, 60)}" is a formula without a saved value.`); return { ...base, value: null }; }
+        if (c.type === 'error') { err(n, colLetter(idx), `"${label.slice(0, 60)}" holds an Excel error (${c.value}).`); return { ...base, value: null }; }
+        if (isBlank(c) || isNoValueText(cellText(c))) return { ...base, value: null };
+        return { ...base, value: cellText(c).slice(0, MAX_TEXT) }; // a free-text answer - evidence only, never scored
+      }
       if (c.formulaWithoutValue) { err(n, colLetter(idx), `"${label.slice(0, 60)}" is a formula without a saved value.`); return { ...base, value: null }; }
       if (c.type === 'error') { err(n, colLetter(idx), `"${label.slice(0, 60)}" holds an Excel error (${c.value}).`); return { ...base, value: null }; }
       if (isBlank(c) || isNoValueText(cellText(c))) return { ...base, value: null };
@@ -295,7 +362,7 @@ function validatePartSheet(sheetRows, resolver, now = new Date(), { scale = 'RAT
     const dupKey = `${key}|${orgLevel === 'BANKWIDE' ? '__BANKWIDE__' : nameKey(directorate)}`;
     if (seen.has(dupKey)) { err(n, 'A', `${orgLevel === 'BANKWIDE' ? 'The Bankwide row' : `Directorate "${directorate}"`} of ${periodLabel(year, month)} appears more than once (rows ${seen.get(dupKey)} and ${n}).`); return; }
     seen.set(dupKey, n);
-    out.push({ row_number: n, org_level: orgLevel, directorate, year, month, score, respondents, questions, period_text: periodText });
+    out.push({ row_number: n, org_level: orgLevel, directorate, year, month, score, respondents, questions: answers, period_text: periodText });
   });
   if (!errors.length && !out.length) err(null, null, 'The sheet has no data row up to the current month (row 2 onward: the Bankwide row and one row per directorate per month).');
   const periods = [...new Set(out.map(r => periodCode(r.year, r.month)))].sort();
@@ -312,7 +379,10 @@ async function importPartXlsx(buffer, fileName, metric, part, { uploadedBy, now 
   }
   const resolver = buildResolver(await storage.getDirectorates(), await storage.getDirectoryAliases());
   const tpl = part.template || {};
-  const v = validatePartSheet(sheetRows, resolver, now, { scale: scaleOf(part), scoreColumn: tpl.score_column || null, respondentsColumn: tpl.respondents_column !== false });
+  const v = validatePartSheet(sheetRows, resolver, now, {
+    scale: scaleOf(part), scoreColumn: tpl.score_column || null, respondentsColumn: tpl.respondents_column !== false,
+    questions: Array.isArray(part.questions) ? part.questions : null, eventPart: isEventPart(part)
+  });
   if (v.errors.length) {
     return { success: false, status: 400, error: `The file was refused (${v.errors.length} error${v.errors.length === 1 ? '' : 's'}); nothing was stored.`, errors: v.errors };
   }
@@ -344,12 +414,21 @@ async function importPartXlsx(buffer, fileName, metric, part, { uploadedBy, now 
 }
 
 // ------------------------------------------------------------------ template
-// The part's file layout: the columns of its latest upload, else its seeded template, else the generic Q1..Q3 layout. One
-// Bankwide row ("CIMB Niaga") + one row per directorate for the last complete month, values left empty.
+// The part's file layout: v2.57.0 the configured questions (Summary Questions; metric 12: one block per event of its latest upload /
+// template = the event + the configured per-event questions); a part without configured questions keeps the v2.55.0 layout: the
+// columns of its latest upload, else its seeded template, else the generic Q1..Q3 layout. One Bankwide row ("CIMB Niaga") + one row
+// per directorate for the last complete month, values left empty.
 async function generatePartTemplateXlsx(metric, part, now = new Date()) {
   const latest = (await storage.getMetricPartUploads(metric.metric_id, part.part_key))[0];
   const cols = (latest && latest.columns) || part.template || {};
-  const questions = cols.question_labels && (cols.question_labels.length || (part.template && part.template.score_column)) ? cols.question_labels : ['Q1', 'Q2', 'Q3'];
+  let questions = cols.question_labels && (cols.question_labels.length || (part.template && part.template.score_column)) ? cols.question_labels : ['Q1', 'Q2', 'Q3'];
+  if (Array.isArray(part.questions) && !(part.template && part.template.score_column)) {
+    const texts = part.questions.map(q => q.text);
+    if (isEventPart(part)) {
+      const events = latest && latest.columns && Array.isArray(latest.columns.event_labels) && latest.columns.event_labels.length ? latest.columns.event_labels : part.template.event_labels;
+      questions = events.flatMap(e => [e, ...texts]);
+    } else questions = texts;
+  }
   const resp = cols.respondents_label || 'Jumlah Responden';
   const period = cols.period_label || 'Periode';
   const y = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
@@ -381,6 +460,17 @@ const dash = v => (v === null || v === undefined ? '-' : v);
  * v2.56.0: the TABLE first - the evidence CSV and the History tab of the metric detail are both built from it, so they cannot
  * disagree. Returns { fileName, headers, rows (arrays), sortKeys (YYYYMM per row), identity: [] }.
  */
+// The question texts a stored row was uploaded with (an event row: the questions of its first event block) - its question set
+function rowQuestionTexts(r) {
+  const qs = r.questions || [];
+  const first = qs.findIndex(q => q.is_event);
+  if (first < 0) return qs.map(q => q.label);
+  const out = [];
+  for (let i = first + 1; i < qs.length && !qs[i].is_event; i++) out.push(qs[i].label);
+  return out;
+}
+const rowSetKey = r => questionSetKey(rowQuestionTexts(r).map(text => ({ text })));
+
 async function partEvidenceTable(metric, part, mp) {
   const w = mp.all ? null : periodWindow(mp);
   const inside = r => {
@@ -389,7 +479,18 @@ async function partEvidenceTable(metric, part, mp) {
     const k = keyOf(r);
     return k >= parseInt(w.from.slice(0, 4), 10) * 100 + parseInt(w.from.slice(5, 7), 10) && k <= parseInt(w.to.slice(0, 4), 10) * 100 + parseInt(w.to.slice(5, 7), 10);
   };
-  const rows = (await storage.getMetricPartResults(metric.metric_id, part.part_key)).filter(inside);
+  const allRows = await storage.getMetricPartResults(metric.metric_id, part.part_key);
+  const rows = allRows.filter(inside);
+  // v2.57.0: the question sets, numbered in upload order over every stored row of the part (Set 1 = the oldest)
+  const setNo = new Map();
+  allRows.slice().sort((a, b) => (String(a.created_at) < String(b.created_at) ? -1 : String(a.created_at) > String(b.created_at) ? 1 : (a.result_id || 0) - (b.result_id || 0)))
+    .forEach(r => { const k = rowSetKey(r); if (!setNo.has(k)) setNo.set(k, setNo.size + 1); });
+  const setOf = r => setNo.get(rowSetKey(r));
+  const setsInPeriod = [...new Set(rows.map(setOf))].sort((a, b) => a - b);
+  const changed = setsInPeriod.length > 1;
+  const note = changed
+    ? `${part.part_name}: the questions changed within this period (${setsInPeriod.map(x => `Set ${x}`).join(', ')}) - every line shows the question text used at upload (column Question Set).`
+    : null;
   const uploads = new Map((await storage.getMetricPartUploads(metric.metric_id, part.part_key)).map(u => [u.upload_id, u]));
   const tag = mp.all ? 'ALL' : (String(mp.mode).toUpperCase() === 'MTD' ? `${mp.year}-${mp.month}` : `YTD_${mp.year}`);
   const lead = r => [metric.metric_id, metric.metric_name, part.part_name, r.org_level === 'BANKWIDE' ? 'CIMB Niaga' : r.directorate,
@@ -401,16 +502,28 @@ async function partEvidenceTable(metric, part, mp) {
   const TAIL = ['Jumlah_Responden', 'Periode', 'Has_Value', 'Upload_ID', 'File_Name', 'File_SHA256', 'Uploaded_By', 'Uploaded_At'];
   const LEAD = ['Metric_ID', 'Metric_Name', 'Part', 'Directorate', 'Level', 'Year', 'Month', 'Period', 'Part_Score'];
   const fileName = `Evidence_Metric_${metric.metric_id}_${part.part_key}_${tag}.csv`;
+  const setCol = changed ? ['Question_Set'] : [];
+  const setCell = r => (changed ? [`Set ${setOf(r)}`] : []);
   if (rows.some(r => (r.questions || []).some(q => q.is_event))) {
     const body = [];
     const sortKeys = [];
-    rows.forEach(r => (r.questions || []).forEach(q => { body.push([...lead(r), q.event || '', q.is_event ? '(event score)' : q.label, dash(q.value), ...tail(r)]); sortKeys.push(keyOf(r)); }));
-    return { fileName, headers: [...LEAD, 'Event', 'Question', 'Value', ...TAIL], rows: body, sortKeys, identity: [] };
+    rows.forEach(r => (r.questions || []).forEach(q => { body.push([...lead(r), ...setCell(r), q.event || '', q.is_event ? '(event score)' : q.label, dash(q.value), ...tail(r)]); sortKeys.push(keyOf(r)); }));
+    return { fileName, headers: [...LEAD, ...setCol, 'Event', 'Question', 'Value', ...TAIL], rows: body, sortKeys, identity: [], note };
+  }
+  if (changed) {
+    // several question sets in the period: one line per row and question, each with the text it was uploaded with
+    const body = [];
+    const sortKeys = [];
+    rows.forEach(r => (r.questions || []).forEach((q, i) => {
+      body.push([...lead(r), ...setCell(r), i + 1, q.label, q.file_label === undefined ? q.label : q.file_label, dash(q.value), ...tail(r)]);
+      sortKeys.push(keyOf(r));
+    }));
+    return { fileName, headers: [...LEAD, ...setCol, 'Question_No', 'Question', 'File_Header', 'Value', ...TAIL], rows: body, sortKeys, identity: [], note };
   }
   const qCount = rows.reduce((mx, r) => Math.max(mx, (r.questions || []).length), 0);
   const labels = Array.from({ length: qCount }, (_, i) => ((rows.find(r => r.questions && r.questions[i]) || { questions: [{}] }).questions[i] || {}).label || `Q${i + 1}`);
   const body = rows.map(r => [...lead(r), ...Array.from({ length: qCount }, (_, i) => dash(((r.questions || [])[i] || {}).value)), ...tail(r)]);
-  return { fileName, headers: [...LEAD, ...labels, ...TAIL], rows: body, sortKeys: rows.map(keyOf), identity: [] };
+  return { fileName, headers: [...LEAD, ...labels, ...TAIL], rows: body, sortKeys: rows.map(keyOf), identity: [], note };
 }
 
 // Evidence CSV of one part for a parsed period: { fileName, csv } (built from partEvidenceTable, like the History tab)
@@ -426,6 +539,7 @@ module.exports = {
   monthValue,
   compositeValue,
   questionColumns,
+  mapConfiguredColumns,
   validatePartSheet,
   importPartXlsx,
   generatePartTemplateXlsx,

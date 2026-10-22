@@ -82,6 +82,13 @@ export default function MetricHistoryTable({ history, loading, error, periodLabe
         </div>
       </div>
 
+      {/* v2.57.0: a summary part whose questions changed within the period (Summary Questions) */}
+      {(history.notes || []).map((n, i) => (
+        <div key={i} className="px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900 font-medium">
+          Question set changed: {n}
+        </div>
+      ))}
+
       <div className="border border-gray-200 rounded-xl overflow-x-auto shadow-2xs">
         <table className="w-full text-left text-xs">
           <thead className="bg-gray-100 text-gray-700 font-bold uppercase text-[10.5px] border-b border-gray-200">

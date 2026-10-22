@@ -1973,6 +1973,8 @@ const initialEmailSettings = {
 // the average of its uploaded monthly summary values, 1-5). Written to px_metric_parts once (boot: only while the metric has no
 // part). template = the columns of the part's summary file (the user's templates in docs/Template Survey/), used for the
 // template download; a part without a known file layout gets the generic Directorate | Level | Year | Month | Score | Q1.. layout.
+// v2.57.0: the part's configured questions (Admin Parameters -> Summary Questions) are seeded once from its latest upload, else from
+// template.question_labels (+ question_types), else none.
 const initialMetricParts = [
   {
     metric_id: 7, part_key: 'MEET_GREET', part_name: 'Meet and Greet Satisfaction', sort_order: 1,
@@ -2000,13 +2002,14 @@ const initialMetricParts = [
     metric_id: 7, part_key: 'DAY1_SURVEY', part_name: 'Onboarding Survey Day 1', sort_order: 3,
     template: {
       score_label: 'Onboarding Survey Day 1',
+      // v2.57.0: the user's current file (3 questions; the recruitment / interview questions moved to metric 5). question_types = the
+      // seed of the part's Summary Questions (question 2 is a free-text answer, never scored)
       question_labels: [
         '1.How was your overall first day of work experience?',
         '2.What makes you interested in joining CIMB Niaga?',
-        '3.How was your overall recruitment experience from being contacted by the Recruiter until signing the agreement?',
-        '4.How would you rate your interview experience with the Business Unit?',
-        '5.How was your experience with the Meet & Greet session at CIMB Niaga?'
+        '3.How was your experience with the Meet & Greet session at CIMB Niaga?'
       ],
+      question_types: ['SCALE', 'TEXT', 'SCALE'],
       respondents_label: 'Jumlah Responden',
       period_label: 'Periode (Join Date)'
     }

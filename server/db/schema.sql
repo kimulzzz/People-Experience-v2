@@ -723,6 +723,12 @@ CREATE TABLE dbo.px_metric_parts (
   CONSTRAINT UQ_px_metric_parts UNIQUE (metric_id, part_key)
 );
 GO
+-- v2.57.0: the configured questions of a part (Admin Parameters -> Summary Questions): [{ key, text, type SCALE | TEXT }] in column
+-- order; the upload maps the file's question columns BY POSITION to them (metric 12: the questions of ONE event block). NULL = not
+-- configured (the boot top-up sets it once from the part's latest upload / seeded template).
+IF COL_LENGTH(N'dbo.px_metric_parts', N'questions_json') IS NULL
+ALTER TABLE dbo.px_metric_parts ADD questions_json NVARCHAR(MAX) NULL;
+GO
 -- One upload of a part summary file. The original file is NOT kept (such files carry a "Raw Data" sheet with personal data
 -- that is never read): file name + SHA-256 + the stored rows are the audit trail.
 IF OBJECT_ID(N'dbo.px_metric_part_uploads', N'U') IS NULL
@@ -736,7 +742,7 @@ CREATE TABLE dbo.px_metric_part_uploads (
   total_rows            INT            NOT NULL CONSTRAINT DF_px_mpu_total DEFAULT (0),
   replaced_rows         INT            NOT NULL CONSTRAINT DF_px_mpu_repl DEFAULT (0),
   periods               NVARCHAR(400)  NULL,     -- 'YYYY-MM YYYY-MM ...' of the file
-  columns_json          NVARCHAR(MAX)  NULL,     -- { score_label, question_labels, respondents_label, period_label }
+  columns_json          NVARCHAR(MAX)  NULL,     -- { score_label, question_labels, respondents_label, period_label, questions_snapshot (v2.57.0) }
   uploaded_at           DATETIME2(3)   NOT NULL CONSTRAINT DF_px_mpu_ts DEFAULT (SYSUTCDATETIME())
 );
 GO

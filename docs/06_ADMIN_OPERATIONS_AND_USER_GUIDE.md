@@ -609,3 +609,18 @@ Tab **History (n)** (dulu "Internal Transaction Records" / "Respondent Records &
 | Direktorat | Admin: semua (tidak dipersempit filter direktorat Dashboard); USER: metrik karyawan hanya direktorat sendiri (tanpa baris Bankwide) | Admin: semua |
 
 Metrik "Real data not available yet" (4, 6, 8, 10, 23, 26) menampilkan History kosong dengan alasannya; Evidence tetap bisa diunduh. Metrik 1 dan 3 menampilkan nilai per bulan plus baris "Average" per tahun.
+
+### Summary Questions - pertanyaan template ringkasan (v2.57.0)
+
+**Siapa**: Admin. Menu: **Admin Parameters** -> tab **Summary Questions**. Untuk template ringkasan metrik 5, 7 (4 bagian) dan 12; metrik 19/20 tidak punya kolom pertanyaan. Pertanyaan ESS tetap di Manage Questions; template tahunan metrik 1 dan 3 tidak punya pertanyaan.
+
+1. Pilih **Template** (metrik - bagian).
+2. Ubah teks, tipe (**Scale** = angka pada skala bagian, 1-5 atau 0-100% untuk metrik 12; **Text answer (not scored)** = jawaban bebas, hanya untuk evidence), urutan, atau tambah/hapus pertanyaan. Urutan = urutan kolom setelah skor (kolom E) di file. Metrik 12: isi pertanyaan **satu** event saja; nama event diambil dari file.
+3. **Save Questions** (tercatat di Audit Trail `PART_QUESTIONS_UPDATE`). **Discard** membatalkan perubahan yang belum disimpan.
+4. Unduh **Template** baru dari Explore Metrics; kolom pertanyaannya mengikuti konfigurasi.
+
+**Saat upload**: kolom pertanyaan file dibaca berdasarkan posisi (kolom pertama setelah E = pertanyaan 1, dst.), bukan dari teks header. Jumlah kolom harus sama dengan jumlah pertanyaan, kalau tidak file ditolak dengan pesan yang menyebut kedua jumlah. Teks di kolom Scale ditolak (ubah tipenya ke Text bila memang jawaban bebas). Skor bagian tetap dari kolom E. File lama dengan susunan pertanyaan berbeda harus disesuaikan atau pertanyaannya diatur dulu.
+
+**History / Evidence**: data yang sudah diunggah tetap memakai teks pertanyaan saat upload. Bila dalam periode yang dipilih ada lebih dari satu set pertanyaan, tab History menampilkan banner kuning "Question set changed: ..." dan tabel/CSV berubah menjadi satu baris per pertanyaan dengan kolom `Question_Set` (Set 1, Set 2, ...) dan `File_Header`.
+
+Belum diatur saat rilis: Welcome Session dan Infrastructure & Application (metrik 7) belum punya pertanyaan - isi dulu sebelum mengunggah `2. Welcome Session.xlsx` (3 pertanyaan) / `4. Infrastructure & Application.xlsx` (6 pertanyaan).

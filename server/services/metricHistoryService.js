@@ -74,19 +74,21 @@ async function historyKindOf(metric) {
  *   seesIdentity : the viewer may see respondent / attendee identities
  *   scopes       : null = every row; otherwise the viewer's scope list (employee metrics of a non-Admin)
  *   operational  : async () => the detail's { operational_records, operational_records_hidden } (OPERATIONAL only)
- * Returns { kind, columns, rows, total, identity_hidden, scope_limited, reason }.
+ * Returns { kind, columns, rows, total, identity_hidden, scope_limited, reason, notes (v2.57.0: question set changed in the period) }.
  */
 async function buildMetricHistory(metric, { period, mp, seesIdentity, scopes, operational }) {
   const kind = await historyKindOf(metric);
   const base = { metric_id: metric.metric_id, kind, period, identity_hidden: !seesIdentity, scope_limited: !!scopes, reason: null };
   const dirs = scopes ? scopes.map(s => s.directorate) : null;
   let table;
+  let notes = [];
   if (kind === 'NOT_AVAILABLE') {
     return { ...base, columns: [], rows: [], total: 0, reason: DATA_NOT_AVAILABLE_REASON };
   } else if (kind === 'PARTS') {
     const parts = (await storage.getMetricParts(metric.metric_id)).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
     const tables = [];
     for (const part of parts) tables.push(await partEvidenceTable(metric, part, mp));
+    notes = tables.map(t => t.note).filter(Boolean); // v2.57.0: a part whose questions changed within the period
     // a scope-limited viewer gets the directorate rows of their own directorates (the Bankwide row is for the Admin)
     table = mergeTables(tables, { keep: dirs ? r => r.Level === 'Directorate' && dirs.includes(r.Directorate) : null });
   } else if (kind === 'ESS') {
@@ -108,7 +110,7 @@ async function buildMetricHistory(metric, { period, mp, seesIdentity, scopes, op
     const headers = [...new Set(records.flatMap(r => Object.keys(r)))];
     table = mergeTables([{ headers, rows: records.map(r => headers.map(h => (typeof r[h] === 'object' && r[h] !== null ? JSON.stringify(r[h]) : r[h]))), sortKeys: null }]);
   }
-  return { ...base, columns: table.columns, rows: table.rows, total: table.rows.length };
+  return { ...base, columns: table.columns, rows: table.rows, total: table.rows.length, notes };
 }
 
 module.exports = { buildMetricHistory, historyKindOf, mergeTables };

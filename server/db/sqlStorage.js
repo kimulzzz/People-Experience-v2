@@ -21,6 +21,7 @@ const { DEFAULT_USER_MENU_ACCESS, coversEventManagerDirectorate } = require('./m
 const { isHistoricalTestRow } = require('./testAccounts');
 const { planDirectory, renamedDirectorate, migrateScopes, migrateDirectorateOptions, DIRECTORATE_SETTING_KEYS } = require('./directorateMigration');
 const dirNames = require('./directoryNames');
+const { seedQuestions: seedPartQuestions } = require('./partQuestions');
 const { nameKey, buildResolver, currentSeedName, directoryError } = dirNames;
 
 // ------------------------------------------------------------------ connection
@@ -1551,7 +1552,8 @@ const rowToMetricPart = r => ({
   part_key: r.part_key,
   part_name: r.part_name,
   sort_order: r.sort_order,
-  template: parseJson(r.template_json, null)
+  template: parseJson(r.template_json, null),
+  questions: parseJson(r.questions_json, null) // v2.57.0: null = not configured
 });
 const rowToPartResult = r => ({
   result_id: r.result_id,
@@ -1582,9 +1584,10 @@ const rowToPartUpload = r => ({
   uploaded_at: iso(r.uploaded_at)
 });
 async function insertMetricPart(tx, p) {
-  await run(`INSERT INTO dbo.px_metric_parts (metric_id, part_key, part_name, sort_order, template_json) VALUES (@m, @k, @n, @o, @t)`, {
+  await run(`INSERT INTO dbo.px_metric_parts (metric_id, part_key, part_name, sort_order, template_json, questions_json) VALUES (@m, @k, @n, @o, @t, @q)`, {
     m: parseInt(p.metric_id, 10), k: String(p.part_key).slice(0, 40), n: String(p.part_name).slice(0, 200), o: parseInt(p.sort_order || 0, 10),
-    t: p.template ? T.max(JSON.stringify(p.template)) : null
+    t: p.template ? T.max(JSON.stringify(p.template)) : null,
+    q: Array.isArray(p.questions) ? T.max(JSON.stringify(p.questions)) : T.max(null)
   }, tx);
 }
 async function insertPartUpload(tx, u) {
@@ -1631,6 +1634,23 @@ async function topUpMetricParts() {
     });
     if (added) console.log(`[sqlStorage] Metric ${metricId} is now scored from ${added} uploaded summary part(s).`);
   }
+}
+
+// v2.57.0: every part without configured questions (questions_json NULL) gets them ONCE from the question headers of its latest upload
+// (else its seeded template, else none) - so the configuration equals the files in use; a configured part is never touched.
+async function topUpPartQuestions() {
+  const parts = (await run('SELECT * FROM dbo.px_metric_parts WHERE questions_json IS NULL ORDER BY metric_id, sort_order, part_id')).map(rowToMetricPart);
+  let n = 0;
+  for (const p of parts) {
+    const latest = (await run(`SELECT TOP 1 * FROM dbo.px_metric_part_uploads WHERE metric_id = @m AND part_key = @k ORDER BY uploaded_at DESC, upload_id DESC`,
+      { m: p.metric_id, k: p.part_key })).map(rowToPartUpload)[0] || null;
+    const rows = latest ? (await run('SELECT * FROM dbo.px_metric_part_results WHERE upload_id = @u', { u: latest.upload_id })).map(rowToPartResult) : [];
+    const questions = seedPartQuestions(p, latest, rows);
+    n += await rowCount(null, 'UPDATE dbo.px_metric_parts SET questions_json = @q WHERE metric_id = @m AND part_key = @k AND questions_json IS NULL',
+      { q: T.max(JSON.stringify(questions)), m: p.metric_id, k: p.part_key });
+  }
+  if (n) console.log(`[sqlStorage] Summary Questions: configured the questions of ${n} summary part(s) from their latest upload / template.`);
+  return n;
 }
 
 // v2.52.0: metric 1 is bankwide social media data - its old recruitment-SLA rows per unit were wrong data. Removed at every
@@ -2168,8 +2188,9 @@ async function removeDivisionAlias(id, name) {
 // Everything an Admin configures, as the raw rows of its tables, so the regression suite (which runs against the SAME
 // database as the live app) can put it back exactly - every column, every id - after it reset or edited parameters.
 // Survey / ESS / exit / event data is not part of it. Parents first (px_divisions references px_directorates).
+// v2.57.0: px_metric_parts (the parts and their configured Summary Questions) is Admin configuration too.
 const CONFIG_TABLES = ['px_journeys', 'px_checkpoints', 'px_metrics', 'px_metric_targets', 'px_survey_questions', 'px_master_survey_questions',
-  'px_action_library', 'px_app_settings', 'px_directorates', 'px_divisions', 'px_directorate_aliases', 'px_division_aliases'];
+  'px_action_library', 'px_app_settings', 'px_directorates', 'px_divisions', 'px_directorate_aliases', 'px_division_aliases', 'px_metric_parts'];
 // Tables restored together (deleting a directorate deletes its divisions)
 const CONFIG_GROUPS = { px_divisions: 'px_directorates', px_directorates: 'px_directorates' };
 
@@ -2328,6 +2349,7 @@ const storage = {
     await topUpScoreTiers();
     await topUpOutcomeAggregation();
     await topUpMetricParts();
+    await topUpPartQuestions();
     await topUpSurveySource();
     await enforceEssManualUpload();
     await enforceEssPercentageQuestions();
@@ -3297,6 +3319,7 @@ const storage = {
   topUpSocialMediaSeed, // boot top-up of the demo rows, exposed for the regression suite (optional seed rows)
   removeMetric1SlaRows, // boot cleanup, exposed for the regression suite
   topUpMetricParts,     // v2.55.0 boot top-up, exposed for the regression suite
+  topUpPartQuestions,   // v2.57.0 boot top-up, exposed for the regression suite
 
   // ---- composite summary metrics (v2.55.0): parts, their uploaded summary rows and upload history
   async getMetricParts(metric_id = null) {
@@ -3313,6 +3336,13 @@ const storage = {
     const rows = await run(`SELECT * FROM dbo.px_metric_part_results ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
                             ORDER BY metric_id, part_key, stat_year, stat_month, CASE WHEN org_level = 'BANKWIDE' THEN 0 ELSE 1 END, directorate, result_id`, params);
     return rows.map(rowToPartResult);
+  },
+  // v2.57.0: the configured questions of a part (already validated by partQuestions.normalizeQuestions). Returns the part or null.
+  async setMetricPartQuestions(metric_id, part_key, questions) {
+    const n = await rowCount(null, 'UPDATE dbo.px_metric_parts SET questions_json = @q WHERE metric_id = @m AND part_key = @k',
+      { q: T.max(JSON.stringify(questions || [])), m: parseInt(metric_id, 10), k: String(part_key) });
+    if (!n) return null;
+    return (await this.getMetricParts(metric_id)).find(p => p.part_key === String(part_key)) || null;
   },
   // newest first
   async getMetricPartUploads(metric_id = null, part_key = null) {

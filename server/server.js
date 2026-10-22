@@ -25,6 +25,7 @@ const { importExitInterviews, resolveExitPeriod, getExitInterviewSummary, genera
 const socialMedia = require('./services/socialMediaService');
 const outcomeValues = require('./services/outcomeValueService');
 const metricParts = require('./services/metricPartsService');
+const partQuestions = require('./db/partQuestions');
 const { buildMetricHistory } = require('./services/metricHistoryService');
 const { isEssMetric } = require('./db/surveySource');
 const { getPendingUploadReminders, sendPendingUploadReminders, startReminderScheduler } = require('./services/reminderService');
@@ -139,12 +140,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.56.0' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.57.0' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.56.0',
+    version: '2.57.0',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',
@@ -1476,6 +1477,7 @@ app.get('/api/admin/metric-parts/:metric_id', async (req, res) => {
       metric_id: found.metric.metric_id,
       metric_name: found.metric.metric_name,
       parts: found.parts.map(p => ({ part_key: p.part_key, part_name: p.part_name, sort_order: p.sort_order, scale: metricParts.scaleOf(p),
+        kind: partQuestions.partKind(p), questions: Array.isArray(p.questions) ? p.questions : null, // v2.57.0 Summary Questions
         uploads: uploads.filter(u => u.part_key === p.part_key) }))
     });
   } catch (err) {
@@ -1514,6 +1516,71 @@ app.post('/api/admin/metric-parts/:metric_id/:part_key/upload', partUploadSingle
   } catch (err) {
     console.error('Metric part upload error:', err.message);
     res.status(500).json({ error: 'The summary file could not be stored; nothing was imported.' });
+  }
+});
+
+// v2.57.0: Summary Questions (Admin Parameters -> Summary Questions; Admin only like every /api/admin route): the configured questions
+// of every summary part. The upload maps the file's question columns BY POSITION to them (count must match), the template uses them
+// as its headers. GET lists every summary metric with its parts; PUT replaces the questions of one part (audit PART_QUESTIONS_UPDATE).
+async function partQuestionsView(part) {
+  const uploads = await storage.getMetricPartUploads(part.metric_id, part.part_key);
+  const latest = uploads[0] || null;
+  const latestCols = (latest && latest.columns) || {};
+  const latestTexts = Array.isArray(latestCols.questions_snapshot)
+    ? latestCols.questions_snapshot.map(q => q.text)
+    : (latest ? partQuestions.firstEventBlock(latestCols.question_labels || [], latestCols.event_labels || []) : null);
+  const questions = Array.isArray(part.questions) ? part.questions : [];
+  return {
+    part_key: part.part_key,
+    part_name: part.part_name,
+    sort_order: part.sort_order,
+    scale: metricParts.scaleOf(part),
+    kind: partQuestions.partKind(part),
+    configured: Array.isArray(part.questions),
+    questions,
+    event_labels: partQuestions.isEventPart(part)
+      ? (Array.isArray(latestCols.event_labels) && latestCols.event_labels.length ? latestCols.event_labels : part.template.event_labels)
+      : [],
+    uploads_count: uploads.length,
+    latest_upload: latest ? { upload_id: latest.upload_id, file_name: latest.file_name, uploaded_at: latest.uploaded_at, question_texts: latestTexts } : null,
+    // the configured texts differ from those of the latest upload: the next upload must follow the new configuration
+    differs_from_latest_upload: !!latest && partQuestions.questionSetKey(questions) !== partQuestions.questionSetKey((latestTexts || []).map(text => ({ text })))
+  };
+}
+
+app.get('/api/admin/part-questions', async (req, res) => {
+  try {
+    const parts = await storage.getMetricParts();
+    const metrics = await storage.getMetrics();
+    const out = [];
+    for (const [metricId, list] of metricParts.partsByMetric(parts)) {
+      const m = metrics.find(x => x.metric_id === metricId);
+      if (!m) continue;
+      const views = [];
+      for (const p of list) views.push(await partQuestionsView(p));
+      out.push({ metric_id: metricId, metric_name: m.metric_name, parts: views });
+    }
+    out.sort((a, b) => a.metric_id - b.metric_id);
+    res.json({ metrics: out, question_types: partQuestions.QUESTION_TYPES, max_text: partQuestions.MAX_QUESTION_TEXT, max_questions: partQuestions.MAX_QUESTIONS });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/admin/part-questions/:metric_id/:part_key', async (req, res) => {
+  try {
+    const found = await metricPartOf(req, res);
+    if (!found) return;
+    const body = req.body || {};
+    const norm = partQuestions.normalizeQuestions(body.questions, found.part);
+    if (norm.error) return res.status(400).json({ error: norm.error });
+    const saved = await storage.setMetricPartQuestions(found.metric.metric_id, found.part.part_key, norm.questions);
+    if (!saved) return res.status(404).json({ error: `Metric ${found.metric.metric_id} has no part "${found.part.part_key}".` });
+    const changes = partQuestions.describeChanges(Array.isArray(found.part.questions) ? found.part.questions : null, norm.questions);
+    await auth.audit(req, 'PART_QUESTIONS_UPDATE', { target: `metric ${found.metric.metric_id} ${found.part.part_key}: ${changes}` });
+    res.json({ success: true, metric_id: found.metric.metric_id, changes, part: await partQuestionsView(saved) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

@@ -23,7 +23,8 @@ import {
   Bell,
   Send,
   UserCog,
-  Building2
+  Building2,
+  ListOrdered
 } from 'lucide-react';
 import { formatMetricValue, defaultUnitForScale } from '../utils/formatMetricValue';
 import { TIER_OPS, validTierBounds, tieredPercent, tierRanges, tierValue } from '../utils/scoreTiers';
@@ -33,6 +34,7 @@ import { MONTH_NAMES } from '../utils/months';
 import EmailSettingsModal from './EmailSettingsModal';
 import UserManagementModal from './UserManagementModal';
 import DirectoryManager from './DirectoryManager';
+import PartQuestionsManager from './PartQuestionsManager';
 
 // Converts a metric's raw Target Nilai (stored in its own native scale — e.g. 4.00 on a
 // RATING_5 1-5 scale) into the same 0-100 % scale as Min Threshold, mirroring the backend's
@@ -143,7 +145,7 @@ function IndexWeightsCard({ initial, onSaved, onError }) {
 }
 
 export default function AdminParametersModal({ isOpen, onClose, onParametersUpdated, onDirectoryChanged, currentUserId }) {
-  const [activeTab, setActiveTab] = useState('metrics'); // 'journeys' | 'metrics' | 'directorates' (v2.51.0) | 'email' | 'users' (v2.42.0)
+  const [activeTab, setActiveTab] = useState('metrics'); // 'journeys' | 'metrics' | 'directorates' (v2.51.0) | 'summary-questions' (v2.57.0) | 'email' | 'users' (v2.42.0)
   const [loading, setLoading] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -647,6 +649,20 @@ All survey data (responses) and question settings of this metric will also be de
               <span>Directorates</span>
             </button>
 
+            {/* Summary Questions (v2.57.0): the questions of the summary templates of metrics 5 / 7 / 12 (19 / 20: none) */}
+            <button
+              onClick={() => setActiveTab('summary-questions')}
+              className={`py-3 text-xs sm:text-sm font-bold border-b-2 flex items-center space-x-2 transition ${
+                activeTab === 'summary-questions'
+                  ? 'border-white text-white'
+                  : 'border-transparent text-red-100 hover:text-white'
+              }`}
+              title="Questions of the summary templates (metrics 5, 7, 12): template columns and upload mapping"
+            >
+              <ListOrdered className="w-4 h-4" />
+              <span>Summary Questions</span>
+            </button>
+
             {/* Email Settings and Manage Users are tabs of Admin Parameters (moved from the Header in v2.41.0, shown in place since v2.42.0) */}
             <button
               onClick={() => setActiveTab('email')}
@@ -705,6 +721,7 @@ All survey data (responses) and question settings of this metric will also be de
           {activeTab === 'email' && <EmailSettingsModal isOpen embedded />}
           {activeTab === 'users' && <UserManagementModal isOpen embedded currentUserId={currentUserId} />}
           {activeTab === 'directorates' && <DirectoryManager onDirectoryChanged={onDirectoryChanged} />}
+          {activeTab === 'summary-questions' && <PartQuestionsManager />}
 
           {/* ============================================================ */}
           {/* TAB 1: PARAMETER JOURNEY                                      */}

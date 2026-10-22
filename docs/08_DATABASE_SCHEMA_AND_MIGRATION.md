@@ -467,3 +467,20 @@ SELECT metric_id, part_key, stat_year, stat_month, COUNT(*) AS rows_ FROM dbo.px
 ```
 
 Diverifikasi oleh Modul 58-60 (`docs/07` §45).
+
+## 29. Pembaruan v2.57.0 - Kolom `px_metric_parts.questions_json` (Summary Questions)
+
+| Kolom | Tipe | Arti | Isi saat boot |
+| :--- | :--- | :--- | :--- |
+| `px_metric_parts.questions_json` | `NVARCHAR(MAX) NULL` (ALTER idempoten via `COL_LENGTH`) | Pertanyaan terkonfigurasi bagian, JSON `[{ "key", "text", "type": "SCALE"\|"TEXT" }]` urut kolom; metrik 12 = pertanyaan satu blok event. `NULL` = belum dikonfigurasi (upload memakai perilaku v2.55.0) | `topUpPartQuestions()` mengisi sekali, hanya bila `NULL`: header upload terakhir > template seed > `[]` |
+
+- Tidak ada tabel baru (**41 tabel**). JSON: `store.json` `metricParts[].questions`.
+- `px_metric_part_uploads.columns_json` mendapat `questions_snapshot` (set pertanyaan saat upload); `question_labels` tetap header file. Jawaban di `px_metric_part_results.questions_json` kini membawa `key`, `label` (teks terkonfigurasi), `file_label`, `type`.
+- `px_metric_parts` masuk `CONFIG_TABLES` (snapshot/restore config guard suite). Ikut `npm run db:export` dan import `migrate.js`; `migrate --reset` mengembalikan ke template seed.
+
+```sql
+SELECT metric_id, part_key, part_name, questions_json FROM dbo.px_metric_parts ORDER BY metric_id, sort_order;
+SELECT upload_id, metric_id, part_key, JSON_QUERY(columns_json, '$.questions_snapshot') AS questions_snapshot FROM dbo.px_metric_part_uploads ORDER BY uploaded_at DESC;
+```
+
+Diverifikasi oleh Modul 62 (`docs/07` §47).

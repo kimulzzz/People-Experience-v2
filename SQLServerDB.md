@@ -284,3 +284,11 @@ Kolom `px_users.menu_access` (`NVARCHAR(400) NULL`, JSON berisi 6 menu `true`/`f
 - Ubah lewat aplikasi (Admin Parameters / upload ringkasan), bukan langsung di tabel - upload memvalidasi, mencatat batch (SHA-256) dan audit `METRIC_PART_UPLOAD`. File asli ringkasan **tidak** disimpan di server (data pribadi); simpan arsipnya sesuai aturan unit.
 - Ikut `.bak`, `npm run db:export` dan import `migrate.js`; dihapus `migrate --reset`.
 - Pemeriksaan: `SELECT metric_id, part_key, stat_year, stat_month, org_level, directorate, score, respondents FROM dbo.px_metric_part_results ORDER BY metric_id, part_key, stat_year, stat_month;`
+
+## 28. Summary Questions (v2.57.0)
+
+- Kolom baru `px_metric_parts.questions_json` (`NVARCHAR(MAX) NULL`, ALTER idempoten): pertanyaan template ringkasan per bagian, diatur Admin di Admin Parameters -> Summary Questions. Diisi boot sekali hanya bila `NULL`. Jumlah tabel tetap **41**. Rincian: `docs/08` §29.
+- `px_metric_part_uploads.columns_json` menyimpan `questions_snapshot` (set pertanyaan saat upload).
+- Ubah lewat aplikasi, bukan langsung di tabel (validasi + audit `PART_QUESTIONS_UPDATE`).
+- Ikut `.bak`, `npm run db:export` dan import `migrate.js`; `migrate --reset` mengembalikan ke template seed.
+- Pemeriksaan: `SELECT metric_id, part_key, questions_json FROM dbo.px_metric_parts ORDER BY metric_id, sort_order;`

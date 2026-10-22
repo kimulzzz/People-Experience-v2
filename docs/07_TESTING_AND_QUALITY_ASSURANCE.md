@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    61 MODUL PENGUJIAN    │     471 AUTOMATED TESTS     │       100% PASS RATE          │
+│    62 MODUL PENGUJIAN    │     479 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -1404,3 +1404,26 @@ Run suite penuh SQL (developer, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **3
 Run suite penuh SQL (developer, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **385/385 lulus, 0 gagal, 16 tes dilewati**. Suite JSON penuh tidak dijalankan. Ukuran suite = **471** menurut hitungan: `await runTest(` statis 458 (v2.55.0: 449; +9 = Modul 61) + selisih 13 yang sama sejak v2.30.2. 385 + 16 = 401; 70 tes sisanya ada di modul media/event yang di-skip.
 
 **Diverifikasi developer di luar suite**: unduhan Evidence byte-identik dengan v2.55.1 untuk 27 metrik (periode 2026, 2026-09, 2025). **Tidak diuji otomatis**: tampilan UI tab History / `MetricHistoryTable`.
+
+## 47. v2.57.0 - Modul 62: Summary Questions
+
+### Modul 62 - pertanyaan terkonfigurasi per bagian ringkasan (8 tes)
+
+Bagian live (5, 7, 12, 19, 20) hanya dibaca; edit/upload memakai metrik fixture buatan modul (bagian disisipkan lewat SQL, dihapus di akhir lewat cascade hapus metrik) dan bulan 2003; USER sementara `is_test_account`. Bagian HTTP khusus SQL (di backend JSON seluruh modul di-skip); tes 8 memeriksa `jsonStorage` in-process dengan `store.json`/`auth.json` dipulihkan byte-identik.
+
+| # | Jenis | Skenario |
+| :--- | :--- | :--- |
+| 1 | Positif | Konfigurasi live ter-seed dari file tersimpan: semua bagian live terkonfigurasi; bagian yang belum diedit = teks upload terakhir (metrik 12: satu blok event; Onboarding Survey Day 1 = 3 pertanyaan) |
+| 2 | Positif | Top-up boot mengisi bagian belum terkonfigurasi dari template; `PUT` tambah (kunci otomatis), ubah teks, ubah tipe, urutkan -> 200; `GET` menampilkannya; audit `PART_QUESTIONS_UPDATE` menyebut perubahan |
+| 3 | Negatif | Validasi 400 (tidak ada yang tersimpan): bukan list, teks kosong / terlalu panjang, tipe salah, kunci kembar / salah format, > 60 pertanyaan, bagian score-table; bagian tidak dikenal / metrik tanpa bagian 404; id salah 400 |
+| 4 | Negatif | Admin saja: USER 403 pada GET/PUT, tanpa login 401; pertanyaan tidak berubah |
+| 5 | Positif/Negatif | Template = teks terkonfigurasi berurutan; jumlah kolom beda -> 400 yang menyebut kedua jumlah dan menu; pemetaan posisi (`file_label` disimpan), TEXT tetap teks, teks di kolom Scale -> 400; `questions_snapshot` tersimpan; skor kolom E tidak terpengaruh |
+| 6 | Positif | Snapshot per upload: setelah pertanyaan berubah History/Evidence tetap memakai teks Januari; periode dengan dua set -> satu baris per pertanyaan + `Question_Set` + catatan; satu bulan = tata letak lebar; template mengikuti konfigurasi baru; `GET` menandai `differs_from_latest_upload` |
+| 7 | Positif/Negatif | Bagian blok event (tata letak metrik 12): template = semua event + pertanyaan; upload dengan blok 1 + N kolom -> 200 (nama event dari file); ukuran blok lain -> 400 |
+| 8 | Positif | Backend JSON in-process: semua bagian terkonfigurasi saat load (Day 1 = 3 pertanyaan template, pertanyaan 2 TEXT), `setMetricPartQuestions` menyimpan, `metricParts` ada di snapshot konfigurasi |
+
+### Hasil
+
+Run suite penuh SQL (developer, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **393/393 lulus, 0 gagal, 16 tes dilewati**. Suite JSON penuh tidak dijalankan. Ukuran suite = **479** menurut hitungan: `await runTest(` statis 466 (v2.56.0: 458; +8 = Modul 62) + selisih 13 yang sama sejak v2.30.2. 393 + 16 = 409; 70 tes sisanya ada di modul media/event yang di-skip.
+
+**Tidak diuji otomatis**: tampilan tab Summary Questions; salah posisi header biru (fill) metrik 12.

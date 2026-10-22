@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(471-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(479-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (471 cases on SQL; v2.56.0 run 385/385, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (479 cases on SQL; v2.57.0 run 393/393, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (41 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
@@ -814,6 +814,15 @@ domain model, not just descriptive:
   Kinds NOT_AVAILABLE / PARTS / ESS / SURVEY_RESPONSES / EVENT_ATTENDANCE / OUTCOME_VALUES / OPERATIONAL (none live). Access never wider than before: Admin all rows + identities (NOT narrowed by the
   Dashboard directorate filter); PIC identities in own scope; USER no identities, employee-metric rows of own directorates only (no Bankwide); evidence downloads stay Admin/PIC. Gotchas: SYSTEM-survey
   tab count = the detail's 100-row capped list; modal always fetches history. Module 61 (9, 2 SQL-only) -> SQL 385/385, 16 skipped (suite 471 by count); JSON full suite not run.
+
+- **v2.57.0** (2026-10-23, see `CHANGELOG.md` [2.57.0], `docs/04`/`05` "Catatan v2.57.0", `docs/06`, `docs/07` §47, `docs/08` §29, `SQLServerDB.md` §28, `docs/SURVEY_IMPORT_GUIDE.md`): user: a menu to change
+  the questions of the uploaded summary templates, Admin only. New Admin Parameters tab **Summary Questions** (`PartQuestionsManager.jsx`; parts of 5, 7 x4, 12, 19/20 = no question columns): text,
+  type SCALE / TEXT (not scored), order. `px_metric_parts.questions_json` (NULL = not configured = v2.55.0 behaviour; still 41 tables; JSON `metricParts[].questions`), shared `server/db/partQuestions.js`;
+  boot `topUpPartQuestions()` fills NULL parts once (latest upload headers > seed template > none). `GET /api/admin/part-questions`, `PUT /api/admin/part-questions/:metric_id/:part_key` (audit
+  `PART_QUESTIONS_UPDATE`). Upload maps question columns BY POSITION (count must match, else 400; metric 12 = blocks of 1 + N; text in a SCALE column 400); score still column E; snapshot
+  `columns_json.questions_snapshot`; History/Evidence keep upload-time texts, several sets in a period -> long layout with `Question_Set` + History `notes` banner. `px_metric_parts` now in the
+  config guard (closes the v2.55.0 open item). Live: Welcome Session / Infrastructure & Application have no questions yet (set them before uploading their files); old 5-question Day 1 file now
+  refused. Module 62 (8) -> SQL 393/393, 16 skipped (suite 479 by count); JSON full suite not run. Open: no "reset to file headers"; Manage Questions still lists 5/7/12; `migrate --reset` drops the config.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

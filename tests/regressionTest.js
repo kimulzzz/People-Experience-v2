@@ -10367,6 +10367,288 @@ async function runAllModules() {
       if (user61) await st61.deleteUser(user61.user_id);
     }
   }
+
+  // --- MODULE 62 (v2.57.0): SUMMARY QUESTIONS (Admin Parameters -> Summary Questions; px_metric_parts.questions_json) ---
+  // The live parts (5, 7, 12, 19, 20) are only read. Edits / uploads go to metrics this module creates (parts inserted through
+  // SQL, deleted at the end with their parts, rows and uploads - the metric-delete cascade) and to far-past months (2003). A
+  // temporary USER (is_test_account) is created and deleted. The HTTP part is SQL only; the JSON contract is checked in-process
+  // with store.json / auth.json restored byte-identically.
+  console.log('\n📦 MODULE 62: Summary Questions - configured questions per summary part, by-position upload, template, snapshot in History / Evidence (Positive & Negative Testing)');
+  if (require('../server/db/storage').backend !== 'sql') {
+    console.log('  ⏭️  SKIPPED: Module 62 needs the SQL Server backend (its fixture parts are inserted through SQL)');
+  } else if (!skipModuleBlock(62)) {
+    const st62 = require('../server/db/storage');
+    const pq62 = require('../server/db/partQuestions');
+    const { buildXlsx: buildXlsx62, readFirstSheet: readSheet62 } = require('../server/services/xlsxUtils');
+    const fs62 = require('fs');
+    const path62 = require('path');
+    const sql62 = require('mssql');
+    const pool62 = await new sql62.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
+      user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
+    const q62 = async (text, params = {}) => {
+      const r = pool62.request();
+      Object.entries(params).forEach(([k, v]) => r.input(k, v));
+      return (await r.query(text)).recordset || [];
+    };
+    const stamp62 = Date.now().toString(36);
+    const metricIds62 = [];
+    const addPart62 = (metricId, key, name, order, template = null) => q62('INSERT INTO dbo.px_metric_parts (metric_id, part_key, part_name, sort_order, template_json) VALUES (@m, @k, @n, @o, @t)',
+      { m: metricId, k: key, n: name, o: order, t: template ? JSON.stringify(template) : null });
+    const createMetric62 = async body => {
+      const r = await adminJson('POST', '/api/admin/metrics', { journey_id: 1, checkpoint_id: 4, metric_type: 'SURVEY', scale_type: 'RATING_5', target_value: 4, target_display: '> 4.00 / 5', min_threshold: 75, is_employee_metric: true, ...body });
+      const b = await r.json();
+      assert.strictEqual(r.status, 201, JSON.stringify(b).slice(0, 300));
+      metricIds62.push(b.metric.metric_id);
+      return b.metric;
+    };
+    const putQ62 = (metricId, key, questions, cookie) => (cookie
+      ? rawFetch(`${BASE_URL}/api/admin/part-questions/${metricId}/${key}`, jsonBody('PUT', { questions }, cookie))
+      : adminJson('PUT', `/api/admin/part-questions/${metricId}/${key}`, { questions }));
+    const postPart62 = async (metricId, key, buf, fileName = 'module62.xlsx') => {
+      const fd = new FormData();
+      fd.append('file', new Blob([buf]), fileName);
+      const r = await fetch(`${BASE_URL}/api/admin/metric-parts/${metricId}/${key}/upload`, { method: 'POST', body: fd });
+      return { status: r.status, body: await r.json() };
+    };
+    const templateHeader62 = async (metricId, key) => {
+      const t = await fetch(`${BASE_URL}/api/admin/metric-parts/${metricId}/${key}/template`);
+      assert.strictEqual(t.status, 200);
+      return (await readSheet62(Buffer.from(await t.arrayBuffer())))[0].cells.map(c => c.value);
+    };
+    const csvRows62 = text => {
+      const t = String(text).replace(/^﻿/, '');
+      const rows = []; let row = [], cell = '', q = false;
+      for (let i = 0; i < t.length; i++) {
+        const c = t[i];
+        if (q) { if (c === '"') { if (t[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += c; }
+        else if (c === '"') q = true;
+        else if (c === ',') { row.push(cell); cell = ''; }
+        else if (c === '\n') { row.push(cell.replace(/\r$/, '')); rows.push(row); row = []; cell = ''; }
+        else cell += c;
+      }
+      if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+      return rows;
+    };
+    const HEAD62 = (score, questions) => ['Directorate', 'Level', 'Year', 'Month', score, ...questions, 'Jumlah Responden', 'Periode (Join Date)'];
+    let m62 = null;
+    let user62 = null;
+    let userCookie62 = null;
+    try {
+      await runTest('[POSITIVE] Live configuration seeded from the stored files: every live part is configured; a part never edited in Summary Questions has the question texts of its latest upload (metric 12: one event block; Onboarding Survey Day 1 = 3 questions, question 2 TEXT), Welcome Session / Infrastructure & Application none, 19 / 20 a score table; the boot top-up never overwrites', async () => {
+        const parts = (await st62.getMetricParts()).filter(p => [5, 7, 12, 19, 20].includes(p.metric_id));
+        assert.ok(parts.length >= 8, `live parts: ${parts.length}`);
+        const edited = new Set((await st62.getAuditLog(5000, { includeTest: false })).filter(a => a.action === 'PART_QUESTIONS_UPDATE').map(a => (String(a.target).match(/^metric (\d+) (\S+):/) || []).slice(1, 3).join('|')));
+        let compared = 0;
+        for (const p of parts) {
+          assert.ok(Array.isArray(p.questions), `metric ${p.metric_id} ${p.part_key} configured`);
+          if (edited.has(`${p.metric_id}|${p.part_key}`)) continue; // the Admin changed it - nothing to compare with the files
+          const latest = (await st62.getMetricPartUploads(p.metric_id, p.part_key))[0];
+          const cols = (latest && latest.columns) || {};
+          const expected = latest
+            ? (Array.isArray(cols.questions_snapshot) ? cols.questions_snapshot.map(q => q.text) : pq62.firstEventBlock(cols.question_labels || [], cols.event_labels || []))
+            : ((p.template && !p.template.score_column && p.template.question_labels) || []);
+          assert.deepStrictEqual(p.questions.map(q => q.text), expected, `metric ${p.metric_id} ${p.part_key}`);
+          compared++;
+          if (p.part_key === 'DAY1_SURVEY' && latest) {
+            assert.deepStrictEqual(p.questions.map(q => q.type), ['SCALE', 'TEXT', 'SCALE'], 'Day 1: "What makes you interested in joining CIMB Niaga?" is a free-text answer');
+          }
+          if (['WELCOME_SESSION', 'INFRA_APP'].includes(p.part_key) && !latest) assert.deepStrictEqual(p.questions, [], `${p.part_key}: none yet`);
+          if (p.metric_id === 12 && latest) assert.strictEqual(p.questions.length, 3, 'metric 12: the 3 questions of one event block');
+        }
+        assert.ok(compared >= 1, 'at least one live part compared');
+        const list = await (await fetch(`${BASE_URL}/api/admin/part-questions`)).json();
+        const kinds = Object.fromEntries(list.metrics.flatMap(m => m.parts.map(p => [`${m.metric_id}|${p.part_key}`, p.kind])));
+        assert.deepStrictEqual([kinds['12|EVENT_SATISFACTION'], kinds['19|MANDATORY_LEARNING'], kinds['20|NON_MANDATORY_LEARNING'], kinds['7|MEET_GREET']], ['EVENT_BLOCKS', 'SCORE_TABLE', 'SCORE_TABLE', 'QUESTIONS']);
+        assert.deepStrictEqual(list.question_types, ['SCALE', 'TEXT']);
+        const before = JSON.stringify(await st62.getMetricParts());
+        assert.strictEqual(await st62.topUpPartQuestions(), 0, 'nothing left to configure');
+        assert.strictEqual(JSON.stringify(await st62.getMetricParts()), before, 'the top-up never overwrites a configured part');
+      });
+
+      await runTest('[POSITIVE] Admin edits a part: the boot top-up seeds an unconfigured part from its template; PUT adds (key assigned), edits a text, changes a type and reorders -> 200; GET shows it; audit PART_QUESTIONS_UPDATE names the changes; the configuration guard snapshot covers it (restore puts the questions back)', async () => {
+        m62 = await createMetric62({ metric_name: `RT62 Summary ${stamp62}` });
+        await addPart62(m62.metric_id, 'P1', 'Part One', 1, { score_label: 'Part One', question_labels: ['Old A', 'Old B'], question_types: ['SCALE', 'TEXT'], respondents_label: 'Jumlah Responden', period_label: 'Periode (Join Date)' });
+        await addPart62(m62.metric_id, 'ST', 'Score Table', 2, { score_label: 'ST', score_column: 'ST', respondents_column: false, question_labels: [] });
+        assert.strictEqual((await st62.getMetricParts(m62.metric_id))[0].questions, null, 'inserted without questions');
+        assert.strictEqual(await st62.topUpPartQuestions(), 2);
+        const seeded = (await st62.getMetricParts(m62.metric_id)).find(p => p.part_key === 'P1').questions;
+        assert.deepStrictEqual(seeded, [{ key: 'q1', text: 'Old A', type: 'SCALE' }, { key: 'q2', text: 'Old B', type: 'TEXT' }]);
+        const snap = await st62.snapshotConfiguration();
+        assert.ok(snap.tables.px_metric_parts && snap.tables.px_metric_parts.columns.includes('questions_json'), 'px_metric_parts is in the configuration snapshot');
+        const r = await putQ62(m62.metric_id, 'P1', [{ key: 'q2', text: '  Reason   to join ', type: 'TEXT' }, { key: 'q1', text: 'Overall rating', type: 'SCALE' }, { text: 'Day one experience' }]);
+        const b = await r.json();
+        assert.strictEqual(r.status, 200, JSON.stringify(b));
+        assert.deepStrictEqual(b.part.questions, [{ key: 'q2', text: 'Reason to join', type: 'TEXT' }, { key: 'q1', text: 'Overall rating', type: 'SCALE' }, { key: 'q3', text: 'Day one experience', type: 'SCALE' }]);
+        assert.strictEqual(b.changes, '2 -> 3 questions; added q3; text q2,q1; reordered');
+        const list = await (await fetch(`${BASE_URL}/api/admin/part-questions`)).json();
+        const mine = list.metrics.find(m => m.metric_id === m62.metric_id);
+        assert.deepStrictEqual(mine.parts.map(p => [p.part_key, p.kind, p.questions.length, p.configured, p.latest_upload]), [['P1', 'QUESTIONS', 3, true, null], ['ST', 'SCORE_TABLE', 0, true, null]]);
+        const a = (await st62.getAuditLog(30, { includeTest: true })).find(x => x.action === 'PART_QUESTIONS_UPDATE' && String(x.target).startsWith(`metric ${m62.metric_id} P1:`));
+        assert.ok(a && a.is_test === true && a.target.includes('2 -> 3 questions; added q3'), JSON.stringify(a));
+        const cmp = await st62.compareConfiguration(snap);
+        assert.deepStrictEqual(cmp.differing_tables, ['px_metric_parts']);
+        const restored = await st62.restoreConfiguration(snap);
+        assert.deepStrictEqual(restored.restored_tables, ['px_metric_parts']);
+        assert.deepStrictEqual((await st62.getMetricParts(m62.metric_id)).find(p => p.part_key === 'P1').questions, seeded, 'the restore puts the questions back');
+        assert.strictEqual((await putQ62(m62.metric_id, 'P1', b.part.questions)).status, 200);
+      });
+
+      await runTest('[NEGATIVE] Validation (400, nothing saved): not a list, empty / too long text, unknown type, duplicate / malformed key, more than 60 questions, a score-table part; unknown part / metric without parts -> 404, bad id -> 400', async () => {
+        const before = JSON.stringify((await st62.getMetricParts(m62.metric_id)).map(p => p.questions));
+        const bad = [
+          ['not a list', 'x'],
+          ['empty text', [{ text: '   ' }]],
+          ['too long', [{ text: 'x'.repeat(501) }]],
+          ['bad type', [{ text: 'A', type: 'STARS' }]],
+          ['duplicate key', [{ key: 'k', text: 'A' }, { key: 'K', text: 'B' }]],
+          ['bad key', [{ key: 'a b', text: 'A' }]],
+          ['too many', Array.from({ length: 61 }, (_, i) => ({ text: `Q${i}` }))],
+          ['not an object', ['A']]
+        ];
+        for (const [what, questions] of bad) {
+          const r = await putQ62(m62.metric_id, 'P1', questions);
+          assert.strictEqual(r.status, 400, what);
+          assert.ok((await r.json()).error, what);
+        }
+        const st = await putQ62(m62.metric_id, 'ST', [{ text: 'A' }]);
+        assert.deepStrictEqual([st.status, /no question columns/.test((await st.json()).error)], [400, true]);
+        assert.strictEqual((await putQ62(m62.metric_id, 'NOPE', [])).status, 404);
+        assert.strictEqual((await putQ62(14, 'P1', [])).status, 404, 'metric 14 has no parts');
+        assert.strictEqual((await putQ62('abc', 'P1', [])).status, 400);
+        assert.strictEqual(JSON.stringify((await st62.getMetricParts(m62.metric_id)).map(p => p.questions)), before, 'nothing saved');
+      });
+
+      await runTest('[NEGATIVE] Admin only: a USER gets 403 on GET / PUT, no login 401; the questions are unchanged', async () => {
+        const before = JSON.stringify((await st62.getMetricParts(m62.metric_id)).map(p => p.questions));
+        const pw = require('crypto').randomBytes(9).toString('hex') + 'Aa1';
+        const dir = (await st62.getDirectorates())[0].directorate_name;
+        user62 = await st62.createUser({ is_test_account: true, username: `rt62u${stamp62}`, full_name: 'Regression 62 User', email: '', role: 'USER',
+          password_hash: await require('../server/services/authService').hashPassword(pw), must_change_password: false, scopes: [{ directorate: dir, divisions: null }] });
+        userCookie62 = (await loginAs(user62.username, pw)).cookie;
+        assert.ok(userCookie62, 'USER login');
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/admin/part-questions`, asUser(userCookie62))).status, 403);
+        assert.strictEqual((await putQ62(m62.metric_id, 'P1', [{ text: 'Hijack' }], userCookie62)).status, 403);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/admin/part-questions`)).status, 401);
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/admin/part-questions/${m62.metric_id}/P1`, jsonBody('PUT', { questions: [{ text: 'Hijack' }] }))).status, 401);
+        assert.strictEqual(JSON.stringify((await st62.getMetricParts(m62.metric_id)).map(p => p.questions)), before);
+      });
+
+      await runTest('[POSITIVE/NEGATIVE] Template + upload follow the configuration: template headers = the configured texts in order; a file with another number of question columns -> 400 naming both counts and the menu (nothing stored); question columns mapped BY POSITION (own header kept as file_label), TEXT kept as text, a text in a Scale column -> 400; upload keeps questions_snapshot', async () => {
+        assert.deepStrictEqual(await templateHeader62(m62.metric_id, 'P1'), HEAD62('Part One', ['Reason to join', 'Overall rating', 'Day one experience']));
+        const rows0 = (await st62.getMetricPartResults(m62.metric_id)).length;
+        const two = await postPart62(m62.metric_id, 'P1', await buildXlsx62([HEAD62('Part One', ['Reason to join', 'Overall rating']), ['CIMB Niaga', 'Bankwide', 2003, 'Jan', 4, 'x', 4, 5, '']]));
+        assert.strictEqual(two.status, 400);
+        assert.ok(/The file has 2 question columns .*the configured template has 3 questions - update the questions in Admin Parameters -> Summary Questions or use the latest template/.test(two.body.errors[0].reason), two.body.errors[0].reason);
+        const scaleText = await postPart62(m62.metric_id, 'P1', await buildXlsx62([HEAD62('Part One', ['A', 'B', 'C']), ['CIMB Niaga', 'Bankwide', 2003, 'Jan', 4, 'Career', 'good', 4, 5, '']]));
+        assert.strictEqual(scaleText.status, 400);
+        assert.deepStrictEqual(scaleText.body.errors.map(e => [e.row_number, e.column]), [[2, 'G']]);
+        assert.ok(/is a Scale question .*set its type to Text in Admin Parameters -> Summary Questions/.test(scaleText.body.errors[0].reason), scaleText.body.errors[0].reason);
+        assert.strictEqual((await st62.getMetricPartResults(m62.metric_id)).length, rows0, 'nothing stored');
+        const ok = await postPart62(m62.metric_id, 'P1', await buildXlsx62([HEAD62('Part One', ['Kenapa join', 'Rating', 'Hari pertama']),
+          ['CIMB Niaga', 'Bankwide', 2003, 'Jan', 4, 'Suitable role', 4.5, '-', 5, '']]), 'module62_jan.xlsx');
+        assert.strictEqual(ok.status, 200, JSON.stringify(ok.body).slice(0, 300));
+        const row = (await st62.getMetricPartResults(m62.metric_id, 'P1'))[0];
+        assert.deepStrictEqual(row.questions, [
+          { key: 'q2', label: 'Reason to join', file_label: 'Kenapa join', type: 'TEXT', value: 'Suitable role' },
+          { key: 'q1', label: 'Overall rating', file_label: 'Rating', type: 'SCALE', value: 4.5 },
+          { key: 'q3', label: 'Day one experience', file_label: 'Hari pertama', type: 'SCALE', value: null }
+        ]);
+        const up = (await st62.getMetricPartUploads(m62.metric_id, 'P1'))[0];
+        assert.deepStrictEqual([up.columns.question_labels, up.columns.questions_snapshot.map(q => q.text)], [['Kenapa join', 'Rating', 'Hari pertama'], ['Reason to join', 'Overall rating', 'Day one experience']]);
+        assert.deepStrictEqual([ok.body.bankwide_by_month[0].value], [4], 'the score (column E) is unaffected by the questions');
+      });
+
+      await runTest('[POSITIVE] Snapshot per upload: after the questions change, History / Evidence keep the January texts; a period with both sets -> one line per question with Question_Set + a note; one month = the wide layout with that month\'s texts; the template follows the new configuration; GET flags the difference to the latest upload', async () => {
+        const r = await putQ62(m62.metric_id, 'P1', [{ key: 'q2', text: 'Reason to join', type: 'TEXT' }, { key: 'q1', text: 'Overall rating (new)', type: 'SCALE' }, { key: 'q3', text: 'Day one experience', type: 'SCALE' }]);
+        assert.strictEqual(r.status, 200);
+        const view = (await (await fetch(`${BASE_URL}/api/admin/part-questions`)).json()).metrics.find(m => m.metric_id === m62.metric_id).parts[0];
+        assert.strictEqual(view.differs_from_latest_upload, true);
+        assert.deepStrictEqual(view.latest_upload.question_texts, ['Reason to join', 'Overall rating', 'Day one experience']);
+        assert.deepStrictEqual(await templateHeader62(m62.metric_id, 'P1'), HEAD62('Part One', ['Reason to join', 'Overall rating (new)', 'Day one experience']));
+        const feb = await postPart62(m62.metric_id, 'P1', await buildXlsx62([HEAD62('Part One', ['a', 'b', 'c']), ['CIMB Niaga', 'Bankwide', 2003, 'Feb', 3, '-', 3, 3.5, 4, '']]), 'module62_feb.xlsx');
+        assert.strictEqual(feb.status, 200, JSON.stringify(feb.body).slice(0, 300));
+        const jan = (await st62.getMetricPartResults(m62.metric_id, 'P1')).find(x => x.month === 1);
+        assert.strictEqual(jan.questions[1].label, 'Overall rating', 'the stored January row keeps its text');
+        // the year: both sets -> long layout
+        const h = await (await fetch(`${BASE_URL}/api/metrics/${m62.metric_id}/history?period=2003`)).json();
+        assert.strictEqual(h.kind, 'PARTS');
+        assert.ok(h.notes.length === 1 && /Part One: the questions changed within this period \(Set 1, Set 2\)/.test(h.notes[0]), JSON.stringify(h.notes));
+        assert.ok(['Question_Set', 'Question_No', 'Question', 'File_Header', 'Value'].every(k => h.columns.some(c => c.key === k)), h.columns.map(c => c.key).join('|'));
+        const line = (set, no) => h.rows.find(x => x.Question_Set === set && x.Question_No === no);
+        assert.deepStrictEqual([line('Set 1', 2).Question, line('Set 1', 2).File_Header, line('Set 1', 2).Value, line('Set 1', 2).Period], ['Overall rating', 'Rating', 4.5, '2003-01']);
+        assert.deepStrictEqual([line('Set 2', 2).Question, line('Set 2', 2).File_Header, line('Set 2', 2).Period], ['Overall rating (new)', 'b', '2003-02']);
+        assert.strictEqual(h.total, 6, '2 rows x 3 questions');
+        const ev = csvRows62(await (await fetch(`${BASE_URL}/api/admin/metric-parts/${m62.metric_id}/P1/evidence?period=2003`)).text());
+        assert.ok(['Question_Set', 'Question_No', 'Question', 'File_Header', 'Value'].every(k => ev[0].includes(k)), ev[0].join('|'));
+        assert.strictEqual(ev.length - 1, h.total, 'History = Evidence');
+        assert.ok(ev.some(l => l.includes('Set 1') && l.includes('Overall rating')) && ev.some(l => l.includes('Set 2') && l.includes('Overall rating (new)')));
+        // one month: one set -> wide layout with that month's texts, no note
+        const h1 = await (await fetch(`${BASE_URL}/api/metrics/${m62.metric_id}/history?period=2003-01`)).json();
+        assert.deepStrictEqual([h1.notes, h1.columns.some(c => c.key === 'Question_Set'), h1.columns.some(c => c.key === 'Overall rating'), h1.columns.some(c => c.key === 'Overall rating (new)')], [[], false, true, false]);
+        const ev2 = csvRows62(await (await fetch(`${BASE_URL}/api/admin/metric-parts/${m62.metric_id}/P1/evidence?period=2003-02`)).text());
+        assert.ok(ev2[0].includes('Overall rating (new)') && !ev2[0].includes('Question_Set'), ev2[0].join('|'));
+      });
+
+      await runTest('[POSITIVE/NEGATIVE] Event-block part (metric 12 layout): the configured questions are the questions of ONE event block; template = every event (from the latest file / template) + those questions; upload with blocks of 1 + N columns -> 200 (event names from the file, question texts configured); another block size -> 400', async () => {
+        const m = await createMetric62({ metric_name: `RT62 Events ${stamp62}`, scale_type: 'PERCENTAGE', target_value: 80, target_display: '> 80%' });
+        await addPart62(m.metric_id, 'EV', 'Events', 1, { score_label: 'Satisfaction Event', score_scale: 'PERCENT', event_labels: ['Event A', 'Event B'],
+          question_labels: ['Event A', 'Makna', 'Hadir', 'Rekomendasi', 'Event B', 'Makna', 'Hadir', 'Rekomendasi'], respondents_label: 'Jumlah Responden Valid', period_label: 'Periode (Start time)', period_before_respondents: true });
+        await st62.topUpPartQuestions();
+        assert.deepStrictEqual((await st62.getMetricParts(m.metric_id))[0].questions.map(q => q.text), ['Makna', 'Hadir', 'Rekomendasi'], 'seeded: one event block');
+        assert.strictEqual((await putQ62(m.metric_id, 'EV', [{ key: 'q1', text: 'Saya mendapatkan makna' }, { key: 'q2', text: 'Saya akan hadir lagi' }])).status, 200);
+        const head = ['Directorate', 'Level', 'Year', 'Month', 'Satisfaction Event', 'Event A', 'Saya mendapatkan makna', 'Saya akan hadir lagi', 'Event B', 'Saya mendapatkan makna', 'Saya akan hadir lagi', 'Periode (Start time)', 'Jumlah Responden Valid'];
+        assert.deepStrictEqual(await templateHeader62(m.metric_id, 'EV'), head);
+        const three = await postPart62(m.metric_id, 'EV', await buildXlsx62([['Directorate', 'Level', 'Year', 'Month', 'S', 'Event A', 'x', 'y', 'z', 'Event B', 'x', 'y', 'z', 'Periode', 'Jumlah Responden Valid'],
+          ['CIMB Niaga', 'Bankwide', 2003, 'Mar', 90, 90, 90, 90, 90, '-', '-', '-', '-', '', 10]]));
+        assert.strictEqual(three.status, 400);
+        assert.ok(/not a whole number of event blocks of 3 columns/.test(three.body.errors[0].reason), three.body.errors[0].reason);
+        const ok = await postPart62(m.metric_id, 'EV', await buildXlsx62([['Directorate', 'Level', 'Year', 'Month', 'S', 'Podcast', 'makna?', 'hadir?', 'Talkshow', 'makna?', 'hadir?', 'Periode', 'Jumlah Responden Valid'],
+          ['CIMB Niaga', 'Bankwide', 2003, 'Mar', 92, 94, 100, 88, 90, 96, 84, '', 10]]));
+        assert.strictEqual(ok.status, 200, JSON.stringify(ok.body).slice(0, 300));
+        assert.deepStrictEqual(ok.body.columns.event_labels, ['Podcast', 'Talkshow']);
+        const row = (await st62.getMetricPartResults(m.metric_id, 'EV'))[0];
+        assert.deepStrictEqual(row.questions.map(q => [q.label, q.event, q.is_event || false, q.file_label || null, q.value]), [
+          ['Podcast', 'Podcast', true, null, 94], ['Saya mendapatkan makna', 'Podcast', false, 'makna?', 100], ['Saya akan hadir lagi', 'Podcast', false, 'hadir?', 88],
+          ['Talkshow', 'Talkshow', true, null, 90], ['Saya mendapatkan makna', 'Talkshow', false, 'makna?', 96], ['Saya akan hadir lagi', 'Talkshow', false, 'hadir?', 84]]);
+        const d = await (await fetch(`${BASE_URL}/api/metrics/${m.metric_id}/detail?mode=YTD&year=2003`)).json();
+        assert.deepStrictEqual(d.parts[0].events.map(e => [e.event, e.value]), [['Podcast', 94], ['Talkshow', 90]]);
+        assert.deepStrictEqual(await templateHeader62(m.metric_id, 'EV'), ['Directorate', 'Level', 'Year', 'Month', 'S', 'Podcast', 'Saya mendapatkan makna', 'Saya akan hadir lagi', 'Talkshow', 'Saya mendapatkan makna', 'Saya akan hadir lagi', 'Periode', 'Jumlah Responden Valid'], 'events (and score / period headers) of the latest file');
+      });
+
+      await runTest('[POSITIVE] JSON backend in-process (same contract): every part configured on load (Day 1 = the 3 template questions, question 2 TEXT), setMetricPartQuestions saves, metricParts is in the configuration snapshot; store.json and auth.json restored byte-identically', async () => {
+        const dataDir = path62.join(__dirname, '..', 'server', 'data');
+        const files = ['store.json', 'auth.json'].map(f => path62.join(dataDir, f));
+        const saved = files.map(f => (fs62.existsSync(f) ? fs62.readFileSync(f) : null));
+        let out;
+        try {
+          const js = require('../server/db/jsonStorage');
+          const parts = await js.getMetricParts();
+          const day1 = parts.find(p => p.metric_id === 7 && p.part_key === 'DAY1_SURVEY');
+          const ws = parts.find(p => p.metric_id === 7 && p.part_key === 'WELCOME_SESSION');
+          const set = await js.setMetricPartQuestions(7, 'WELCOME_SESSION', [{ key: 'q1', text: 'RT62 welcome', type: 'SCALE' }]);
+          const snap = js.snapshotConfiguration();
+          out = {
+            allConfigured: parts.every(p => Array.isArray(p.questions)),
+            day1: day1 ? day1.questions.map(q => q.type) : null,
+            ws: ws ? ws.questions : null,
+            set: set && set.questions,
+            missing: await js.setMetricPartQuestions(7, 'NOPE', []),
+            snap: Array.isArray(snap.keys.metricParts) && snap.keys.metricParts.some(p => p.part_key === 'WELCOME_SESSION' && p.questions.length === 1)
+          };
+        } finally {
+          files.forEach((f, i) => { if (saved[i] === null) { if (fs62.existsSync(f)) fs62.unlinkSync(f); } else fs62.writeFileSync(f, saved[i]); });
+        }
+        files.forEach((f, i) => assert.ok(saved[i] === null ? !fs62.existsSync(f) : Buffer.compare(fs62.readFileSync(f), saved[i]) === 0, `${path62.basename(f)} restored byte-identically`));
+        assert.strictEqual(out.allConfigured, true);
+        if (out.day1 && out.day1.length === 3) assert.deepStrictEqual(out.day1, ['SCALE', 'TEXT', 'SCALE']);
+        assert.deepStrictEqual([out.ws, out.set, out.missing, out.snap], [[], [{ key: 'q1', text: 'RT62 welcome', type: 'SCALE' }], null, true]);
+      });
+    } finally {
+      if (user62) await st62.deleteUser(user62.user_id);
+      for (const id of [...metricIds62].reverse()) await adminJson('DELETE', `/api/admin/metrics/${id}`);
+      await pool62.close();
+    }
+  }
 }
 
 runRegressionSuite().catch(async err => {
