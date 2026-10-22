@@ -10763,6 +10763,117 @@ async function runAllModules() {
       for (const id of created63) await adminJson('DELETE', `/api/admin/metrics/${id}`);
     }
   }
+  // --- MODULE 64 (v2.59.0): PHOTO / VIDEO UPLOAD LIMIT (setting media_upload_max_mb, MB per file, 1-4096, default 1024) ---
+  // Admin Parameters -> Journey Parameters -> Upload Limits. The media upload route reads the setting per request (30 s
+  // cache, cleared by a save), so a change needs no restart. The stored value is put back in the finally block.
+  console.log('\n📦 MODULE 64: Photo/video upload limit - Admin setting, validation, audit, applied to the next upload without a restart (Positive & Negative Testing)');
+  {
+    const KEY64 = 'media_upload_max_mb';
+    const stamp64 = Date.now().toString(36);
+    const users64 = [];
+    const media64 = [];
+    let userCookie64 = null;
+    const EVENT64 = 'ev-perspektif-2024-q1';
+    const UPLOADS64 = require('path').join(__dirname, '..', 'server', 'uploads');
+    const put64 = (value, cookie) => (cookie === undefined ? adminJson('PUT', `/api/admin/settings/${KEY64}`, { value })
+      : rawFetch(`${BASE_URL}/api/admin/settings/${KEY64}`, jsonBody('PUT', { value }, cookie || undefined)));
+    const setting64 = async () => (await (await adminJson('GET', '/api/settings')).json())[KEY64];
+    const upload64 = (sizeBytes, name = 'regression-limit-64.jpg') => {
+      const form = new FormData();
+      form.append('mediaFile', new Blob([Buffer.alloc(sizeBytes, 7)], { type: 'image/jpeg' }), name);
+      form.append('caption', 'Regression 64 upload limit');
+      return fetch(`${BASE_URL}/api/events/${EVENT64}/media`, { method: 'POST', body: form });
+    };
+    const mediaCount64 = async () => ((await (await adminJson('GET', `/api/events/${EVENT64}`)).json()).media || []).length;
+    const newUploadFiles64 = since => require('fs').readdirSync(UPLOADS64)
+      .filter(f => f.startsWith('media-') && require('fs').statSync(require('path').join(UPLOADS64, f)).mtimeMs >= since);
+    const original64 = await setting64();
+    try {
+      await runTest('[POSITIVE] The setting exists after boot (seed default 1024 MB) with a valid whole number, and every signed-in account can read it (/api/settings)', async () => {
+        assert.strictEqual(require('../server/db/seedData').initialAppSettings[KEY64].value, 1024, 'seed default');
+        assert.ok(Number.isInteger(original64) && original64 >= 1 && original64 <= 4096, `stored value ${original64}`);
+        const dirs = await (await adminJson('GET', '/api/directorates')).json();
+        const username = `rt64u${stamp64}`;
+        const res = await adminJson('POST', '/api/admin/users', { username, full_name: 'Regression 64 User', role: 'USER', scopes: [{ directorate: dirs[0].name, divisions: null }] });
+        assert.strictEqual(res.status, 201);
+        const body = await res.json();
+        users64.push(body.user.user_id);
+        const first = await loginAs(username, body.temporary_password);
+        const password = require('crypto').randomBytes(9).toString('hex') + 'Bb2';
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/auth/change-password`, jsonBody('POST', { current_password: body.temporary_password, new_password: password }, first.cookie))).status, 200);
+        userCookie64 = (await loginAs(username, password)).cookie;
+        const asUserSettings = await (await rawFetch(`${BASE_URL}/api/settings`, asUser(userCookie64))).json();
+        assert.strictEqual(asUserSettings[KEY64], original64, 'a USER reads the same value');
+      });
+
+      await runTest('[NEGATIVE] Invalid limits are refused with 400 and leave the setting unchanged (0, 4097, -1, 2.5, "abc", empty, null)', async () => {
+        for (const bad of [0, 4097, -1, 2.5, 'abc', '', null]) {
+          const res = await put64(bad);
+          assert.strictEqual(res.status, 400, `value ${JSON.stringify(bad)}`);
+          assert.ok(/between 1 and 4096/.test((await res.json()).error));
+        }
+        assert.strictEqual(await setting64(), original64);
+      });
+
+      await runTest('[NEGATIVE] A User cannot change the limit (403), nobody can without a session (401)', async () => {
+        assert.ok(userCookie64, 'fixture: USER session');
+        assert.strictEqual((await put64(50, userCookie64)).status, 403);
+        assert.strictEqual((await put64(50, null)).status, 401);
+        assert.strictEqual(await setting64(), original64);
+      });
+
+      await runTest('[POSITIVE/NEGATIVE] A new limit applies to the very next upload (no restart): at 1 MB a 2 MB photo -> 413 "exceeds the 1 MB limit" and nothing is stored; at 3 MB the same photo -> 201; the changes are audited (SETTINGS_CHANGE)', async () => {
+        const started = Date.now() - 1000;
+        const before = await mediaCount64();
+        let res = await put64(1);
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual((await res.json()).value, 1);
+        res = await upload64(2 * 1024 * 1024);
+        assert.strictEqual(res.status, 413);
+        const refused = await res.json();
+        assert.strictEqual(refused.error, 'The file exceeds the 1 MB limit.');
+        assert.strictEqual(refused.max_mb, 1);
+        assert.strictEqual(await mediaCount64(), before, 'no media record');
+        assert.deepStrictEqual(newUploadFiles64(started), [], 'no partial file left in server/uploads');
+        // just under the limit still passes
+        res = await upload64(1024 * 1024 - 1024);
+        assert.strictEqual(res.status, 201, 'a file under 1 MB is accepted');
+        media64.push((await res.json()).media.media_id);
+        assert.strictEqual((await put64(3)).status, 200);
+        res = await upload64(2 * 1024 * 1024);
+        assert.strictEqual(res.status, 201, 'the same 2 MB photo passes at 3 MB');
+        const media = (await res.json()).media;
+        media64.push(media.media_id);
+        assert.strictEqual(media.file_type, 'IMAGE');
+        const me = (await (await adminJson('GET', '/api/auth/me')).json()).user;
+        const rows = (await (await adminJson('GET', '/api/admin/audit-log?limit=500&include_test=1')).json())
+          .filter(e => e.username === me.username && e.action === 'SETTINGS_CHANGE' && String(e.target).startsWith(KEY64));
+        assert.ok(rows.some(e => e.target === `${KEY64}: ${original64} -> 1`), 'audit old -> new');
+        assert.ok(rows.some(e => e.target === `${KEY64}: 1 -> 3`), 'audit second change');
+      });
+
+      await runTest('[NEGATIVE] The file-type allowlist still applies under the limit (415); back at 1 MB a 2 MB photo is refused again (413)', async () => {
+        assert.strictEqual((await put64(1024)).status, 200);
+        assert.strictEqual(await setting64(), 1024);
+        const bad = new FormData();
+        bad.append('mediaFile', new Blob([Buffer.from('<html></html>')], { type: 'video/mp4' }), 'evil64.html');
+        assert.strictEqual((await fetch(`${BASE_URL}/api/events/${EVENT64}/media`, { method: 'POST', body: bad })).status, 415);
+        assert.strictEqual((await put64(1)).status, 200);
+        const res = await upload64(2 * 1024 * 1024);
+        assert.strictEqual(res.status, 413);
+        assert.strictEqual((await res.json()).error, 'The file exceeds the 1 MB limit.');
+      });
+    } finally {
+      for (const id of media64) await adminJson('DELETE', `/api/media/${id}`);
+      if (Number.isInteger(original64)) await put64(original64);
+      for (const id of users64) await adminJson('DELETE', `/api/admin/users/${id}`);
+    }
+    await runTest('[POSITIVE] Clean-up: the stored limit is back to its original value and the test photos are gone', async () => {
+      assert.strictEqual(await setting64(), original64);
+      const media = ((await (await adminJson('GET', `/api/events/${EVENT64}`)).json()).media || []);
+      assert.ok(!media.some(m => media64.includes(m.media_id)), 'test media deleted');
+    });
+  }
 }
 
 runRegressionSuite().catch(async err => {

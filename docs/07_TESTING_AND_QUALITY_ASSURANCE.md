@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    63 MODUL PENGUJIAN    │     483 AUTOMATED TESTS     │       100% PASS RATE          │
+│    64 MODUL PENGUJIAN    │     489 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -1450,3 +1450,24 @@ Nomor yang diharapkan dihitung ulang dari `GET /api/admin/parameters` (journey m
 Run suite penuh SQL (developer, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **397/397 lulus, 0 gagal, 16 tes dilewati**. Suite JSON penuh tidak dijalankan. Ukuran suite = **483** menurut hitungan: `await runTest(` statis 470 (v2.57.0: 466; +4 = Modul 63) + selisih 13 yang sama sejak v2.30.2. 397 + 16 = 413; 70 tes sisanya ada di modul media/event yang di-skip.
 
 **Tidak diuji otomatis**: tampilan kolom "No." dan label "Metric n" di UI.
+
+## 49. v2.59.0 - Modul 64: batas unggahan foto/video (`media_upload_max_mb`)
+
+### Modul 64 - setting Admin, validasi, audit, berlaku tanpa restart (6 tes)
+
+Memakai event `ev-perspektif-2024-q1`, foto uji (`image/jpeg`) berukuran sintetis dan akun USER sementara. Nilai setting awal dikembalikan, media uji dan akun dihapus di `finally`.
+
+| # | Jenis | Skenario |
+| :--- | :--- | :--- |
+| 1 | Positif | Setting ada setelah boot (seed 1024), bilangan bulat 1-4096, dan USER membaca nilai yang sama lewat `GET /api/settings` |
+| 2 | Negatif | `0`, `4097`, `-1`, `2.5`, `"abc"`, `""`, `null` -> 400 "between 1 and 4096", setting tidak berubah |
+| 3 | Negatif | USER -> 403, tanpa sesi -> 401, setting tidak berubah |
+| 4 | Positif/Negatif | Batas 1 MB: foto 2 MB -> 413 "The file exceeds the 1 MB limit." + `max_mb: 1`, tidak ada record media maupun file sisa di `server/uploads`; foto < 1 MB -> 201; batas 3 MB: foto 2 MB yang sama -> 201 (tanpa restart); kedua perubahan tercatat `SETTINGS_CHANGE` "<lama> -> <baru>" |
+| 5 | Negatif | Allowlist tetap berlaku (`evil64.html` sebagai `video/mp4` -> 415); kembali ke 1 MB, foto 2 MB -> 413 lagi |
+| 6 | Positif | Clean-up: setting kembali ke nilai awal, media uji terhapus |
+
+### Hasil
+
+Run suite penuh SQL (developer): **482/482 lulus, 0 gagal, 7 tes dilewati** - modul media 27, 32, 38, 41, 42, 43 **dijalankan** (diff menyentuh route media), hanya modul event 8 dan 24 dilewati. Suite JSON penuh tidak dijalankan. Ukuran suite = **489** menurut hitungan: `await runTest(` statis 476 (v2.58.0: 470; +6 = Modul 64) + selisih 13 yang sama sejak v2.30.2; 482 + 7 = 489.
+
+**Tidak diuji otomatis**: tampilan kartu Upload Limits dan teks/penolakan sisi browser di Events; unggahan 300 MB lewat proxy Vite (dicek manual developer -> 201); reverse proxy produksi.

@@ -404,6 +404,12 @@ API kini bisa mengirim indeks dan skor `null` serta status `NO_DATA` (lihat `doc
 | `MetricDetailModal.jsx` | Nilai "—", "No survey data in this period - left out of the index", badge abu-abu "No Data", pertanyaan berlabel "No Data" tanpa skor. Catatan "Annual metric: shows the result of Jan–Sep 2026" untuk metrik tahunan pada filter MTD **dihapus di v2.37.0** (MTD kini selalu satu bulan, `period_window.basis = 'MONTH'`). |
 | `TrendChart.jsx` | Titik `null` menjadi celah (garis dipotong per segmen), tooltip "—". |
 
+## Catatan v2.59.0 - Kartu Upload Limits & batas unggahan di Events
+
+- **`src/utils/mediaLimit.js`** (baru): `MEDIA_MAX_MB_RANGE` (`{ min: 1, max: 4096 }`) dan `mediaLimitLabel(mb)` ("1024 MB (1 GB)" / "500 MB"), sama dengan server.
+- **`AdminParametersModal.jsx`**: tab Journey Parameters mendapat kartu **Upload Limits** (`UploadLimitCard`, ikon `HardDriveUpload`) di bawah PX Index Weights: input "Max photo/video upload size (MB)", pratinjau "= 1024 MB (1 GB) per file" (merah "Use a whole number from 1 to 4096." bila tidak valid), catatan amber "Videos longer than ~2 hours may exceed the 120-minute transcript limit.", tombol **Save Limit** (aktif bila valid dan berubah) -> `PUT /api/admin/settings/media_upload_max_mb`, pesan "Upload limit saved: ... per photo/video.". Nilai awal dari `GET /api/settings`.
+- **`EventManager.jsx`**: state `mediaMaxMb` dibaca sekali dari `GET /api/settings` saat komponen dimuat; teks "Max 1024 MB (1 GB) per file" di samping tombol **Upload Photo / Video** (hanya bila boleh mengelola event); file yang lebih besar ditolak di browser (alert berisi ukuran file) sebelum dikirim. Server tetap memeriksa (413).
+
 ## Catatan v2.58.0 - Kolom "No." (nomor tampilan metrik)
 
 - **`src/utils/metricNumber.js`** (baru): `metricNo(m)` = `m.display_no` dari server (`'-'` bila tidak ada); `byDisplayNo` = comparator urutan nomor. `metric_id` tetap dipakai untuk panggilan API dan React key, tidak pernah ditampilkan.

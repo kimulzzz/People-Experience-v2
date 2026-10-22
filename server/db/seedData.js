@@ -1720,6 +1720,8 @@ const initialAppSettings = {
   login_rate_limit_per_minute: { value: 20, description: 'Batas percobaan login GAGAL per alamat IP per menit' },
   // v2.44.0: sesi diakhiri otomatis bila tidak ada aktivitas pengguna selama N menit (1-120)
   session_idle_timeout_minutes: { value: 5, description: 'Logout otomatis setelah N menit tanpa aktivitas pengguna (1-120)' },
+  // v2.59.0: batas ukuran satu file foto/video Signature Program Events (MB, 1-4096) — Admin Parameters -> Journey Parameters
+  media_upload_max_mb: { value: 1024, description: 'Batas ukuran unggahan foto/video Signature Program Events per file (MB, 1-4096)' },
   // v2.51.0: set to true by the first change in Admin Parameters -> Directorates. From then on the Admin owns the
   // directorate master and the boot never adds seed directorates / divisions again (a renamed, merged or deleted one
   // would otherwise come back). Not editable through PUT /api/admin/settings.

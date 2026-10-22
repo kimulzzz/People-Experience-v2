@@ -102,7 +102,7 @@ Buka berkas CSV di Microsoft Excel atau editor teks dan isi baris data:
 ### Langkah 2: Membagikan QR Code / Link Peserta
 - **QR Absensi Pra-Event**: Klik tombol QR Absensi untuk menampilkan kode QR di layar proyektor atau membagikan URL `http://.../checkin/:event_id` kepada peserta.
 - **QR Evaluasi Pasca-Event**: Di akhir sesi, tampilkan QR Evaluasi agar peserta mengisi rating pembicara, materi, dan kepuasan event.
-- **Dokumentasi Foto/Video & Transkrip AI**: Di bagian *Photo Gallery & Event Documentation* klik **Upload Photo / Video** (foto JPG/PNG/GIF/WEBP/BMP/AVIF atau video MP4/MOV/WEBM/MKV/AVI dan sejenisnya, maks. 200 MB; SVG dan HEIC ditolak - lihat "Nama File Video & Format Unggahan Media" di bawah). Foto dan video langsung bisa dilihat/diputar di kartu (atau diperbesar lewat tombol *Perbesar*). Untuk video, sistem otomatis membuat **transkrip teks Bahasa Indonesia** lewat API transkrip lokal — prosesnya bisa beberapa menit (kartu menampilkan "sedang diproses" dan terisi sendiri). Buka *Full AI transcript* (dulu "Transkrip AI lengkap") untuk membaca teks lengkap dan per segmen; klik sebuah baris untuk memutar video dari bagian itu. Jika gagal (mis. API transkrip belum dijalankan), klik **Try again** (dulu "Coba lagi") setelah API aktif di `http://127.0.0.1:8000`. Setelah transkrip selesai, video **baru** otomatis mendapat **AI Summary** (lihat bagian "AI Summary Video" di bawah).
+- **Dokumentasi Foto/Video & Transkrip AI**: Di bagian *Photo Gallery & Event Documentation* klik **Upload Photo / Video** (foto JPG/PNG/GIF/WEBP/BMP/AVIF atau video MP4/MOV/WEBM/MKV/AVI dan sejenisnya, maks. sesuai batas Admin - default 1 GB sejak v2.59.0, sebelumnya 200 MB; SVG dan HEIC ditolak - lihat "Nama File Video & Format Unggahan Media" di bawah). Foto dan video langsung bisa dilihat/diputar di kartu (atau diperbesar lewat tombol *Perbesar*). Untuk video, sistem otomatis membuat **transkrip teks Bahasa Indonesia** lewat API transkrip lokal — prosesnya bisa beberapa menit (kartu menampilkan "sedang diproses" dan terisi sendiri). Buka *Full AI transcript* (dulu "Transkrip AI lengkap") untuk membaca teks lengkap dan per segmen; klik sebuah baris untuk memutar video dari bagian itu. Jika gagal (mis. API transkrip belum dijalankan), klik **Try again** (dulu "Coba lagi") setelah API aktif di `http://127.0.0.1:8000`. Setelah transkrip selesai, video **baru** otomatis mendapat **AI Summary** (lihat bagian "AI Summary Video" di bawah).
 
 ### Langkah 3: Menghasilkan Executive Report PPT (.pptx)
 1. Pada kartu event, klik tombol **"Generate Executive PPT"**.
@@ -323,7 +323,7 @@ Setelah mengubah `.env`, restart backend. Bila batas ringkasan habis, kartu vide
 
 ## Nama File Video & Format Unggahan Media (v2.30.1)
 
-**Format yang diterima** (Upload Photo / Video, maks. 200 MB): foto **JPG, JPEG, PNG, GIF, WEBP, BMP, AVIF**; video **MP4, M4V, MOV, WEBM, MKV, AVI, OGV, MPG, MPEG, 3GP, WMV, FLV**. Format lain ditolak dengan pesan "Unsupported file format" dan tidak ada yang tersimpan, termasuk **SVG** (bisa membawa script) dan **HEIC/HEIF** (foto iPhone - browser tidak bisa menampilkannya; ubah dulu ke JPG). Jenis file (gambar/video) dan ekstensinya harus cocok: file `.html`, `.exe`, atau `.js` ditolak walau dikirim sebagai video, dan video dengan ekstensi gambar (atau sebaliknya) juga ditolak.
+**Format yang diterima** (Upload Photo / Video, maks. sesuai batas Admin - default 1 GB sejak v2.59.0, lihat "Batas Ukuran Unggahan Foto/Video"): foto **JPG, JPEG, PNG, GIF, WEBP, BMP, AVIF**; video **MP4, M4V, MOV, WEBM, MKV, AVI, OGV, MPG, MPEG, 3GP, WMV, FLV**. Format lain ditolak dengan pesan "Unsupported file format" dan tidak ada yang tersimpan, termasuk **SVG** (bisa membawa script) dan **HEIC/HEIF** (foto iPhone - browser tidak bisa menampilkannya; ubah dulu ke JPG). Jenis file (gambar/video) dan ekstensinya harus cocok: file `.html`, `.exe`, atau `.js` ditolak walau dikirim sebagai video, dan video dengan ekstensi gambar (atau sebaliknya) juga ditolak.
 
 **Nama file video berubah setelah proses selesai**: segera setelah diunggah, file video di `server/uploads` bernama acak (`media-<angka>-<acak>.mp4`) supaya dua unggahan bernama sama tidak bertabrakan selagi diproses. Setelah transkrip dan AI Summary selesai (atau transkrip gagal), sistem otomatis mengganti nama file menjadi **nama file yang Anda unggah**; kartu video menyegarkan dirinya sendiri beberapa detik kemudian. Hal yang perlu diketahui:
 - Selama proses berjalan (status "processing") nama tidak diganti, agar Video Extractor dan Gemma tidak kehilangan file.
@@ -633,3 +633,15 @@ Nomor metrik yang tampil (kolom **No.** di Explore Metrics / Admin Parameters, c
 - **Tambah metrik**: metrik baru menjadi nomor terakhir journey yang dipilih; semua metrik di journey sesudahnya bergeser +1.
 - **ID internal** tidak ditampilkan dan tidak berubah. Masih dipakai pada nama file unduhan (`Template_..._Metric_<id>`), isi file (sel pertama "Metric <id> - ...", kolom CSV `metric_id`) dan target Audit Trail ("#<id>") - jadi angka di nama file bisa berbeda dari nomor di layar.
 - Nomor di laporan atau tangkapan layar lama bisa tidak cocok lagi setelah ada metrik dihapus/ditambah.
+
+### Batas Ukuran Unggahan Foto/Video & Lokasi File Media (v2.59.0)
+
+**Mengubah batas** (Admin): Admin Parameters -> tab **Journey Parameters** -> kartu **Upload Limits** (di bawah PX Index Weights). Isi "Max photo/video upload size (MB)" dengan bilangan bulat 1-4096 (1024 = 1 GB, default), lalu klik **Save Limit**. Berlaku untuk unggahan berikutnya tanpa restart; perubahan tercatat di Audit Trail (`SETTINGS_CHANGE`). Halaman Signature Program Events menampilkan "Max ... per file" dan langsung menolak file yang lebih besar; muat ulang halaman Events yang sudah terbuka agar teks batasnya ikut berubah.
+
+Hal yang perlu diketahui:
+- Video lebih dari ~2 jam bisa gagal ditranskrip (batas proses 120 menit) walau ukurannya lolos.
+- Tidak ada pengecekan ruang disk: pastikan drive server cukup sebelum menaikkan batas.
+- Di produksi, reverse proxy HTTPS (IIS/nginx) juga harus mengizinkan body sebesar batas ini dan timeout panjang; kalau tidak, unggahan besar ditolak proxy sebelum sampai ke aplikasi.
+- Env `MEDIA_MAX_MB` di `.env` kini hanya cadangan bila setting tidak bisa dibaca.
+
+**Lokasi file media**: foto/video tersimpan sebagai file di `server/uploads/` pada mesin server (di `.gitignore`, tidak ikut git maupun backup database `.bak`); database hanya menyimpan path-nya (`px_media.file_path`, mis. `/uploads/<nama file>`) beserta transkrip/ringkasan. Selama transkrip berjalan ada hard link sementara di `server/tmp-transcribe/` (lihat v2.30.2). Backup folder `server/uploads/` terpisah dari database.

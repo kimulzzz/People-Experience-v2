@@ -27,6 +27,7 @@ import {
   AlertCircle,
   ChevronDown
 } from 'lucide-react';
+import { mediaLimitLabel } from '../utils/mediaLimit';
 
 function formatTimestamp(totalSeconds) {
   const s = Math.max(0, Math.floor(totalSeconds || 0));
@@ -328,11 +329,19 @@ export default function EventManager({
   const [eventDetail, setEventDetail] = useState(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [mediaMaxMb, setMediaMaxMb] = useState(null); // Admin setting media_upload_max_mb (v2.59.0); the server enforces it
   const [generatingPpt, setGeneratingPpt] = useState(false);
   const [pptDownloadUrl, setPptDownloadUrl] = useState(null);
   const [lightboxMedia, setLightboxMedia] = useState(null);
 
   const selectedEvent = events?.find(e => e.event_id === selectedEventId) || events?.[0];
+
+  useEffect(() => {
+    fetch('/api/settings')
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => { if (data && Number.isInteger(data.media_upload_max_mb)) setMediaMaxMb(data.media_upload_max_mb); })
+      .catch(err => console.error('Failed to load the upload limit:', err));
+  }, []);
 
   // Fetch Event Deep Details
   React.useEffect(() => {
@@ -396,6 +405,12 @@ export default function EventManager({
     const input = e.target;
     const file = input.files[0];
     if (!file || !selectedEvent) return;
+    // Checked here first so a too-large video is not sent for minutes only to be refused (the server checks again).
+    if (mediaMaxMb && file.size > mediaMaxMb * 1024 * 1024) {
+      alert(`The file exceeds the ${mediaLimitLabel(mediaMaxMb)} limit (this file is ${(file.size / (1024 * 1024)).toFixed(1)} MB).`);
+      input.value = '';
+      return;
+    }
 
     setUploadingMedia(true);
     const formData = new FormData();
@@ -735,7 +750,9 @@ export default function EventManager({
                     </h4>
                   </div>
 
-                  {canManageEvents && <label className="px-3 py-1.5 bg-white/90 hover:bg-white text-[var(--theme-dark)] rounded-lg text-xs font-bold transition cursor-pointer flex items-center space-x-1.5">
+                  {canManageEvents && <div className="flex items-center space-x-2">
+                  {mediaMaxMb && <span className="text-[11px] font-semibold text-white/80">Max {mediaLimitLabel(mediaMaxMb)} per file</span>}
+                  <label className="px-3 py-1.5 bg-white/90 hover:bg-white text-[var(--theme-dark)] rounded-lg text-xs font-bold transition cursor-pointer flex items-center space-x-1.5">
                     <Upload className="w-3.5 h-3.5" />
                     <span>{uploadingMedia ? 'Uploading...' : 'Upload Photo / Video'}</span>
                     <input
@@ -745,7 +762,8 @@ export default function EventManager({
                       className="hidden"
                       disabled={uploadingMedia}
                     />
-                  </label>}
+                  </label>
+                  </div>}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-start">

@@ -24,7 +24,8 @@ import {
   Send,
   UserCog,
   Building2,
-  ListOrdered
+  ListOrdered,
+  HardDriveUpload
 } from 'lucide-react';
 import { formatMetricValue, defaultUnitForScale } from '../utils/formatMetricValue';
 import { TIER_OPS, validTierBounds, tieredPercent, tierRanges, tierValue } from '../utils/scoreTiers';
@@ -36,6 +37,7 @@ import UserManagementModal from './UserManagementModal';
 import DirectoryManager from './DirectoryManager';
 import PartQuestionsManager from './PartQuestionsManager';
 import { metricNo, byDisplayNo } from '../utils/metricNumber';
+import { MEDIA_MAX_MB_RANGE, mediaLimitLabel } from '../utils/mediaLimit';
 
 // Converts a metric's raw Target Nilai (stored in its own native scale — e.g. 4.00 on a
 // RATING_5 1-5 scale) into the same 0-100 % scale as Min Threshold, mirroring the backend's
@@ -141,6 +143,77 @@ function IndexWeightsCard({ initial, onSaved, onError }) {
       {!valid && (survey !== '' || outcome !== '') && (
         <p className="text-[11px] text-red-600 font-semibold mt-2">Use whole numbers from 0 to 100 that add up to 100.</p>
       )}
+    </div>
+  );
+}
+
+// Upload limit (v2.59.0): px_app_settings.media_upload_max_mb - max size of ONE Signature Program Events photo/video (MB).
+// The server applies a saved value to the next upload (no restart); it validates the range again (400 otherwise).
+function UploadLimitCard({ initial, onSaved, onError }) {
+  const [mb, setMb] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (initial !== null && initial !== undefined) setMb(String(initial));
+  }, [initial]);
+
+  const n = Number(mb);
+  const valid = mb !== '' && Number.isInteger(n) && n >= MEDIA_MAX_MB_RANGE.min && n <= MEDIA_MAX_MB_RANGE.max;
+  const changed = initial !== null && initial !== undefined && n !== initial;
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/admin/settings/media_upload_max_mb', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: n })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to save the upload limit');
+      onSaved(data.value);
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mb-6 p-5 bg-white border border-white rounded-xl shadow-lg">
+      <div className="flex flex-col md:flex-row md:items-end gap-4">
+        <div className="flex-1">
+          <h3 className="text-sm font-bold text-gray-900 flex items-center space-x-2">
+            <HardDriveUpload className="w-4 h-4 text-[var(--theme-base)]" />
+            <span>Upload Limits</span>
+          </h3>
+          <p className="text-xs text-gray-500 mt-1">
+            Maximum size of one photo or video uploaded in Signature Program Events ({MEDIA_MAX_MB_RANGE.min}-{MEDIA_MAX_MB_RANGE.max} MB).
+            Applies to the next upload, no restart needed.
+          </p>
+          <p className="text-[11px] text-amber-700 font-semibold mt-1">
+            Videos longer than ~2 hours may exceed the 120-minute transcript limit.
+          </p>
+        </div>
+        <label className="text-xs font-bold text-gray-700">
+          Max photo/video upload size (MB)
+          <input type="number" min={MEDIA_MAX_MB_RANGE.min} max={MEDIA_MAX_MB_RANGE.max} step="1" value={mb} onChange={e => setMb(e.target.value)}
+            className="mt-1 block w-32 px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--theme-base)]" />
+        </label>
+        <button
+          onClick={handleSave}
+          disabled={!valid || !changed || saving}
+          className="px-3 py-2 text-xs font-bold text-white bg-[var(--theme-base)] hover:bg-[var(--theme-hover)] disabled:opacity-50 disabled:cursor-not-allowed rounded-lg flex items-center space-x-1.5 shadow-sm transition"
+        >
+          <Save className="w-3.5 h-3.5" />
+          <span>{saving ? 'Saving...' : 'Save Limit'}</span>
+        </button>
+      </div>
+      {valid ? (
+        <p className="text-[11px] text-gray-500 mt-2">= {mediaLimitLabel(n)} per file</p>
+      ) : (mb !== '' && (
+        <p className="text-[11px] text-red-600 font-semibold mt-2">Use a whole number from {MEDIA_MAX_MB_RANGE.min} to {MEDIA_MAX_MB_RANGE.max}.</p>
+      ))}
     </div>
   );
 }
@@ -737,6 +810,17 @@ All survey data (responses) and question settings of this metric will also be de
                   setErrorMessage('');
                   setSaveSuccess(`PX Index weights saved: Survey ${value.survey}% + Outcome ${value.outcome}%.`);
                   if (onParametersUpdated) onParametersUpdated();
+                }}
+                onError={(msg) => { setSaveSuccess(''); setErrorMessage(msg); }}
+              />
+
+              {/* Signature Program Events photo/video upload limit, v2.59.0 */}
+              <UploadLimitCard
+                initial={optionCatalogs.media_upload_max_mb ?? null}
+                onSaved={(value) => {
+                  setOptionCatalogs(prev => ({ ...prev, media_upload_max_mb: value }));
+                  setErrorMessage('');
+                  setSaveSuccess(`Upload limit saved: ${mediaLimitLabel(value)} per photo/video.`);
                 }}
                 onError={(msg) => { setSaveSuccess(''); setErrorMessage(msg); }}
               />

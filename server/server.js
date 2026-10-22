@@ -83,22 +83,51 @@ const upload = multer({ storage: multerStorage, limits: { fileSize: 50 * 1024 * 
 
 // Event photo/video uploads are served back as static files from /uploads, so only real
 // image/video MIME types are accepted (an uploaded .html would otherwise be served and run).
-// Videos get a higher cap than the 50MB CSV limit — event recordings are routinely larger.
-const MEDIA_MAX_MB = parseInt(process.env.MEDIA_MAX_MB || '200', 10);
-const mediaUpload = multer({
-  storage: multerStorage,
-  limits: { fileSize: MEDIA_MAX_MB * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    // Both checks must agree: the (client-supplied) MIME type AND the file extension, which decides the stored name and
-    // how /uploads serves it. SVG is refused (script), as is anything like evil.html sent with a video/mp4 MIME type.
-    const mimeKind = /^image\/(?!svg)/.test(file.mimetype) ? 'IMAGE' : (/^video\//.test(file.mimetype) ? 'VIDEO' : null);
-    const nameKind = mediaKindOfName(repairUploadedName(file.originalname));
-    if (mimeKind && mimeKind === nameKind) return cb(null, true);
-    const err = new Error('Unsupported file format. Upload a photo (JPG/PNG/GIF/WEBP/BMP/AVIF) or a video (MP4/MOV/WEBM/MKV/AVI) whose file extension matches its type. SVG is not accepted.');
-    err.code = 'UNSUPPORTED_MEDIA_TYPE';
-    cb(err);
+// v2.59.0: the size cap per file is the Admin setting media_upload_max_mb (MB, 1-4096, default 1024; Admin Parameters ->
+// Journey Parameters), read per upload with a 30 s cache that a save clears, so a change needs no restart. The env
+// MEDIA_MAX_MB is only the fallback when the setting cannot be read (then 1024). multer writes to disk as a stream, so
+// a large file never sits in memory.
+const MEDIA_MAX_MB_DEFAULT = 1024;
+const MEDIA_MAX_MB_RANGE = { min: 1, max: 4096 };
+const validMediaMaxMb = n => Number.isInteger(n) && n >= MEDIA_MAX_MB_RANGE.min && n <= MEDIA_MAX_MB_RANGE.max;
+let mediaMaxMbCache = { value: null, at: 0 };
+async function getMediaMaxMb() {
+  if (mediaMaxMbCache.value !== null && Date.now() - mediaMaxMbCache.at < 30 * 1000) return mediaMaxMbCache.value;
+  try {
+    const n = Number((await storage.getSettings()).media_upload_max_mb);
+    if (validMediaMaxMb(n)) {
+      mediaMaxMbCache = { value: n, at: Date.now() };
+      return n;
+    }
+  } catch (err) {
+    console.error('Reading media_upload_max_mb failed, using the fallback limit:', err.message);
   }
-});
+  const env = parseInt(process.env.MEDIA_MAX_MB || '', 10);
+  return validMediaMaxMb(env) ? env : MEDIA_MAX_MB_DEFAULT;
+}
+function clearMediaMaxMbCache() { mediaMaxMbCache = { value: null, at: 0 }; }
+// "1024 MB (1 GB)" / "500 MB"
+function mediaLimitLabel(mb) {
+  return mb >= 1024 ? `${mb} MB (${Number((mb / 1024).toFixed(2))} GB)` : `${mb} MB`;
+}
+const mediaFileFilter = (req, file, cb) => {
+  // Both checks must agree: the (client-supplied) MIME type AND the file extension, which decides the stored name and
+  // how /uploads serves it. SVG is refused (script), as is anything like evil.html sent with a video/mp4 MIME type.
+  const mimeKind = /^image\/(?!svg)/.test(file.mimetype) ? 'IMAGE' : (/^video\//.test(file.mimetype) ? 'VIDEO' : null);
+  const nameKind = mediaKindOfName(repairUploadedName(file.originalname));
+  if (mimeKind && mimeKind === nameKind) return cb(null, true);
+  const err = new Error('Unsupported file format. Upload a photo (JPG/PNG/GIF/WEBP/BMP/AVIF) or a video (MP4/MOV/WEBM/MKV/AVI) whose file extension matches its type. SVG is not accepted.');
+  err.code = 'UNSUPPORTED_MEDIA_TYPE';
+  cb(err);
+};
+// one multer instance per limit (the limit is fixed per instance; it only changes when an Admin saves a new value)
+const mediaUploaders = new Map();
+function mediaUploaderFor(mb) {
+  if (!mediaUploaders.has(mb)) {
+    mediaUploaders.set(mb, multer({ storage: multerStorage, limits: { fileSize: mb * 1024 * 1024 }, fileFilter: mediaFileFilter }));
+  }
+  return mediaUploaders.get(mb);
+}
 
 // ==========================================
 // API ROUTES
@@ -141,12 +170,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.58.0' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.59.0' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.58.0',
+    version: '2.59.0',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',
@@ -164,7 +193,8 @@ const NUMERIC_SETTINGS = {
   login_max_attempts: { min: 3, max: 20, integer: true, label: 'Failed login limit' },
   login_lockout_minutes: { min: 1, max: 1440, integer: true, label: 'Account lockout duration (minutes)' },
   login_rate_limit_per_minute: { min: 5, max: 200, integer: true, label: 'Failed login attempt limit per IP per minute' },
-  session_idle_timeout_minutes: { min: 1, max: 120, integer: true, label: 'Auto sign-out after inactivity (minutes)' }
+  session_idle_timeout_minutes: { min: 1, max: 120, integer: true, label: 'Auto sign-out after inactivity (minutes)' },
+  media_upload_max_mb: { ...MEDIA_MAX_MB_RANGE, integer: true, label: 'Max photo/video upload size (MB)' }
 };
 const LABEL_ONLY_SETTINGS = new Set(['metric_types', 'scale_types', 'target_audiences', 'update_frequencies', 'question_types']);
 
@@ -202,6 +232,7 @@ app.put('/api/admin/settings/:key', async (req, res) => {
       }
       const saved = await storage.setSetting(key, n);
       if (key === 'session_idle_timeout_minutes') auth.clearIdleTimeoutCache();
+      if (key === 'media_upload_max_mb') clearMediaMaxMbCache();
       await auth.audit(req, 'SETTINGS_CHANGE', { target: `${key}: ${current} -> ${saved}` });
       return res.json({ key, value: saved });
     }
@@ -1807,11 +1838,12 @@ app.delete('/api/events/:id/feedback/:nip', EVENT_MANAGER, async (req, res) => {
 });
 
 // 6. Media Gallery Uploads
-app.post('/api/events/:id/media', EVENT_MANAGER, (req, res, next) => {
-  mediaUpload.single('mediaFile')(req, res, (err) => {
+app.post('/api/events/:id/media', EVENT_MANAGER, async (req, res, next) => {
+  const maxMb = await getMediaMaxMb();
+  mediaUploaderFor(maxMb).single('mediaFile')(req, res, (err) => {
     if (!err) return next();
     if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(413).json({ error: `The file exceeds the ${MEDIA_MAX_MB} MB limit.` });
+      return res.status(413).json({ error: `The file exceeds the ${mediaLimitLabel(maxMb)} limit.`, max_mb: maxMb });
     }
     if (err.code === 'UNSUPPORTED_MEDIA_TYPE') {
       return res.status(415).json({ error: err.message });

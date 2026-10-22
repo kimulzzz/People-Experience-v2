@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(483-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(489-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (483 cases on SQL; v2.58.0 run 397/397, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (489 cases on SQL; v2.59.0 run 482/482, 7 skipped (event modules 8/24 only, media modules run); full JSON suite not re-run since v2.30.1) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (41 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
@@ -831,6 +831,15 @@ domain model, not just descriptive:
   `byDisplayNo`): "ID" columns -> "No.", sorted. Still `metric_id` on purpose: download file names/routes, file contents (CSV `metric_id`), 404 texts, audit "#<id>", SurveyImportModal
   hint "Metric ID (1 - 27)" (outdated). LIVE DB now has 26 metrics (metric 4 deleted 2026-10-22, audit `METRIC_DELETE`) - tests must not assume 27 (`LIVE_METRIC_IDS`/`liveSeedIds`/
   `isLiveMetric`). No DB change. Module 63 (4) + 13 tests adapted -> SQL 397/397, 16 skipped (suite 483 by count); JSON full suite not run.
+
+- **v2.59.0** (2026-10-23, see `CHANGELOG.md` [2.59.0], `docs/04`/`05` "Catatan v2.59.0", `docs/06`, `docs/07` §49): user: raise the Signature Program Events photo/video
+  upload limit; decided 1 GB as an Admin setting. New `px_app_settings.media_upload_max_mb` (whole MB 1-4096, default 1024, boot top-up never overwrites; Admin Parameters -> Journey Parameters
+  -> **Upload Limits** card, `src/utils/mediaLimit.js`; `PUT /api/admin/settings/media_upload_max_mb`, audit `SETTINGS_CHANGE`). `POST /api/events/:id/media` reads it per request
+  (`getMediaMaxMb`, 30 s cache cleared on save, `mediaUploaderFor(mb)`) -> no restart; 413 `{ error, max_mb }`. Env `MEDIA_MAX_MB` (was the source, 200) is only a fallback. Events page
+  shows "Max ... per file" and refuses bigger files client-side (limit read once on open). `vite.config.mjs` plugin `px-long-uploads` sets the Vite dev/preview `requestTimeout` to
+  `REQUEST_TIMEOUT_MS` (Node default 5 min cut long uploads). Gotchas: production reverse proxy must allow bodies >= the limit + long timeouts; no free-disk check (`server/uploads/`,
+  gitignored, not in the .bak); videos > ~2 h may exceed the 120-min transcript limit. Module 64 (6) -> SQL 482/482, 7 skipped (media modules RUN, 8/24 skipped; suite 489 by count);
+  JSON full suite not run. The developer's in-process JSON check rewrote `store.json` (restored from backup) - back it up first.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
