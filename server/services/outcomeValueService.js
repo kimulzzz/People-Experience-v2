@@ -414,7 +414,7 @@ async function importOutcomeXlsx(buffer, fileName, metric, { uploadedBy, year: r
         average_value: Math.round(avg * 10000) / 10000,
         average_label: averageLabel(v.rows),
         errors: [],
-        message: `${year} stored for metric ${metric.metric_id}: ${v.rows.length} month${v.rows.length === 1 ? '' : 's'} (${saved.inserted} new, ${saved.updated} updated${saved.deleted ? `, ${saved.deleted} removed` : ''}). ${averageLabel(v.rows)}: ${Math.round(avg * 100) / 100}${unit}.`
+        message: `${year} stored for "${metric.metric_name}": ${v.rows.length} month${v.rows.length === 1 ? '' : 's'} (${saved.inserted} new, ${saved.updated} updated${saved.deleted ? `, ${saved.deleted} removed` : ''}). ${averageLabel(v.rows)}: ${Math.round(avg * 100) / 100}${unit}.`
       };
     }
     return {
@@ -430,7 +430,7 @@ async function importOutcomeXlsx(buffer, fileName, metric, { uploadedBy, year: r
       periods,
       period_labels: labels,
       errors: [],
-      message: `${v.rows.length} monthly value${v.rows.length === 1 ? '' : 's'} stored for metric ${metric.metric_id} (${saved.inserted} new, ${saved.updated} updated): ${labels.join(', ')}.`
+      message: `${v.rows.length} monthly value${v.rows.length === 1 ? '' : 's'} stored for "${metric.metric_name}" (${saved.inserted} new, ${saved.updated} updated): ${labels.join(', ')}.`
     };
   } catch (e) {
     fs.unlink(filePath, () => {});

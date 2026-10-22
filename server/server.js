@@ -26,6 +26,7 @@ const socialMedia = require('./services/socialMediaService');
 const outcomeValues = require('./services/outcomeValueService');
 const metricParts = require('./services/metricPartsService');
 const partQuestions = require('./db/partQuestions');
+const { loadDisplayNumbers, withDisplayNo } = require('./db/metricNumbers');
 const { buildMetricHistory } = require('./services/metricHistoryService');
 const { isEssMetric } = require('./db/surveySource');
 const { getPendingUploadReminders, sendPendingUploadReminders, startReminderScheduler } = require('./services/reminderService');
@@ -140,12 +141,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.57.0' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.58.0' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.57.0',
+    version: '2.58.0',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',
@@ -602,8 +603,10 @@ app.get('/api/admin/parameters', async (req, res) => {
     // target_value_normalized converts each metric's raw target (e.g. 4.00 on a 1-5
     // Likert scale) into the same 0-100 scale as min_threshold, so Admin Parameters can
     // display Target and Threshold using one consistent unit instead of mixing scales.
+    const numbers = await loadDisplayNumbers(storage); // v2.58.0: display_no = the number the UI shows
     const metrics = (await storage.getMetrics()).map(m => ({
       ...m,
+      display_no: numbers.get(m.metric_id) ?? null,
       target_value_normalized: targetPercent(normalizeTarget(m, m))
     }));
     res.json({
@@ -858,13 +861,14 @@ app.post('/api/admin/survey-questions/:metric_id/reset', async (req, res) => {
 // Survey Upload Reminders — Periodic Data Update / Manual Survey Upload Deadline tracking
 app.get('/api/admin/upload-reminders', async (req, res) => {
   try {
-    const reminders = await getPendingUploadReminders();
+    const numbers = await loadDisplayNumbers(storage);
+    const reminders = withDisplayNo(await getPendingUploadReminders(), numbers);
     res.json({
       total_reminders: reminders.length,
       overdue_count: reminders.filter(r => r.status === 'OVERDUE').length,
       due_today_count: reminders.filter(r => r.status === 'DUE_TODAY').length,
       reminders,
-      history: await storage.getReminderLog(20)
+      history: withDisplayNo(await storage.getReminderLog(20), numbers)
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -980,7 +984,7 @@ app.get('/api/surveys/metrics', async (req, res) => {
   try {
     const gate = await auth.requirePicMetric(req, res, null, { required: false });
     if (!gate) return;
-    const metrics = (await storage.getMetrics()).filter(m => m.metric_type === 'SURVEY');
+    const metrics = withDisplayNo((await storage.getMetrics()).filter(m => m.metric_type === 'SURVEY'), await loadDisplayNumbers(storage));
     res.json(req.user.role === 'ADMIN' ? metrics : metrics.filter(m => gate.mine.some(p => p.metric_id === m.metric_id)));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1552,15 +1556,16 @@ app.get('/api/admin/part-questions', async (req, res) => {
   try {
     const parts = await storage.getMetricParts();
     const metrics = await storage.getMetrics();
+    const numbers = await loadDisplayNumbers(storage);
     const out = [];
     for (const [metricId, list] of metricParts.partsByMetric(parts)) {
       const m = metrics.find(x => x.metric_id === metricId);
       if (!m) continue;
       const views = [];
       for (const p of list) views.push(await partQuestionsView(p));
-      out.push({ metric_id: metricId, metric_name: m.metric_name, parts: views });
+      out.push({ metric_id: metricId, display_no: numbers.get(metricId) ?? null, metric_name: m.metric_name, parts: views });
     }
-    out.sort((a, b) => a.metric_id - b.metric_id);
+    out.sort((a, b) => a.display_no - b.display_no);
     res.json({ metrics: out, question_types: partQuestions.QUESTION_TYPES, max_text: partQuestions.MAX_QUESTION_TEXT, max_questions: partQuestions.MAX_QUESTIONS });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { X, Database, Download, Upload, History, CheckCircle2, AlertCircle, FileSpreadsheet, Loader2 } from 'lucide-react';
 import { monthName } from '../utils/months';
+import { metricNo } from '../utils/metricNumber';
 
 // Monthly values of an OUTCOME metric (v2.54.0, Admin only - every route is under /api/admin, the server answers 403 to a User).
 // 1. Template (.xlsx: Year | Month | Value | Notes), 2. Upload (validated as a whole: any error -> nothing stored, every
@@ -84,7 +85,7 @@ export default function OutcomeUploadModal({ isOpen, metric, onClose, onUploaded
               <Database className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-extrabold text-[#231F20]">Monthly Values: Metric {metric.metric_id}</h3>
+              <h3 className="text-base font-extrabold text-[#231F20]">Monthly Values: Metric {metricNo(metric)}</h3>
               <p className="text-[11px] text-gray-500 font-medium">
                 {metric.metric_name} • one bankwide value per month{metric.unit ? ` (${metric.unit})` : ''}. {isYearly ? 'YTD uses the average of the uploaded months in the period, MTD that month.' : 'YTD uses the latest month in the period, MTD that month.'}
               </p>

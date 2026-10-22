@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    62 MODUL PENGUJIAN    │     479 AUTOMATED TESTS     │       100% PASS RATE          │
+│    63 MODUL PENGUJIAN    │     483 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -1427,3 +1427,26 @@ Bagian live (5, 7, 12, 19, 20) hanya dibaca; edit/upload memakai metrik fixture 
 Run suite penuh SQL (developer, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **393/393 lulus, 0 gagal, 16 tes dilewati**. Suite JSON penuh tidak dijalankan. Ukuran suite = **479** menurut hitungan: `await runTest(` statis 466 (v2.56.0: 458; +8 = Modul 62) + selisih 13 yang sama sejak v2.30.2. 393 + 16 = 409; 70 tes sisanya ada di modul media/event yang di-skip.
 
 **Tidak diuji otomatis**: tampilan tab Summary Questions; salah posisi header biru (fill) metrik 12.
+
+## 48. v2.58.0 - Modul 63: nomor tampilan metrik (`display_no`)
+
+### Modul 63 - nomor 1..N tanpa celah dalam urutan journey (4 tes)
+
+Nomor yang diharapkan dihitung ulang dari `GET /api/admin/parameters` (journey menurut `journey_id`, lalu `metric_id`). Metrik sementara dibuat lewat `POST /api/admin/metrics` dan dihapus di `finally`.
+
+| # | Jenis | Skenario |
+| :--- | :--- | :--- |
+| 1 | Positif | `display_no` = 1..N tanpa celah dalam urutan journey lalu `metric_id`, dan sama di calculate, detail, admin parameters, survey metrics, alerts dan part questions |
+| 2 | Positif | Metrik baru di journey tengah (journey ke-3 menurut `journey_id`) = nomor terakhir journey itu; metrik journey sebelumnya tidak berubah, journey sesudahnya +1 |
+| 3 | Positif | Hapus metrik menutup celah: metrik sesudahnya mengambil nomornya, journey sesudahnya mundur, nomor yang dihapus hilang |
+| 4 | Negatif | `display_no` tidak pernah kembar dan tetap di 1..N; metrik tak dikenal tidak punya detail (404) |
+
+### Modul lama disesuaikan (jumlah tes tidak berubah)
+
+13 tes lama tidak lagi mengasumsikan 27 metrik atau keberadaan metrik 4 (Admin menghapus metrik 4 live pada 2026-10-22): daftar `LIVE_METRIC_IDS` diambil dari `/api/admin/parameters` saat start, dengan helper `liveSeedIds(max)` / `isLiveMetric(id)`; tes `last_data_date` Modul 21 memakai metrik sementara; Modul 55/60/61 melewati metrik yang sudah dihapus.
+
+### Hasil
+
+Run suite penuh SQL (developer, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **397/397 lulus, 0 gagal, 16 tes dilewati**. Suite JSON penuh tidak dijalankan. Ukuran suite = **483** menurut hitungan: `await runTest(` statis 470 (v2.57.0: 466; +4 = Modul 63) + selisih 13 yang sama sejak v2.30.2. 397 + 16 = 413; 70 tes sisanya ada di modul media/event yang di-skip.
+
+**Tidak diuji otomatis**: tampilan kolom "No." dan label "Metric n" di UI.

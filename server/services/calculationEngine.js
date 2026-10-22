@@ -9,6 +9,7 @@ const { readTierConfig, tieredScore } = require('../db/scoreTiers');
 const { isOutcomeUploadMetric, evidenceTypeOf, selectOutcomeValue, loadLastUpdateContext, lastUpdateFor, aggregationOf } = require('./outcomeValueService');
 const { isDataNotAvailable, DATA_NOT_AVAILABLE_REASON } = require('../db/dataStatus');
 const { partsByMetric, compositeValue } = require('./metricPartsService');
+const { displayNumberMap, loadDisplayNumbers } = require('../db/metricNumbers');
 
 // Default year for YTD/unparseable period requests, derived from the real server clock
 // instead of a hardcoded literal — this dataset happens to be seeded for 2026 (today's real
@@ -730,6 +731,9 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
       } : {})
     };
   }));
+  // v2.58.0: the number the UI shows (position in journey order, no gaps) - metric_id stays the key
+  const displayNumbers = displayNumberMap(metrics, journeys);
+  enrichedMetrics.forEach(m => { m.display_no = displayNumbers.get(m.metric_id) ?? null; });
 
   // 2. Separate Active Survey vs Outcome metrics (Excluding Disabled non-employee metrics when directorate is selected,
   // and - v2.36.0 - NO_DATA survey metrics, which have no value in this window)
@@ -889,7 +893,7 @@ async function getMetricDetail(metricId, filterInput = 'YTD') {
   if (!detail) return detail;
   // v2.54.0: the latest data period of the metric (bankwide, any window) - "Last update: <Month Year>"
   const metric = (await storage.getMetrics()).find(m => m.metric_id === detail.metric_id);
-  const out = { ...detail, ...lastUpdateFor(metric, await loadLastUpdateContext()) };
+  const out = { ...detail, ...lastUpdateFor(metric, await loadLastUpdateContext()), display_no: (await loadDisplayNumbers(storage)).get(detail.metric_id) ?? null };
   // v2.55.0: an OUTCOME composite metric (19, 20) before its first summary upload: static value, but the summary upload is offered
   if (!out.data_upload && (await storage.getMetricParts(metric.metric_id)).length) {
     Object.assign(out, { data_upload: 'PART_SUMMARY', outcome_upload: false, evidence_type: null, parts: [], composite: null });

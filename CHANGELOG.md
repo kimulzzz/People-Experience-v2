@@ -2,6 +2,35 @@
 
 Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Management & Scoring System dicatat di dalam dokumen ini mengikuti standar [Semantic Versioning](https://semver.org/).
 
+## [2.58.0] - 2026-10-23
+
+### 🔢 Nomor tampilan metrik tanpa celah (Changed)
+
+- **Permintaan user**: Admin menghapus metrik #4; nomor yang tampil harus menutup celahnya (#5 tampil sebagai #4, dst.); metrik baru di suatu journey (mis. Belong) menjadi nomor terakhir journey itu dan journey sesudahnya bergeser satu. ID internal tetap kunci backend dan TIDAK ditampilkan di UI (user setuju `metric_id` numerik tetap tersembunyi; kode internal "Journey-n" sempat dibahas lalu dibatalkan karena perubahannya lebih besar).
+- **Penyebab**: UI menampilkan `metric_id` apa adanya, jadi metrik yang dihapus meninggalkan celah dan metrik baru (id = max + 1) selalu bernomor paling akhir, di journey mana pun.
+- **Perbaikan backend**: field baru `display_no` = posisi 1-based semua metrik yang ADA, diurutkan menurut `journey_id` lalu `metric_id` (urutan `journey_id` = urutan journey di aplikasi; `px_journeys.display_order` tidak dipakai). Dihitung di `server/db/metricNumbers.js` baru (`displayNumberMap`, `loadDisplayNumbers`, `withDisplayNo`; metrik dengan journey tak dikenal di urutan terakhir, metrik yang sudah tidak ada -> `null`). Dikirim oleh:
+
+  | Endpoint | Letak `display_no` |
+  | :--- | :--- |
+  | `GET /api/metrics/calculate` | setiap metrik (juga di rollup journey) |
+  | `GET /api/metrics/:id/detail` | objek detail |
+  | `GET /api/alerts` | setiap alert |
+  | `GET /api/admin/parameters` | setiap metrik |
+  | `GET /api/surveys/metrics` | setiap metrik SURVEY |
+  | `GET /api/admin/part-questions` | setiap metrik; daftar diurutkan menurut `display_no` |
+  | `GET /api/admin/upload-reminders` | setiap pengingat dan baris `history` |
+  | `GET /api/admin/users` | `pic_metrics[]` |
+  | Hasil upload survei | `affected_metrics[]` |
+
+- **Perbaikan frontend**: helper `src/utils/metricNumber.js` (`metricNo`, `byDisplayNo`). Kolom "ID" menjadi **"No."** dan diurutkan menurut nomor di Explore Metrics (`Calculator.jsx`), Admin Parameters, `WeightsModal.jsx`, `AdminSettingsModal.jsx`; chip Dashboard "`<n> - nama`"; header detail "Metric n"; dropdown Manage Questions / `SurveyImportModal.jsx` / Summary Questions diurutkan dan bernomor; judul modal "Monthly Values: Metric n" / "Summary Upload: Metric n"; riwayat Email Settings; Manage Users "Metric PIC"; pesan sukses upload nilai OUTCOME (`outcomeValueService.js`) kini menyebut nama metrik, bukan `metric_id`.
+- **Sengaja tetap memakai `metric_id`**: nama file & route unduhan (`Template_..._Metric_<id>`), isi file (sel pertama "Metric <id> - ...", kolom CSV `metric_id`), teks 404, target audit "#<id>", petunjuk `SurveyImportModal` "Metric ID (1 - 27)" (teks usang, belum diganti).
+- **Data live**: metrik 4 dihapus Admin pada 2026-10-22 (audit `METRIC_DELETE`, cascade) -> 26 metrik; metrik lama #5 kini tampil sebagai 4. Tidak ada perubahan DB/skema.
+- **Tes**: Modul 63 (4 tes: nomor 1..N tanpa celah dan sama di semua endpoint; metrik baru di journey tengah = nomor terakhir journey itu, journey sesudahnya +1; hapus menutup celah; negatif: tidak ada nomor kembar/di luar 1..N, metrik tak dikenal 404). 13 tes lama disesuaikan dengan daftar metrik live (`LIVE_METRIC_IDS` / `liveSeedIds` / `isLiveMetric` menggantikan asumsi 27 metrik atau metrik 4; tes `last_data_date` Modul 21 memakai metrik sementara; Modul 55/60/61 melewati metrik yang sudah dihapus). Suite penuh SQL (developer, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **397/397 lulus, 0 gagal, 16 dilewati**; ukuran suite 483 menurut hitungan (479 + 4). Suite JSON penuh tidak dijalankan.
+- **Browser**: dicek main session di :5000 (v2.58.0): Explore Metrics berkolom "No.", 26 baris urut 1-26 tanpa celah (1-3 Arrival tetap, Candidate Experience = 4, Pre-boarding = 5, Day 1 Onboarding = 6, Day 90 Onboarding = 7, ..., Intent to Stay = 26)
+- **Catatan**: nomor tampilan berubah setiap kali metrik dihapus/ditambah, jadi nomor di laporan/tangkapan layar lama bisa tidak cocok lagi; nama file template/evidence dan isi CSV tetap memakai `metric_id` (bisa berbeda dari nomor di layar).
+
+---
+
 ## [2.57.0] - 2026-10-23
 
 ### 📝 Menu Summary Questions: pertanyaan template ringkasan diatur Admin (Added / Changed)

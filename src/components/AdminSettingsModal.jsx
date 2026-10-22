@@ -12,6 +12,7 @@ import {
   Sparkles,
   HelpCircle
 } from 'lucide-react';
+import { metricNo, byDisplayNo } from '../utils/metricNumber';
 
 export default function AdminSettingsModal({ 
   isOpen, 
@@ -43,9 +44,9 @@ export default function AdminSettingsModal({
   const metrics = calculationData?.metrics || [];
   const journeys = calculationData?.journeys || [];
 
-  const filteredMetrics = activeJourneyTab === 'ALL'
+  const filteredMetrics = (activeJourneyTab === 'ALL'
     ? metrics
-    : metrics.filter(m => m.journey_id === parseInt(activeJourneyTab));
+    : metrics.filter(m => m.journey_id === parseInt(activeJourneyTab))).slice().sort(byDisplayNo);
 
   const handleChange = (metricId, field, value) => {
     setEditableTargets(prev => ({
@@ -191,7 +192,7 @@ export default function AdminSettingsModal({
             <table className="w-full text-left text-xs">
               <thead className="bg-gray-100/90 text-gray-700 font-bold uppercase tracking-wider border-b border-gray-200">
                 <tr>
-                  <th className="py-3 px-3 w-12 text-center">ID</th>
+                  <th className="py-3 px-3 w-12 text-center">No.</th>
                   <th className="py-3 px-3 min-w-[240px]">Metric Name & PIC</th>
                   <th className="py-3 px-3 w-28 text-center">Type & Scale</th>
                   <th className="py-3 px-3 w-36">Target Value (Num)</th>
@@ -210,7 +211,7 @@ export default function AdminSettingsModal({
                   return (
                     <tr key={m.metric_id} className="hover:bg-gray-50/70 transition">
                       <td className="py-3 px-3 text-center font-bold text-gray-500">
-                        {m.metric_id}
+                        {metricNo(m)}
                       </td>
                       <td className="py-3 px-3">
                         <div className="font-bold text-gray-900 leading-snug">

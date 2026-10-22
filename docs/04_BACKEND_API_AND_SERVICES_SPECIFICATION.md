@@ -605,6 +605,16 @@ Pengujian: `docs/07` §31 (Modul 46).
 
 ---
 
+## Catatan v2.58.0 - Nomor tampilan metrik (`display_no`)
+
+`metric_id` tetap kunci backend (route, storage, kolom CSV `metric_id`, nama file unduhan, target audit). Field baru `display_no` = nomor yang ditampilkan UI: posisi 1-based semua metrik yang ada, diurutkan `journey_id` lalu `metric_id` (`px_journeys.display_order` tidak dipakai). Metrik dihapus -> nomor sesudahnya maju (tanpa celah); metrik baru (id max + 1) -> nomor terakhir journey-nya, journey sesudahnya +1.
+
+- **`server/db/metricNumbers.js`** (baru): `displayNumberMap(metrics, journeys)` -> `Map(metric_id -> display_no)` (journey tak dikenal di akhir); `loadDisplayNumbers(storage)` membaca metrik + journey dari backend aktif; `withDisplayNo(list, numbers)` menyalin objek ber-`metric_id` dan menambah `display_no` (`null` bila metrik sudah tidak ada).
+- **Dikirim oleh**: `GET /api/metrics/calculate` (metrik + rollup journey, `calculationEngine.calculatePEIndex`), `GET /api/metrics/:id/detail`, `GET /api/alerts` (`alertEngine`), `GET /api/admin/parameters`, `GET /api/surveys/metrics`, `GET /api/admin/part-questions` (diurutkan menurut `display_no`), `GET /api/admin/upload-reminders` (+ `history`), `GET /api/admin/users` (`pic_metrics[]`, `authService`), hasil upload survei `affected_metrics[]` (`surveyImportService`).
+- Tidak ada endpoint, tabel, setting, atau env baru. Pengujian: `docs/07` §48 (Modul 63).
+
+---
+
 ## Catatan v2.57.0 - Summary Questions (pertanyaan template ringkasan)
 
 **Endpoint baru (Admin saja; USER 403, tanpa login 401)**:

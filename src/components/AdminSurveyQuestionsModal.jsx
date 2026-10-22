@@ -18,6 +18,7 @@ import {
   Check,
   ListOrdered
 } from 'lucide-react';
+import { metricNo, byDisplayNo } from '../utils/metricNumber';
 
 export default function AdminSurveyQuestionsModal({
   isOpen,
@@ -63,7 +64,7 @@ export default function AdminSurveyQuestionsModal({
       const res = await fetch('/api/surveys/metrics');
       if (res.ok) {
         const data = await res.json();
-        setSurveyMetrics(data);
+        setSurveyMetrics(Array.isArray(data) ? [...data].sort(byDisplayNo) : data);
       }
     } catch (err) {
       console.error('Error loading survey metrics:', err);
@@ -245,7 +246,7 @@ export default function AdminSurveyQuestionsModal({
             >
               {surveyMetrics.map(m => (
                 <option key={m.metric_id} value={m.metric_id}>
-                  {m.metric_id} — {m.metric_name} ({m.experience_owner || 'HR'})
+                  {metricNo(m)} — {m.metric_name} ({m.experience_owner || 'HR'})
                 </option>
               ))}
             </select>

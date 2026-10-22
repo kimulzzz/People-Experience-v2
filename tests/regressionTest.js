@@ -267,6 +267,11 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
 // through the Admin API (audited as test-run rows) and switched back at the end (the configuration guard also restores
 // px_metrics). Re-applied after every configuration restore; Module 60 switches them back to check the live state.
 const LEGACY_FIXTURE_METRICS = [4, 6, 8, 10, 23, 26];
+// v2.58.0: the metrics that exist when the run starts. An Admin may delete a seed metric (live: metric 4 was deleted in Admin
+// Parameters), so the count / id assertions on the 27 seed metrics read this list instead of assuming all 27 still exist.
+let LIVE_METRIC_IDS = [];
+const liveSeedIds = (max = 27) => LIVE_METRIC_IDS.filter(id => id <= max);
+const isLiveMetric = id => LIVE_METRIC_IDS.includes(id);
 let legacyFixturesOn = [];
 async function setLegacyFixtures(on) {
   if (on) {
@@ -297,6 +302,7 @@ async function runRegressionSuite() {
     process.exit(2);
   }
   await setupSuiteLogin();
+  LIVE_METRIC_IDS = (await (await fetch(`${BASE_URL}/api/admin/parameters`)).json()).metrics.map(m => m.metric_id);
   await startConfigGuard();
   try {
     await setLegacyFixtures(true);
@@ -336,7 +342,7 @@ async function runAllModules() {
     assert(pxIndex > 0 && pxIndex <= 100, 'PX Index must be between 0 and 100');
     assert(data.survey_index > 0, 'Survey index must exist');
     assert(data.outcome_index > 0, 'Outcome index must exist');
-    assert.strictEqual(data.metrics.length, 27, 'Total metrics must be 27');
+    assert.strictEqual(data.metrics.length, LIVE_METRIC_IDS.length, 'Total metrics must be every existing metric (27 seed metrics minus those an Admin deleted)');
     assert.strictEqual(data.journeys.length, 5, 'Total journeys must be 5');
     assert.strictEqual(data.checkpoints.length, 17, 'Total checkpoints must be 17');
     
@@ -494,7 +500,7 @@ async function runAllModules() {
     const data = await res.json();
     const targets = data.targets || data;
     const totalCount = Array.isArray(targets) ? targets.length : Object.keys(targets).length;
-    assert.strictEqual(totalCount, 27, 'Should have targets for all 27 metrics');
+    assert.strictEqual(totalCount, LIVE_METRIC_IDS.length, 'Should have targets for every existing metric');
   });
 
   await runTest('Admin update custom targets and min threshold', async () => {
@@ -949,7 +955,7 @@ async function runAllModules() {
 
     // Metrics 1 to 5: not disabled, flagged as bankwide values, equal to the bankwide view
     const nonEmpMetrics = data.metrics.filter(m => m.metric_id <= 5);
-    assert.strictEqual(nonEmpMetrics.length, 5);
+    assert.strictEqual(nonEmpMetrics.length, liveSeedIds(5).length);
     nonEmpMetrics.forEach(m => {
       assert.strictEqual(m.is_disabled, false, `Metric #${m.metric_id} must not be exempted`);
       assert.strictEqual(m.excluded_from_index, false, `Metric #${m.metric_id} must count in the index`);
@@ -997,7 +1003,7 @@ async function runAllModules() {
     const data = await res.json();
     assert.strictEqual(data.journeys.length, 5);
     assert.strictEqual(data.checkpoints.length, 17);
-    assert.strictEqual(data.metrics.length, 27);
+    assert.strictEqual(data.metrics.length, LIVE_METRIC_IDS.length);
   });
 
   await runTest('Update metric parameters (weight, target, threshold) via PUT /api/admin/metrics/:id', async () => {
@@ -1236,28 +1242,32 @@ async function runAllModules() {
 
   await runTest('[POSITIVE] Editing an OUTCOME metric\'s last_data_date via Admin persists and is reflected in calculation output', async () => {
     const newDate = '2026-08-15';
-    // v2.54.0: metric 4 (static snapshot) - metric 1 now takes uploaded monthly values, which set its date
-    const originalDate = (await (await fetch(`${BASE_URL}/api/admin/parameters`)).json()).metrics.find(m => m.metric_id === 4).last_data_date || '2026-03-23';
-    const resUpdate = await fetch(`${BASE_URL}/api/admin/metrics/4`, {
-      method: 'PUT',
+    // v2.54.0: was metric 4 (static snapshot) - metric 1 takes uploaded monthly values, which set its date. v2.58.0: the Admin
+    // deleted metric 4 live, so the check runs on a temporary static OUTCOME metric (deleted afterwards).
+    const created = await fetch(`${BASE_URL}/api/admin/metrics`, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ last_data_date: newDate })
+      body: JSON.stringify({ metric_name: 'REGRESSION last_data_date Metric', metric_type: 'OUTCOME', scale_type: 'QUOTA_COUNT', target_value: 100, target_display: 'min 100', raw_value: 40, requires_manual_upload: false })
     });
-    assert.strictEqual(resUpdate.status, 200);
-    const updated = await resUpdate.json();
-    assert.strictEqual(updated.last_data_date, newDate, 'Updated last_data_date must be persisted, not silently overridden by a hardcoded fallback');
+    assert.strictEqual(created.status, 201);
+    const tempId = (await created.json()).metric_id;
+    try {
+      const resUpdate = await fetch(`${BASE_URL}/api/admin/metrics/${tempId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ last_data_date: newDate })
+      });
+      assert.strictEqual(resUpdate.status, 200);
+      const updated = await resUpdate.json();
+      assert.strictEqual(updated.last_data_date, newDate, 'Updated last_data_date must be persisted, not silently overridden by a hardcoded fallback');
 
-    const resCalc = await fetch(`${BASE_URL}/api/metrics/calculate?period=YTD`);
-    const calc = await resCalc.json();
-    const m1 = calc.metrics.find(m => m.metric_id === 4);
-    assert.strictEqual(m1.last_survey_date, newDate, 'Calculation output must reflect the admin-edited last_data_date, confirming the value is read from storage, not a hardcoded map');
-
-    // Cleanup: restore the original value so it doesn't affect other tests / a later reset
-    await fetch(`${BASE_URL}/api/admin/metrics/4`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ last_data_date: originalDate })
-    });
+      const resCalc = await fetch(`${BASE_URL}/api/metrics/calculate?period=YTD`);
+      const calc = await resCalc.json();
+      const m1 = calc.metrics.find(m => m.metric_id === tempId);
+      assert.strictEqual(m1.last_survey_date, newDate, 'Calculation output must reflect the admin-edited last_data_date, confirming the value is read from storage, not a hardcoded map');
+    } finally {
+      await fetch(`${BASE_URL}/api/admin/metrics/${tempId}`, { method: 'DELETE' });
+    }
   });
 
   await runTest('[POSITIVE] Score Deficit Alerts aggregate verbatim feedback across ALL events, not one hardcoded event ID', async () => {
@@ -1798,7 +1808,7 @@ async function runAllModules() {
 
   await runTest('[POSITIVE] SQL backend only: health shows live row counts read from the database (survey responses, metrics, events, media)', async () => {
     if (healthDb.backend !== 'sql') return; // JSON store: nothing to check
-    assert.ok(healthDb.tables.metrics >= 27, 'metrics table must be populated');
+    assert.ok(healthDb.tables.metrics >= LIVE_METRIC_IDS.length && healthDb.tables.metrics > 0, 'metrics table must be populated');
     assert.ok(healthDb.tables.survey_responses > 0, 'survey responses must be populated');
     assert.ok(healthDb.tables.events >= 1, 'events table must be populated');
   });
@@ -2385,10 +2395,10 @@ async function runAllModules() {
   });
   const unitDeleteMetric = (id) => fetch(`${BASE_URL}/api/admin/metrics/${id}`, { method: 'DELETE' });
 
-  await runTest('[POSITIVE] Every one of the 27 metrics exposes a non-empty unit (calculate + admin parameters) and RATING_5 metrics read "/ 5"', async () => {
+  await runTest('[POSITIVE] Every existing metric exposes a non-empty unit (calculate + admin parameters) and RATING_5 metrics read "/ 5"', async () => {
     const calc = await (await fetch(`${BASE_URL}/api/metrics/calculate?period=YTD`)).json();
     const admin = (await (await fetch(`${BASE_URL}/api/admin/parameters`)).json()).metrics;
-    assert.strictEqual(calc.metrics.length, 27);
+    assert.strictEqual(calc.metrics.length, LIVE_METRIC_IDS.length);
     for (const m of [...calc.metrics, ...admin]) {
       assert.ok(typeof m.unit === 'string' && m.unit.trim().length > 0 && m.unit.length <= 30, `Metric ${m.metric_id} has no valid unit: ${JSON.stringify(m.unit)}`);
     }
@@ -2866,7 +2876,7 @@ async function runAllModules() {
       const adminAll = await (await adminJson('GET', '/api/metrics/calculate?period=YTD')).json();
       const adminDir = await (await adminJson('GET', `/api/metrics/calculate?period=YTD&directorate=${own}`)).json();
       const nonEmp = user.metrics.filter(m => m.is_employee_metric === false);
-      assert.ok(nonEmp.length >= 5);
+      assert.ok(nonEmp.length >= liveSeedIds(5).length);
       for (const m of nonEmp) {
         assert.strictEqual(m.is_disabled, false, `metric ${m.metric_id} must not be exempted for a USER`);
         const a = adminAll.metrics.find(x => x.metric_id === m.metric_id);
@@ -3601,7 +3611,7 @@ async function runAllModules() {
 
       await runTest('[POSITIVE] survey_source is filled for every metric: exactly the 11 ESS metrics are ESS, the other SURVEY metrics are SYSTEM, OUTCOME metrics are NULL; ESS metrics are manual-upload; calculate and detail expose it and detail.is_ess follows it', async () => {
         const params = (await aj('/api/admin/parameters')).metrics.filter(m => m.metric_id <= 27);
-        assert.strictEqual(params.length, 27);
+        assert.strictEqual(params.length, liveSeedIds().length);
         assert.deepStrictEqual(params.filter(m => m.survey_source === 'ESS').map(m => m.metric_id), ESS_IDS);
         const system = params.filter(m => m.metric_type === 'SURVEY' && m.survey_source === 'SYSTEM').map(m => m.metric_id);
         assert.deepStrictEqual(system, [2, 5, 6, 7, 8, 10, 12, 23, 26]);
@@ -7005,7 +7015,7 @@ async function runAllModules() {
         const dir = await aj50(`/api/metrics/calculate?${q}`);
         const bank = await aj50('/api/metrics/calculate?mode=YTD');
         const nonEmp = dir.metrics.filter(m => m.is_employee_metric === false);
-        assert.ok(nonEmp.length >= 5);
+        assert.ok(nonEmp.length >= liveSeedIds(5).length);
         for (const m of nonEmp) {
           const b = bank.metrics.find(x => x.metric_id === m.metric_id);
           assert.strictEqual(m.is_bankwide_value, true);
@@ -8578,7 +8588,7 @@ async function runAllModules() {
         assert.strictEqual(preExisting55, 0, 'the fixture years 2018 / 2097 / 2099 must be empty before the module runs (nothing of somebody else is touched)');
         assert.strictEqual((await q55('SELECT COUNT(*) AS n FROM dbo.px_recruitment_sla_by_unit WHERE metric_id = 1'))[0].n, 0);
         assert.strictEqual(await st55.removeMetric1SlaRows(), 0, 'a second cleanup removes nothing');
-        for (const [id, n] of [[3, 3], [4, 4], [14, 3]]) {
+        for (const [id, n] of [[3, 3], [4, 4], [14, 3]].filter(([id]) => isLiveMetric(id))) { // v2.58.0: a metric the Admin deleted is skipped
           const d = await (await fetch(`${BASE_URL}/api/metrics/${id}/detail?period=YTD`)).json();
           assert.strictEqual(d.operational_records.length, n, `metric ${id} keeps its ${n} drilldown rows`);
         }
@@ -10131,7 +10141,7 @@ async function runAllModules() {
     try {
       await runTest('[POSITIVE] Live: metrics 4, 6, 8, 10, 23, 26 are N/A ("Real data not available yet"), out of the Survey / Outcome index; their detail shows no records / responses / question scores', async () => {
         const calc = await (await fetch(`${BASE_URL}/api/metrics/calculate?mode=YTD`)).json();
-        for (const id of [4, 6, 8, 10, 23, 26]) {
+        for (const id of [4, 6, 8, 10, 23, 26].filter(isLiveMetric)) {
           const m = calc.metrics.find(x => x.metric_id === id);
           assert.strictEqual((await st60.getMetricById(id)).data_status, 'NOT_AVAILABLE', `metric ${id}`);
           assert.deepStrictEqual([m.status, m.not_applicable, m.not_applicable_reason, m.data_not_available, m.raw_value, m.normalized_score], ['NO_DATA', true, 'Real data not available yet', true, null, null], `metric ${id}`);
@@ -10142,8 +10152,10 @@ async function runAllModules() {
         assert.ok(Math.abs(calc.survey_index - expected) < 0.01, 'Survey Index without the N/A metrics');
         const d8 = await (await fetch(`${BASE_URL}/api/metrics/8/detail?mode=YTD`)).json();
         assert.deepStrictEqual([d8.not_applicable_reason, d8.responses.length, d8.questions_breakdown.length, d8.total_respondents, d8.current_raw_value], ['Real data not available yet', 0, 0, 0, null]);
-        const d4 = await (await fetch(`${BASE_URL}/api/metrics/4/detail?mode=YTD`)).json();
-        assert.deepStrictEqual([d4.operational_records.length, d4.status, d4.data_not_available], [0, 'NO_DATA', true]);
+        if (isLiveMetric(4)) { // the Admin deleted metric 4 live (v2.58.0)
+          const d4 = await (await fetch(`${BASE_URL}/api/metrics/4/detail?mode=YTD`)).json();
+          assert.deepStrictEqual([d4.operational_records.length, d4.status, d4.data_not_available], [0, 'NO_DATA', true]);
+        }
       });
 
       await runTest('[POSITIVE] The switch on a metric: ticked -> N/A and out of the Outcome Index (and back in when unticked, data kept); audited METRIC_UPDATE; bad value -> 400', async () => {
@@ -10300,7 +10312,7 @@ async function runAllModules() {
 
       await runTest('[POSITIVE] N/A metrics (data_status NOT_AVAILABLE, live 4, 6, 8, 10, 23, 26): History empty with the reason, while their evidence still holds the stored rows', async () => {
         let checked = 0;
-        for (const id of [4, 6, 8, 10, 23, 26]) {
+        for (const id of [4, 6, 8, 10, 23, 26].filter(isLiveMetric)) {
           if ((await st61.getMetricById(id)).data_status !== 'NOT_AVAILABLE') continue;
           const { status, body } = await history61(id, 'period=2026');
           assert.strictEqual(status, 200);
@@ -10647,6 +10659,108 @@ async function runAllModules() {
       if (user62) await st62.deleteUser(user62.user_id);
       for (const id of [...metricIds62].reverse()) await adminJson('DELETE', `/api/admin/metrics/${id}`);
       await pool62.close();
+    }
+  }
+
+  // --- MODULE 63 (v2.58.0): DISPLAY NUMBER OF A METRIC (display_no = position in journey order, no gaps; metric_id stays the key) ---
+  console.log('\n📦 MODULE 63: Metric display number - contiguous 1..N in journey order, closes the gap after a delete, a new metric is last of its journey (Positive & Negative Testing)');
+  {
+    const calc63 = async () => (await (await fetch(`${BASE_URL}/api/metrics/calculate?period=YTD`)).json());
+    const params63 = async () => (await (await fetch(`${BASE_URL}/api/admin/parameters`)).json());
+    const numbers63 = list => new Map(list.map(m => [m.metric_id, m.display_no]));
+    // Expected numbering from the raw lists: journeys by journey_id, metrics by metric_id inside the journey
+    const expected63 = (metrics, journeys) => {
+      const rank = new Map([...journeys].sort((a, b) => a.journey_id - b.journey_id).map((j, i) => [j.journey_id, i]));
+      const r = m => (rank.has(m.journey_id) ? rank.get(m.journey_id) : Number.MAX_SAFE_INTEGER);
+      return new Map([...metrics].sort((a, b) => r(a) - r(b) || a.metric_id - b.metric_id).map((m, i) => [m.metric_id, i + 1]));
+    };
+    const created63 = [];
+    try {
+      const base = await params63();
+      const baseNo = numbers63(base.metrics);
+
+      await runTest('[POSITIVE] display_no is 1..N without gaps in journey order (then metric_id) and equal in calculate, detail, admin parameters, survey metrics, alerts and part questions', async () => {
+        const calc = await calc63();
+        const exp = expected63(base.metrics, base.journeys);
+        assert.deepStrictEqual([...baseNo.values()].sort((a, b) => a - b), base.metrics.map((_, i) => i + 1), 'contiguous 1..N');
+        base.metrics.forEach(m => assert.strictEqual(m.display_no, exp.get(m.metric_id), `admin parameters metric ${m.metric_id}`));
+        calc.metrics.forEach(m => assert.strictEqual(m.display_no, baseNo.get(m.metric_id), `calculate metric ${m.metric_id}`));
+        const sample = base.metrics[base.metrics.length - 1];
+        const detail = await (await fetch(`${BASE_URL}/api/metrics/${sample.metric_id}/detail?period=YTD`)).json();
+        assert.strictEqual(detail.display_no, baseNo.get(sample.metric_id), 'detail');
+        const survey = await (await fetch(`${BASE_URL}/api/surveys/metrics`)).json();
+        assert.ok(survey.length > 0);
+        survey.forEach(m => assert.strictEqual(m.display_no, baseNo.get(m.metric_id), `survey metric ${m.metric_id}`));
+        const alerts = await (await fetch(`${BASE_URL}/api/alerts`)).json();
+        (Array.isArray(alerts) ? alerts : (alerts.alerts || [])).forEach(a => assert.strictEqual(a.display_no, baseNo.get(a.metric_id), `alert ${a.metric_id}`));
+        const pq = await (await fetch(`${BASE_URL}/api/admin/part-questions`)).json();
+        pq.metrics.forEach(m => assert.strictEqual(m.display_no, baseNo.get(m.metric_id), `part questions ${m.metric_id}`));
+        // a metric right after a missing metric_id carries the shifted (gap-free) number
+        const ids = base.metrics.map(m => m.metric_id).sort((a, b) => a - b);
+        const afterGap = ids.find((id, i) => i > 0 && id !== ids[i - 1] + 1);
+        if (afterGap) {
+          const m = base.metrics.find(x => x.metric_id === afterGap);
+          const before = base.metrics.filter(x => exp.get(x.metric_id) < exp.get(afterGap)).length;
+          assert.strictEqual(m.display_no, before + 1, `metric ${afterGap} after a gap`);
+        }
+      });
+
+      // A middle journey (the 3rd by journey_id) that has a checkpoint, and the later journeys' metrics
+      const journeys = [...base.journeys].sort((a, b) => a.journey_id - b.journey_id);
+      const mid = journeys[Math.min(2, journeys.length - 2)];
+      const later = base.metrics.filter(m => m.journey_id > mid.journey_id);
+      const cp = base.checkpoints.find(c => c.journey_id === mid.journey_id);
+      const firstLater = later.length ? later.reduce((a, b) => (baseNo.get(a.metric_id) < baseNo.get(b.metric_id) ? a : b)) : null;
+      const lastOfMid = base.metrics.filter(m => m.journey_id <= mid.journey_id).length; // number of the middle journey's last metric now
+      const addTemp = async name => {
+        const res = await adminJson('POST', '/api/admin/metrics', { metric_name: name, metric_type: 'OUTCOME', scale_type: 'QUOTA_COUNT', journey_id: mid.journey_id,
+          checkpoint_id: cp ? cp.checkpoint_id : undefined, target_value: 100, target_display: 'min 100', raw_value: 40, requires_manual_upload: false });
+        assert.strictEqual(res.status, 201, `create ${name}`);
+        const id = (await res.json()).metric_id;
+        created63.push(id);
+        return id;
+      };
+
+      await runTest('[POSITIVE] A new metric in a middle journey becomes the last number of that journey and every metric of the later journeys moves up by one', async () => {
+        assert.ok(cp && firstLater, 'fixture: middle journey with a checkpoint and later journeys with metrics');
+        const t1 = await addTemp('REGRESSION RT63 display no A');
+        const after = numbers63((await params63()).metrics);
+        assert.strictEqual(after.get(t1), lastOfMid + 1, 'temp metric = last of its journey');
+        assert.strictEqual(after.get(firstLater.metric_id), baseNo.get(firstLater.metric_id) + 1, 'first metric of the next journey shifted by one');
+        later.forEach(m => assert.strictEqual(after.get(m.metric_id), baseNo.get(m.metric_id) + 1, `later metric ${m.metric_id} shifted`));
+        base.metrics.filter(m => m.journey_id <= mid.journey_id).forEach(m => assert.strictEqual(after.get(m.metric_id), baseNo.get(m.metric_id), `earlier metric ${m.metric_id} unchanged`));
+        assert.strictEqual(numbers63((await calc63()).metrics).get(t1), lastOfMid + 1, 'calculate agrees');
+      });
+
+      await runTest('[POSITIVE] Deleting a metric closes its gap: the metric after it takes its number, later journeys move back, the deleted number is gone', async () => {
+        assert.strictEqual(created63.length, 1, 'fixture: first temp metric exists');
+        const [t1] = created63;
+        const t2 = await addTemp('REGRESSION RT63 display no B');
+        let now = numbers63((await params63()).metrics);
+        assert.deepStrictEqual([now.get(t1), now.get(t2)], [lastOfMid + 1, lastOfMid + 2]);
+        assert.strictEqual(now.get(firstLater.metric_id), baseNo.get(firstLater.metric_id) + 2);
+        assert.strictEqual((await adminJson('DELETE', `/api/admin/metrics/${t1}`)).status, 200);
+        created63.splice(created63.indexOf(t1), 1);
+        const list = (await params63()).metrics;
+        now = numbers63(list);
+        assert.ok(!now.has(t1), 'deleted metric has no number');
+        assert.strictEqual(now.get(t2), lastOfMid + 1, 'the metric after the deleted one takes its number');
+        assert.strictEqual(now.get(firstLater.metric_id), baseNo.get(firstLater.metric_id) + 1);
+        assert.deepStrictEqual([...now.values()].sort((a, b) => a - b), list.map((_, i) => i + 1), 'still contiguous');
+        assert.strictEqual((await fetch(`${BASE_URL}/api/metrics/${t1}/detail?period=YTD`)).status, 404, 'deleted metric detail 404');
+        assert.strictEqual((await adminJson('DELETE', `/api/admin/metrics/${t2}`)).status, 200);
+        created63.splice(created63.indexOf(t2), 1);
+        assert.deepStrictEqual(numbers63((await params63()).metrics), baseNo, 'back to the original numbering');
+      });
+
+      await runTest('[NEGATIVE] display_no never repeats and stays inside 1..N; an unknown metric has no detail (404)', async () => {
+        const list = (await params63()).metrics;
+        assert.strictEqual(new Set(list.map(m => m.display_no)).size, list.length, 'unique');
+        list.forEach(m => assert.ok(Number.isInteger(m.display_no) && m.display_no >= 1 && m.display_no <= list.length, `metric ${m.metric_id} number in 1..N`));
+        assert.strictEqual((await fetch(`${BASE_URL}/api/metrics/999999/detail?period=YTD`)).status, 404);
+      });
+    } finally {
+      for (const id of created63) await adminJson('DELETE', `/api/admin/metrics/${id}`);
     }
   }
 }

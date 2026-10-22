@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X, SlidersHorizontal, RotateCcw, Save } from 'lucide-react';
+import { metricNo, byDisplayNo } from '../utils/metricNumber';
 
 export default function WeightsModal({ isOpen, onClose, metrics, onSaveWeights }) {
   const [weights, setWeights] = useState({});
@@ -84,11 +85,11 @@ export default function WeightsModal({ isOpen, onClose, metrics, onSaveWeights }
 
         {/* Weights List */}
         <div className="space-y-2 max-h-96 overflow-y-auto pr-2 text-xs">
-          {metrics?.map((m) => (
+          {metrics?.slice().sort(byDisplayNo).map((m) => (
             <div key={m.metric_id} className="flex items-center justify-between p-2.5 bg-white hover:bg-gray-50 rounded-lg border border-gray-200">
               <div className="max-w-md">
                 <span className="text-[10px] font-bold text-gray-400 uppercase">
-                  {m.metric_id} • {m.metric_type}
+                  {metricNo(m)} • {m.metric_type}
                 </span>
                 <p className="font-bold text-gray-800 leading-snug">{m.metric_name}</p>
               </div>

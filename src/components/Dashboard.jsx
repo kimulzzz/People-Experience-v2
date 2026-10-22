@@ -23,6 +23,7 @@ import TrendChart from './TrendChart';
 import DirectoratePxPanel from './DirectoratePxPanel';
 import { useAuth } from '../utils/AuthContext';
 import { monthName } from '../utils/months';
+import { metricNo, byDisplayNo } from '../utils/metricNumber';
 
 // Derived from the real browser clock (not a frozen literal) — only used as a last-resort
 // fallback when App.jsx hasn't passed filterOptions yet.
@@ -46,7 +47,7 @@ function sortJourneyMetrics(list) {
   const rank = m => (m.is_disabled ? 4 : (STATUS_RANK[m.status] ?? 3));
   return [...(list || [])].sort((a, b) => rank(a) - rank(b)
     || (b.normalized_score ?? -1) - (a.normalized_score ?? -1)
-    || a.metric_id - b.metric_id);
+    || byDisplayNo(a, b));
 }
 
 export default function Dashboard({ 
@@ -361,7 +362,7 @@ export default function Dashboard({
                           }`}
                           title={
                             isDisabled
-                              ? `Metric ${m.metric_id} (${m.metric_name}) is disabled under the Directorate filter (Bankwide External).`
+                              ? `Metric ${metricNo(m)} (${m.metric_name}) is disabled under the Directorate filter (Bankwide External).`
                               : isNoData && m.not_applicable && m.not_applicable_reason
                                 ? `${m.metric_name}: N/A - ${m.not_applicable_reason} (not counted in the PX Index)`
                                 : `Click to view survey details and questions for ${m.metric_name}`
@@ -369,7 +370,7 @@ export default function Dashboard({
                         >
                           <span className="flex items-center space-x-1.5 min-w-0 text-left">
                             <StatusIcon className="w-3 h-3 shrink-0" />
-                            <span className={`truncate ${isDisabled ? 'line-through' : ''}`}>{m.metric_id} - {m.metric_name}</span>
+                            <span className={`truncate ${isDisabled ? 'line-through' : ''}`}>{metricNo(m)} - {m.metric_name}</span>
                             {m.is_bankwide_value && (
                               <span className="shrink-0 px-1 rounded bg-white/25 text-[8px] font-bold uppercase tracking-wide" title="Non-employee metric: shown and counted at its bankwide value">Bankwide</span>
                             )}

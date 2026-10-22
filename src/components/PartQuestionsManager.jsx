@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ListOrdered, Plus, Trash2, ArrowUp, ArrowDown, Save, RotateCcw, Loader2, AlertCircle, CheckCircle2, Info } from 'lucide-react';
+import { metricNo } from '../utils/metricNumber';
 
 // "Summary Questions" tab of Admin Parameters (v2.57.0, Admin only - the server answers 403 to a User). The questions of the
 // summary templates of the composite metrics (5, 7 = 4 parts, 12, 19, 20 - the files uploaded per part in Explore Metrics):
@@ -130,10 +131,10 @@ export default function PartQuestionsManager() {
               className="flex-1 min-w-[260px] bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-[var(--theme-base)]"
             >
               {metrics.map(m => (
-                <optgroup key={m.metric_id} label={`${m.metric_id} - ${m.metric_name}`}>
+                <optgroup key={m.metric_id} label={`${metricNo(m)} - ${m.metric_name}`}>
                   {m.parts.map(p => (
                     <option key={p.part_key} value={`${m.metric_id}|${p.part_key}`}>
-                      {m.metric_id} - {p.part_name} ({p.kind === 'SCORE_TABLE' ? 'no question columns' : `${p.questions.length} question${p.questions.length === 1 ? '' : 's'}`})
+                      {metricNo(m)} - {p.part_name} ({p.kind === 'SCORE_TABLE' ? 'no question columns' : `${p.questions.length} question${p.questions.length === 1 ? '' : 's'}`})
                     </option>
                   ))}
                 </optgroup>

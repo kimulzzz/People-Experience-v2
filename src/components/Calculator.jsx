@@ -27,6 +27,7 @@ import { monthName } from '../utils/months';
 import SocialMediaUploadModal from './SocialMediaUploadModal';
 import OutcomeUploadModal from './OutcomeUploadModal';
 import PartSummaryModal from './PartSummaryModal';
+import { metricNo, byDisplayNo } from '../utils/metricNumber';
 
 function normalizeDateString(dateVal) {
   if (!dateVal) return null;
@@ -132,7 +133,7 @@ export default function Calculator({
       if (!matchName && !matchOwner && !matchSource) return false;
     }
     return true;
-  });
+  }).sort(byDisplayNo);
 
   // Check scroll position to update scroll navigation buttons
   const checkScrollState = () => {
@@ -354,7 +355,7 @@ export default function Calculator({
             {/* Sticky Table Header */}
             <thead className="sticky top-0 z-20 shadow-xs">
               <tr className="bg-[var(--theme-deep)] text-[10.5px] font-extrabold text-white uppercase tracking-wider border-b border-white/10">
-                <th className={`py-3 px-2.5 w-10 text-center bg-[var(--theme-deep)]`}>ID</th>
+                <th className={`py-3 px-2.5 w-10 text-center bg-[var(--theme-deep)]`}>No.</th>
                 <th className={`py-3 px-2.5 min-w-[210px] max-w-[270px] bg-[var(--theme-deep)]`}>
                   Check Point & Metric
                 </th>
@@ -405,13 +406,13 @@ export default function Calculator({
                       }`}
                       title={
                         isDisabled
-                          ? `Metric ${m.metric_id} (${m.metric_name}) is disabled for Directorate calculations because it is a non-employee / external bankwide metric.`
-                          : `Click to view full drilldown for metric ${m.metric_id} (${m.metric_name})`
+                          ? `Metric ${metricNo(m)} (${m.metric_name}) is disabled for Directorate calculations because it is a non-employee / external bankwide metric.`
+                          : `Click to view full drilldown for metric ${metricNo(m)} (${m.metric_name})`
                       }
                     >
                       {/* ID */}
                       <td className={`py-3 px-2.5 text-center font-bold ${isDisabled ? 'text-gray-400' : 'text-[var(--theme-deep)] group-hover:text-[var(--theme-base)]'}`}>
-                        {m.metric_id}
+                        {metricNo(m)}
                       </td>
 
                       {/* Name & Checkpoint */}

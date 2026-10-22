@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../utils/AuthContext';
 import { isEssSurveyMetric, surveyTemplateFileName } from '../utils/surveySource';
+import { metricNo, byDisplayNo } from '../utils/metricNumber';
 
 export default function SurveyImportModal({ 
   isOpen, 
@@ -42,7 +43,7 @@ export default function SurveyImportModal({
       fetch('/api/surveys/metrics')
         .then(res => res.json())
         .then(data => {
-          const list = Array.isArray(data) ? data : [];
+          const list = Array.isArray(data) ? [...data].sort(byDisplayNo) : [];
           setSurveyMetrics(list);
           // no 'ALL' for a PIC: start on the pre-selected metric, else their first one
           if (!isAdmin && !preSelectedMetricId && list.length) setSelectedMetricId(String(list[0].metric_id));
@@ -228,7 +229,7 @@ export default function SurveyImportModal({
                 {isAdmin && <option value="ALL">🌟 Master Template: All {surveyMetrics.length} Survey Metrics (Complete)</option>}
                 {surveyMetrics.map(m => (
                   <option key={m.metric_id} value={m.metric_id}>
-                    {m.metric_id} - {m.metric_name} ({m.scale_type})
+                    {metricNo(m)} - {m.metric_name} ({m.scale_type})
                   </option>
                 ))}
               </select>
@@ -348,7 +349,7 @@ export default function SurveyImportModal({
                 {isAdmin && <option value="ALL">Auto-detect from `metric_id` column inside CSV</option>}
                 {surveyMetrics.map(m => (
                   <option key={m.metric_id} value={m.metric_id}>
-                    {m.metric_id} - {m.metric_name} ({m.scale_type})
+                    {metricNo(m)} - {m.metric_name} ({m.scale_type})
                   </option>
                 ))}
               </select>
@@ -467,7 +468,7 @@ export default function SurveyImportModal({
                       {uploadResult.affected_metrics.map(af => (
                         <div key={af.metric_id} className="flex items-center justify-between bg-white p-2 rounded border border-gray-200 text-[11px]">
                           <div>
-                            <span className="font-bold text-gray-800">{af.metric_id} - {af.metric_name}</span>
+                            <span className="font-bold text-gray-800">{metricNo(af)} - {af.metric_name}</span>
                             <span className="text-gray-400 block">{af.respondent_count} respondents</span>
                           </div>
                           <div className="text-right">

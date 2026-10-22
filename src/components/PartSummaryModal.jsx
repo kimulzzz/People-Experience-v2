@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { X, Layers, Download, Upload, FileText, History, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { monthName } from '../utils/months';
+import { metricNo } from '../utils/metricNumber';
 
 // Summary parts of a composite metric (v2.55.0, Admin only - every route is under /api/admin): metric 7 = Meet and Greet /
 // Welcome Session / Onboarding Survey Day 1 / Infrastructure & Application, metric 5 and 12 = one part. Per part:
@@ -87,7 +88,7 @@ export default function PartSummaryModal({ isOpen, metric, period, onClose, onUp
               <Layers className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-extrabold text-[#231F20]">Summary Upload: Metric {metric.metric_id}</h3>
+              <h3 className="text-base font-extrabold text-[#231F20]">Summary Upload: Metric {metricNo(metric)}</h3>
               <p className="text-[11px] text-gray-500 font-medium">
                 {metric.metric_name} • per part the average of its months with a value in the period{parts.length > 1 ? '; the metric = the average of the parts with a value (parts without data are N/A)' : ''}.
               </p>

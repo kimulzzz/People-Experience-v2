@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Mail, Send, Save, ShieldAlert, CheckCircle2, AlertCircle, Loader2, KeyRound, Trash2 } from 'lucide-react';
+import { metricNo } from '../utils/metricNumber';
 
 // "Email Settings": the sender account used for the Survey Upload Reminder emails to PICs.
 // Everything is stored in SQL Server (px_email_settings). The password is write-only: it is
@@ -310,7 +311,7 @@ export default function EmailSettingsModal({ isOpen, onClose, embedded = false }
                 <ul className="text-[11px] text-gray-700 space-y-1 max-h-32 overflow-y-auto">
                   {history.map(h => (
                     <li key={h.log_id} className="flex justify-between gap-2">
-                      <span>{h.sent_on} — metric #{h.metric_id}, data {h.expected_period} → {h.pic_email}</span>
+                      <span>{h.sent_on} — metric {metricNo(h)}, data {h.expected_period} → {h.pic_email}</span>
                       <span className={h.status === 'SENT' ? 'text-emerald-600 font-bold' : 'text-red-600 font-bold'}>{h.status}</span>
                     </li>
                   ))}

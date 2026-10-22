@@ -35,6 +35,7 @@ import EmailSettingsModal from './EmailSettingsModal';
 import UserManagementModal from './UserManagementModal';
 import DirectoryManager from './DirectoryManager';
 import PartQuestionsManager from './PartQuestionsManager';
+import { metricNo, byDisplayNo } from '../utils/metricNumber';
 
 // Converts a metric's raw Target Nilai (stored in its own native scale — e.g. 4.00 on a
 // RATING_5 1-5 scale) into the same 0-100 % scale as Min Threshold, mirroring the backend's
@@ -485,8 +486,8 @@ export default function AdminParametersModal({ isOpen, onClose, onParametersUpda
     }
   };
 
-  const handleDeleteMetric = async (metricId, metricName) => {
-    if (!window.confirm(`Are you sure you want to delete Metric ${metricId} - "${metricName}"?
+  const handleDeleteMetric = async (metricId, metricName, metricNumber) => {
+    if (!window.confirm(`Are you sure you want to delete Metric ${metricNumber} - "${metricName}"?
 
 All survey data (responses) and question settings of this metric will also be deleted.`)) return;
     setLoading(true);
@@ -496,7 +497,7 @@ All survey data (responses) and question settings of this metric will also be de
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || 'Failed to delete the Metric');
 
-      setSaveSuccess(`Metric ${metricId} deleted successfully.`);
+      setSaveSuccess(`Metric ${metricNumber} deleted successfully.`);
       setTimeout(() => setSaveSuccess(''), 3500);
       await fetchParameters();
       if (onParametersUpdated) onParametersUpdated();
@@ -548,7 +549,7 @@ All survey data (responses) and question settings of this metric will also be de
       return false;
     }
     return true;
-  });
+  }).sort(byDisplayNo);
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-150">
@@ -931,7 +932,7 @@ All survey data (responses) and question settings of this metric will also be de
                   <div className="flex items-center justify-between pb-3 mb-4 border-b border-gray-200">
                     <h3 className="text-sm font-bold text-gray-900 flex items-center space-x-2">
                       <Sparkles className="w-4 h-4 text-[var(--theme-base)]" />
-                      <span>{editingMetric ? `Edit Metric ${editingMetric.metric_id}: ${editingMetric.metric_name}` : 'Add New Metric'}</span>
+                      <span>{editingMetric ? `Edit Metric ${metricNo(editingMetric)}: ${editingMetric.metric_name}` : 'Add New Metric'}</span>
                     </h3>
                     <button
                       onClick={() => { setIsAddingMetric(false); setEditingMetric(null); }}
@@ -1406,7 +1407,7 @@ All survey data (responses) and question settings of this metric will also be de
                 <table className="min-w-full divide-y divide-red-900/10 text-left text-xs">
                   <thead className="bg-[var(--theme-deep)] font-bold text-white">
                     <tr>
-                      <th className="py-2.5 px-3 w-12 text-center">ID</th>
+                      <th className="py-2.5 px-3 w-12 text-center">No.</th>
                       <th className="py-2.5 px-3">Metric Name</th>
                       <th className="py-2.5 px-3">Journey</th>
                       <th className="py-2.5 px-3 text-center">Type</th>
@@ -1425,7 +1426,7 @@ All survey data (responses) and question settings of this metric will also be de
                       return (
                         <tr key={m.metric_id} className="odd:bg-white/50 hover:bg-red-100 transition">
                           <td className="py-2.5 px-3 text-center font-mono font-black text-gray-700">
-                            {m.metric_id}
+                            {metricNo(m)}
                           </td>
                           <td className="py-2.5 px-3">
                             <div className="font-bold text-gray-900">{m.metric_name}</div>
@@ -1516,7 +1517,7 @@ All survey data (responses) and question settings of this metric will also be de
                                 <Edit3 className="w-3.5 h-3.5" />
                               </button>
                               <button
-                                onClick={() => handleDeleteMetric(m.metric_id, m.metric_name)}
+                                onClick={() => handleDeleteMetric(m.metric_id, m.metric_name, metricNo(m))}
                                 className="p-1.5 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
                                 title="Delete Metric"
                               >

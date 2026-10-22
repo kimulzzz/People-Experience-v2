@@ -624,3 +624,12 @@ Metrik "Real data not available yet" (4, 6, 8, 10, 23, 26) menampilkan History k
 **History / Evidence**: data yang sudah diunggah tetap memakai teks pertanyaan saat upload. Bila dalam periode yang dipilih ada lebih dari satu set pertanyaan, tab History menampilkan banner kuning "Question set changed: ..." dan tabel/CSV berubah menjadi satu baris per pertanyaan dengan kolom `Question_Set` (Set 1, Set 2, ...) dan `File_Header`.
 
 Belum diatur saat rilis: Welcome Session dan Infrastructure & Application (metrik 7) belum punya pertanyaan - isi dulu sebelum mengunggah `2. Welcome Session.xlsx` (3 pertanyaan) / `4. Infrastructure & Application.xlsx` (6 pertanyaan).
+
+### Nomor metrik di layar (v2.58.0)
+
+Nomor metrik yang tampil (kolom **No.** di Explore Metrics / Admin Parameters, chip Dashboard, "Metric n" di detail) adalah urutan metrik per journey (Arrival, Connect, Belong, Contribute, Depart), bukan ID internal.
+
+- **Hapus metrik**: nomor sesudahnya maju satu, tidak ada celah (contoh live: metrik #4 dihapus 2026-10-22 -> metrik lama #5 kini tampil sebagai 4; total 26 metrik).
+- **Tambah metrik**: metrik baru menjadi nomor terakhir journey yang dipilih; semua metrik di journey sesudahnya bergeser +1.
+- **ID internal** tidak ditampilkan dan tidak berubah. Masih dipakai pada nama file unduhan (`Template_..._Metric_<id>`), isi file (sel pertama "Metric <id> - ...", kolom CSV `metric_id`) dan target Audit Trail ("#<id>") - jadi angka di nama file bisa berbeda dari nomor di layar.
+- Nomor di laporan atau tangkapan layar lama bisa tidak cocok lagi setelah ada metrik dihapus/ditambah.

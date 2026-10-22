@@ -41,6 +41,7 @@ import OutcomeUploadModal from './OutcomeUploadModal';
 import PartSummaryModal from './PartSummaryModal';
 import MetricHistoryTable from './MetricHistoryTable';
 import { tierBandsText, tierValue } from '../utils/scoreTiers';
+import { metricNo } from '../utils/metricNumber';
 
 function normalizeDateString(dateVal) {
   if (!dateVal) return null;
@@ -268,7 +269,7 @@ export default function MetricDetailModal({
             <div>
               <div className="flex items-center space-x-2 flex-wrap gap-1">
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-gray-200/80 text-gray-700">
-                  Metric {detailData?.metric_id || metricId}
+                  Metric {detailData ? metricNo(detailData) : ''}
                 </span>
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-red-50 text-[#ED1C24] border border-red-200/60">
                   {detailData?.journey_name || 'People Experience (PX)'}

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Users, Plus, Save, KeyRound, Loader2, AlertCircle, CheckCircle2, Copy, Lock, History, Trash2, Clock } from 'lucide-react';
 import { IDLE_TIMEOUT_CHANGED_EVENT } from './IdleSessionGuard';
 import { MENU_TABS, DEFAULT_USER_MENU_ACCESS } from '../utils/menuAccess';
+import { metricNo } from '../utils/metricNumber';
 
 // "Manage Users" (Admin only): accounts that may log in. Directorate / division choices come from the
 // directory in SQL Server (/api/directorates). Passwords are never shown except the one-time
@@ -360,7 +361,7 @@ export default function UserManagementModal({ isOpen, onClose, currentUserId, em
                     <td className="px-3 py-2"><div className="font-bold text-gray-900">{u.full_name}</div><div className="font-mono text-[10px] text-gray-500">{u.username}{u.email ? ` • ${u.email}` : ''}</div>
                       {(u.pic_metrics || []).length > 0 && (
                         <div className={`text-[10px] mt-0.5 ${u.is_active ? 'text-slate-600' : 'text-gray-400'}`} title="Assigned via the PIC Email in Admin Parameters">
-                          <b>Metric PIC:</b> {u.pic_metrics.map(m => `${m.metric_id} - ${m.metric_name}`).join('; ')}{!u.is_active && <span className="italic"> (inactive - not in effect)</span>}
+                          <b>Metric PIC:</b> {u.pic_metrics.map(m => `${metricNo(m)} - ${m.metric_name}`).join('; ')}{!u.is_active && <span className="italic"> (inactive - not in effect)</span>}
                         </div>
                       )}
                     </td>

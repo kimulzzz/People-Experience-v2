@@ -404,6 +404,13 @@ API kini bisa mengirim indeks dan skor `null` serta status `NO_DATA` (lihat `doc
 | `MetricDetailModal.jsx` | Nilai "—", "No survey data in this period - left out of the index", badge abu-abu "No Data", pertanyaan berlabel "No Data" tanpa skor. Catatan "Annual metric: shows the result of Jan–Sep 2026" untuk metrik tahunan pada filter MTD **dihapus di v2.37.0** (MTD kini selalu satu bulan, `period_window.basis = 'MONTH'`). |
 | `TrendChart.jsx` | Titik `null` menjadi celah (garis dipotong per segmen), tooltip "—". |
 
+## Catatan v2.58.0 - Kolom "No." (nomor tampilan metrik)
+
+- **`src/utils/metricNumber.js`** (baru): `metricNo(m)` = `m.display_no` dari server (`'-'` bila tidak ada); `byDisplayNo` = comparator urutan nomor. `metric_id` tetap dipakai untuk panggilan API dan React key, tidak pernah ditampilkan.
+- Kolom "ID" -> **"No."**, diurutkan menurut nomor: `Calculator.jsx` (Explore Metrics), `AdminParametersModal.jsx` (juga judul "Edit Metric n" dan konfirmasi hapus), `AdminSettingsModal.jsx`; `WeightsModal.jsx` menampilkan "`n` • tipe" dan diurutkan.
+- `Dashboard.jsx`: chip journey "`n` - nama" (urutan status tetap, nomor sebagai pengurut terakhir); `MetricDetailModal.jsx`: header "Metric n"; `OutcomeUploadModal.jsx` "Monthly Values: Metric n"; `PartSummaryModal.jsx` "Summary Upload: Metric n"; dropdown `AdminSurveyQuestionsModal.jsx`, `SurveyImportModal.jsx` (juga `affected_metrics` hasil upload) dan `PartQuestionsManager.jsx` bernomor dan terurut; `EmailSettingsModal.jsx` riwayat "metric n"; `UserManagementModal.jsx` "Metric PIC: n - nama".
+- Belum diganti: petunjuk `SurveyImportModal.jsx` "Metric ID (1 - 27)" (teks usang).
+
 ## Catatan v2.57.0 - Tab Summary Questions
 
 - **`AdminParametersModal.jsx`**: tab baru **Summary Questions** (ikon `ListOrdered`) setelah Directorates, sebelum Email Settings; `activeTab` `'summary-questions'`.

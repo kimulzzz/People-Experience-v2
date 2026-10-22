@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const storage = require('../db/storage');
 const { createRateLimiter } = require('./rateLimiter');
 const { normalizeScopes, scopeAllows, rowInScopes } = require('../db/scopeUtils');
+const { loadDisplayNumbers } = require('../db/metricNumbers');
 const { MENU_KEYS, DEFAULT_USER_MENU_ACCESS, effectiveMenuAccess, validateMenuAccessInput, hasMenu, describeMenuChange } = require('../db/menuAccess');
 
 const COOKIE_NAME = 'px_session';
@@ -605,10 +606,11 @@ function registerAuthRoutes(app) {
       // pic_metrics (read-only): the metrics each account is PIC of, i.e. whose pic_email equals the account's e-mail
       const users = await storage.listUsers();
       const metrics = (await storage.getMetrics()).filter(isPicMetric);
+      const numbers = await loadDisplayNumbers(storage); // v2.58.0
       res.json(users.map(u => ({
         ...toPublicUser(u),
         pic_metrics: u.role === 'USER' && u.email
-          ? metrics.filter(m => normEmail(m.pic_email) === normEmail(u.email)).map(m => ({ metric_id: m.metric_id, metric_name: m.metric_name }))
+          ? metrics.filter(m => normEmail(m.pic_email) === normEmail(u.email)).map(m => ({ metric_id: m.metric_id, display_no: numbers.get(m.metric_id) ?? null, metric_name: m.metric_name }))
           : []
       })));
     } catch (err) {

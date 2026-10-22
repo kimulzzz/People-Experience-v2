@@ -89,6 +89,7 @@ async function getAlertsAndRecommendations(scope = {}) {
     return {
       alert_id: `alt-${metric.metric_id}`,
       metric_id: metric.metric_id,
+      display_no: metric.display_no ?? null, // v2.58.0: the number the UI shows
       metric_name: metric.metric_name,
       journey_id: metric.journey_id,
       journey_name: journey ? journey.journey_name : '',
