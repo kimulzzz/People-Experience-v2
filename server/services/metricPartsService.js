@@ -375,11 +375,13 @@ const toCsv = (headers, rows) => BOM + [headers, ...rows].map(r => r.map(csvCell
 const dash = v => (v === null || v === undefined ? '-' : v);
 
 /**
- * Evidence CSV of one part: every stored row of the period (mp = { all: true } | { mode, year, month }). A part without event
+ * Evidence of one part: every stored row of the period (mp = { all: true } | { mode, year, month }). A part without event
  * columns: one line per row with every question column (header text of the upload). A part with event columns (metric 12):
- * one line per row, event and question (Event | Question | Value). Returns { fileName, csv }.
+ * one line per row, event and question (Event | Question | Value).
+ * v2.56.0: the TABLE first - the evidence CSV and the History tab of the metric detail are both built from it, so they cannot
+ * disagree. Returns { fileName, headers, rows (arrays), sortKeys (YYYYMM per row), identity: [] }.
  */
-async function generatePartEvidence(metric, part, mp) {
+async function partEvidenceTable(metric, part, mp) {
   const w = mp.all ? null : periodWindow(mp);
   const inside = r => {
     if (mp.all) return true;
@@ -401,13 +403,20 @@ async function generatePartEvidence(metric, part, mp) {
   const fileName = `Evidence_Metric_${metric.metric_id}_${part.part_key}_${tag}.csv`;
   if (rows.some(r => (r.questions || []).some(q => q.is_event))) {
     const body = [];
-    rows.forEach(r => (r.questions || []).forEach(q => body.push([...lead(r), q.event || '', q.is_event ? '(event score)' : q.label, dash(q.value), ...tail(r)])));
-    return { fileName, csv: toCsv([...LEAD, 'Event', 'Question', 'Value', ...TAIL], body) };
+    const sortKeys = [];
+    rows.forEach(r => (r.questions || []).forEach(q => { body.push([...lead(r), q.event || '', q.is_event ? '(event score)' : q.label, dash(q.value), ...tail(r)]); sortKeys.push(keyOf(r)); }));
+    return { fileName, headers: [...LEAD, 'Event', 'Question', 'Value', ...TAIL], rows: body, sortKeys, identity: [] };
   }
   const qCount = rows.reduce((mx, r) => Math.max(mx, (r.questions || []).length), 0);
   const labels = Array.from({ length: qCount }, (_, i) => ((rows.find(r => r.questions && r.questions[i]) || { questions: [{}] }).questions[i] || {}).label || `Q${i + 1}`);
   const body = rows.map(r => [...lead(r), ...Array.from({ length: qCount }, (_, i) => dash(((r.questions || [])[i] || {}).value)), ...tail(r)]);
-  return { fileName, csv: toCsv([...LEAD, ...labels, ...TAIL], body) };
+  return { fileName, headers: [...LEAD, ...labels, ...TAIL], rows: body, sortKeys: rows.map(keyOf), identity: [] };
+}
+
+// Evidence CSV of one part for a parsed period: { fileName, csv } (built from partEvidenceTable, like the History tab)
+async function generatePartEvidence(metric, part, mp) {
+  const t = await partEvidenceTable(metric, part, mp);
+  return { fileName: t.fileName, csv: toCsv(t.headers, t.rows) };
 }
 
 module.exports = {
@@ -420,5 +429,6 @@ module.exports = {
   validatePartSheet,
   importPartXlsx,
   generatePartTemplateXlsx,
+  partEvidenceTable,
   generatePartEvidence
 };

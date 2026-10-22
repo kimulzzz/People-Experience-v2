@@ -404,6 +404,11 @@ API kini bisa mengirim indeks dan skor `null` serta status `NO_DATA` (lihat `doc
 | `MetricDetailModal.jsx` | Nilai "—", "No survey data in this period - left out of the index", badge abu-abu "No Data", pertanyaan berlabel "No Data" tanpa skor. Catatan "Annual metric: shows the result of Jan–Sep 2026" untuk metrik tahunan pada filter MTD **dihapus di v2.37.0** (MTD kini selalu satu bulan, `period_window.basis = 'MONTH'`). |
 | `TrendChart.jsx` | Titik `null` menjadi celah (garis dipotong per segmen), tooltip "—". |
 
+## Catatan v2.56.0 - Tab History di detail metrik
+
+- **`MetricDetailModal.jsx`**: setiap metrik punya tab **History (n)** (data di balik tombol Evidence, dari `GET /api/metrics/:id/history` dengan periode detail); label "Internal Transaction Records" dan "Respondent Records & Answers" dihapus. Survei SYSTEM tetap memakai tabel responden lama (angka n = daftar responden detail, maks. 100); OUTCOME `OPERATIONAL` tetap memakai tabel records lama; jenis lain memakai `MetricHistoryTable`. Tabel absensi metrik 11 lama diganti tabel bersama. Metrik ringkasan tetap membuka "Summary Parts" lebih dulu. History diambil setiap kali modal dibuka; 403 -> "No access to the history of this metric.", error lain -> "The history could not be loaded."
+- **`MetricHistoryTable.jsx` (baru)**: kolom dari `columns` (yang `hidden` tidak tampil), urutan server (terbaru dulu), kotak "Search history..." di semua kolom, 50 baris per halaman, "Showing X-Y of Z" (+ "(filtered from n)" saat mencari), baris "Average" metrik 1/3 ditebalkan, `reason` ditampilkan untuk metrik N/A. Keterangan: "Only the rows of your own directorates are shown." (`scope_limited`); Admin: "All directorates (the Evidence download is not narrowed by the directorate filter)."; catatan kolom identitas disembunyikan bila `identity_hidden`.
+
 ## Catatan v2.55.0 - Upload ringkasan per bagian, rata-rata bulan & centang N/A
 
 - **`PartSummaryModal.jsx` (baru)**: judul "Summary Upload: Metric <id>"; pilih bagian, lalu Template / Evidence (periode terpilih) / Upload `.xlsx`; riwayat upload per bagian (nama file, SHA-256 di tooltip). Dibuka dari Explore Metrics (`Calculator.jsx`, tombol Template/Evidence/Upload pada baris `data_upload === 'PART_SUMMARY'`, Admin saja) dan dari detail metrik. Upload CSV per responden lama untuk metrik 5/7/12 tidak ditawarkan di UI.

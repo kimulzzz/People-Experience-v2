@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    60 MODUL PENGUJIAN    │     462 AUTOMATED TESTS     │       100% PASS RATE          │
+│    61 MODUL PENGUJIAN    │     471 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -1380,3 +1380,27 @@ Modul 5, 9, 18, 26, 35, 46, 50, 53, 55, 56 disesuaikan dengan aturan baru (metri
 Run suite penuh SQL (developer, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **376/376 lulus, 0 gagal, 16 tes dilewati**. Suite JSON penuh tidak dijalankan. Ukuran suite = **462** menurut hitungan: `await runTest(` statis 449 (v2.54.3: 425; +24 = Modul 58-60) + selisih 13 yang sama sejak v2.30.2. Catatan: angka 434 di §43 belum memasukkan 4 tes Modul 57 (v2.54.2), sehingga ukuran sebenarnya sebelum versi ini 438, bukan 434. 376 + 16 = 392; 70 tes sisanya ada di modul media/event yang di-skip (sama dengan selisih di v2.54.0: 434 - 364 = 70).
 
 **Tidak diuji otomatis**: tampilan UI (`PartSummaryModal`, tab Summary Parts, centang N/A); upload 7 file riil di database utama dilakukan main session lewat API, bukan oleh suite.
+
+---
+
+## 46. v2.56.0 - Modul 61: tab History (`GET /api/metrics/:id/history`)
+
+### Modul 61 - History = baris di balik unduhan Evidence per jenis (9 tes, 2 khusus SQL)
+
+| # | Jenis | Skenario |
+| :--- | :--- | :--- |
+| 1 | Positif | Metrik 14 (LATEST), 1 dan 3 (AVERAGE): `OUTCOME_VALUES`, baris sama dengan CSV evidence outcome (tahun YTD, satu bulan, ALL), terbaru dulu, satu baris "Average" di awal tiap tahun untuk metrik AVERAGE; `mode/year/month` = `period` |
+| 2 | Positif | Metrik 5, 7, 12, 19, 20: `PARTS`, baris = gabungan CSV evidence semua bagian (kolom Part), terbaru dulu; metrik 12 per event/pertanyaan |
+| 3 | Positif | Metrik ESS: `ESS`, baris = evidence ESS (semua periode, baris Directorate + Bankwide, partisipasi, index, skor pertanyaan) |
+| 4 | Positif | Metrik 2 (Admin): `SURVEY_RESPONSES`, responden sama dengan evidence survei (kolom identitas ada), tanggal survei terbaru dulu |
+| 5 | Positif | Metrik 11 (Admin): `EVENT_ATTENDANCE`, absensi sama dengan evidence (NIP/nama/e-mail ada) |
+| 6 | Positif | Metrik N/A (4, 6, 8, 10, 23, 26): History kosong dengan `reason`, evidence tetap berisi baris tersimpan |
+| 7 | Positif (SQL) | USER: survei tanpa kolom identitas (metrik 2 = semua baris), absensi metrik 11 tanpa identitas dan hanya direktorat sendiri, baris ESS/bagian hanya direktorat sendiri (tanpa Bankwide), nilai OUTCOME tidak berubah |
+| 8 | Negatif (SQL) | USER meminta direktorat di luar cakupan -> 403; unduhan evidence khusus Admin tetap 403 bagi USER |
+| 9 | Negatif | Tanpa login 401; id salah format 400; metrik tidak ada 404; periode salah 400 |
+
+### Hasil
+
+Run suite penuh SQL (developer, `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`): **385/385 lulus, 0 gagal, 16 tes dilewati**. Suite JSON penuh tidak dijalankan. Ukuran suite = **471** menurut hitungan: `await runTest(` statis 458 (v2.55.0: 449; +9 = Modul 61) + selisih 13 yang sama sejak v2.30.2. 385 + 16 = 401; 70 tes sisanya ada di modul media/event yang di-skip.
+
+**Diverifikasi developer di luar suite**: unduhan Evidence byte-identik dengan v2.55.1 untuk 27 metrik (periode 2026, 2026-09, 2025). **Tidak diuji otomatis**: tampilan UI tab History / `MetricHistoryTable`.

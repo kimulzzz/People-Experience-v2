@@ -25,6 +25,7 @@ const { importExitInterviews, resolveExitPeriod, getExitInterviewSummary, genera
 const socialMedia = require('./services/socialMediaService');
 const outcomeValues = require('./services/outcomeValueService');
 const metricParts = require('./services/metricPartsService');
+const { buildMetricHistory } = require('./services/metricHistoryService');
 const { isEssMetric } = require('./db/surveySource');
 const { getPendingUploadReminders, sendPendingUploadReminders, startReminderScheduler } = require('./services/reminderService');
 const emailSettingsService = require('./services/emailSettingsService');
@@ -138,12 +139,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.55.1' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.56.0' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.55.1',
+    version: '2.56.0',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',
@@ -449,6 +450,48 @@ app.get('/api/metrics/:id/detail', async (req, res) => {
       return res.json({ ...auth.redactRespondent(detail), respondent_data_hidden: true, can_upload: false });
     }
     res.json({ ...detail, can_upload: canUpload });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 2b-2. History of a metric (v2.56.0, the detail's "History" tab, formerly "Internal Transaction Records"): the rows behind
+// the metric's Evidence download for the period (?period= as the evidence: YTD | YYYY | YYYY-MM | ALL, or ?mode=&year=&month=
+// like the detail), built by the same functions as the evidence CSV. Every login may read it, limited like the detail:
+// identities (respondents, attendees) only for the Admin and the PIC of a SURVEY metric; a non-Admin gets only the rows
+// of their own directorates for employee metrics (aggregate rows of OUTCOME values stay bankwide); directorate outside the
+// scope -> 403. The Admin's rows are not narrowed by the directorate filter (the evidence download is not either).
+app.get('/api/metrics/:id/history', async (req, res) => {
+  try {
+    if (!/^\d{1,9}$/.test(String(req.params.id))) return res.status(400).json({ error: 'The metric id must be a metric number.' });
+    const scope = auth.scopeFilter(req, res);
+    if (scope === null) return;
+    const metric = await storage.getMetricById(parseInt(req.params.id, 10));
+    if (!metric) return res.status(404).json({ error: `Metric #${req.params.id} not found` });
+    const { mode, year, month } = req.query;
+    const period = req.query.period !== undefined && req.query.period !== ''
+      ? String(req.query.period)
+      : (mode === 'MTD' ? `${year || CURRENT_YEAR}-${String(month || '01').padStart(2, '0')}` : String(year || CURRENT_YEAR));
+    const mp = outcomeValues.parseEvidencePeriod(period);
+    if (!mp) return res.status(400).json({ error: 'period must be ALL, YTD, a year (YYYY) or a month (YYYY-MM).' });
+    const evidencePeriod = period.trim().toUpperCase();
+    const seesIdentity = await auth.canSeeRespondentData(req.user, metric.metric_id);
+    const scopes = req.user.role === 'ADMIN' || metric.is_employee_metric === false ? null : scope.scopes;
+    const history = await buildMetricHistory(metric, {
+      period: evidencePeriod, mp, seesIdentity, scopes,
+      // OPERATIONAL records come from the detail (same filter as the detail itself)
+      operational: async () => {
+        const detail = await getMetricDetail(metric.metric_id, {
+          period: mp.all || mp.mode !== 'MTD' ? (mp.all ? CURRENT_YEAR : mp.year) : `${mp.year}-${mp.month}`,
+          mode: !mp.all && mp.mode === 'MTD' ? 'MTD' : 'YTD',
+          year: mp.all ? CURRENT_YEAR : mp.year,
+          month: mp.all ? '01' : mp.month,
+          directorate: scope.directorate, sub_directorate: scope.sub_directorate, scopes: scope.scopes
+        });
+        return detail && !seesIdentity ? auth.redactRespondent(detail) : detail;
+      }
+    });
+    res.json(history);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -62,6 +62,8 @@ function normalizeDateString(dateVal) {
  * uploads from before v2.50.0 have none and use the current Manage Questions configuration). One question-set version
  * -> { kind: 'csv', content } (the CSV of before); several -> { kind: 'zip', buffer, fileName } with one CSV per
  * version + README.txt. The all-metrics export has no per-question columns and is always one CSV.
+ * v2.56.0: options.tablesOnly (one metric) -> { kind: 'tables', versions: [{ headers, rows (raw values), sortKeys, identity }] },
+ * the same rows the CSV holds (History tab of the metric detail).
  */
 async function generateSurveyEvidence(metric_id, period = 'YTD', options = {}) {
   const metrics = await storage.getMetrics();
@@ -120,7 +122,8 @@ async function generateSurveyEvidence(metric_id, period = 'YTD', options = {}) {
         : { questions: snapshotQuestions(questions), source: 'CURRENT_CONFIG', uploaded_at: (u && u.uploaded_at) || r.created_at };
     });
 
-    const csvOf = (questions, responses) => {
+    // v2.56.0: the TABLE first (raw values) - the CSV below and the History tab of the metric detail are both built from it
+    const tableOf = (questions, responses) => {
       // Headers with descriptive question headers
       const headers = [
         idHeader,
@@ -138,10 +141,7 @@ async function generateSurveyEvidence(metric_id, period = 'YTD', options = {}) {
         'Sumber_Data_Survei'
       ];
 
-      const rows = [];
-      rows.push(headers.join(','));
-
-      responses.forEach(r => {
+      const rows = responses.map(r => {
         const qScores = questions.map(q => {
           if (r.ratings && r.ratings[q.key] !== undefined) {
             return r.ratings[q.key];
@@ -155,32 +155,37 @@ async function generateSurveyEvidence(metric_id, period = 'YTD', options = {}) {
         const dirVal = r.university || r.applied_position || r.directorate || 'General';
         const divVal = r.major || r.recruitment_channel || r.division || 'General';
 
-        rows.push([
-          escapeCsv(identifier),
-          escapeCsv(name),
-          escapeCsv(email),
-          escapeCsv(dirVal),
-          escapeCsv(divVal),
-          escapeCsv(normalizeDateString(r.survey_date || r.created_at) || '-'),
-          escapeCsv(targetMetric.metric_id),
-          escapeCsv(targetMetric.metric_name),
-          ...qScores.map(escapeCsv),
-          escapeCsv(r.rating_score || (isScale5 ? 4.0 : 80)),
-          escapeCsv(isScale5 ? 'Skala 1.0 - 5.0' : 'Skala 0 - 100%'),
-          escapeCsv(r.verbatim_feedback || '-'),
-          escapeCsv(r.source || 'CIMB Niaga PE Survey System')
-        ].join(','));
+        return [
+          identifier,
+          name,
+          email,
+          dirVal,
+          divVal,
+          normalizeDateString(r.survey_date || r.created_at) || '-',
+          targetMetric.metric_id,
+          targetMetric.metric_name,
+          ...qScores,
+          r.rating_score || (isScale5 ? 4.0 : 80),
+          isScale5 ? 'Skala 1.0 - 5.0' : 'Skala 0 - 100%',
+          r.verbatim_feedback || '-',
+          r.source || 'CIMB Niaga PE Survey System'
+        ];
       });
-
-      // Return with UTF-8 BOM for Excel compatibility
-      return '\uFEFF' + rows.join('\r\n');
+      const sortKeys = responses.map(r => String(normalizeDateString(r.survey_date || r.created_at) || ''));
+      return { headers, rows, sortKeys, identity: [idHeader, nameHeader, emailHeader] };
     };
+    // Return with UTF-8 BOM for Excel compatibility (the header line is not escaped, as before)
+    const csvOf = t => '\uFEFF' + [t.headers.join(','), ...t.rows.map(r => r.map(escapeCsv).join(','))].join('\r\n');
 
-    if (versions.length <= 1) return { kind: 'csv', content: csvOf(versions[0] ? versions[0].questions : questions, responses) };
+    const tables = versions.length
+      ? versions.map(v => ({ ...v, ...tableOf(v.questions, v.items) }))
+      : [{ questions, items: [], ...tableOf(questions, []) }];
+    if (options.tablesOnly) return { kind: 'tables', versions: tables };
+    if (tables.length <= 1) return { kind: 'csv', content: csvOf(tables[0]) };
     const zip = await buildVersionedZip({
       baseName: `Evidence_Survey_Metric_${mId}_${period}`,
       title: `Survey evidence - metric ${mId} ${targetMetric.metric_name}, period ${period}`,
-      versions: versions.map(v => ({ ...v, csv: csvOf(v.questions, v.items) }))
+      versions: tables.map(v => ({ ...v, csv: csvOf(v) }))
     });
     return { kind: 'zip', ...zip };
 

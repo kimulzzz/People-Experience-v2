@@ -10173,6 +10173,200 @@ async function runAllModules() {
       if (m60) await adminJson('DELETE', `/api/admin/metrics/${m60.metric_id}`);
     }
   }
+
+  // --- MODULE 61 (v2.56.0): HISTORY TAB (GET /api/metrics/:id/history = the rows of the metric's Evidence download) ---
+  // Read-only on the live data; a temporary USER account (is_test_account) is created on SQL Server and deleted at the end.
+  console.log('\n📦 MODULE 61: History tab - the rows behind the Evidence download of each metric, per kind (Positive & Negative Testing)');
+  if (!skipModuleBlock(61)) {
+    const st61 = require('../server/db/storage');
+    const JSZip61 = require('jszip');
+    // RFC 4180 rows of a CSV text (quoted cells may hold commas / newlines); the header line is dropped
+    const csvRows61 = text => {
+      const t = String(text).replace(/^﻿/, '');
+      const rows = []; let row = [], cell = '', q = false;
+      for (let i = 0; i < t.length; i++) {
+        const c = t[i];
+        if (q) { if (c === '"') { if (t[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += c; }
+        else if (c === '"') q = true;
+        else if (c === ',') { row.push(cell); cell = ''; }
+        else if (c === '\n') { row.push(cell.replace(/\r$/, '')); rows.push(row); row = []; cell = ''; }
+        else cell += c;
+      }
+      if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+      return rows.slice(1);
+    };
+    // every data row of an evidence download (CSV, or the .zip of question-set versions)
+    const evidenceRows61 = async p => {
+      const res = await fetch(`${BASE_URL}${p}`);
+      assert.strictEqual(res.status, 200, `${p} -> ${res.status}`);
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (!/zip/.test(res.headers.get('content-type') || '')) return csvRows61(buf.toString('utf8'));
+      const zip = await JSZip61.loadAsync(buf);
+      const out = [];
+      for (const name of Object.keys(zip.files).filter(n => /\.csv$/i.test(n))) out.push(...csvRows61(await zip.files[name].async('string')));
+      return out;
+    };
+    const history61 = async (id, query = 'period=2026', cookie = null) => {
+      const res = cookie ? await rawFetch(`${BASE_URL}/api/metrics/${id}/history?${query}`, asUser(cookie)) : await fetch(`${BASE_URL}/api/metrics/${id}/history?${query}`);
+      return { status: res.status, body: await res.json().catch(() => null) };
+    };
+    const keys61 = h => h.columns.map(c => c.key);
+    let user61 = null;
+    let userCookie61 = null;
+    let userDir61 = null;
+    try {
+      await runTest('[POSITIVE] OUTCOME monthly values (metric 14 LATEST, metrics 1 / 3 AVERAGE): kind OUTCOME_VALUES, same rows as the outcome evidence CSV (YTD year, one month, ALL), newest first, one "Average" line heading each year for AVERAGE metrics; mode/year/month = period', async () => {
+        for (const id of [14, 1, 3]) {
+          for (const period of ['2026', '2026-09', 'ALL']) {
+            const { status, body } = await history61(id, `period=${period}`);
+            assert.strictEqual(status, 200, `metric ${id} ${period}`);
+            assert.strictEqual(body.kind, 'OUTCOME_VALUES', `metric ${id}`);
+            const ev = await evidenceRows61(`/api/admin/outcome-evidence/${id}?period=${period}`);
+            assert.strictEqual(body.total, ev.length, `metric ${id} ${period}: history ${body.total} vs evidence ${ev.length}`);
+            assert.strictEqual(body.rows.length, body.total);
+            assert.ok(['Period', 'Value', 'Notes', 'Source', 'Used_In_Score', 'Uploaded_By', 'Uploaded_At'].every(k => keys61(body).includes(k)), keys61(body).join('|'));
+            assert.deepStrictEqual(body.rows.map(r => String(r.Period)).sort(), ev.map(r => r[5]).sort(), `metric ${id} ${period}: same periods`);
+            const months = body.rows.filter(r => r.Period !== 'Average').map(r => r.Period);
+            assert.deepStrictEqual(months, [...months].sort().reverse(), 'newest first');
+            if (id !== 14) {
+              const years = [...new Set(months.map(p => p.slice(0, 4)))];
+              assert.strictEqual(body.rows.filter(r => r.Period === 'Average').length, years.length, `metric ${id}: one Average line per year`);
+              years.forEach(y => assert.strictEqual(body.rows.find(r => String(r.Year) === y).Period, 'Average', `metric ${id} ${y}: the Average line heads its year`));
+            }
+          }
+        }
+        const viaMode = await history61(14, 'mode=MTD&year=2026&month=09');
+        const viaPeriod = await history61(14, 'period=2026-09');
+        assert.deepStrictEqual(viaMode.body.rows, viaPeriod.body.rows);
+        assert.strictEqual(viaMode.body.period, '2026-09');
+        assert.strictEqual((await history61(14, 'mode=YTD&year=2026')).body.period, '2026');
+      });
+
+      await runTest('[POSITIVE] Summary-part metrics (5, 7, 12, 19, 20): kind PARTS, rows = the rows of every part evidence CSV together (Part column), newest first; metric 12 per event / question', async () => {
+        for (const id of [5, 7, 12, 19, 20]) {
+          const { status, body } = await history61(id, 'period=2026');
+          assert.strictEqual(status, 200);
+          assert.strictEqual(body.kind, 'PARTS', `metric ${id}`);
+          let ev = [];
+          for (const p of await st61.getMetricParts(id)) ev = ev.concat(await evidenceRows61(`/api/admin/metric-parts/${id}/${p.part_key}/evidence?period=2026`));
+          assert.strictEqual(body.total, ev.length, `metric ${id}: history ${body.total} vs evidence ${ev.length}`);
+          assert.ok(['Part', 'Directorate', 'Level', 'Year', 'Month', 'Part_Score', 'Jumlah_Responden', 'Periode'].every(k => keys61(body).includes(k)), `metric ${id}: ${keys61(body).join('|')}`);
+          assert.deepStrictEqual([...new Set(body.rows.map(r => r.Part))].sort(), [...new Set(ev.map(r => r[2]))].sort());
+          const periods = body.rows.map(r => r.Period);
+          assert.deepStrictEqual(periods, [...periods].sort().reverse(), `metric ${id}: newest first`);
+          if (id === 12 && body.total) assert.ok(['Event', 'Question', 'Value'].every(k => keys61(body).includes(k)), 'metric 12: per event / question');
+        }
+      });
+
+      await runTest('[POSITIVE] ESS metrics: kind ESS, rows = the ESS evidence rows (every period, Directorate + Bankwide rows, participation, index, question scores)', async () => {
+        const ess = (await st61.getMetrics()).filter(m => m.metric_type === 'SURVEY' && m.survey_source === 'ESS' && m.data_status !== 'NOT_AVAILABLE');
+        assert.ok(ess.length >= 1);
+        for (const m of ess) {
+          const { status, body } = await history61(m.metric_id, 'period=2026-09');
+          assert.strictEqual(status, 200);
+          assert.strictEqual(body.kind, 'ESS', `metric ${m.metric_id}`);
+          const ev = await evidenceRows61(`/api/surveys/evidence?metric_id=${m.metric_id}&period=2026-09`);
+          assert.strictEqual(body.total, ev.length, `metric ${m.metric_id}: history ${body.total} vs evidence ${ev.length}`);
+          assert.ok(['Directorate', 'Level', 'Participation', 'Index_%'].every(k => keys61(body).includes(k)));
+          assert.deepStrictEqual(body.rows.map(r => `${r.Directorate}|${r.Level}`).sort(), ev.map(r => `${r[0]}|${r[1]}`).sort());
+        }
+      });
+
+      await runTest('[POSITIVE] SYSTEM survey metric 2 (Admin): kind SURVEY_RESPONSES, same respondents as the survey evidence (identity columns included), newest survey date first', async () => {
+        for (const period of ['2026', '2026-09']) {
+          const { status, body } = await history61(2, `period=${period}`);
+          assert.strictEqual(status, 200);
+          assert.strictEqual(body.kind, 'SURVEY_RESPONSES');
+          assert.strictEqual(body.identity_hidden, false);
+          const ev = await evidenceRows61(`/api/surveys/evidence?metric_id=2&period=${period}`);
+          assert.strictEqual(body.total, ev.length, `${period}: history ${body.total} vs evidence ${ev.length}`);
+          assert.ok(['ID_Peserta', 'Nama_Peserta', 'Email_Peserta', 'Tanggal_Survei_Dilakukan'].every(k => keys61(body).includes(k)));
+          assert.deepStrictEqual(body.rows.map(r => String(r.ID_Peserta)).sort(), ev.map(r => r[0].replace(/^'/, '')).sort());
+          const dates = body.rows.map(r => r.Tanggal_Survei_Dilakukan);
+          assert.deepStrictEqual(dates, [...dates].sort().reverse());
+        }
+      });
+
+      await runTest('[POSITIVE] Metric 11 (Admin): kind EVENT_ATTENDANCE, same attendances as its evidence (NIP / name / e-mail included)', async () => {
+        for (const period of ['ALL', '2026']) {
+          const { status, body } = await history61(11, `period=${period}`);
+          assert.strictEqual(status, 200);
+          assert.strictEqual(body.kind, 'EVENT_ATTENDANCE');
+          const ev = await evidenceRows61(`/api/admin/outcome-evidence/11?period=${period}`);
+          assert.strictEqual(body.total, ev.length);
+          assert.ok(['NIP', 'Employee_Name', 'CIMB_Email', 'Event_Name', 'Directorate', 'Attendance_Timestamp'].every(k => keys61(body).includes(k)));
+        }
+      });
+
+      await runTest('[POSITIVE] N/A metrics (data_status NOT_AVAILABLE, live 4, 6, 8, 10, 23, 26): History empty with the reason, while their evidence still holds the stored rows', async () => {
+        let checked = 0;
+        for (const id of [4, 6, 8, 10, 23, 26]) {
+          if ((await st61.getMetricById(id)).data_status !== 'NOT_AVAILABLE') continue;
+          const { status, body } = await history61(id, 'period=2026');
+          assert.strictEqual(status, 200);
+          assert.deepStrictEqual([body.kind, body.total, body.rows.length, body.reason], ['NOT_AVAILABLE', 0, 0, 'Real data not available yet'], `metric ${id}`);
+          checked++;
+        }
+        assert.ok(checked >= 1, 'at least one N/A metric');
+        if ((await st61.getMetricById(8)).data_status === 'NOT_AVAILABLE') {
+          assert.ok((await evidenceRows61('/api/surveys/evidence?metric_id=8&period=2026')).length > 0, 'metric 8 keeps its data (evidence still downloadable)');
+        }
+      });
+
+      if (st61.backend === 'sql') {
+        // a USER scoped to one directorate that has ESS directorate rows
+        const essAdmin = (await history61(9, 'period=2026')).body;
+        userDir61 = (essAdmin.rows.find(r => r.Level === 'Directorate') || {}).Directorate;
+        const pw61 = require('crypto').randomBytes(9).toString('hex') + 'Aa1';
+        user61 = await st61.createUser({ is_test_account: true, username: `rt61u${Date.now().toString(36)}`, full_name: 'Regression 61 User', email: '', role: 'USER',
+          password_hash: await require('../server/services/authService').hashPassword(pw61), must_change_password: false, scopes: [{ directorate: userDir61, divisions: null }] });
+        userCookie61 = (await loginAs(user61.username, pw61)).cookie;
+
+        await runTest('[POSITIVE] USER: survey rows without identity columns (metric 2, non-employee = every row), attendances without identity and only of own directorates (metric 11), ESS / part rows only of own directorates (no Bankwide row), OUTCOME values unchanged', async () => {
+          assert.ok(userDir61 && userCookie61, 'USER login');
+          const a2 = (await history61(2, 'period=2026')).body;
+          const u2 = await history61(2, 'period=2026', userCookie61);
+          assert.strictEqual(u2.status, 200);
+          assert.strictEqual(u2.body.identity_hidden, true);
+          assert.ok(!['ID_Peserta', 'Nama_Peserta', 'Email_Peserta'].some(k => keys61(u2.body).includes(k)), keys61(u2.body).join('|'));
+          assert.ok(!u2.body.rows.some(r => 'ID_Peserta' in r || 'Nama_Peserta' in r || 'Email_Peserta' in r));
+          assert.strictEqual(u2.body.total, a2.total, 'non-employee survey: the same respondents, without identity');
+          assert.strictEqual((await rawFetch(`${BASE_URL}/api/surveys/evidence?metric_id=2&period=2026`, asUser(userCookie61))).status, 403, 'the survey evidence itself stays Admin / PIC only');
+
+          const u11 = (await history61(11, 'period=ALL', userCookie61)).body;
+          assert.ok(!['NIP', 'Employee_Name', 'CIMB_Email'].some(k => keys61(u11).includes(k)));
+          assert.ok(u11.rows.every(r => r.Directorate === userDir61 && !('NIP' in r)));
+
+          const u9 = (await history61(9, 'period=2026', userCookie61)).body;
+          assert.strictEqual(u9.scope_limited, true);
+          assert.ok(u9.total >= 1 && u9.rows.every(r => r.Level === 'Directorate' && r.Directorate === userDir61), JSON.stringify(u9.rows.map(r => r.Directorate)));
+          assert.strictEqual(u9.total, essAdmin.rows.filter(r => r.Level === 'Directorate' && r.Directorate === userDir61).length);
+
+          const u7 = (await history61(7, 'period=2026', userCookie61)).body;
+          assert.ok(u7.rows.every(r => r.Level === 'Directorate' && r.Directorate === userDir61));
+
+          const a14 = (await history61(14, 'period=2026')).body;
+          const u14 = (await history61(14, 'period=2026', userCookie61)).body;
+          assert.deepStrictEqual(u14.rows, a14.rows, 'OUTCOME values are bankwide aggregates');
+        });
+
+        await runTest('[NEGATIVE] USER asking a directorate outside the scope -> 403; the Admin-only evidence downloads stay 403 for the USER', async () => {
+          const other = (await (await rawFetch(`${BASE_URL}/api/directorates`)).json()).find(d => d.directorate_name !== userDir61);
+          assert.strictEqual((await history61(9, `period=2026&directorate=${encodeURIComponent(other.directorate_name)}`, userCookie61)).status, 403);
+          assert.strictEqual((await rawFetch(`${BASE_URL}/api/admin/outcome-evidence/14?period=2026`, asUser(userCookie61))).status, 403);
+        });
+      }
+
+      await runTest('[NEGATIVE] No login -> 401; malformed id -> 400; unknown metric -> 404; bad period -> 400', async () => {
+        assert.strictEqual((await rawFetch(`${BASE_URL}/api/metrics/14/history?period=2026`)).status, 401);
+        for (const bad of ['abc', '1.5', '-3', '%2014']) assert.strictEqual((await history61(bad)).status, 400, `id ${bad}`);
+        assert.strictEqual((await history61(999999)).status, 404);
+        for (const p of ['2026-13', 'garbage', '20261', '2026-9x']) assert.strictEqual((await history61(14, `period=${encodeURIComponent(p)}`)).status, 400, `period ${p}`);
+      });
+    } finally {
+      if (user61) await st61.deleteUser(user61.user_id);
+    }
+  }
 }
 
 runRegressionSuite().catch(async err => {

@@ -605,6 +605,22 @@ Pengujian: `docs/07` §31 (Modul 46).
 
 ---
 
+## Catatan v2.56.0 - History metrik (`GET /api/metrics/:id/history`)
+
+| Endpoint | Respons / aturan |
+| :--- | :--- |
+| `GET /api/metrics/:id/history` | Login wajib (401). Periode: `?period=YTD\|YYYY\|YYYY-MM\|ALL` (seperti evidence) atau `?mode=&year=&month=` (seperti detail; `MTD` -> `YYYY-MM`, lainnya `YYYY`, default tahun berjalan). `?directorate=` / `?sub_directorate=` hanya untuk cek cakupan USER (di luar cakupan 403). id bukan angka 400, metrik tidak ada 404, periode salah 400. Respons `{ metric_id, kind, period, columns: [{ key, label, hidden? }], rows, total, identity_hidden, scope_limited, reason }`, baris terbaru dulu. |
+
+**Service**: `metricHistoryService.js` (baru): `buildMetricHistory`, `historyKindOf`, `mergeTables`. Baris dibangun oleh fungsi yang sama dengan file evidence: `outcomeValueService.outcomeEvidenceTable`, `metricPartsService.partEvidenceTable`, `essSummaryService.essEvidenceTables`, `surveyEvidenceService.generateSurveyEvidence(id, period, { tablesOnly: true })` (builder membuat tabel dulu, lalu CSV). Kunci kolom = header CSV evidence; `Metric_ID`, `Metric_Name`, `Upload_ID`, `File_SHA256`, `Updated_At` diberi `hidden: true`. Header yang berulang dalam satu tabel diberi akhiran " (2)".
+
+**`kind`** (urutan pengecekan): `NOT_AVAILABLE` (`data_status` `NOT_AVAILABLE`; tanpa baris, `reason` diisi) -> `PARTS` (metrik punya `px_metric_parts`) -> `ESS` / `SURVEY_RESPONSES` (SURVEY) -> `EVENT_ATTENDANCE` (metrik 11) -> `OUTCOME_VALUES` (OUTCOME upload dengan baris `px_outcome_values`) -> `OPERATIONAL` (records operasional `getMetricDetail`).
+
+**Akses** (route): identitas hanya bila `auth.canSeeRespondentData` (Admin; PIC metrik SURVEY), selain itu kolom identitas dibuang (`identity_hidden`). Admin dan metrik non-karyawan: `scopes = null` (semua baris, tidak dipersempit `?directorate=`). Non-Admin pada metrik karyawan: baris cakupan sendiri (`scope_limited`); `PARTS`: hanya baris Level `Directorate` direktorat sendiri (tanpa Bankwide); `ESS`: `essEvidenceTables({ scopes })`; `EVENT_ATTENDANCE`: `rowInScopes`. Endpoint evidence tidak berubah (Admin/PIC saja).
+
+Pengujian: `docs/07` §46 (Modul 61).
+
+---
+
 ## Catatan v2.55.0 - Rata-rata Bulan (metrik 1, 3), Metrik Ringkasan per Bagian & Saklar Data N/A
 
 **Endpoint baru (Admin saja; USER 403, tanpa login 401)**:

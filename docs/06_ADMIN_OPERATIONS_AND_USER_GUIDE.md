@@ -596,3 +596,16 @@ Template asli user: `docs/Template Survey/`. Format kolom: `docs/SURVEY_IMPORT_G
 5. Bagian tanpa data = N/A dan tidak dihitung; nilai metrik = rata-rata bagian yang punya data.
 
 **Saklar "Real data not available yet"**: Admin Parameters -> Metric Parameters -> Edit -> centang **Real data not available yet (N/A, excluded from the PX Index)**. Metrik tampil N/A dan tidak dihitung; data tidak dihapus; Evidence tetap bisa diunduh. Saat ini aktif untuk metrik 4, 6, 8, 10, 23, 26 - hapus centang setelah data riil tersedia. Perubahan tercatat (`METRIC_UPDATE`).
+
+### Tab History di detail metrik (v2.56.0)
+
+Tab **History (n)** (dulu "Internal Transaction Records" / "Respondent Records & Answers") ada di detail setiap metrik dan menampilkan baris yang sama dengan file **Evidence** untuk periode yang dipilih (YTD/MTD Dashboard), terbaru dulu, dengan pencarian dan 50 baris per halaman.
+
+| | History (tab) | Evidence (unduhan) |
+| :--- | :--- | :--- |
+| Siapa | semua yang bisa membuka detail metrik | Admin dan PIC metrik SURVEY |
+| Isi | baris evidence; kolom teknis (Metric ID/Name, Upload ID, File SHA256, Updated At) disembunyikan | file CSV/ZIP lengkap |
+| Identitas responden/peserta | Admin; PIC metrik SURVEY (cakupan sendiri) | sama |
+| Direktorat | Admin: semua (tidak dipersempit filter direktorat Dashboard); USER: metrik karyawan hanya direktorat sendiri (tanpa baris Bankwide) | Admin: semua |
+
+Metrik "Real data not available yet" (4, 6, 8, 10, 23, 26) menampilkan History kosong dengan alasannya; Evidence tetap bisa diunduh. Metrik 1 dan 3 menampilkan nilai per bulan plus baris "Average" per tahun.

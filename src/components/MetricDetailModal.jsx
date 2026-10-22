@@ -39,6 +39,7 @@ import { surveySourceLabel, surveySourceBadgeClass, surveyTemplateFileName } fro
 import SocialMediaUploadModal from './SocialMediaUploadModal';
 import OutcomeUploadModal from './OutcomeUploadModal';
 import PartSummaryModal from './PartSummaryModal';
+import MetricHistoryTable from './MetricHistoryTable';
 import { tierBandsText, tierValue } from '../utils/scoreTiers';
 
 function normalizeDateString(dateVal) {
@@ -131,6 +132,10 @@ export default function MetricDetailModal({
   const [isSocialUploadOpen, setIsSocialUploadOpen] = useState(false); // v2.52.0: social media data of metric 1 (Admin)
   const [isOutcomeUploadOpen, setIsOutcomeUploadOpen] = useState(false); // v2.54.0: monthly values of an OUTCOME metric (Admin)
   const [isPartSummaryOpen, setIsPartSummaryOpen] = useState(false); // v2.55.0: summary parts of a composite metric (Admin)
+  // v2.56.0: History tab = the rows behind the metric's Evidence download (GET /api/metrics/:id/history)
+  const [history, setHistory] = useState(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState(null);
 
   useEffect(() => {
     if (isOpen && metricId) {
@@ -153,6 +158,7 @@ export default function MetricDetailModal({
       } else {
         params.set('period', period);
       }
+      fetchHistory(params);
       const res = await fetch(`/api/metrics/${metricId}/detail?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
@@ -163,6 +169,26 @@ export default function MetricDetailModal({
       console.error('Error fetching metric detail:', err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Same period + directorate parameters as the detail (the server turns them into the evidence period)
+  const fetchHistory = async (params) => {
+    setHistoryLoading(true);
+    setHistoryError(null);
+    setHistory(null);
+    try {
+      const res = await fetch(`/api/metrics/${metricId}/history?${params.toString()}`);
+      if (res.ok) setHistory(await res.json());
+      else {
+        setHistory(null);
+        setHistoryError(res.status === 403 ? 'No access to the history of this metric.' : 'The history could not be loaded.');
+      }
+    } catch (err) {
+      setHistory(null);
+      setHistoryError('The history could not be loaded.');
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -183,6 +209,13 @@ export default function MetricDetailModal({
   // v2.55.0: composite summary metric (7, 5, 12): scored from the uploaded part summaries, not from respondent rows
   const isPartSummary = detailData?.data_upload === 'PART_SUMMARY';
   const summaryParts = detailData?.parts || [];
+  // v2.56.0 History tab: SYSTEM surveys keep the respondent records of the detail (redacted for non-PIC users); OUTCOME
+  // metrics without stored months keep the operational records of the detail; every other kind = the evidence rows
+  const usesRespondentHistory = isSurvey && !isEss && !isPartSummary;
+  const usesOperationalHistory = isOutcome && !isPartSummary && history?.kind === 'OPERATIONAL' && !detailData?.operational_records_hidden;
+  const historyCount = usesRespondentHistory
+    ? (detailData?.responses?.length || 0)
+    : usesOperationalHistory ? (detailData?.operational_records?.length || 0) : (history ? history.total : (historyLoading ? '…' : 0));
 
   const isCampus = detailData?.metric_id === 2 || detailData?.target_audience === 'CAMPUS_STUDENTS';
   const isCandidate = detailData?.metric_id === 5 || detailData?.target_audience === 'JOB_APPLICANTS';
@@ -296,7 +329,7 @@ export default function MetricDetailModal({
           {isLoading ? (
             <div className="py-20 text-center space-y-3">
               <div className="w-8 h-8 border-3 border-[#ED1C24] border-t-transparent rounded-full animate-spin mx-auto" />
-              <div className="text-xs text-gray-500 font-medium">Loading metric details and internal data records...</div>
+              <div className="text-xs text-gray-500 font-medium">Loading metric details and history...</div>
             </div>
           ) : !detailData ? (
             <div className="py-12 text-center text-gray-500 text-sm">
@@ -611,7 +644,7 @@ export default function MetricDetailModal({
                       <HelpCircle className="w-4 h-4" />
                       <span>{isPartSummary ? `Summary Parts (${summaryParts.length})` : `Question Breakdown & Average Scores (${detailData.questions_breakdown?.length || 0})`}</span>
                     </button>
-                    {!isEss && !isPartSummary && (
+                    {/* v2.56.0: every metric has a History tab (SYSTEM surveys: the respondent records, as before) */}
                     <button
                       onClick={() => setActiveTab('secondary')}
                       className={`pb-2.5 px-4 text-xs font-bold transition flex items-center space-x-2 border-b-2 ${
@@ -621,9 +654,8 @@ export default function MetricDetailModal({
                       }`}
                     >
                       <Users className="w-4 h-4" />
-                      <span>{`Respondent Records & Answers (${detailData.responses?.length || 0})`}</span>
+                      <span>{`History (${historyCount})`}</span>
                     </button>
-                    )}
                   </>
                 ) : (
                   <>
@@ -638,8 +670,7 @@ export default function MetricDetailModal({
                       <SlidersHorizontal className="w-4 h-4" />
                       <span>HR Measurement Specifications & Targets</span>
                     </button>
-                    {/* v2.55.0: no Internal Transaction Records tab when the server says so (metric 1: social media drilldown off for now) */}
-                    {!detailData.operational_records_hidden && (
+                    {/* v2.56.0: History (formerly Internal Transaction Records) - also for metric 1 (its monthly values) */}
                     <button
                       onClick={() => setActiveTab('secondary')}
                       className={`pb-2.5 px-4 text-xs font-bold transition flex items-center space-x-2 border-b-2 ${
@@ -649,9 +680,8 @@ export default function MetricDetailModal({
                       }`}
                     >
                       <Database className="w-4 h-4" />
-                      <span>Internal Transaction Records ({operationalRecords.length})</span>
+                      <span>{`History (${historyCount})`}</span>
                     </button>
-                    )}
                   </>
                 )}
               </div>
@@ -1028,8 +1058,24 @@ export default function MetricDetailModal({
                 </div>
               )}
 
-              {/* TAB 2 FOR SURVEY: LIST OF RESPONDENTS & SURVEY ANSWERS */}
-              {isSurvey && !isEss && activeTab === 'secondary' && (
+              {/* TAB 2 FOR SYSTEM SURVEY: HISTORY = LIST OF RESPONDENTS & SURVEY ANSWERS */}
+              {/* v2.56.0: History of every metric except SYSTEM surveys and the old operational records: rows of the Evidence download */}
+              {activeTab === 'secondary' && !usesRespondentHistory && !usesOperationalHistory && (
+                <MetricHistoryTable
+                  history={history}
+                  loading={historyLoading}
+                  error={historyError}
+                  periodLabel={periodLabel}
+                  isAdmin={isAdmin}
+                  accent={isSurvey ? 'red' : 'blue'}
+                />
+              )}
+
+              {usesRespondentHistory && activeTab === 'secondary' && detailData.data_not_available && (
+                <MetricHistoryTable history={{ kind: 'NOT_AVAILABLE', reason: detailData.not_applicable_reason, rows: [], columns: [] }} periodLabel={periodLabel} />
+              )}
+
+              {usesRespondentHistory && !detailData.data_not_available && activeTab === 'secondary' && (
                 <div className="space-y-4">
                   {/* Search, Filter & Download Evidence Toolbar */}
                   <div className="flex flex-col md:flex-row items-center justify-between gap-3 bg-gray-50 p-3 rounded-xl border border-gray-200">
@@ -1251,8 +1297,8 @@ export default function MetricDetailModal({
                 </div>
               )}
 
-              {/* TAB 2 FOR OUTCOME: TRANSACTION LOGS & OPERATIONAL RECORDS */}
-              {isOutcome && !isPartSummary && activeTab === 'secondary' && !detailData.operational_records_hidden && (
+              {/* TAB 2 FOR OUTCOME WITHOUT STORED MONTHS: HISTORY = THE OPERATIONAL RECORDS OF THE DETAIL */}
+              {usesOperationalHistory && activeTab === 'secondary' && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     {isSocialMedia ? (
@@ -1293,7 +1339,7 @@ export default function MetricDetailModal({
                       <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-2.5" />
                       <input
                         type="text"
-                        placeholder="Search transaction records..."
+                        placeholder="Search history..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         className="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -1356,52 +1402,6 @@ export default function MetricDetailModal({
                               );
                               return out;
                             })
-                          )}
-                        </tbody>
-                      </table>
-                    ) : detailData.metric_id === 11 ? (
-                      /* Live Event Attendance Table */
-                      <table className="w-full text-left text-xs">
-                        <thead className="bg-gray-100 text-gray-700 font-bold uppercase tracking-wider border-b border-gray-200">
-                          <tr>
-                            <th className="py-2.5 px-3.5">Registration Time</th>
-                            <th className="py-2.5 px-3.5">Employee Participant (NIP)</th>
-                            <th className="py-2.5 px-3.5">Directorate & Division</th>
-                            <th className="py-2.5 px-3.5">Program Event Title</th>
-                            <th className="py-2.5 px-3.5 text-center">Status</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100 font-normal bg-white">
-                          {filteredOperationalRecords.length === 0 ? (
-                            <tr>
-                              <td colSpan="5" className="text-center py-8 text-gray-400">
-                                No event attendance records found.
-                              </td>
-                            </tr>
-                          ) : (
-                            filteredOperationalRecords.map((item, idx) => (
-                              <tr key={idx} className="hover:bg-blue-50/30 transition">
-                                <td className="py-2.5 px-3.5 font-mono text-gray-600">
-                                  {item.registered_at ? new Date(item.registered_at).toLocaleString('en-US') : '-'}
-                                </td>
-                                <td className="py-2.5 px-3.5">
-                                  <div className="font-bold text-gray-900">{item.employee_name || <span className="italic font-medium text-gray-400">Identity hidden</span>}</div>
-                                  {item.nip && <div className="text-[10px] text-gray-500 font-mono">{item.nip} • {item.cimb_email}</div>}
-                                </td>
-                                <td className="py-2.5 px-3.5 text-gray-700">
-                                  <div>{item.directorate}</div>
-                                  <div className="text-[10px] text-gray-400">{item.division}</div>
-                                </td>
-                                <td className="py-2.5 px-3.5 font-semibold text-gray-800">
-                                  {item.event_title}
-                                </td>
-                                <td className="py-2.5 px-3.5 text-center">
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                                    <Check className="w-3 h-3 mr-0.5" /> Present & Verified
-                                  </span>
-                                </td>
-                              </tr>
-                            ))
                           )}
                         </tbody>
                       </table>

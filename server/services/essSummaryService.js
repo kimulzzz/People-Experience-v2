@@ -401,17 +401,10 @@ async function generateEssTemplateXlsx(metric) {
  * options.scopes (a PIC's data scope) limits the directorate rows; the Bankwide row is only for viewers without a
  * scope limit (the Admin).
  * v2.50.0: every row is exported with the question texts stored with it (snapshot of the upload; before v2.50.0 the file
- * header). One question-set version -> { kind: 'csv', content } (the CSV of before); several -> { kind: 'zip', buffer,
- * fileName } with one CSV per version + README.txt.
+ * header). v2.56.0: the TABLES first (one per question-set version) - the evidence file below and the History tab of the
+ * metric detail are both built from them. Returns { versions: [{ headers, rows (arrays), sortKeys, identity: [] }] }.
  */
-async function generateEssEvidence(metric, options = {}) {
-  const escapeCsv = (val) => {
-    if (val === null || val === undefined) return '';
-    let str = val.toString();
-    if (typeof val === 'string' && str !== '-' && /^[=+\-@\t\r]/.test(str) && !/^[+-]?\d+([.,]\d+)?$/.test(str)) str = `'${str}`;
-    if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) return `"${str.replace(/"/g, '""')}"`;
-    return str;
-  };
+async function essEvidenceTables(metric, options = {}) {
   let rows = await storage.getEssResults(metric.metric_id);
   if (options.scopes) {
     const dirs = options.scopes.map(s => s.directorate);
@@ -426,16 +419,15 @@ async function generateEssEvidence(metric, options = {}) {
     source: (r.questions || []).some(q => q.key) ? 'SNAPSHOT' : 'FILE_HEADER',
     uploaded_at: (uploads.get(r.upload_id) || {}).uploaded_at || r.created_at
   }));
-  const csvOf = vRows => {
+  const tableOf = vRows => {
     const count = vRows.reduce((mx, r) => Math.max(mx, (r.questions || []).length), 0);
     const first = vRows.find(r => (r.questions || []).length === count) || { questions: [] };
     const labels = first.questions.map(q => q.text || q.label);
     const headers = ['Directorate', 'Level', 'Year', 'Month', 'Participation', 'Index_%', ...labels.map(l => `${l} (%)`),
       'Metric_ID', 'Metric_Name', 'Upload_ID', 'File_Name', 'Uploaded_By', 'Uploaded_At'];
-    const lines = [headers.map(escapeCsv).join(',')];
-    vRows.forEach(r => {
+    const body = vRows.map(r => {
       const u = uploads.get(r.upload_id) || {};
-      lines.push([
+      return [
         r.org_level === 'BANKWIDE' ? BANKWIDE_NAME : r.directorate,
         r.org_level === 'BANKWIDE' ? 'Bankwide' : 'Directorate',
         r.survey_year,
@@ -449,15 +441,34 @@ async function generateEssEvidence(metric, options = {}) {
         u.file_name || '',
         u.uploaded_by || '',
         u.uploaded_at || ''
-      ].map(escapeCsv).join(','));
+      ];
     });
-    return '﻿' + lines.join('\r\n');
+    return { headers, rows: body, sortKeys: vRows.map(r => r.survey_year * 100 + r.survey_month), identity: [] };
   };
-  if (versions.length <= 1) return { kind: 'csv', content: csvOf(rows) };
+  // no row at all: one empty table (the CSV of before: the header line only)
+  const tables = versions.length ? versions.map(v => ({ ...v, ...tableOf(v.items) })) : [{ items: [], ...tableOf(rows) }];
+  return { versions: tables };
+}
+
+/**
+ * Evidence file of the stored ESS summary rows (see essEvidenceTables): one question-set version -> { kind: 'csv', content };
+ * several -> { kind: 'zip', buffer, fileName } with one CSV per version + README.txt.
+ */
+async function generateEssEvidence(metric, options = {}) {
+  const escapeCsv = (val) => {
+    if (val === null || val === undefined) return '';
+    let str = val.toString();
+    if (typeof val === 'string' && str !== '-' && /^[=+\-@\t\r]/.test(str) && !/^[+-]?\d+([.,]\d+)?$/.test(str)) str = `'${str}`;
+    if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) return `"${str.replace(/"/g, '""')}"`;
+    return str;
+  };
+  const { versions } = await essEvidenceTables(metric, options);
+  const csvOf = t => '﻿' + [t.headers, ...t.rows].map(r => r.map(escapeCsv).join(',')).join('\r\n');
+  if (versions.length <= 1) return { kind: 'csv', content: csvOf(versions[0]) };
   const zip = await buildVersionedZip({
     baseName: `Evidence_ESS_Summary_Metric_${metric.metric_id}`,
     title: `ESS summary evidence - metric ${metric.metric_id} ${metric.metric_name}`,
-    versions: versions.map(v => ({ ...v, csv: csvOf(v.items) }))
+    versions: versions.map(v => ({ ...v, csv: csvOf(v) }))
   });
   return { kind: 'zip', ...zip };
 }
@@ -482,5 +493,6 @@ module.exports = {
   essOriginalFilePath,
   buildXlsx,
   generateEssTemplateXlsx,
+  essEvidenceTables,
   generateEssEvidence
 };

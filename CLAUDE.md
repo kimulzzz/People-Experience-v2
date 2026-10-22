@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(462-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(471-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (462 cases on SQL; v2.55.0 run 376/376, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (471 cases on SQL; v2.56.0 run 385/385, 16 skipped with `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`; full JSON suite not re-run since v2.30.1) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (41 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
@@ -806,6 +806,14 @@ domain model, not just descriptive:
   works via API and Manage Questions still lists them; no Admin UI for `outcome_aggregation`/parts; `px_metric_parts` not in the config-guard snapshot; `getAvailableSurveyYears` ignores part years.
 
 - **v2.55.1** (2026-10-23, see `CHANGELOG.md` [2.55.1]): Dashboard journey cards no longer show the small "JOURNEY #n" label - only the journey name. Frontend only.
+
+- **v2.56.0** (2026-10-23, see `CHANGELOG.md` [2.56.0], `docs/04`/`05` "Catatan v2.56.0", `docs/06`, `docs/07` §46): user: the data behind each metric's Evidence button must also show in the
+  metric detail; "Internal Transaction Records" renamed **History**. New `GET /api/metrics/:id/history` (`?period=` like evidence or `?mode/year/month` like the detail) -> `{ kind, columns, rows,
+  total, identity_hidden, scope_limited, reason }`, newest first; `metricHistoryService.js` + `MetricHistoryTable.jsx` (search, 50/page). Single source of truth: the evidence builders now build rows
+  first, then CSV (`outcomeEvidenceTable`, `partEvidenceTable`, `essEvidenceTables`, `generateSurveyEvidence({ tablesOnly })`) - evidence downloads byte-identical to v2.55.1 (developer, 27 metrics).
+  Kinds NOT_AVAILABLE / PARTS / ESS / SURVEY_RESPONSES / EVENT_ATTENDANCE / OUTCOME_VALUES / OPERATIONAL (none live). Access never wider than before: Admin all rows + identities (NOT narrowed by the
+  Dashboard directorate filter); PIC identities in own scope; USER no identities, employee-metric rows of own directorates only (no Bankwide); evidence downloads stay Admin/PIC. Gotchas: SYSTEM-survey
+  tab count = the detail's 100-row capped list; modal always fetches history. Module 61 (9, 2 SQL-only) -> SQL 385/385, 16 skipped (suite 471 by count); JSON full suite not run.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

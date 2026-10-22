@@ -530,37 +530,51 @@ const inPeriod = (key, mp) => {
   return !!k && key >= k.fromKey && key <= k.toKey;
 };
 
-/** Evidence CSV of a metric for a parsed period; kind 'social_media' = metric 1's social media rows. Returns { fileName, csv }. */
-async function generateOutcomeEvidence(metric, mp, kind = null) {
+/**
+ * Evidence TABLE of a metric for a parsed period (v2.56.0: the rows first - the CSV below and the History tab of the metric
+ * detail are both built from it, so they can never disagree); kind 'social_media' = metric 1's social media rows.
+ * Returns { type, fileName, headers, rows (arrays, header order), sortKeys (one per row, larger = newer), identity (headers
+ * holding a person's identity) }.
+ */
+async function outcomeEvidenceTable(metric, mp, kind = null) {
   const tag = mp.all ? 'ALL' : (mp.mode === 'MTD' ? `${mp.year}-${mp.month}` : `YTD_${mp.year}`);
   const type = kind === 'social_media' && isSocialMediaMetric(metric) ? 'SOCIAL_MEDIA' : evidenceTypeOf(metric);
   if (type === 'SOCIAL_MEDIA') {
     const uploads = new Map((await storage.getSocialMediaUploads()).map(u => [u.upload_id, u]));
-    const rows = (await storage.getSocialMediaStats()).filter(r => inPeriod(keyOf(r), mp)).map(r => {
+    const stats = (await storage.getSocialMediaStats()).filter(r => inPeriod(keyOf(r), mp));
+    const rows = stats.map(r => {
       const u = uploads.get(r.upload_id) || {};
       return [metric.metric_id, metric.metric_name, r.platform, r.year, MONTH_NAMES[r.month - 1], periodCode(r.year, r.month), r.followers, r.reach,
         r.engagement, r.source, r.upload_id || '', u.file_name || '', u.uploaded_by || '', u.uploaded_at || r.created_at || ''];
     });
     return {
+      type,
       fileName: `Evidence_Social_Media_Metric_${metric.metric_id}_${tag}.csv`,
-      csv: toCsv(['Metric_ID', 'Metric_Name', 'Platform', 'Year', 'Month', 'Period', 'Followers', 'Reach', 'Engagement', 'Source', 'Upload_ID',
-        'File_Name', 'Uploaded_By', 'Uploaded_At'], rows)
+      headers: ['Metric_ID', 'Metric_Name', 'Platform', 'Year', 'Month', 'Period', 'Followers', 'Reach', 'Engagement', 'Source', 'Upload_ID',
+        'File_Name', 'Uploaded_By', 'Uploaded_At'],
+      rows,
+      sortKeys: stats.map(r => keyOf(r)),
+      identity: []
     };
   }
   if (type === 'EVENT_ATTENDANCE') {
     const events = new Map((await storage.getEvents()).map(e => [e.event_id, e]));
-    const rows = (await storage.getAttendances())
+    const atts = (await storage.getAttendances())
       .filter(a => { const d = String(a.attendance_timestamp || '').slice(0, 10); return /^\d{4}-\d{2}/.test(d) && inPeriod(dateKey(d), mp); })
-      .sort((a, b) => String(a.attendance_timestamp).localeCompare(String(b.attendance_timestamp)))
-      .map(a => {
-        const ev = events.get(a.event_id) || {};
-        return [metric.metric_id, metric.metric_name, a.event_id, ev.event_name || '', ev.event_date || '', a.nip, a.employee_name, a.cimb_email,
-          a.directorate, a.division, a.attendance_timestamp];
-      });
+      .sort((a, b) => String(a.attendance_timestamp).localeCompare(String(b.attendance_timestamp)));
+    const rows = atts.map(a => {
+      const ev = events.get(a.event_id) || {};
+      return [metric.metric_id, metric.metric_name, a.event_id, ev.event_name || '', ev.event_date || '', a.nip, a.employee_name, a.cimb_email,
+        a.directorate, a.division, a.attendance_timestamp];
+    });
     return {
+      type,
       fileName: `Evidence_Event_Attendance_Metric_${metric.metric_id}_${tag}.csv`,
-      csv: toCsv(['Metric_ID', 'Metric_Name', 'Event_ID', 'Event_Name', 'Event_Date', 'NIP', 'Employee_Name', 'CIMB_Email', 'Directorate', 'Division',
-        'Attendance_Timestamp'], rows)
+      headers: ['Metric_ID', 'Metric_Name', 'Event_ID', 'Event_Name', 'Event_Date', 'NIP', 'Employee_Name', 'CIMB_Email', 'Directorate', 'Division',
+        'Attendance_Timestamp'],
+      rows,
+      sortKeys: atts.map(a => String(a.attendance_timestamp || '')),
+      identity: ['NIP', 'Employee_Name', 'CIMB_Email']
     };
   }
   // OUTCOME_VALUES: every stored month of the period; Used_In_Score = the month(s) the period is scored with
@@ -576,6 +590,7 @@ async function generateOutcomeEvidence(metric, mp, kind = null) {
       r.notes || '', r.source, used && used.rows.includes(r) ? 'YES' : (mp.all ? '' : 'NO'), r.upload_id || '', u.file_name || '', u.uploaded_by || '',
       u.uploaded_at || r.created_at || '', r.updated_at || ''];
   });
+  const sortKeys = inside.map(r => keyOf(r));
   if (aggregation === 'AVERAGE') {
     [...new Set(inside.map(r => r.year))].forEach(y => {
       const ofYear = inside.filter(r => r.year === y);
@@ -583,13 +598,24 @@ async function generateOutcomeEvidence(metric, mp, kind = null) {
       const scored = used && used.rows.length === ofYear.length && used.rows.every(r => ofYear.includes(r));
       rows.push([metric.metric_id, metric.metric_name, metric.unit || '', y, '', 'Average', Math.round(avg * 10000) / 10000, averageLabel(ofYear),
         'CALCULATED', scored ? 'YES' : (mp.all ? '' : 'NO'), '', '', '', '', '']);
+      sortKeys.push(y * 100 + 13); // newest first: the year's Average line above its months
     });
   }
   return {
+    type: 'OUTCOME_VALUES',
     fileName: `Evidence_Outcome_Metric_${metric.metric_id}_${tag}.csv`,
-    csv: toCsv(['Metric_ID', 'Metric_Name', 'Unit', 'Year', 'Month', 'Period', 'Value', 'Notes', 'Source', 'Used_In_Score', 'Upload_ID', 'File_Name',
-      'Uploaded_By', 'Uploaded_At', 'Updated_At'], rows)
+    headers: ['Metric_ID', 'Metric_Name', 'Unit', 'Year', 'Month', 'Period', 'Value', 'Notes', 'Source', 'Used_In_Score', 'Upload_ID', 'File_Name',
+      'Uploaded_By', 'Uploaded_At', 'Updated_At'],
+    rows,
+    sortKeys,
+    identity: []
   };
+}
+
+/** Evidence CSV of a metric for a parsed period; kind 'social_media' = metric 1's social media rows. Returns { fileName, csv }. */
+async function generateOutcomeEvidence(metric, mp, kind = null) {
+  const t = await outcomeEvidenceTable(metric, mp, kind);
+  return { fileName: t.fileName, csv: toCsv(t.headers, t.rows) };
 }
 
 module.exports = {
@@ -610,5 +636,6 @@ module.exports = {
   parseUploadYear,
   validateOutcomeYearSheet,
   tierBandTexts,
+  outcomeEvidenceTable,
   generateOutcomeEvidence
 };
