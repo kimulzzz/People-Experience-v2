@@ -99,6 +99,27 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
 
   // Topic summary of a long video (v2.60.0); older and short summaries have no topics and render as before.
   const hasTopics = Array.isArray(med.summary_topics) && med.summary_topics.length > 0;
+  // v2.60.1: a meeting with several agendas has `agenda` on its topics -> grouped under the agenda names, in recording order.
+  const agendaGroups = hasTopics && med.summary_topics.some(t => t && t.agenda)
+    ? med.summary_topics.reduce((groups, topic) => {
+      const last = groups[groups.length - 1];
+      if (last && last.name === (topic.agenda || '')) last.topics.push(topic);
+      else groups.push({ name: topic.agenda || '', topics: [topic] });
+      return groups;
+    }, [])
+    : null;
+  const renderTopics = topics => (
+    <ol className="space-y-1">
+      {topics.map((topic, i) => (
+        <li key={i}>
+          <p className="font-semibold text-gray-800 leading-snug">{i + 1}. {topic.title}</p>
+          <ul className="list-disc pl-6 space-y-0.5 leading-snug">
+            {(topic.points || []).map((pt, j) => <li key={j}>{pt}</li>)}
+          </ul>
+        </li>
+      ))}
+    </ol>
+  );
 
   return (
     <div className="bg-white border border-white/40 rounded-xl p-3 space-y-2 relative group">
@@ -230,16 +251,18 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
                 // v2.60.0: a long video is summarized by topic (numbered titles, their points below)
                 <div className="space-y-1">
                   <p className="font-bold text-gray-700">Topics discussed</p>
-                  <ol className="space-y-1">
-                    {med.summary_topics.map((topic, i) => (
-                      <li key={i}>
-                        <p className="font-semibold text-gray-800 leading-snug">{i + 1}. {topic.title}</p>
-                        <ul className="list-disc pl-6 space-y-0.5 leading-snug">
-                          {(topic.points || []).map((pt, j) => <li key={j}>{pt}</li>)}
-                        </ul>
-                      </li>
-                    ))}
-                  </ol>
+                  {agendaGroups ? (
+                    <div className="space-y-2">
+                      {agendaGroups.map((group, g) => (
+                        <div key={g} className="space-y-1">
+                          {group.name && (
+                            <p className="font-bold text-[var(--theme-base)] border-l-2 border-[var(--theme-base)] pl-1.5 leading-snug">{group.name}</p>
+                          )}
+                          {renderTopics(group.topics)}
+                        </div>
+                      ))}
+                    </div>
+                  ) : renderTopics(med.summary_topics)}
                 </div>
               ) : Array.isArray(med.summary_points) && med.summary_points.length > 0 && (
                 <ul className="list-disc pl-4 space-y-0.5 leading-snug">
@@ -271,10 +294,12 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
             <p className="text-gray-500 italic">No summary yet for this video.</p>
           )}
 
-          {canManage && med.summary_status !== 'PROCESSING' && med.summary_status !== 'INSUFFICIENT' && (!med.summary_status || med.summary_status === 'FAILED' || med.summary_source !== 'AI') && (
+          {/* v2.60.1: also for AI summaries, so an event manager can re-run a video from the web */}
+          {canManage && med.summary_status !== 'PROCESSING' && med.summary_status !== 'INSUFFICIENT' && (
             <button
               onClick={() => onSummarize(med.media_id)}
               disabled={summarizing}
+              title="Runs the local AI summary of this video again; a long video can take several minutes"
               className="inline-flex items-center space-x-1 px-2 py-0.5 bg-gray-50 border border-gray-200 rounded font-bold text-gray-700 hover:bg-gray-100 transition disabled:opacity-60 disabled:cursor-wait"
             >
               <RefreshCw className={`w-3 h-3 ${summarizing ? 'animate-spin' : ''}`} />

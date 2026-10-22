@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(515-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(530-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (515 cases on SQL; v2.60.0 run 515/515, 0 skipped (media + event modules run); full JSON suite not re-run since v2.30.1) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (530 cases on SQL; v2.60.1 run 523/523, 7 skipped (event modules 8/24; media modules run); full JSON suite not re-run since v2.30.1) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (41 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
@@ -855,6 +855,21 @@ domain model, not just descriptive:
   summaries, so old AI summaries of long videos are only redone via `POST /api/media/:id/summarize`; ringkasan may repeat "Pembahasan mencakup"; the suite's 2nd backend (:5002) uses the
   real Ollama (Modules 27/32 videos get real summaries); Ollama models live in `D:\Ollama\models` (user env `OLLAMA_MODELS`, not app config). Module 65 (26; 17 SQL-only) + 2 asserts in
   Module 38 -> SQL 515/515, 0 skipped (no skip list); JSON full suite not run.
+
+- **v2.60.1** (2026-10-23, see `CHANGELOG.md` [2.60.1], `docs/04`/`05` "Catatan v2.60.1", `docs/06`, `docs/07` §51, `docs/08` §31, `SQLServerDB.md` §29): user: the AI Summary of the meeting
+  "HR Projects Update…Meeting Recording" (agendas People Experience + Talent Factory) showed only People Experience; the 52k podcast looped in the single merge ("token repeat limit") twice
+  -> older path, no topics, 17 min; also wanted Regenerate for AI summaries and no repeated "Pembahasan mencakup". Design proven in read-only spikes with the real Gemma, approved by the user.
+  `mediaSummaryService.js`: AGENDA MODE only when `eventWordsAllowed` (rapat/pertemuan/meeting in transcript or file name): one detect call per 6,000-char part (num_predict 250; verbatim quote
+  must be found back: >= 4 words, >= 60% match) -> one group call (num_predict 200) when >= 2 candidates; start = FIRST candidate with the same name words (project/program/update ignored; model
+  number = fallback), `refineAgendaStart` <= 1,500 chars back, max 3 agendas, < 15% share joins its neighbour, < 2 agendas = normal path; map per agenda segment (unchanged prompt), merge per
+  agenda (2-5 topics x 1-3 points, topics carry `agenda`, summary = agenda sentences joined). BLOCK MERGE when > 15 map topics and as fallback of a failed single merge (blocks <= 10 topics, no
+  `agenda`); <= 15 = v2.60.0 single merge (prompt byte-identical). Group merge: seed 41, then 42 + REPEAT_GUARD; accept >= min(topics,2) topics and >= min(points,4) points, else the checked map
+  topics; coverage guard `restoreCoverage` (0.35; cap agenda 6 / block 5). `dedupeOpeners`: later openers "Pembahasan juga mencakup". Stats + `agenda_mode`, `agendas`, `detect_calls`,
+  `agenda_candidates`, `blocks`, `coverage_restored` (no schema change). UI: topics grouped under agenda headings; Regenerate also on AI summaries (hidden while PROCESSING/INSUFFICIENT).
+  Gating unchanged. Real Gemma: HR 2 agendas, 3+3 topics, 3.3 min; podcast 3 blocks, 13 topics, 7.1 min. Gotchas: a meeting with ONE agenda still pays one detect call per part; meetings
+  without the word in transcript/file name get no agendas; agenda mode untried with real Gemma in English; some details still lost (HR: exit interview, "status complete 100%"); the main
+  session regenerates the 4 live videos itself (backup first). Module 66 (15; 8 SQL-only) + Module 65 adjusted (detect calls counted apart; bad-summary -> block fallback) -> SQL 523/523,
+  7 skipped (event 8/24; all media modules run; suite 530 by count); JSON full suite not run.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

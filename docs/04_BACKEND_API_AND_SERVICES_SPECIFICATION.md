@@ -345,7 +345,7 @@ Tidak diubah / belum diputuskan: importer tidak menolak NIP kembar (dalam satu C
 | `summary_language` | Mengikuti `transcript_language`; kode tak dikenal -> `id` |
 | `summary_generated_at`, `summary_error` | Waktu dibuat; alasan fallback/gagal (teks Indonesia, maks. 500 karakter) |
 
-Sejak v2.60.0 ditambah `summary_topics` dan `summary_topic_stats` untuk ringkasan per topik video panjang (lihat "Catatan v2.60.0").
+Sejak v2.60.0 ditambah `summary_topics` dan `summary_topic_stats` untuk ringkasan per topik video panjang (lihat "Catatan v2.60.0"). Sejak v2.60.1 topik rapat bisa memuat `agenda` dan `summary_topic_stats` mendapat 6 field baru (lihat "Catatan v2.60.1").
 
 **Service**
 
@@ -604,6 +604,43 @@ Pengujian: `docs/07` §30 (Modul 46).
 **Seed ESS**: `seedData.generateInitialEssResults()` juga membuat periode dummy `ESS_SEED_DUMMY_PERIODS` (2026-03, 2026-06, 2026-09; 429 baris + 33 batch). `sqlStorage.topUpEssSeed()` / `jsonStorage.topUpStoreEssSeed()` kini menyisipkan per (metrik, periode) yang belum punya baris dan mengembalikan daftar `upload_id` yang ditambahkan. Rincian: `docs/08` §17, `CHANGELOG.md` [2.37.0].
 
 Pengujian: `docs/07` §31 (Modul 46).
+
+---
+
+## Catatan v2.60.1 - AI Summary rapat per agenda & merge per blok
+
+**Masalah**: rapat "HR Projects Update" (dua agenda: People Experience dan Talent Factory) hanya mendapat topik People Experience; podcast 52.282 karakter membuat single merge berputar ("token repeat limit") dua kali -> jalur lama tanpa topik (17 mnt). Detail dan hasil uji nyata: `CHANGELOG.md` [2.60.1].
+
+**Alur `summarizeByTopics` (`mediaSummaryService.js`)**; syarat mode topik (> 5.000 karakter, maks. 20 bagian) tidak berubah:
+
+| Kondisi | Jalur |
+| :--- | :--- |
+| `ctx.eventWordsAllowed` (transkrip atau `file_name` memuat rapat/pertemuan/meeting) dan `findAgendas` -> >= 2 agenda | Mode agenda: map per segmen agenda, merge per agenda (`mergeGroups`, `kind: 'agenda'`) |
+| Selain itu, topik map <= `TOPIC_BLOCK_THRESHOLD` (15) | Single merge v2.60.0 (`mergeAllTopics`); hasil `null` -> merge per blok |
+| Topik map > 15 | Merge per blok (`mergeInBlocks`), tanpa single merge |
+| Topik map < 2, atau < 2 topik setelah merge grup | `null` -> jalur lama per potongan (seperti v2.60.0) |
+
+| Langkah | Perilaku |
+| :--- | :--- |
+| Deteksi agenda | `buildAgendaDetectPrompt` per bagian 6.000 karakter (JSON `{"agenda_baru":[{"nama","kutipan"}]}`, en `{"new_agendas":[{"name","quote"}]}`; prompt membawa agenda yang sedang berjalan), seed 41, `num_ctx` 8192, `num_predict` 250 (`AGENDA_DETECT_OPTIONS`). Nama yang gagal `fragmentProblem(..., 'title')` dibuang. `locateQuote` mencari kutipan di transkrip asli: jendela dengan kata sama di posisinya terbanyak, minimal `QUOTE_MIN_WORDS` 4 kata dan `QUOTE_MIN_MATCH` 0,6, selain itu `null` (kandidat dibuang). Soft error = tanpa kandidat untuk bagian itu (tanpa retry); hard error dilempar -> `RULE` |
+| Pengelompokan | Hanya bila kandidat >= 2: `buildAgendaGroupPrompt` (kandidat + posisi % + kutipan), `num_predict` 200 -> `{"agenda":[{"nama","mulai"}]}`. `agendasFromGroups`: awal = kandidat pertama yang `sameAgendaName` (kata nama >= 3 huruf tanpa `AGENDA_GENERIC`: project, proyek, projek, program, update, agenda, terkait, dengan, untuk, the, and, for, with, about, related); nomor `mulai` dari model hanya cadangan; nama gagal cek judul dibuang; agenda pertama di posisi 0; `refineAgendaStart` (maks. `AGENDA_REFINE_CHARS` 1500 ke belakang, ke tempat dua kata nama berjarak <= `AGENDA_REFINE_NEAR` 60 karakter; nama satu kata tidak digeser); maks. `MAX_AGENDAS` 3; `applyAgendaMinShare` (`AGENDA_MIN_SHARE` 0,15: agenda lebih pendek dari 15% transkrip atau dimulai < 15% setelah agenda sebelumnya dihapus, teksnya ikut agenda sebelumnya) |
+| Map | `mapTopicParts` (prompt dan opsi v2.60.0 tidak berubah). Mode agenda: transkrip dipotong di awal agenda, lalu `splitTranscript` per segmen, jadi tidak ada bagian yang melintasi batas agenda; `stats.parts` = jumlah bagian segmen |
+| Merge grup (`mergeGroup`) | `buildTopicMergePrompt(items, lang, '', group)`: agenda 2-5 topik dan `ringkasan` 1-2 kalimat yang menyebut nama agenda; blok 2-4 topik dan 1-2 kalimat; keduanya 1-3 poin per topik. `num_predict` 900 (`GROUP_MERGE_PREDICT`), `num_ctx` dari `contextFor`. Percobaan 1 seed 41, percobaan 2 seed 42 + `REPEAT_GUARD` (tanpa kalimat PERBAIKAN). Diterima: >= min(topik masukan, 2) topik dan >= min(poin masukan, 4) poin setelah `checkTopics` + `removeDuplicatePoints`; terbaik = poin terbanyak; percobaan 2 dilewati bila percobaan 1 diterima dan ringkasannya lolos. Tidak ada yang diterima -> topik map (judul dicek, duplikat dibuang, dipotong di cap) |
+| Penjaga cakupan | `restoreCoverage(topics, items, cap)`: cakupan topik map = bagian prefiksnya (6 huruf pertama kata >= 5 huruf, judul + poin) yang ada di hasil; < `COVERAGE_MIN` 0,35 -> dikembalikan apa adanya (cakupan terendah dulu, judul dicek) sampai cap; lalu semua topik diurutkan menurut bagian asal. `GROUP_LIMITS`: agenda `{ topics: 5, points: 3, cap: 6 }`, blok `{ topics: 4, points: 3, cap: 5 }` |
+| Blok | `topicBlocks(mapped, TOPIC_BLOCK_SIZE)` (10): bagian berurutan, jumlah blok paling sedikit lalu ukuran paling rata; bagian tidak dipecah (bagian dengan > 10 topik = blok sendiri) |
+| Ringkasan umum | `mergeGroups`: ringkasan grup digabung berurutan lalu `dedupeOpeners`; grup tanpa ringkasan yang lolos -> satu kalimat `summaryFromTitles` dari topiknya (bila lolos cek judul); tidak ada kalimat sama sekali -> `summaryFromTitles` dari semua topik. Topik agenda `{ agenda, title, points }`, topik blok `{ title, points }` |
+
+**Pembuka**: `dedupeOpenerSentences` / `dedupeOpeners` (juga dipanggil `repairSummary`): kalimat kedua dan seterusnya yang dibuka "Pembahasan mencakup" / "The discussion covers" menjadi "Pembahasan juga mencakup" / "The discussion also covers"; yang sudah memakai "juga"/"also" tidak disentuh.
+
+**Single merge**: `buildTopicMergePrompt` tanpa parameter ke-4 (`group = null`) menghasilkan prompt yang sama dengan v2.60.0; `mergeAllTopics` (keep-best, PERBAIKAN) tidak berubah, hanya hasil `null`-nya kini diteruskan ke merge per blok, bukan langsung ke jalur lama.
+
+**Field media**: `summary_topics[]` boleh memuat `agenda` (string) pada mode agenda. `summary_topic_stats` mendapat `agenda_mode` (boolean), `agendas` (nama agenda), `detect_calls`, `agenda_candidates`, `blocks`, `coverage_restored` (total 18 field); pada jalur agenda/blok `merge_attempts` = total panggilan merge semua grup, `summary_repaired` / `summary_from_titles` = jumlah grup. Disimpan apa adanya di SQL dan JSON; tidak ada perubahan skema (`docs/08` §31).
+
+**Tidak berubah**: endpoint, setting, tabel, kolom, env; gating Gemma (`assertAiAllowed`, `queryLocalOllama` scope `EVENT_VIDEO_SUMMARY`; pemicu = video baru setelah transkrip `DONE` atau `POST /api/media/:id/summarize`). Route summarize tetap 409 bila `PROCESSING`/sedang antri; UI kini juga memanggilnya untuk ringkasan AI. `/api/health` `version` = `2.60.1`.
+
+**Ekspor modul baru**: `dedupeOpeners`, `buildAgendaDetectPrompt`, `buildAgendaGroupPrompt`, `wordPositions`, `locateQuote`, `agendaNameWords`, `sameAgendaName`, `refineAgendaStart`, `applyAgendaMinShare`, `agendasFromGroups`, `topicBlocks`, `restoreCoverage`, `MAX_AGENDAS`, `AGENDA_MIN_SHARE`, `TOPIC_BLOCK_THRESHOLD`, `TOPIC_BLOCK_SIZE`, `GROUP_LIMITS`, `COVERAGE_MIN`.
+
+**Batasan**: rapat yang hanya punya satu agenda tetap menjalankan panggilan deteksi (satu per bagian) sebelum jalur biasa; rapat tanpa kata rapat/pertemuan/meeting di transkrip atau nama file tidak mendapat agenda; mode agenda belum dicoba dengan Gemma asli berbahasa Inggris; distorsi makna halus tetap lolos. Pengujian: `docs/07` §51 (Modul 66).
 
 ---
 

@@ -11121,7 +11121,7 @@ async function runAllModules() {
       // v2.60.0 follow-up: Ollama aborting ONE generation (HTTP 500 "prediction aborted, token repeat limit reached")
       const aborts65 = prompt => {
         const first = !prompt.includes('PASTI berisi pembahasan') && !prompt.includes('PERBAIKAN');
-        if (oll65.mode === 'abort-map') return /Berikut bagian 2 dari/.test(prompt) && first;
+        if (oll65.mode === 'abort-map') return /Berikut bagian 2 dari \d+ transkrip rekaman/.test(prompt) && first; // a map part, not the v2.60.1 agenda detect call
         if (oll65.mode === 'abort-merge') return prompt.includes('Berikut daftar topik dan poin') && first;
         if (oll65.mode === 'abort-short') return prompt.includes('Ringkas transkrip berikut') && first;
         if (oll65.mode === 'abort-short-always') return prompt.includes('Ringkas transkrip berikut');
@@ -11164,7 +11164,12 @@ async function runAllModules() {
       let child65 = null;
       let cookie65 = null;
       const api65 = (p, opts = {}) => realFetch(`${CHILD65}${p}`, { ...opts, headers: { ...(opts.headers || {}), ...(cookie65 ? { Cookie: cookie65 } : {}) } });
-      const generate65 = () => oll65.calls.filter(c => c.url === '/api/generate');
+      // v2.60.1: LONG65 says "rapat", so a meeting first gets one agenda-detect call per part (the fake gives no candidates -> the
+      // normal topic path). Those calls are counted separately (detect65) so the call orders below stay those of the topic path.
+      const isDetect65 = c => c.prompt.includes('MEMULAI AGENDA BESAR BARU');
+      const allGenerate65 = () => oll65.calls.filter(c => c.url === '/api/generate');
+      const generate65 = () => allGenerate65().filter(c => !isDetect65(c));
+      const detect65 = () => allGenerate65().filter(isDetect65);
       const eventMedia65 = async id => (await (await api65(`/api/events/${EVENT65}`)).json()).media.find(m => m.media_id === id);
       const waitDone65 = async (id, ms = 30000) => {
         for (let i = 0; i < ms / 250; i++) { const m = await eventMedia65(id); if (m && m.summary_status && m.summary_status !== 'PROCESSING') return m; await sleep65(250); }
@@ -11216,7 +11221,10 @@ async function runAllModules() {
           assert.deepStrictEqual(done.summary_topics, FINAL65.map(t => ({ title: t.judul, points: t.poin })));
           assert.deepStrictEqual(done.summary_points, FINAL65.map(t => `${t.judul}: ${t.poin[0]}`));
           assert.deepStrictEqual(done.summary_topic_stats, { parts: 3, retried_parts: 0, skipped_parts: 0, dropped_points: 0, dropped_topics: 0, merge_attempts: 1, aborted_answers: 0,
-            filler_points: 0, duplicate_points: 0, summary_repaired: 0, summary_sentences_removed: 0, summary_from_titles: 0 });
+            filler_points: 0, duplicate_points: 0, summary_repaired: 0, summary_sentences_removed: 0, summary_from_titles: 0,
+            agenda_mode: false, agendas: [], detect_calls: 3, agenda_candidates: 0, blocks: 0, coverage_restored: 0 });
+          assert.strictEqual(detect65().length, 3, 'v2.60.1: a meeting gets one agenda-detect call per part; no candidates -> no group call, normal topic path');
+          assert.ok(detect65().every(c => c.format === 'json' && c.options.num_predict === 250 && c.options.num_ctx === 8192 && c.options.seed === 41));
           const calls = generate65();
           assert.strictEqual(calls.length, 4);
           calls.slice(0, 3).forEach((c, i) => {
@@ -11281,25 +11289,27 @@ async function runAllModules() {
           assert.ok(merge && !merge.prompt.includes('Hendra'), 'the invented part point is dropped before the merge');
         });
 
-        await runTest('[NEGATIVE] Both merge attempts unusable (summary with an invented name AND no topic passing the fact check): one merge retry naming it, then the older part-by-part path (source AI, no topics)', async () => {
+        // v2.60.1: a single merge without an acceptable attempt now falls back to the block merge (Module 66) before the older path;
+        // the older part-by-part path itself is still covered by Module 38 (a fake that never answers JSON).
+        await runTest('[NEGATIVE] Both single-merge attempts unusable (summary with an invented name AND no topic passing the fact check): one merge retry naming it, then the BLOCK merge (v2.60.1) - its answers are unusable too, so the checked map topics are shown with a summary from their titles; no older path, nothing invented stored', async () => {
           const v = await videoWith65(LONG65);
           const done = await summarize65(v.media_id, 'bad-summary');
           assert.strictEqual(done.summary_status, 'DONE');
           assert.strictEqual(done.summary_source, 'AI', done.summary_error);
-          assert.strictEqual(done.summary_topics, null);
-          assert.strictEqual(done.summary_topic_stats, null);
-          assert.ok(!/Budi/.test(done.summary));
-          assert.ok(/program mentoring/.test(done.summary), 'older-path summary stored');
+          assert.deepStrictEqual(done.summary_topics, MAP65.flat().map(t => ({ title: t.judul, points: t.poin })), 'the checked map topics, in recording order');
+          assert.strictEqual(done.summary, 'Pembahasan mencakup program mentoring, dashboard People Experience, audit eksternal OJK, dan monitoring referral.');
+          assert.ok(!/Budi|350|2019/.test(JSON.stringify([done.summary, done.summary_points, done.summary_topics])));
+          assert.strictEqual(done.summary_topic_stats.blocks, 1);
+          assert.strictEqual(done.summary_topic_stats.merge_attempts, 4, '2 single-merge attempts + 2 block attempts');
+          assert.strictEqual(done.summary_topic_stats.summary_from_titles, 1);
           const calls = generate65();
           const merges = calls.filter(c => c.prompt.includes('Berikut daftar topik dan poin'));
-          assert.strictEqual(merges.length, 2, 'exactly one merge retry');
-          assert.ok(merges[1].prompt.includes('PERBAIKAN') && /Budi/.test(merges[1].prompt), 'the retry names the rejected name');
+          assert.strictEqual(merges.length, 4);
+          assert.ok(merges[1].prompt.includes('PERBAIKAN') && /Budi/.test(merges[1].prompt), 'the single-merge retry names the rejected name');
           assert.strictEqual(merges[1].options.seed, 42);
-          const older = calls.filter(c => c.prompt.includes('Ini bagian'));
-          assert.strictEqual(older.length, sm65.splitTranscript(LONG65).length, 'the older path summarizes every 5,000-char part');
-          assert.ok(calls[calls.length - 1].prompt.includes('Gabungkan'), 'then combines them');
-          assert.strictEqual(calls.length, 3 + 2 + older.length + 1);
-          assert.ok(older.every(c => c.format === undefined), 'the older path keeps its text format');
+          assert.ok(merges.slice(2).every(c => c.prompt.includes('dari satu potongan berurutan sebuah rekaman') && c.options.num_predict === 900), 'then the block merge prompt');
+          assert.deepStrictEqual(merges.slice(2).map(c => [c.options.seed, c.options.repeat_penalty]), [[41, undefined], [42, 1.15]]);
+          assert.ok(!calls.some(c => c.prompt.includes('Ini bagian')), 'the older path is not used');
         });
 
         await runTest('[POSITIVE] A short transcript keeps the standard summary: one call with the old prompt (no JSON format), summary_topics null', async () => {
@@ -11457,7 +11467,7 @@ async function runAllModules() {
           assert.strictEqual(doneB.summary_source, 'RULE');
           assert.strictEqual(doneB.summary_topics, null);
           assert.ok(doneB.summary_error.length > 5, 'reason shown');
-          assert.strictEqual(generate65().length, 1, 'Ollama off: the first call fails and the job goes rule-based at once');
+          assert.strictEqual(allGenerate65().length, 1, 'Ollama off: the first call (v2.60.1: the agenda detect of this meeting) fails and the job goes rule-based at once');
           assert.strictEqual((await api65('/api/health')).status, 200);
         });
       } finally {
@@ -11474,6 +11484,472 @@ async function runAllModules() {
         const all = await storage65.getAllMedia();
         assert.ok(!all.some(m => mediaIds65.has(m.media_id)), 'test media deleted');
         for (const id of users65) assert.ok(!(await storage65.getUserById(id)), 'temporary admin deleted');
+      });
+    }
+  }
+
+  // --- MODULE 66 (v2.60.1): AGENDA MODE FOR MEETINGS, BLOCK MERGE FOR MANY TOPICS, COVERAGE GUARD, OPENER DEDUPE (FAKE Ollama) ---
+  // A meeting recording (rapat / pertemuan / meeting in the transcript or file name) first gets one agenda-detect call per part; the
+  // candidates' quotes must be found back in the transcript, one group call makes 1-3 agendas, and every agenda is mapped and merged
+  // on its own (topics carry `agenda`). More than 15 map topics are merged in blocks of consecutive parts. Offline checks run on both
+  // backends; the pipeline tests start a throw-away backend with OLLAMA_HOST pointing at an in-process fake (like Modules 38 / 65).
+  console.log('\n📦 MODULE 66: AI summary agendas & blocks - agenda detect/group per meeting, block merge, coverage guard, opener dedupe, Regenerate on an AI summary (Positive & Negative Testing)');
+  if (!skipModuleBlock(66)) {
+    const sm66 = require('../server/services/mediaSummaryService');
+    // A meeting with two agendas (People Experience, then Talent Factory at about half way).
+    const A_OPEN66 = 'Selamat pagi semua, rapat hari ini membahas update proyek HR. Yang pertama terkait dengan People Experience dashboard yang sudah kami siapkan. ';
+    const A_BLOCK66 = 'Dashboard People Experience menampilkan indeks per direktorat dan sudah berjalan di server lokal. Tim menyiapkan definisi parameter agar pengukuran konsisten. Memo proses pengukuran akan dikirim ke semua experience owner. ';
+    const B_OPEN66 = 'Baik, saya kembalikan ke Pak Wira untuk update terkait dengan Project Talent Factory. ';
+    const B_BLOCK66 = 'Talent factory sudah sampai di tahap akhir dan sosialisasi dilakukan dalam dua sesi. Audit eksternal untuk perizinan sedang berjalan dengan update harian. Modul pembelajaran untuk peserta baru sedang dikembangkan. ';
+    const TAIL66 = 'Penutup talent factory akan dilaporkan pada rapat berikutnya.';
+    const MEET66 = (A_OPEN66 + Array(70).fill(A_BLOCK66).join('') + B_OPEN66 + Array(70).fill(B_BLOCK66).join('') + TAIL66).trim();
+    const TF_START66 = MEET66.indexOf('Talent Factory. Talent factory sudah');
+    // A lecture (never says rapat / pertemuan / meeting): 24 distinct sentences, the map fake gives 3 of them per part.
+    const SENT66 = ['Jantung yang sehat membutuhkan olahraga teratur setiap pagi.', 'Sayuran hijau mengandung serat yang membantu pencernaan.', 'Tidur malam yang cukup memulihkan tenaga tubuh.',
+      'Air putih menjaga cairan tubuh tetap seimbang.', 'Peregangan ringan mengurangi kaku pada otot punggung.', 'Garam berlebihan menaikkan tekanan darah.',
+      'Buah segar memberikan vitamin alami bagi anak.', 'Meditasi singkat menenangkan pikiran yang gelisah.', 'Sarapan bergizi menjaga konsentrasi belajar siswa.',
+      'Gula tambahan sebaiknya dibatasi pada minuman kemasan.', 'Postur duduk tegak mencegah nyeri leher.', 'Kalsium dari susu memperkuat tulang remaja.',
+      'Protein nabati berasal dari kacang kedelai.', 'Mencuci tangan dengan sabun mencegah penularan kuman.', 'Bersepeda santai melatih kekuatan kaki.',
+      'Camilan kacang lebih baik daripada keripik.', 'Pernapasan perlahan membantu mengatasi rasa cemas.', 'Sinar matahari pagi membantu pembentukan vitamin.',
+      'Berjalan kaki setiap sore menambah kebugaran.', 'Kolesterol tinggi berkaitan dengan makanan berlemak.', 'Imunitas tubuh meningkat dengan pola hidup aktif.',
+      'Puasa teratur melatih pengendalian diri.', 'Lemak sehat terdapat pada alpukat dan ikan.', 'Stres kerja dapat diredakan dengan hobi.'];
+    const LECT_UNIT66 = SENT66.join(' ') + ' ';
+    const LECT66 = Array(30).fill(LECT_UNIT66).join('').trim();       // 6 parts -> 18 map topics (> 15: blocks)
+    const LECT_SHORT66 = Array(12).fill(LECT_UNIT66).join('').trim(); // 3 parts -> 9 map topics (single merge)
+    const titleOf66 = s => s.split(' ').slice(0, 2).map(w => w[0].toUpperCase() + w.slice(1)).join(' ').replace(/[.,]$/, '');
+
+    await runTest('[POSITIVE/NEGATIVE] Offline quote location: an exact quote is found at its first place in the ORIGINAL transcript; a quote with a few words changed (>= 60% equal in place) still is; < 60%, fewer than 4 words or not in the transcript -> null (dropped)', async () => {
+      const T = 'Selamat pagi. Update Pak, ini untuk yang graduate talent factory project Pak, jadi dari proyek kita sudah sampai di tahap akhir. Lalu yang lain.';
+      const words = sm66.wordPositions(T);
+      assert.deepStrictEqual(words.slice(0, 3), [{ w: 'selamat', at: 0 }, { w: 'pagi', at: 8 }, { w: 'update', at: 14 }]);
+      assert.strictEqual(sm66.locateQuote('ini untuk yang graduate talent factory project', T), T.indexOf('ini untuk yang graduate'));
+      assert.strictEqual(sm66.locateQuote('Ini untuk yang GRADUATE talent-factory project!', words), T.indexOf('ini untuk'), 'case and punctuation do not matter');
+      assert.strictEqual(sm66.locateQuote('ini buat yang graduate talent factory proyek', T), T.indexOf('ini untuk'), 'fuzzy: 5 of 7 words equal in place (71%)');
+      assert.strictEqual(sm66.locateQuote('ini buat para graduate talent pabrik proyek', T), null, '3 of 7 words (43%) is not enough');
+      assert.strictEqual(sm66.locateQuote('anggaran tahunan dibahas oleh semua direktur bank', T), null, 'not in the transcript');
+      assert.strictEqual(sm66.locateQuote('talent factory project', T), null, 'fewer than 4 words cannot place a boundary');
+      assert.strictEqual(sm66.locateQuote('', T), null);
+      assert.strictEqual(sm66.locateQuote(null, T), null);
+      const twice = 'Audit eksternal untuk perizinan berjalan. Lain hal. Audit eksternal untuk perizinan berjalan.';
+      assert.strictEqual(sm66.locateQuote('Audit eksternal untuk perizinan berjalan', twice), 0, 'the first occurrence');
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] Offline grouping: the agenda start is the FIRST candidate with the same name words (generic words like project/update ignored), not the model\'s wrong number; refineStart moves it back to the announcement (2 own words within 60 chars, at most 1,500 back); first agenda at 0; an invented name (Pak Hendra) or an unknown candidate is dropped; at most 3 agendas', async () => {
+      assert.deepStrictEqual(sm66.agendaNameWords('Update Talent Factory Project'), ['talent', 'factory']);
+      assert.strictEqual(sm66.sameAgendaName('Talent Factory Project', 'talent factory'), true);
+      assert.strictEqual(sm66.sameAgendaName('Talent Factory', 'Update terkait Talent Factory'), true);
+      assert.strictEqual(sm66.sameAgendaName('PX Dashboard', 'People Experience'), false);
+      assert.strictEqual(sm66.sameAgendaName('Project', 'Talent Factory'), false, 'only generic words = no name');
+      const ctx = sm66.buildCheckContext(MEET66, 'id', 'x.mp4');
+      const quotePos = MEET66.indexOf('Talent factory sudah sampai');
+      assert.strictEqual(sm66.refineAgendaStart('Talent Factory Project', quotePos, MEET66), TF_START66, 'moved back to "Project Talent Factory"');
+      assert.strictEqual(sm66.refineAgendaStart('Talent', quotePos, MEET66), quotePos, 'a one-word name keeps the quote position');
+      assert.strictEqual(sm66.refineAgendaStart('Anggaran Tahunan', quotePos, MEET66), quotePos, 'own words not near: unchanged');
+      const far = 'kata '.repeat(400) + 'talent factory dibahas. ' + 'isi '.repeat(500) + 'graduate talent factory sudah final.';
+      const farQuote = far.indexOf('graduate talent');
+      assert.strictEqual(sm66.refineAgendaStart('Talent Factory', farQuote, far), farQuote, 'an announcement more than 1,500 characters back is out of reach; a later hit never moves the start forward');
+      const near = 'kata '.repeat(400) + 'talent factory dibahas. ' + 'isi '.repeat(200) + 'graduate talent factory sudah final.';
+      assert.strictEqual(sm66.refineAgendaStart('Talent Factory', near.indexOf('graduate talent'), near), near.indexOf('talent factory dibahas'), 'within 1,500 characters: moved back');
+      const cands = [
+        { name: 'People Experience', pos: MEET66.indexOf('Yang pertama') },
+        { name: 'Dashboard People Experience', pos: MEET66.indexOf('Dashboard People') },
+        { name: 'Talent Factory', pos: quotePos },
+        { name: 'Audit Eksternal', pos: MEET66.indexOf('Audit eksternal') },
+        { name: 'Talent Factory', pos: MEET66.indexOf('Penutup talent') }
+      ];
+      const agendas = sm66.agendasFromGroups([{ nama: 'People Experience', mulai: 1 }, { nama: 'Talent Factory Project', mulai: 99 }], cands, ctx);
+      assert.deepStrictEqual(agendas, [{ name: 'People Experience', pos: 0 }, { name: 'Talent Factory Project', pos: TF_START66 }]);
+      // by number only when no candidate has the name; an invented name is dropped; an unknown number too
+      assert.deepStrictEqual(sm66.agendasFromGroups([{ nama: 'People Experience', mulai: 1 }, { nama: 'Factory Talent Sesi Akhir', mulai: 3 }], cands, ctx).map(a => a.name), ['People Experience', 'Factory Talent Sesi Akhir'], 'name words found');
+      assert.deepStrictEqual(sm66.agendasFromGroups([{ nama: 'People Experience', mulai: 1 }, { nama: 'Proyek Baru', mulai: 3 }], cands, ctx).map(a => a.pos), [0, quotePos], 'no name match: the model number (candidate 3; a one-word name is not refined)');
+      assert.deepStrictEqual(sm66.agendasFromGroups([{ nama: 'People Experience', mulai: 1 }, { nama: 'Kunjungan Pak Hendra', mulai: 3 }], cands, ctx).map(a => a.name), ['People Experience'], 'invented name dropped');
+      assert.deepStrictEqual(sm66.agendasFromGroups([{ nama: 'People Experience', mulai: 1 }, { nama: 'Proyek Baru', mulai: 42 }], cands, ctx).map(a => a.name), ['People Experience'], 'unknown candidate number dropped');
+      for (const junk of [null, 'teks', {}, [null, 'x', { nama: '' }]]) assert.deepStrictEqual(sm66.agendasFromGroups(junk, cands, ctx), [], JSON.stringify(junk));
+      // the model's FIRST agenda is the opening one (at 0): a sub-candidate that sits a little earlier ("Bal Experience" before
+      // "People Experience" in the real meeting) does not take its name; it is too close and joins it (guard)
+      const balCands = [{ name: 'Bal Experience', pos: MEET66.indexOf('Selamat pagi') }, ...cands];
+      assert.deepStrictEqual(sm66.agendasFromGroups([{ nama: 'People Experience', mulai: 2 }, { nama: 'Talent Factory Project', mulai: 4 }, { nama: 'Bal Experience', mulai: 1 }], balCands, ctx).map(a => [a.name, a.pos]),
+        [['People Experience', 0], ['Talent Factory Project', TF_START66]]);
+      assert.strictEqual(sm66.MAX_AGENDAS, 3);
+      const long = Array.from({ length: 5 }, (_, k) => `agenda${'abcde'[k]}x satu dua. ` + 'isi '.repeat(2000)).join('');
+      const many = Array.from({ length: 5 }, (_, k) => ({ name: `Agenda${'abcde'[k]}x`, pos: long.indexOf(`agenda${'abcde'[k]}x`) }));
+      assert.strictEqual(sm66.agendasFromGroups(many.map((c, k) => ({ nama: c.name, mulai: k + 1 })), many, sm66.buildCheckContext(long, 'id')).length, 3, 'at most 3 agendas');
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] Offline MIN_SHARE guard (15%): an agenda starting less than 15% after the previous one, or shorter than 15% of the transcript, joins its neighbour; well-spread agendas stay', async () => {
+      assert.strictEqual(sm66.AGENDA_MIN_SHARE, 0.15);
+      assert.deepStrictEqual(sm66.applyAgendaMinShare([{ name: 'A', pos: 0 }, { name: 'B', pos: 10 }, { name: 'C', pos: 50 }], 100), [{ name: 'A', pos: 0 }, { name: 'C', pos: 50 }], 'B starts 10% after A');
+      assert.deepStrictEqual(sm66.applyAgendaMinShare([{ name: 'A', pos: 0 }, { name: 'B', pos: 90 }], 100), [{ name: 'A', pos: 0 }], 'B is only 10% long');
+      assert.deepStrictEqual(sm66.applyAgendaMinShare([{ name: 'A', pos: 0 }, { name: 'B', pos: 40 }, { name: 'C', pos: 50 }], 100).map(a => a.name), ['A', 'B'], 'C starts 10% after B');
+      const ok = [{ name: 'A', pos: 0 }, { name: 'B', pos: 15 }, { name: 'C', pos: 70 }];
+      assert.deepStrictEqual(sm66.applyAgendaMinShare(ok, 100), ok, 'exactly 15% is enough');
+      assert.notStrictEqual(sm66.applyAgendaMinShare(ok, 100), ok, 'a new list (input untouched)');
+      assert.deepStrictEqual(sm66.applyAgendaMinShare([{ name: 'A', pos: 0 }], 100), [{ name: 'A', pos: 0 }]);
+    });
+
+    await runTest('[POSITIVE] Offline blocks: consecutive parts with at most 10 topics each, as few blocks as possible, balanced sizes, a part never split; a part with more than 10 topics is a block of its own', async () => {
+      assert.strictEqual(sm66.TOPIC_BLOCK_THRESHOLD, 15);
+      assert.strictEqual(sm66.TOPIC_BLOCK_SIZE, 10);
+      const mk = sizes => sizes.flatMap((n, p) => Array.from({ length: n }, (_, i) => ({ part: p + 1, title: `T${p + 1}.${i}`, points: ['x'] })));
+      const shape = blocks => blocks.map(b => b.map(t => t.part));
+      assert.deepStrictEqual(shape(sm66.topicBlocks(mk([3, 3, 3, 3, 3, 3]))), [[1, 1, 1, 2, 2, 2, 3, 3, 3], [4, 4, 4, 5, 5, 5, 6, 6, 6]]);
+      for (const sizes of [[3, 3, 3, 3, 3, 3, 3, 3, 3, 3], [3, 2, 3, 1, 3, 3, 2], [1, 3, 3, 3, 3, 3, 1, 2, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3]]) {
+        const mapped = mk(sizes);
+        const blocks = sm66.topicBlocks(mapped);
+        assert.deepStrictEqual(blocks.flat(), mapped, `${sizes}: every topic once, in order`);
+        assert.ok(blocks.every(b => b.length <= 10), `${sizes}: <= 10 per block`);
+        assert.strictEqual(blocks.length, Math.ceil(mapped.length / 10) + (sizes.length === 10 ? 1 : 0), `${sizes}: fewest blocks`);
+        const parts = blocks.map(b => new Set(b.map(t => t.part)));
+        parts.forEach((s, k) => parts.slice(k + 1).forEach(o => assert.ok([...s].every(p => !o.has(p)), `${sizes}: a part is never split`)));
+        const lens = blocks.map(b => b.length);
+        assert.ok(Math.max(...lens) - Math.min(...lens) <= 3, `${sizes}: balanced ${lens}`);
+      }
+      assert.deepStrictEqual(shape(sm66.topicBlocks(mk([12, 1]))), [Array(12).fill(1), [2]]);
+      assert.deepStrictEqual(sm66.topicBlocks([]), []);
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] Offline coverage guard: a map topic with < 35% of its word prefixes in the merged result is put back (lowest coverage first, up to the cap, title checked), ordered by its part; covered topics and topics over the cap are not', async () => {
+      assert.strictEqual(sm66.COVERAGE_MIN, 0.35);
+      assert.deepStrictEqual(sm66.GROUP_LIMITS, { agenda: { topics: 5, points: 3, cap: 6 }, block: { topics: 4, points: 3, cap: 5 } });
+      const ctx = sm66.buildCheckContext(MEET66, 'id', 'x.mp4');
+      const items = [
+        { part: 1, title: 'Tahap Akhir Talent Factory', points: ['Talent factory sudah sampai di tahap akhir.'] },
+        { part: 1, title: 'Sosialisasi Dua Sesi', points: ['Sosialisasi dilakukan dalam dua sesi.'] },
+        { part: 2, title: 'Audit Eksternal', points: ['Audit eksternal untuk perizinan sedang berjalan dengan update harian.'] },
+        { part: 3, title: 'Modul Pembelajaran', points: ['Modul pembelajaran untuk peserta baru sedang dikembangkan.'] },
+        { part: 3, title: 'Kunjungan Pak Hendra', points: ['Modul dikirim ke semua experience owner.'] }
+      ];
+      const merged = [{ title: 'Audit Eksternal', points: ['Audit eksternal untuk perizinan sedang berjalan.'] }, { title: 'Tahap Akhir Talent Factory', points: ['Talent factory sudah sampai di tahap akhir.'] }];
+      const r = sm66.restoreCoverage(merged, items, 6, ctx);
+      assert.strictEqual(r.restored, 2, 'Sosialisasi + Modul (the invented-name title is not put back)');
+      assert.deepStrictEqual(r.topics.map(t => t.title), ['Tahap Akhir Talent Factory', 'Sosialisasi Dua Sesi', 'Audit Eksternal', 'Modul Pembelajaran'], 'recording order by part');
+      assert.deepStrictEqual(r.topics[1], { title: items[1].title, points: items[1].points }, 'put back as it is');
+      const capped = sm66.restoreCoverage(merged, items, 3, ctx);
+      assert.strictEqual(capped.restored, 1, 'only up to the cap');
+      assert.strictEqual(capped.topics.length, 3);
+      assert.strictEqual(sm66.restoreCoverage(items.slice(0, 4), items.slice(0, 4), 6, ctx).restored, 0, 'everything covered: nothing added');
+    });
+
+    await runTest('[POSITIVE] Offline opener dedupe: only the first "Pembahasan mencakup ..." / "The discussion covers ..." stays, later ones read "... juga mencakup ..." / "... also covers ..."; repairSummary does it too; other sentences untouched', async () => {
+      assert.strictEqual(sm66.dedupeOpeners('Pembahasan mencakup dashboard. Pembahasan mencakup talent factory. Audit berjalan. Pembahasan juga mencakup memo. pembahasan mencakup modul.'),
+        'Pembahasan mencakup dashboard. Pembahasan juga mencakup talent factory. Audit berjalan. Pembahasan juga mencakup memo. Pembahasan juga mencakup modul.');
+      assert.strictEqual(sm66.dedupeOpeners('The discussion covers the dashboard. The discussion covers the audit.'), 'The discussion covers the dashboard. The discussion also covers the audit.');
+      assert.strictEqual(sm66.dedupeOpeners('Audit berjalan. Pembahasan mencakup memo.'), 'Audit berjalan. Pembahasan mencakup memo.', 'a single opener stays as it is');
+      assert.strictEqual(sm66.dedupeOpeners(''), '');
+      const ctx = sm66.buildCheckContext(MEET66, 'id', 'x.mp4');
+      assert.deepStrictEqual(sm66.repairSummary('Rekaman ini membahas dashboard People Experience yang menampilkan indeks per direktorat. Rapat ini membahas talent factory yang sudah sampai di tahap akhir.', ctx),
+        { text: 'Pembahasan mencakup dashboard People Experience yang menampilkan indeks per direktorat. Pembahasan juga mencakup talent factory yang sudah sampai di tahap akhir.', repaired: true, removed: 0 });
+      assert.deepStrictEqual(sm66.repairSummary('Pembahasan mencakup dashboard People Experience yang menampilkan indeks. Pembahasan mencakup talent factory yang sudah sampai di tahap akhir.', ctx).text,
+        'Pembahasan mencakup dashboard People Experience yang menampilkan indeks. Pembahasan juga mencakup talent factory yang sudah sampai di tahap akhir.', 'also when the model wrote the opener itself');
+    });
+
+    await runTest('[POSITIVE] Offline prompts: detect (JSON {"agenda_baru":[{nama,kutipan}]}, carries the running agenda), group (candidates with % position), merge variants for an agenda ("dari agenda X", 2-5 topics, 1-3 points, first sentence names X) and a block ("satu potongan berurutan", 2-4 topics)', async () => {
+      const first = sm66.buildAgendaDetectPrompt('teks', 'id', 1, 5, '');
+      assert.ok(first.includes('bagian 1 dari 5') && first.includes('Ini bagian pertama.') && first.includes('MEMULAI AGENDA BESAR BARU') && first.includes('{"agenda_baru":[{"nama":"...","kutipan":"..."}]}'));
+      assert.ok(first.includes('sebut juga agenda pertama'));
+      const next = sm66.buildAgendaDetectPrompt('teks', 'id', 2, 5, 'People Experience');
+      assert.ok(next.includes('sejak bagian sebelumnya: "People Experience"') && !next.includes('sebut juga agenda pertama'));
+      const noneYet = sm66.buildAgendaDetectPrompt('teks', 'id', 3, 5, '');
+      assert.ok(noneYet.includes('Belum ada agenda besar yang ditandai di bagian sebelumnya.') && !noneYet.includes('Ini bagian pertama'), 'a later part without an agenda so far is not called the first part');
+      assert.ok(sm66.buildAgendaDetectPrompt('text', 'en', 1, 2, '').includes('{"new_agendas":[{"name":"...","quote":"..."}]}'));
+      const group = sm66.buildAgendaGroupPrompt([{ name: 'People Experience', pos: 0, quote: 'yang pertama' }, { name: 'Talent Factory', pos: 500, quote: 'update terkait' }], 1000, 'id');
+      assert.ok(group.includes('1. "People Experience" (posisi 0%): "yang pertama"') && group.includes('2. "Talent Factory" (posisi 50%)') && group.includes('{"agenda":[{"nama":"...","mulai":1}]}'));
+      const items = [{ part: 1, title: 'A', points: ['p'] }];
+      const agenda = sm66.buildTopicMergePrompt(items, 'id', '', { kind: 'agenda', name: 'Talent Factory' });
+      assert.ok(agenda.includes('dari agenda "Talent Factory" dalam sebuah rekaman') && agenda.includes('Hasilkan 2 sampai 5 topik akhir') && agenda.includes('tulis 1 sampai 3 poin singkat') && agenda.includes('kalimat pertama menyebut "Talent Factory"'));
+      const block = sm66.buildTopicMergePrompt(items, 'id', '', { kind: 'block' });
+      assert.ok(block.includes('dari satu potongan berurutan sebuah rekaman') && block.includes('Hasilkan 2 sampai 4 topik akhir') && block.includes('1 sampai 2 kalimat tentang isi potongan ini'));
+      const whole = sm66.buildTopicMergePrompt(items, 'id', '');
+      assert.ok(whole.includes('dari beberapa bagian satu rekaman yang sama') && whole.includes('Hasilkan 4 sampai 8 topik akhir') && whole.includes('tulis 1 sampai 4 poin singkat'), 'the single merge prompt is unchanged');
+      assert.ok(sm66.buildTopicMergePrompt(items, 'en', '', { kind: 'agenda', name: 'Talent Factory' }).includes('from the agenda "Talent Factory" of a recording'));
+    });
+
+    const storage66 = require('../server/db/storage');
+    if (storage66.backend !== 'sql') {
+      console.log('  ⏭️  SKIP: Module 66 pipeline tests need the SQL backend (second backend over the same database)');
+    } else {
+      const http66 = require('http');
+      const { spawn } = require('child_process');
+      const path66 = require('path');
+      const crypto66 = require('crypto');
+      const auth66 = require('../server/services/authService');
+      const EVENT66 = 'ev-perspektif-2024-q1';
+      const sleep66 = ms => new Promise(r => setTimeout(r, ms));
+      const textOfPrompt66 = prompt => { const m = prompt.match(/"""\n([\s\S]*)\n"""/); return m ? m[1] : ''; };
+      const itemsOfPrompt66 = prompt => [...prompt.matchAll(/^\d+\. \[bagian (\d+)\] (.+?): (.+)$/gm)].map(m => ({ part: Number(m[1]), judul: m[2], poin: m[3].split(' | ') }));
+      const oll66 = { calls: [], mode: 'normal' };
+      const detectAnswer66 = text => {
+        const out = [];
+        if (text.includes('Yang pertama terkait dengan People Experience')) {
+          out.push({ nama: 'People Experience', kutipan: 'Yang pertama terkait dengan People Experience dashboard' },
+            { nama: 'Dashboard People Experience', kutipan: 'Dashboard People Experience menampilkan indeks per direktorat' },
+            { nama: 'Kunjungan Pak Hendra', kutipan: 'Tim menyiapkan definisi parameter agar pengukuran konsisten' }, // invented name -> dropped
+            { nama: 'Anggaran Tahunan', kutipan: 'anggaran tahunan dibahas oleh semua direktur bank' });             // quote not in the transcript -> dropped
+        }
+        if (text.includes('Project Talent Factory')) {
+          out.push({ nama: 'Talent Factory', kutipan: 'Talent factory sudah sampai di tahap akhir dan sosialisasi' }, { nama: 'Audit Eksternal', kutipan: 'Audit eksternal untuk perizinan sedang berjalan' });
+        }
+        if (text.includes('Penutup talent factory')) out.push({ nama: 'Talent Factory', kutipan: 'Penutup talent factory akan dilaporkan pada rapat berikutnya' });
+        return { agenda_baru: out };
+      };
+      const answer66 = prompt => {
+        if (prompt.includes('MEMULAI AGENDA BESAR BARU')) return JSON.stringify(detectAnswer66(textOfPrompt66(prompt)));
+        if (prompt.includes('AGENDA BESAR yang sebenarnya')) {
+          // the 2nd agenda's number is wrong (99) - its start must come from the name; a 3rd agenda right after it is too close (guard)
+          return JSON.stringify({ agenda: [{ nama: 'People Experience', mulai: 1 }, { nama: 'Talent Factory Project', mulai: 99 }, { nama: 'Audit Eksternal', mulai: 4 }] });
+        }
+        const map = prompt.match(/Berikut bagian (\d+) dari (\d+) transkrip rekaman/);
+        if (map) {
+          const text = textOfPrompt66(prompt);
+          if (text.includes('Dashboard People Experience')) {
+            return JSON.stringify({ topik: [{ judul: 'Dashboard People Experience', poin: ['Dashboard People Experience menampilkan indeks per direktorat.'] }, { judul: 'Memo Pengukuran', poin: ['Memo proses pengukuran akan dikirim ke semua experience owner.'] }] });
+          }
+          if (text.includes('Talent factory sudah')) {
+            return JSON.stringify({ topik: [{ judul: 'Tahap Akhir Talent Factory', poin: ['Talent factory sudah sampai di tahap akhir.'] }, { judul: 'Sosialisasi Dua Sesi', poin: ['Sosialisasi dilakukan dalam dua sesi.'] },
+              { judul: 'Audit Eksternal', poin: ['Audit eksternal untuk perizinan sedang berjalan dengan update harian.'] }] });
+          }
+          const part = Number(map[1]);
+          return JSON.stringify({ topik: SENT66.slice((part - 1) * 3, part * 3).map(s => ({ judul: titleOf66(s), poin: [s] })) });
+        }
+        if (prompt.includes('Berikut daftar topik dan poin')) {
+          if (prompt.includes('dari agenda "People Experience"')) {
+            const ringkasan = oll66.mode === 'px-summary-bad' ? 'Agenda People Experience dipimpin oleh Budi Santoso untuk dashboard indeks.' // invented name, both attempts
+              : 'Rekaman ini membahas dashboard People Experience yang menampilkan indeks per direktorat.';
+            return JSON.stringify({ ringkasan, topik: [
+              { judul: 'Dashboard People Experience', poin: ['Dashboard People Experience menampilkan indeks per direktorat.', 'Dashboard sudah berjalan di server lokal.'] },
+              { judul: 'Parameter dan Memo Pengukuran', poin: ['Tim menyiapkan definisi parameter agar pengukuran konsisten.', 'Memo proses pengukuran akan dikirim ke semua experience owner.'] }] });
+          }
+          if (prompt.includes('dari agenda "Talent Factory Project"')) { // drops the socialisation topic -> the coverage guard puts it back
+            return JSON.stringify({ ringkasan: 'Pembahasan mencakup talent factory yang sudah sampai di tahap akhir.', topik: [
+              { judul: 'Tahap Akhir Talent Factory', poin: ['Talent factory sudah sampai di tahap akhir.', 'Modul pembelajaran untuk peserta baru sedang dikembangkan.'] },
+              { judul: 'Audit Eksternal', poin: ['Audit eksternal untuk perizinan sedang berjalan.', 'Update harian diberikan selama audit eksternal berjalan.'] }] });
+          }
+          const items = itemsOfPrompt66(prompt);
+          if (prompt.includes('dari beberapa bagian satu rekaman yang sama') && oll66.mode === 'single-fails') return 'Maaf, daftarnya terlalu panjang.';
+          const topik = items.slice(0, 4).map(t => ({ judul: t.judul, poin: t.poin }));
+          return JSON.stringify({ ringkasan: `Pembahasan mencakup ${items[0].poin[0][0].toLowerCase()}${items[0].poin[0].slice(1)}`, topik });
+        }
+        return 'RINGKASAN: tidak dipakai.\n\nPOIN:\n- tidak dipakai di modul ini.\n- tidak dipakai di modul ini.';
+      };
+      const fakeOllama66 = http66.createServer((req, res) => {
+        const chunks = [];
+        req.on('data', c => chunks.push(c));
+        req.on('end', () => {
+          let body = {};
+          try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch (_) { /* tags etc. */ }
+          oll66.calls.push({ url: req.url, prompt: body.prompt || '', format: body.format, options: body.options || {} });
+          res.setHeader('Content-Type', 'application/json');
+          if (oll66.mode === 'abort-detect' && (body.prompt || '').includes('MEMULAI AGENDA BESAR BARU') && (body.prompt || '').includes('Ini bagian pertama.')) {
+            res.statusCode = 500;
+            return res.end(JSON.stringify({ error: 'prediction aborted, token repeat limit reached' }));
+          }
+          res.end(JSON.stringify({ response: answer66(body.prompt || ''), done: true }));
+        });
+      });
+      const fakeTranscribe66 = http66.createServer((req, res) => { req.resume(); req.on('end', () => { res.setHeader('Content-Type', 'application/json'); res.end('{"status":"ok"}'); }); });
+      const listen66 = srv => new Promise(resolve => srv.listen(0, '127.0.0.1', () => resolve(srv.address().port)));
+      const ollamaPort66 = await listen66(fakeOllama66);
+      const trPort66 = await listen66(fakeTranscribe66);
+      const freePort66 = await (async () => { const s = http66.createServer(); const p = await listen66(s); await new Promise(r => s.close(r)); return p; })();
+      const CHILD66 = `http://127.0.0.1:${freePort66}`;
+      const stamp66 = Date.now().toString(36);
+      const pw66 = crypto66.randomBytes(9).toString('hex') + 'Aa1';
+      const users66 = [];
+      const mediaIds66 = new Set();
+      let child66 = null;
+      let cookie66 = null;
+      const api66 = (p, opts = {}) => realFetch(`${CHILD66}${p}`, { ...opts, headers: { ...(opts.headers || {}), ...(cookie66 ? { Cookie: cookie66 } : {}) } });
+      const generate66 = () => oll66.calls.filter(c => c.url === '/api/generate');
+      const kind66 = c => (c.prompt.includes('MEMULAI AGENDA BESAR BARU') ? 'detect' : c.prompt.includes('AGENDA BESAR yang sebenarnya') ? 'group'
+        : /Berikut bagian \d+ dari \d+ transkrip rekaman/.test(c.prompt) ? 'map' : c.prompt.includes('dari agenda "') ? 'agenda-merge'
+          : c.prompt.includes('dari satu potongan berurutan') ? 'block-merge' : c.prompt.includes('dari beberapa bagian satu rekaman yang sama') ? 'single-merge' : 'other');
+      const count66 = kind => generate66().filter(c => kind66(c) === kind).length;
+      const eventMedia66 = async id => (await (await api66(`/api/events/${EVENT66}`)).json()).media.find(m => m.media_id === id);
+      const waitDone66 = async (id, ms = 30000) => {
+        for (let i = 0; i < ms / 250; i++) { const m = await eventMedia66(id); if (m && m.summary_status && m.summary_status !== 'PROCESSING') return m; await sleep66(250); }
+        return eventMedia66(id);
+      };
+      const videoWith66 = async (transcript, fileName, extra = {}) => {
+        const m = await storage66.addMedia({ event_id: EVENT66, file_name: fileName, file_path: `/uploads/rt66-${stamp66}-${mediaIds66.size}.mp4`, file_type: 'VIDEO', caption: 'rt66', transcript_status: 'DONE' });
+        mediaIds66.add(m.media_id);
+        await storage66.updateMedia(m.media_id, { transcript, transcript_language: 'id', transcript_segments: [], ...extra });
+        return m;
+      };
+      const summarize66 = async (id, mode = 'normal') => {
+        oll66.calls.length = 0; oll66.mode = mode;
+        const r = await api66(`/api/media/${id}/summarize`, { method: 'POST' });
+        assert.strictEqual(r.status, 202);
+        return waitDone66(id);
+      };
+      const EXPECTED_AGENDA66 = [
+        { agenda: 'People Experience', title: 'Dashboard People Experience', points: ['Dashboard People Experience menampilkan indeks per direktorat.', 'Dashboard sudah berjalan di server lokal.'] },
+        { agenda: 'People Experience', title: 'Parameter dan Memo Pengukuran', points: ['Tim menyiapkan definisi parameter agar pengukuran konsisten.', 'Memo proses pengukuran akan dikirim ke semua experience owner.'] },
+        { agenda: 'Talent Factory Project', title: 'Tahap Akhir Talent Factory', points: ['Talent factory sudah sampai di tahap akhir.', 'Modul pembelajaran untuk peserta baru sedang dikembangkan.'] },
+        { agenda: 'Talent Factory Project', title: 'Audit Eksternal', points: ['Audit eksternal untuk perizinan sedang berjalan.', 'Update harian diberikan selama audit eksternal berjalan.'] },
+        { agenda: 'Talent Factory Project', title: 'Sosialisasi Dua Sesi', points: ['Sosialisasi dilakukan dalam dua sesi.'] }
+      ];
+      try {
+        const u = await storage66.createUser({ is_test_account: true, username: `rt66a${stamp66}`, full_name: 'Regression 66 Admin', email: '', role: 'ADMIN', password_hash: await auth66.hashPassword(pw66), must_change_password: false });
+        users66.push(u.user_id);
+        child66 = spawn(process.execPath, [path66.join(__dirname, '..', 'server', 'server.js')], {
+          cwd: path66.join(__dirname, '..'),
+          env: { ...process.env, PORT: String(freePort66), OLLAMA_HOST: `http://127.0.0.1:${ollamaPort66}`, OLLAMA_MODEL: 'gemma3:4b', TRANSCRIBE_API_URL: `http://127.0.0.1:${trPort66}`, PX_DISABLE_SCHEDULERS: '1', PX_DISABLE_RESUME: '1' },
+          stdio: 'ignore'
+        });
+        let booted = false;
+        for (let i = 0; i < 120 && !booted; i++) { try { booted = (await realFetch(`${CHILD66}/api/health`)).ok; } catch (_) { await sleep66(500); } }
+        assert.ok(booted, 'second backend did not start');
+        const login = await realFetch(`${CHILD66}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u.username, password: pw66 }) });
+        assert.strictEqual(login.status, 200);
+        cookie66 = (login.headers.getSetCookie() || []).map(c => c.split(';')[0]).find(c => c.startsWith('px_session='));
+        assert.strictEqual(generate66().length, 0, 'booting the second backend makes no Gemma call');
+
+        await runTest('[POSITIVE] A meeting with two agendas: one detect call per part (JSON, num_predict 250), ONE group call (num_predict 200); the start of Talent Factory comes from its name (model number 99 is wrong) and moves back to the announcement; no map part crosses the agenda boundary; one merge per agenda; topics carry `agenda` and are returned by the event GET; the dropped socialisation topic is put back; summary openers deduplicated', async () => {
+          const v = await videoWith66(MEET66, 'HR Projects Update - Meeting Recording.mp4');
+          const done = await summarize66(v.media_id);
+          assert.strictEqual(done.summary_status, 'DONE', done.summary_error);
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          assert.deepStrictEqual(done.summary_topics, EXPECTED_AGENDA66);
+          assert.strictEqual(done.summary, 'Pembahasan mencakup dashboard People Experience yang menampilkan indeks per direktorat. Pembahasan juga mencakup talent factory yang sudah sampai di tahap akhir.');
+          assert.deepStrictEqual(done.summary_points, EXPECTED_AGENDA66.map(t => `${t.title}: ${t.points[0]}`));
+          const st = done.summary_topic_stats;
+          const plainParts = sm66.splitTranscript(MEET66, sm66.TOPIC_PART_CHARS).length;
+          const segParts = sm66.splitTranscript(MEET66.slice(0, TF_START66), 6000).length + sm66.splitTranscript(MEET66.slice(TF_START66), 6000).length;
+          assert.deepStrictEqual([st.agenda_mode, st.agendas, st.detect_calls, st.agenda_candidates, st.blocks, st.coverage_restored, st.merge_attempts, st.parts, st.summary_repaired, st.aborted_answers],
+            [true, ['People Experience', 'Talent Factory Project'], plainParts, 5, 0, 1, 2, segParts, 1, 0]);
+          assert.ok(JSON.stringify(st).length < 1000, 'stats fit px_media.summary_topic_stats (NVARCHAR(1000))');
+          const calls = generate66();
+          assert.deepStrictEqual(calls.map(kind66), [...Array(plainParts).fill('detect'), 'group', ...Array(segParts).fill('map'), 'agenda-merge', 'agenda-merge']);
+          calls.filter(c => kind66(c) === 'detect').forEach((c, i) => {
+            assert.ok(c.prompt.includes(`bagian ${i + 1} dari ${plainParts}`));
+            assert.deepStrictEqual([c.format, c.options.seed, c.options.num_ctx, c.options.num_predict], ['json', 41, 8192, 250]);
+          });
+          assert.ok(calls[1].prompt.includes('sejak bagian sebelumnya: "Dashboard People Experience"'), 'the next detect call carries the running agenda');
+          const group = calls.find(c => kind66(c) === 'group');
+          assert.deepStrictEqual([group.format, group.options.seed, group.options.num_predict], ['json', 41, 200]);
+          assert.ok(group.prompt.includes('1. "People Experience" (posisi 0%)') && !group.prompt.includes('Hendra') && !group.prompt.includes('Anggaran'), 'dropped candidates never reach the group call');
+          const maps = calls.filter(c => kind66(c) === 'map').map(c => textOfPrompt66(c.prompt));
+          assert.ok(maps.every(t => !(t.includes('Dashboard People Experience') && t.includes('Talent factory sudah'))), 'no part crosses the agenda boundary');
+          assert.ok(maps.some(t => t.startsWith('Talent Factory. Talent factory sudah')), 'the Talent Factory segment starts at the announcement, not at the quote');
+          const merges = calls.filter(c => kind66(c) === 'agenda-merge');
+          assert.ok(merges[0].prompt.includes('dari agenda "People Experience"') && !merges[0].prompt.includes('Talent'), 'agenda 1 merges only its own topics');
+          assert.ok(merges[1].prompt.includes('dari agenda "Talent Factory Project"') && merges[1].prompt.includes('Sosialisasi Dua Sesi'));
+          assert.deepStrictEqual([merges[0].options.num_predict, merges[0].options.seed, merges[0].options.repeat_penalty], [900, 41, undefined]);
+          // the event GET returns the agenda topics (SQL round trip) and never calls the model
+          oll66.calls.length = 0;
+          assert.deepStrictEqual((await eventMedia66(v.media_id)).summary_topics, EXPECTED_AGENDA66);
+          await sleep66(300);
+          assert.strictEqual(oll66.calls.length, 0, 'GET makes zero Ollama requests');
+        });
+
+        await runTest('[POSITIVE] A soft Ollama abort of ONE detect call = no candidates for that part (counted, no retry); the group answer falls back to the model number for an unmatched name - still two agendas', async () => {
+          const v = await videoWith66(MEET66, 'rt66-rapat.mp4');
+          const done = await summarize66(v.media_id, 'abort-detect');
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          const st = done.summary_topic_stats;
+          assert.strictEqual(st.aborted_answers, 1);
+          assert.strictEqual(st.agenda_candidates, 3, 'part 1 gave none');
+          assert.strictEqual(st.agenda_mode, true);
+          assert.deepStrictEqual(st.agendas, ['People Experience', 'Talent Factory Project']);
+          assert.strictEqual(count66('detect'), sm66.splitTranscript(MEET66, 6000).length, 'no extra detect call');
+          assert.ok(done.summary_topics.every(t => t.agenda));
+        });
+
+        await runTest('[NEGATIVE] An agenda whose summary fails twice (invented name) still appears in the overall summary: one sentence from ITS topic titles (summary_from_titles 1), followed by the other agenda\'s summary; nothing invented stored', async () => {
+          const v = await videoWith66(MEET66, 'rt66-rapat-ringkasan.mp4');
+          const done = await summarize66(v.media_id, 'px-summary-bad');
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          assert.deepStrictEqual(done.summary_topics, EXPECTED_AGENDA66, 'topics of attempt 1 kept');
+          const ctx = sm66.buildCheckContext(MEET66, 'id', 'x.mp4');
+          const fromTitles = sm66.summaryFromTitles(EXPECTED_AGENDA66.slice(0, 2), ctx);
+          assert.ok(fromTitles.startsWith('Pembahasan mencakup Dashboard People Experience'), fromTitles);
+          assert.strictEqual(done.summary, `${fromTitles} Pembahasan juga mencakup talent factory yang sudah sampai di tahap akhir.`);
+          assert.ok(!/Budi|Santoso/.test(JSON.stringify([done.summary, done.summary_topics])));
+          assert.deepStrictEqual([done.summary_topic_stats.summary_from_titles, done.summary_topic_stats.merge_attempts], [1, 3], 'PX merged twice (summary retry), Talent Factory once');
+          const pxMerges = generate66().filter(c => kind66(c) === 'agenda-merge' && c.prompt.includes('dari agenda "People Experience"'));
+          assert.deepStrictEqual(pxMerges.map(c => [c.options.seed, c.options.repeat_penalty, c.options.repeat_last_n]), [[41, undefined, undefined], [42, 1.15, 128]]);
+        });
+
+        await runTest('[POSITIVE/NEGATIVE] Gate: a long transcript that never says rapat/pertemuan/meeting (and a plain file name) makes ZERO detect calls; the same transcript with "Meeting Recording" in the file name does run them (no candidates -> normal single merge)', async () => {
+          const plain = await videoWith66(LECT_SHORT66, 'rt66-lecture.mp4');
+          const a = await summarize66(plain.media_id);
+          assert.strictEqual(a.summary_source, 'AI', a.summary_error);
+          assert.strictEqual(count66('detect') + count66('group'), 0, 'no detect / group call');
+          assert.deepStrictEqual(generate66().map(kind66), ['map', 'map', 'map', 'single-merge']);
+          assert.deepStrictEqual([a.summary_topic_stats.agenda_mode, a.summary_topic_stats.detect_calls, a.summary_topic_stats.blocks], [false, 0, 0]);
+          assert.ok(a.summary_topics.every(t => t.agenda === undefined), 'no agenda field');
+          const named = await videoWith66(LECT_SHORT66, 'Kelas Kesehatan - Meeting Recording.mp4');
+          const b = await summarize66(named.media_id);
+          assert.strictEqual(b.summary_source, 'AI', b.summary_error);
+          assert.deepStrictEqual(generate66().map(kind66), ['detect', 'detect', 'detect', 'map', 'map', 'map', 'single-merge']);
+          assert.deepStrictEqual([b.summary_topic_stats.agenda_mode, b.summary_topic_stats.detect_calls, b.summary_topic_stats.agenda_candidates], [false, 3, 0]);
+        });
+
+        await runTest('[POSITIVE] More than 15 map topics (18 from 6 parts): NO single merge call - merged in 2 blocks of consecutive parts (<= 10 topics each, 2-4 topics + coverage guard up to 5), block topics without `agenda`, block summaries joined with a deduplicated opener', async () => {
+          const v = await videoWith66(LECT66, 'rt66-lecture-long.mp4');
+          const done = await summarize66(v.media_id);
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          const calls = generate66();
+          assert.strictEqual(count66('single-merge'), 0, 'no single merge');
+          assert.strictEqual(count66('detect'), 0);
+          assert.deepStrictEqual(calls.map(kind66), [...Array(6).fill('map'), 'block-merge', 'block-merge']);
+          const blockItems = calls.filter(c => kind66(c) === 'block-merge').map(c => itemsOfPrompt66(c.prompt));
+          assert.deepStrictEqual(blockItems.map(b => b.map(t => t.part)), [[1, 1, 1, 2, 2, 2, 3, 3, 3], [4, 4, 4, 5, 5, 5, 6, 6, 6]]);
+          calls.filter(c => kind66(c) === 'block-merge').forEach(c => assert.deepStrictEqual([c.format, c.options.num_predict, c.options.seed], ['json', 900, 41]));
+          const st = done.summary_topic_stats;
+          assert.deepStrictEqual([st.agenda_mode, st.blocks, st.merge_attempts, st.coverage_restored, st.parts], [false, 2, 2, 2, 6]);
+          assert.strictEqual(done.summary_topics.length, 10, '4 merged + 1 put back, per block');
+          assert.ok(done.summary_topics.every(t => t.agenda === undefined && t.title && t.points.length));
+          assert.deepStrictEqual(done.summary_topics.slice(0, 4).map(t => t.title), SENT66.slice(0, 4).map(titleOf66));
+          assert.strictEqual(done.summary, `Pembahasan mencakup ${SENT66[0][0].toLowerCase()}${SENT66[0].slice(1)} Pembahasan juga mencakup ${SENT66[9][0].toLowerCase()}${SENT66[9].slice(1)}`);
+        });
+
+        await runTest('[NEGATIVE] The single merge (<= 15 topics) without an acceptable attempt (no JSON twice) falls back to the block merge before the older path: still an AI topic summary, blocks 1, merge_attempts 3, no older-path call', async () => {
+          const v = await videoWith66(LECT_SHORT66, 'rt66-lecture-fallback.mp4');
+          const done = await summarize66(v.media_id, 'single-fails');
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          assert.deepStrictEqual(generate66().map(kind66), ['map', 'map', 'map', 'single-merge', 'single-merge', 'block-merge']);
+          const singles = generate66().filter(c => kind66(c) === 'single-merge');
+          assert.deepStrictEqual([singles[1].options.seed, singles[1].options.repeat_penalty], [42, 1.15]);
+          assert.deepStrictEqual([done.summary_topic_stats.blocks, done.summary_topic_stats.merge_attempts, done.summary_topic_stats.coverage_restored], [1, 3, 1]);
+          assert.strictEqual(done.summary_topics.length, 5);
+          assert.strictEqual(done.summary, `Pembahasan mencakup ${SENT66[0][0].toLowerCase()}${SENT66[0].slice(1)}`);
+          assert.ok(!generate66().some(c => c.prompt.includes('Ini bagian')), 'the older path is not used');
+        });
+
+        await runTest('[POSITIVE] Regenerate on an existing AI summary (older topics with `agenda` round-trip through SQL): 202 PROCESSING -> a new AI summary; the old agenda topics are replaced', async () => {
+          const old = { summary_status: 'DONE', summary_source: 'AI', summary_model: 'gemma3:4b', summary_generated_at: '2026-01-02T03:04:05.000Z', summary: 'Ringkasan lama yang harus diganti oleh ringkasan baru.',
+            summary_points: ['Topik Lama: Poin lama yang basi.'], summary_topics: [{ agenda: 'Agenda Lama', title: 'Topik Lama', points: ['Poin lama yang basi.'] }],
+            summary_topic_stats: { parts: 2, agenda_mode: true, agendas: ['Agenda Lama'] } };
+          const v = await videoWith66(LECT_SHORT66, 'rt66-regenerate.mp4', old);
+          const before = await eventMedia66(v.media_id);
+          assert.deepStrictEqual(before.summary_topics, old.summary_topics, 'the agenda field survives the SQL round trip');
+          assert.strictEqual(before.summary_source, 'AI');
+          oll66.calls.length = 0; oll66.mode = 'normal';
+          const r = await api66(`/api/media/${v.media_id}/summarize`, { method: 'POST' });
+          assert.strictEqual(r.status, 202, 'an AI summary may be regenerated');
+          assert.strictEqual((await r.json()).media.summary_status, 'PROCESSING');
+          const done = await waitDone66(v.media_id);
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          assert.notStrictEqual(done.summary, old.summary);
+          assert.notStrictEqual(done.summary_generated_at, old.summary_generated_at);
+          assert.ok(done.summary_topics.length >= 2 && done.summary_topics.every(t => t.agenda === undefined), 'new topics, no stale agenda');
+          assert.ok(generate66().length > 0);
+        });
+      } finally {
+        if (child66) child66.kill();
+        await sleep66(500);
+        for (const id of mediaIds66) {
+          try { const removed = await storage66.deleteMedia(id); const abs = removed && require('../server/services/transcribeService').resolveUploadPath(removed.file_path); if (abs) require('fs').unlink(abs, () => {}); } catch (_) { /* ignore */ }
+        }
+        for (const id of users66) { try { await storage66.deleteUser(id); } catch (_) { /* ignore */ } }
+        await new Promise(r => fakeOllama66.close(r));
+        await new Promise(r => fakeTranscribe66.close(r));
+      }
+      await runTest('[POSITIVE] Clean-up: the Module 66 videos and the temporary admin are gone', async () => {
+        const all = await storage66.getAllMedia();
+        assert.ok(!all.some(m => mediaIds66.has(m.media_id)), 'test media deleted');
+        for (const id of users66) assert.ok(!(await storage66.getUserById(id)), 'temporary admin deleted');
       });
     }
   }

@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    65 MODUL PENGUJIAN    │     515 AUTOMATED TESTS     │       100% PASS RATE          │
+│    66 MODUL PENGUJIAN    │     530 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -1493,7 +1493,7 @@ Tes offline memanggil `mediaSummaryService` langsung (tanpa Ollama/database) dan
 | 11 | Positif | Bagian yang jawabannya tak terpakai (bukan JSON) ditanya ulang SEKALI dengan seed lain dan "PASTI berisi pembahasan" - berhasil, tidak ada yang dilewati |
 | 12 | Negatif | Bagian yang tetap kosong setelah retry dilewati (dihitung); job tetap selesai sebagai ringkasan AI bertopik dari bagian lain |
 | 13 | Negatif | Poin karangan dibuang, sisanya tetap: angka (350, 2019) dan nama (Budi Santoso) di poin merge, topik yang satu-satunya poinnya menyebut "Pak Hendra", poin karangan bagian (tidak sampai ke merge) |
-| 14 | Negatif | Kedua percobaan merge tak terpakai (ringkasan dengan nama karangan DAN tidak ada topik lolos): satu retry merge, lalu jalur lama per potongan (sumber AI, tanpa topik) |
+| 14 | Negatif | Kedua percobaan merge tak terpakai (ringkasan dengan nama karangan DAN tidak ada topik lolos): satu retry merge, lalu jalur lama per potongan (sumber AI, tanpa topik). Diubah v2.60.1: kini berakhir di merge per blok, bukan jalur lama (lihat §51) |
 | 15 | Positif | Transkrip pendek tetap ringkasan standar: satu panggilan prompt lama (tanpa format JSON), `summary_topics` null |
 | 16 | Positif | Bagian map yang DIHENTIKAN Ollama (HTTP 500 "token repeat limit reached") dicoba ulang sekali dengan seed 42, kalimat retry dan `repeat_penalty` 1.15 / `repeat_last_n` 128 - tetap AI bertopik |
 | 17 | Positif | Panggilan MERGE yang dihentikan dicoba ulang sekali (PERBAIKAN + guard) - tetap AI, `merge_attempts` 2 |
@@ -1518,3 +1518,39 @@ Run suite penuh SQL (developer, backend kedua :5002, TANPA daftar skip - modul m
 **Catatan harness**: pada backend kedua suite, `OLLAMA_HOST` (:5002) mengarah ke Ollama asli, jadi video uji Modul 27/32 ikut diringkas Gemma asli (lebih lama bila Ollama hidup).
 
 **Tidak diuji otomatis**: kualitas ringkasan Gemma asli (hanya uji nyata manual pada 4 video, lihat `CHANGELOG.md` [2.60.0]); tampilan "Topics discussed", badge "AI" dan baris "Generated <tanggal jam>" (dicek `vite build` + Browser pane).
+
+## 51. v2.60.1 - Modul 66: AI Summary rapat per agenda, merge per blok
+
+### Modul 66 - deteksi/pengelompokan agenda, merge per blok, penjaga cakupan, pembuka ringkasan, Regenerate ringkasan AI (15 tes; 7 offline, 8 khusus SQL)
+
+Tes offline memanggil `mediaSummaryService` langsung (tanpa Ollama/database) dan jalan di kedua backend. Tes pipeline butuh backend SQL: suite menyalakan backend sekali pakai dengan `OLLAMA_HOST` ke Ollama palsu di dalam proses, atas database SQL yang sama (seperti Modul 38/65); di JSON dicetak SKIP. Fixture: rapat dua agenda (People Experience, lalu "Project Talent Factory" sekitar pertengahan) dan transkrip kuliah kesehatan tanpa kata rapat/meeting (6 bagian -> 18 topik map; versi 3 bagian -> 9 topik).
+
+| # | Jenis | Skenario |
+| :--- | :--- | :--- |
+| 1 | Positif/Negatif | Offline lokasi kutipan: kutipan persis ditemukan di posisi pertamanya di transkrip ASLI; beberapa kata berubah (>= 60% sama di posisinya) tetap ditemukan; < 60%, kurang dari 4 kata, atau tidak ada di transkrip -> `null` (dibuang) |
+| 2 | Positif/Negatif | Offline pengelompokan: awal agenda = kandidat PERTAMA dengan kata nama yang sama (project/update diabaikan), bukan nomor model yang salah; `refineAgendaStart` mundur ke pengumuman (2 kata nama dalam 60 karakter, maks. 1.500 ke belakang); agenda pertama di 0; nama karangan (Pak Hendra) atau kandidat tak dikenal dibuang; maks. 3 agenda |
+| 3 | Positif/Negatif | Offline batas 15% (`AGENDA_MIN_SHARE`): agenda yang dimulai < 15% setelah agenda sebelumnya atau lebih pendek dari 15% transkrip digabung ke tetangganya; agenda yang tersebar tetap |
+| 4 | Positif | Offline blok: bagian berurutan dengan maks. 10 topik per blok, blok sesedikit mungkin, ukuran seimbang, bagian tidak dipecah; bagian dengan > 10 topik = blok sendiri |
+| 5 | Positif/Negatif | Offline penjaga cakupan: topik map dengan < 35% prefiks katanya di hasil dikembalikan (cakupan terendah dulu, sampai cap, judul dicek), diurutkan menurut bagian; topik yang sudah tercakup dan yang melewati cap tidak |
+| 6 | Positif | Offline pembuka: hanya "Pembahasan mencakup ..." / "The discussion covers ..." pertama yang tetap, berikutnya "... juga mencakup ..." / "... also covers ..."; `repairSummary` juga; kalimat lain tidak disentuh |
+| 7 | Positif | Offline prompt: deteksi (JSON `{"agenda_baru":[{nama,kutipan}]}`, membawa agenda berjalan), pengelompokan (kandidat + posisi %), varian merge agenda ("dari agenda X", 2-5 topik, 1-3 poin, kalimat pertama menyebut X) dan blok ("satu potongan berurutan", 2-4 topik) |
+| 8 | Positif | Rapat dua agenda: satu panggilan deteksi per bagian (JSON, `num_predict` 250), SATU panggilan pengelompokan (`num_predict` 200); awal Talent Factory dari namanya (nomor model 99 salah) dan digeser ke pengumuman; tidak ada bagian map yang melintasi batas agenda; satu merge per agenda; topik memuat `agenda` dan dikirim GET event; topik sosialisasi yang hilang dikembalikan; pembuka ringkasan tidak berulang |
+| 9 | Positif | Soft abort Ollama pada SATU panggilan deteksi = tanpa kandidat untuk bagian itu (dihitung, tanpa retry); nama yang tidak cocok memakai nomor kandidat dari model - tetap dua agenda |
+| 10 | Negatif | Agenda yang ringkasannya gagal dua kali (nama karangan) tetap ada di ringkasan umum: satu kalimat dari judul topiknya (`summary_from_titles` 1), lalu ringkasan agenda lain; tidak ada karangan yang tersimpan |
+| 11 | Positif/Negatif | Gerbang: transkrip panjang tanpa rapat/pertemuan/meeting (nama file biasa) -> NOL panggilan deteksi; transkrip yang sama dengan "Meeting Recording" di nama file -> deteksi jalan (tanpa kandidat -> single merge biasa) |
+| 12 | Positif | > 15 topik map (18 dari 6 bagian): TANPA single merge - 2 blok bagian berurutan (<= 10 topik, 2-4 topik + penjaga cakupan sampai 5), topik blok tanpa `agenda`, ringkasan blok digabung dengan pembuka tanpa ulangan |
+| 13 | Negatif | Single merge (<= 15 topik) tanpa percobaan yang diterima (dua kali bukan JSON) -> merge per blok sebelum jalur lama: tetap ringkasan AI bertopik, `blocks` 1, `merge_attempts` 3, tanpa panggilan jalur lama |
+| 14 | Positif | Regenerate atas ringkasan AI yang sudah ada (topik lama ber-`agenda` lewat SQL): 202 `PROCESSING` -> ringkasan AI baru; topik agenda lama diganti |
+| 15 | Positif | Clean-up: video Modul 66 dan admin sementara sudah tidak ada |
+
+### Modul lama disesuaikan
+
+Modul 65 (jumlah tes tetap 26): fixture `LONG65` memuat "rapat", jadi setiap video kini lebih dulu mendapat panggilan deteksi agenda (Ollama palsu tidak memberi kandidat -> jalur topik biasa). Panggilan deteksi dihitung terpisah (`detect65`) agar urutan panggilan tes lama tetap; tes 10 kini juga memeriksa field statistik baru dan opsi deteksi (3 panggilan, JSON, `num_predict` 250, `num_ctx` 8192, seed 41). Tes 14 ("bad-summary") kini: dua percobaan single merge gagal -> merge per blok (jawabannya juga tak terpakai) -> topik map yang sudah dicek + ringkasan dari judul, `blocks` 1, `merge_attempts` 4, tanpa jalur lama. Tes Ollama mati menghitung panggilan pertama (kini deteksi agenda). Pola abort `abort-map` dipersempit agar hanya mengenai bagian map, bukan deteksi. Jalur lama per potongan tetap diuji Modul 38.
+
+### Hasil
+
+Run suite penuh SQL (developer, backend kedua :5002): **523/523 lulus, 0 gagal, 7 dilewati** (modul event 8 dan 24). Semua modul media (27, 32, 38, 41, 42, 43, 65, 66) dijalankan. Ukuran suite = **530** = 515 + 15 (Modul 66); `await runTest(` statis 517 (v2.60.0: 502; +15) + selisih 13 yang sama sejak v2.30.2. Suite JSON penuh tidak dijalankan. Angka dari laporan developer; penulis dokumen ini tidak menjalankan ulang suite.
+
+**Catatan harness**: seperti v2.60.0, `OLLAMA_HOST` backend kedua (:5002) mengarah ke Ollama asli, jadi video uji Modul 27/32 ikut diringkas Gemma asli.
+
+**Tidak diuji otomatis**: kualitas ringkasan Gemma asli (uji nyata baca-saja pada HR Projects Update dan podcast, lihat `CHANGELOG.md` [2.60.1]); mode agenda dengan Gemma asli berbahasa Inggris; tampilan judul agenda dan tombol Regenerate untuk ringkasan AI (tanpa tes UI).

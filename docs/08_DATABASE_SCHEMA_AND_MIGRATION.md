@@ -503,3 +503,25 @@ FROM dbo.px_media WHERE summary_topics IS NOT NULL ORDER BY summary_generated_at
 ```
 
 Diverifikasi oleh Modul 65 (`docs/07` §50). API: `docs/04` "Catatan v2.60.0".
+
+## 31. Pembaruan v2.60.1 - Isi JSON `summary_topics` & `summary_topic_stats` (tanpa perubahan skema)
+
+Tidak ada tabel, kolom, atau ALTER baru (tetap **41 tabel**); hanya isi JSON kolom v2.60.0 (§30) yang bertambah:
+
+| Kolom | Tambahan isi |
+| :--- | :--- |
+| `px_media.summary_topics` | Pada mode agenda rapat setiap topik memuat `agenda` (nama agenda): `[{ "agenda", "title", "points": [...] }]`. Topik single merge / merge per blok tetap `{ "title", "points" }` |
+| `px_media.summary_topic_stats` | 6 field baru: `agenda_mode` (boolean), `agendas` (daftar nama agenda), `detect_calls`, `agenda_candidates`, `blocks`, `coverage_restored` (total 18 field). Perkiraan penulis: JSON terpanjang sekitar 550 karakter (3 nama agenda x 60 karakter), di bawah batas potong 1000 |
+
+- Ringkasan yang sudah tersimpan tidak diubah sampai Regenerate. Menurut kode, versi lama (rollback ke v2.60.0) membaca kolom yang sama dan mengabaikan field tambahan (tidak diuji).
+- Komentar `schema.sql` untuk `summary_topic_stats` masih hanya menyebut 6 field pertama.
+
+```sql
+SELECT media_id, file_name,
+       JSON_VALUE(summary_topic_stats, '$.agenda_mode') AS agenda_mode,
+       JSON_QUERY(summary_topic_stats, '$.agendas') AS agendas,
+       JSON_VALUE(summary_topic_stats, '$.blocks') AS blocks
+FROM dbo.px_media WHERE summary_topics IS NOT NULL ORDER BY summary_generated_at DESC;
+```
+
+Diverifikasi oleh Modul 66 (`docs/07` §51). API: `docs/04` "Catatan v2.60.1".

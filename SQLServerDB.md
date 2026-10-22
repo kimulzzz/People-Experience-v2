@@ -298,4 +298,5 @@ Kolom `px_users.menu_access` (`NVARCHAR(400) NULL`, JSON berisi 6 menu `true`/`f
 - Dua kolom baru di `px_media` (nullable, ALTER idempoten saat server start): `summary_topics` (`NVARCHAR(MAX)`, JSON daftar topik + poin ringkasan AI video panjang) dan `summary_topic_stats` (`NVARCHAR(1000)`, JSON statistik proses: jumlah bagian, retry, poin/topik yang dibuang, dst.). `NULL` untuk ringkasan standar/rule-based. Jumlah tabel tetap **41**. Rincian: `docs/08` §30.
 - Diisi aplikasi saat ringkasan dibuat; jangan diubah langsung di tabel.
 - Ikut `.bak`, `npm run db:export` dan import `migrate.js`.
+- Sejak v2.60.1 (tanpa perubahan skema): topik rapat bisa memuat `agenda`, dan `summary_topic_stats` mendapat `agenda_mode`, `agendas`, `detect_calls`, `agenda_candidates`, `blocks`, `coverage_restored`. Rincian: `docs/08` §31.
 - Pemeriksaan: `SELECT media_id, file_name, summary_source, summary_topic_stats FROM dbo.px_media WHERE summary_topics IS NOT NULL;`
