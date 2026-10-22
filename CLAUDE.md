@@ -805,6 +805,8 @@ domain model, not just descriptive:
   during a run. Live: 7 real files uploaded by the main session via the API (temp `claude-maint`). Open: reminders still check per-respondent rows for 5/7/12; old CSV upload for 5/7/12 still
   works via API and Manage Questions still lists them; no Admin UI for `outcome_aggregation`/parts; `px_metric_parts` not in the config-guard snapshot; `getAvailableSurveyYears` ignores part years.
 
+- **v2.55.1** (2026-10-23, see `CHANGELOG.md` [2.55.1]): Dashboard journey cards no longer show the small "JOURNEY #n" label - only the journey name. Frontend only.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan

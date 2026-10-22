@@ -507,6 +507,8 @@ Permintaan user: latar kartu journey kembali gradasi tema (v2.46.0 dibatalkan); 
 
 Chip metrik CRITICAL di kartu journey Dashboard: `bg-red-600 text-white border-white/80 ring-1 ring-red-300` (dulu `bg-black/30`).
 
+**v2.55.1**: header kartu journey Dashboard hanya berisi ikon + nama journey; label kecil "JOURNEY #n" (`Journey #{journey_id}`) dihapus atas permintaan user.
+
 ## Catatan v2.46.0 - Kartu journey berwarna journey
 
 Kartu "5 Employee Experience Journeys" di `Dashboard.jsx` berlatar gradasi warna journey (`shadeHex(color, -0.28)` -> `color`), bukan lagi gradasi merah tema; ikon `bg-white/20`, progress bar putih, label `text-white/80`.

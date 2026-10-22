@@ -2,6 +2,17 @@
 
 Semua perubahan dan pembaruan versi pada sistem People Experience (PX) Management & Scoring System dicatat di dalam dokumen ini mengikuti standar [Semantic Versioning](https://semver.org/).
 
+## [2.55.1] - 2026-10-23
+
+### 🧹 Kartu journey tanpa label "JOURNEY #n" (Changed)
+
+- **Permintaan user**: pada bagian "5 Employee Experience Journeys" di Dashboard, label kecil "JOURNEY #1", "JOURNEY #2", dst. di atas nama journey dihapus; kartu hanya menampilkan nama journey.
+- **`src/components/Dashboard.jsx`**: elemen label `Journey #{journey_id}` dihapus dari header kartu. Ikon, nama, progress bar dan daftar metrik tidak berubah. Frontend saja.
+- **Tes**: `npx vite build` lulus; suite penuh SQL sebelum commit (modul media dan event di-skip karena tidak tersentuh): **376/376 lulus, 0 gagal, 16 tes dilewati**.
+- **Tes Modul 49 (idle sign-out) disesuaikan**: Admin mengubah `session_idle_timeout_minutes` 5 -> 120 pada 2026-10-22, sedangkan tes mengasumsikan nilai default 5 dan di akhir selalu memasang 5 kembali. Kini tes membaca nilai yang tersimpan, menjalankan sisa modul dengan 5 menit, lalu mengembalikan nilai Admin (120) di `finally`. Nilai live tetap 120.
+
+---
+
 ## [2.55.0] - 2026-10-22
 
 ### 📥 Template ringkasan per metrik (1, 3, 5, 7, 12, 19, 20) & saklar "Real data not available yet" (Added / Changed)

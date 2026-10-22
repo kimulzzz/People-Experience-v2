@@ -6741,13 +6741,15 @@ async function runAllModules() {
       return cookie;
     };
 
+    // v2.55.1: the Admin may have configured another idle time (e.g. 120 on 2026-10-22) - the tests read the stored value and put it back
+    const idle49 = await idleSetting();
     try {
-      await runTest('[POSITIVE] The idle time defaults to 5 minutes and every signed-in account reads it (/api/auth/me idle_timeout_minutes)', async () => {
-        assert.strictEqual(await idleSetting(), 5);
-        assert.strictEqual((await (await adminJson('GET', '/api/auth/me')).json()).idle_timeout_minutes, 5);
+      await runTest('[POSITIVE] The configured idle time (default 5 minutes) is valid and every signed-in account reads it (/api/auth/me idle_timeout_minutes)', async () => {
+        assert.ok(Number.isInteger(idle49) && idle49 >= 1 && idle49 <= 120, `stored idle time ${idle49}`);
+        assert.strictEqual((await (await adminJson('GET', '/api/auth/me')).json()).idle_timeout_minutes, idle49);
         const u = await makeUser49('r');
         const me = await (await json49('GET', '/api/auth/me', undefined, await login49(u))).json();
-        assert.strictEqual(me.idle_timeout_minutes, 5, 'a USER sees it too');
+        assert.strictEqual(me.idle_timeout_minutes, idle49, 'a USER sees it too');
       });
 
       await runTest('[NEGATIVE] Invalid idle times are refused with 400 and leave the setting unchanged (0, 121, "abc", 2.5, empty, null)', async () => {
@@ -6756,10 +6758,10 @@ async function runAllModules() {
           assert.strictEqual(res.status, 400, `value ${JSON.stringify(bad)}`);
           assert.ok(/between 1 and 120/.test((await res.json()).error));
         }
-        assert.strictEqual(await idleSetting(), 5);
+        assert.strictEqual(await idleSetting(), idle49);
       });
 
-      await runTest('[POSITIVE] 120 and 1 are accepted, /api/auth/me follows at once, the change is audited (SETTINGS_CHANGE); restored to 5', async () => {
+      await runTest('[POSITIVE] 120 and 1 are accepted, /api/auth/me follows at once, the change is audited (SETTINGS_CHANGE); the module then runs at 5 (configured value restored at the end)', async () => {
         await nativeFetch(`${BASE_URL}/api/auth/activity`, { method: 'POST', headers: { Cookie: suiteCookie } }); // fresh activity before a 1-minute window
         try {
           for (const n of [120, 1]) {
@@ -6865,7 +6867,8 @@ async function runAllModules() {
         });
       }
     } finally {
-      if ((await idleSetting()) !== 5) await putIdle(5);
+      // v2.55.1: put back the idle time the Admin configured (was always reset to 5 before)
+      if ((await idleSetting()) !== idle49) await putIdle(idle49);
       for (const id of users49) await adminJson('DELETE', `/api/admin/users/${id}`);
     }
   }

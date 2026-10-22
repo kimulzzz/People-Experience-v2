@@ -286,9 +286,6 @@ export default function Dashboard({
                         <Icon className="w-4 h-4" />
                       </div>
                       <div>
-                        <span className="text-[10px] font-bold text-red-100 uppercase tracking-wider">
-                          Journey #{j.journey_id}
-                        </span>
                         <h4 className="text-base font-extrabold text-white transition">
                           {j.journey_name}
                         </h4>
