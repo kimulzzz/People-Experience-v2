@@ -231,6 +231,9 @@ function rowToMedia(r) {
     m.summary_language = r.summary_language || null;
     m.summary_generated_at = r.summary_generated_at ? iso(r.summary_generated_at) : null;
     m.summary_error = r.summary_error || '';
+    // v2.60.0: topic summary of a long video; null = standard summary
+    m.summary_topics = parseJson(r.summary_topics, null);
+    m.summary_topic_stats = parseJson(r.summary_topic_stats, null);
   }
   return m;
 }
@@ -1079,12 +1082,15 @@ async function importStore(store, log = () => {}) {
       await run(`INSERT INTO dbo.px_media (media_id, event_id, file_name, file_path, file_type, caption, ai_generated_description,
                    highlight_order, created_at, transcript_status, transcript_error, transcript, transcript_segments,
                    transcript_language, duration_seconds, summary, summary_points, summary_status, summary_source, summary_model,
-                   summary_language, summary_generated_at, summary_error)
+                   summary_language, summary_generated_at, summary_error, summary_topics, summary_topic_stats)
                  VALUES (@media_id, @event_id, @file_name, @file_path, @file_type, @caption, @ai, @highlight_order, @created_at,
                    @transcript_status, @transcript_error, @transcript, @transcript_segments, @transcript_language, @duration_seconds,
-                   @summary, @summary_points, @summary_status, @summary_source, @summary_model, @summary_language, @summary_generated_at, @summary_error)`, {
+                   @summary, @summary_points, @summary_status, @summary_source, @summary_model, @summary_language, @summary_generated_at, @summary_error,
+                   @summary_topics, @summary_topic_stats)`, {
         summary: m.summary === undefined || m.summary === null ? null : T.max(m.summary),
         summary_points: m.summary_points === undefined ? null : T.max(JSON.stringify(m.summary_points)),
+        summary_topics: m.summary_topics === undefined || m.summary_topics === null ? null : T.max(JSON.stringify(m.summary_topics)),
+        summary_topic_stats: m.summary_topic_stats === undefined || m.summary_topic_stats === null ? null : JSON.stringify(m.summary_topic_stats).slice(0, 1000),
         summary_status: m.summary_status || null, summary_source: m.summary_source || null, summary_model: m.summary_model || null,
         summary_language: m.summary_language || null, summary_generated_at: m.summary_generated_at ? toDateObj(m.summary_generated_at) : null,
         summary_error: m.summary_error ? String(m.summary_error).slice(0, 500) : null,
@@ -3086,6 +3092,9 @@ const storage = {
     setIf('summary_language', 'summary_language');
     setIf('summary_generated_at', 'summary_generated_at', v => (v ? new Date(v) : null));
     setIf('summary_error', 'summary_error', v => (v === null ? null : String(v).slice(0, 500)));
+    // topic summary of a long video (v2.60.0); null clears it
+    setIf('summary_topics', 'summary_topics', v => T.max(v === null ? null : JSON.stringify(v)));
+    setIf('summary_topic_stats', 'summary_topic_stats', v => (v === null ? null : JSON.stringify(v).slice(0, 1000)));
     if (!sets.length) return this.getMediaById(media_id);
     const rows = await run(`UPDATE dbo.px_media SET ${sets.join(', ')} OUTPUT INSERTED.* WHERE media_id = @id`, params);
     return rows[0] ? rowToMedia(rows[0]) : null;

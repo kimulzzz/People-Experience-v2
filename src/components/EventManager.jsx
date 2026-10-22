@@ -97,6 +97,9 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
     videoRef.current.play().catch(() => {});
   };
 
+  // Topic summary of a long video (v2.60.0); older and short summaries have no topics and render as before.
+  const hasTopics = Array.isArray(med.summary_topics) && med.summary_topics.length > 0;
+
   return (
     <div className="bg-white border border-white/40 rounded-xl p-3 space-y-2 relative group">
       <div className="w-full aspect-video bg-gray-200 rounded-lg flex items-center justify-center overflow-hidden relative">
@@ -205,7 +208,7 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
             <div className="flex items-center space-x-1.5">
               {med.summary_status === 'DONE' && (
                 <span className={`px-1.5 py-0.5 rounded font-bold text-[9px] ${med.summary_source === 'AI' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
-                  {med.summary_source === 'AI' ? `AI${med.summary_model ? ` • ${med.summary_model}` : ''}` : 'Automatic (rule-based)'}
+                  {med.summary_source === 'AI' ? 'AI' : 'Automatic (rule-based)'}
                 </span>
               )}
               <ChevronDown className="w-3 h-3 text-gray-400 transition-transform group-open:rotate-180" />
@@ -223,17 +226,29 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
           {med.summary_status === 'DONE' && (
             <>
               <p className="leading-snug text-gray-800">{med.summary}</p>
-              {Array.isArray(med.summary_points) && med.summary_points.length > 0 && (
+              {hasTopics ? (
+                // v2.60.0: a long video is summarized by topic (numbered titles, their points below)
+                <div className="space-y-1">
+                  <p className="font-bold text-gray-700">Topics discussed</p>
+                  <ol className="space-y-1">
+                    {med.summary_topics.map((topic, i) => (
+                      <li key={i}>
+                        <p className="font-semibold text-gray-800 leading-snug">{i + 1}. {topic.title}</p>
+                        <ul className="list-disc pl-6 space-y-0.5 leading-snug">
+                          {(topic.points || []).map((pt, j) => <li key={j}>{pt}</li>)}
+                        </ul>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ) : Array.isArray(med.summary_points) && med.summary_points.length > 0 && (
                 <ul className="list-disc pl-4 space-y-0.5 leading-snug">
                   {med.summary_points.map((pt, i) => <li key={i}>{pt}</li>)}
                 </ul>
               )}
-              <p className="text-[9px] text-gray-400">
-                {med.summary_generated_at ? `Generated ${new Date(med.summary_generated_at).toLocaleString('en-US')}` : ''}
-                {med.summary_language ? ` • ${med.summary_language.toUpperCase()}` : ''}
-              </p>
-              {med.summary_source === 'AI' && (
-                <p className="text-[9px] text-gray-400 italic">Generated automatically by AI — please check it against the transcript.</p>
+              {/* v2.60.0: only the generation date and time below the summary (no model name, language or notes) */}
+              {med.summary_generated_at && (
+                <p className="text-[9px] text-gray-400">Generated {new Date(med.summary_generated_at).toLocaleString('en-US')}</p>
               )}
               {med.summary_source !== 'AI' && med.summary_error && (
                 <p className="text-[9.5px] text-amber-700">{med.summary_error}</p>

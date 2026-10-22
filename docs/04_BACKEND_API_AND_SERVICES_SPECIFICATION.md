@@ -345,6 +345,8 @@ Tidak diubah / belum diputuskan: importer tidak menolak NIP kembar (dalam satu C
 | `summary_language` | Mengikuti `transcript_language`; kode tak dikenal -> `id` |
 | `summary_generated_at`, `summary_error` | Waktu dibuat; alasan fallback/gagal (teks Indonesia, maks. 500 karakter) |
 
+Sejak v2.60.0 ditambah `summary_topics` dan `summary_topic_stats` untuk ringkasan per topik video panjang (lihat "Catatan v2.60.0").
+
 **Service**
 
 - `mediaSummaryService.js`: `queueMediaSummary(media_id)` (hanya video dengan `transcript_status = DONE`; mengembalikan `queued`/`insufficient`/`duplicate`/`skipped`), `resumeInterruptedSummaries()` (dipanggil `server.js` saat boot; hanya yang `PROCESSING`), `summarizeWithAi`, `validateAnswer`, `numberMentions`, `novelWords`, `tooManyNovelWords`, `NOVEL_LIMITS` (sejak v2.30.3), `splitTranscript`, `parseModelAnswer`, `ruleBasedSummary`.
@@ -602,6 +604,38 @@ Pengujian: `docs/07` §30 (Modul 46).
 **Seed ESS**: `seedData.generateInitialEssResults()` juga membuat periode dummy `ESS_SEED_DUMMY_PERIODS` (2026-03, 2026-06, 2026-09; 429 baris + 33 batch). `sqlStorage.topUpEssSeed()` / `jsonStorage.topUpStoreEssSeed()` kini menyisipkan per (metrik, periode) yang belum punya baris dan mengembalikan daftar `upload_id` yang ditambahkan. Rincian: `docs/08` §17, `CHANGELOG.md` [2.37.0].
 
 Pengujian: `docs/07` §31 (Modul 46).
+
+---
+
+## Catatan v2.60.0 - AI Summary per topik untuk video panjang
+
+**Masalah**: AI Summary video panjang (contoh: "HR Projects Update", transkrip 25.411 karakter) terlalu pendek dan kehilangan topik di tengah, karena transkrip > 5.000 karakter diringkas per potongan lalu digabung menjadi format tetap 2-4 kalimat + 3-5 poin. Detail dan hasil uji nyata: `CHANGELOG.md` [2.60.0].
+
+**Alur `runSummaryJob` (`mediaSummaryService.js`)**: satu batas waktu job (`SUMMARY_JOB_TIMEOUT_MS`) untuk semua langkah. `usesTopicMode(transcript)` = panjang transkrip (trim) > `CHUNK_CHARS` (5000) -> `summarizeByTopics()`; hasil `null` -> `summarizeWithAi()` (jalur lama per potongan, tetap bisa berakhir `RULE`). Transkrip <= 5000 karakter langsung ke `summarizeWithAi()` (satu panggilan, prompt `RINGKASAN:`/`POIN:` lama).
+
+| Langkah | Perilaku |
+| :--- | :--- |
+| Map | `splitTranscript(transcript, TOPIC_PART_CHARS)` = bagian maks. 6000 karakter dipotong di akhir kalimat; > `TOPIC_MAX_PARTS` (20) -> `null`. Per bagian: `buildTopicPartPrompt` (JSON `{"topik":[{"judul","poin"}]}`), opsi `format: 'json'`, temperature 0.1, seed 41, `num_ctx` 8192, `num_predict` 500 -> `normalizeTopics` maks. 3 topik x 3 poin (`TOPIC_PART_LIMITS`). Tidak terbaca/kosong -> satu retry (seed 42, `REPEAT_GUARD`, kalimat "PASTI berisi pembahasan, jangan kosong"); tetap kosong -> bagian dilewati (`skipped_parts`). Poin bagian langsung dicek fakta (judul bagian tidak dicek; judul final dicek saat merge). Total topik < `TOPIC_MIN_MAPPED` (2) -> `null` |
+| Merge | `buildTopicMergePrompt` -> JSON `{"ringkasan","topik"}`: 4-8 topik x 1-4 poin (`TOPIC_FINAL_LIMITS`), `ringkasan` 3-5 kalimat; `num_predict` 1400, `num_ctx` dari `contextFor(prompt)` (8192/16384/32768). Maks. 2 percobaan (seed 41 lalu 42 + `REPEAT_GUARD` + `PERBAIKAN: ...`) |
+| Cek fakta | `buildCheckContext` (sekali per job) + `fragmentProblem`: frasa meta, tag HTML, angka/kata bilangan yang tidak ada, nama/akronim tak dikenal (akronim (2-8 huruf kapital/angka, minimal satu huruf) harus kata utuh transkrip, juga dengan akhiran nya/ku/mu/lah/kah/pun/an/kan/s; token dipecah di "/"; pada judul hanya kata setelah sapaan `pak`/`bu`/`bapak`/`ibu`/`mas`/`mbak`/`sdr`/`sdri`/`mr`/`mrs`/`ms`/`dr`/`prof`), kata isi baru (`novelWords` + `tooManyNovelWords`, hanya poin). `checkTopics` membuang poin gagal + poin pengisi (`isFillerPoint`), topik tanpa poin / judul gagal dibuang. `removeDuplicatePoints` (`isDuplicatePoint`: tumpang tindih stem >= 0,8 dari yang lebih pendek atau Jaccard >= 0,6, min. 2 kata isi; polaritas negasi harus sama) |
+| `ringkasan` | `repairSummary`: pembuka meta ("Rekaman/Video/Transkrip/Rapat/Pertemuan/Diskusi/Podcast/Percakapan/Wawancara ini membahas ...", en "This recording/video/... discusses ...") -> "Pembahasan (juga) mencakup ..." / "The discussion (also) covers ..."; masih gagal -> kalimat dengan frasa meta atau kata acara terlarang dibuang (sisa >= 40 karakter, lolos `validateAnswer`). Kata rapat/pertemuan/meeting hanya boleh bila transkrip atau `file_name` memuatnya |
+| Keep-best | Topik >= 2 dan `ringkasan` lolos -> selesai. Selain itu percobaan dengan topik terbanyak (>= 2) disimpan; setelah 2 percobaan: topik terbaik + `ringkasan` cadangan yang lolos, atau `summaryFromTitles` ("Pembahasan mencakup <t1>, <t2>, dan <tN>."); tidak ada percobaan dengan >= 2 topik valid -> `null` |
+
+**Soft error Ollama (`localAiService.js`)**: `postJson` kini menyertakan `err.status` dan `err.ollamaError`; jawaban kosong melempar error dengan `err.soft = true`. `isSoftGenerationError(err)` = `soft` atau pesan cocok `/token repeat limit|prediction aborted|repeat(ed|ing)? tokens?/i`. `askModelOrNull` mengubah soft error menjadi `null` (jawaban tak terpakai, `aborted_answers`++) sehingga retry yang sudah ada berjalan; hard error tetap dilempar -> `RULE`. Berlaku juga di jalur lama: ringkasan per potongan kini satu retry pada soft error; dua kali dihentikan -> "Ollama aborted the AI answer twice (the model kept repeating itself); the automatic (rule-based) summary is shown.". Retry jalur pendek = temperature 0.2, seed 42 + `REPEAT_GUARD` (sebelumnya tanpa guard). `queryLocalOllama` opsi baru: `format`, `numCtx` (`num_ctx`), `numPredict` (`num_predict`), `repeatPenalty`, `repeatLastN`, `details` (`{ text, doneReason, evalCount }`). Jawaban yang tak terpakai di mode topik dicatat di log server (`done_reason`, `eval_count`, panjang, 150 karakter awal/akhir).
+
+**Field media** (sama di SQL dan JSON; dikirim apa adanya oleh `GET /api/events/:id`):
+
+| Field | Isi |
+| :--- | :--- |
+| `summary_topics` | `[{ title, points: [...] }]` untuk ringkasan AI bertopik; `null` untuk ringkasan standar, `RULE`, `INSUFFICIENT`, atau sebelum ringkasan ada |
+| `summary_topic_stats` | `{ parts, retried_parts, skipped_parts, dropped_points, dropped_topics, merge_attempts, aborted_answers, filler_points, duplicate_points, summary_repaired, summary_sentences_removed, summary_from_titles }`; `null` bila `summary_topics` null. Tidak ditampilkan di UI |
+| `summary` / `summary_points` | Mode topik: `summary` = `ringkasan`, `summary_points` = "<judul>: <poin pertama>" per topik (pembaca lama dan PPT tetap jalan) |
+
+Setiap penulisan ringkasan (`runSummaryJob`, `INSUFFICIENT`, antrian penuh) mengisi kedua field (Regenerate menghapus topik lama); `queueMediaTranscription` (`transcribeService.js`) mengosongkannya saat transkrip baru dimulai. `pptGenerator.js` tidak berubah (memakai `summary`). Tidak ada endpoint, setting, atau env baru; gating Gemma tidak berubah (video baru setelah transkrip `DONE` atau `POST /api/media/:id/summarize`). `/api/health` `version` = `2.60.0`.
+
+**Ekspor modul baru**: `summarizeByTopics`, `usesTopicMode`, `buildTopicPartPrompt`, `buildTopicMergePrompt`, `parseJsonAnswer`, `normalizeTopics`, `buildCheckContext`, `fragmentProblem`, `checkTopics`, `isFillerPoint`, `isDuplicatePoint`, `removeDuplicatePoints`, `repairSummary`, `summaryFromTitles`, `contextFor`, `TOPIC_PART_CHARS`, `TOPIC_MAX_PARTS`, `TOPIC_PART_LIMITS`, `TOPIC_FINAL_LIMITS`, `REPEAT_GUARD`; `localAiService.isSoftGenerationError`.
+
+**Batasan**: Gemma 4B bisa berputar pada transkrip sangat panjang/podcast (52.282 karakter: jalur lama, AI tanpa topik, 17 mnt); `ringkasan` bisa mengulang "Pembahasan mencakup"; distorsi makna halus tidak terdeteksi; ringkasan tersimpan tidak diproses ulang otomatis (tombol Regenerate di UI hanya untuk ringkasan kosong/`FAILED`/`RULE`; ringkasan AI lama lewat `POST /api/media/:id/summarize`). Skema: `docs/08` §30. Pengujian: `docs/07` §50 (Modul 65).
 
 ---
 

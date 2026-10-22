@@ -354,6 +354,10 @@ IF COL_LENGTH(N'dbo.px_media', N'summary_model') IS NULL ALTER TABLE dbo.px_medi
 IF COL_LENGTH(N'dbo.px_media', N'summary_language') IS NULL ALTER TABLE dbo.px_media ADD summary_language VARCHAR(10) NULL;
 IF COL_LENGTH(N'dbo.px_media', N'summary_generated_at') IS NULL ALTER TABLE dbo.px_media ADD summary_generated_at DATETIME2(3) NULL;
 IF COL_LENGTH(N'dbo.px_media', N'summary_error') IS NULL ALTER TABLE dbo.px_media ADD summary_error NVARCHAR(500) NULL;
+-- v2.60.0: topic summary of a LONG video (transcript over 5,000 characters). JSON [{title, points:[...]}]; NULL = standard summary.
+IF COL_LENGTH(N'dbo.px_media', N'summary_topics') IS NULL ALTER TABLE dbo.px_media ADD summary_topics NVARCHAR(MAX) NULL;
+-- JSON {parts, retried_parts, skipped_parts, dropped_points, dropped_topics, merge_attempts} of that topic summary; NULL otherwise.
+IF COL_LENGTH(N'dbo.px_media', N'summary_topic_stats') IS NULL ALTER TABLE dbo.px_media ADD summary_topic_stats NVARCHAR(1000) NULL;
 GO
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_px_media_seq' AND object_id = OBJECT_ID(N'dbo.px_media'))
   CREATE UNIQUE INDEX IX_px_media_seq ON dbo.px_media(media_seq);

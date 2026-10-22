@@ -84,7 +84,7 @@ Tabel aplikasi berawalan `px_` (41 tabel sejak v2.55.0). Yang paling sering dili
 
 ## 5. Foto & Video
 
-File foto/video Signature Event **tidak disimpan di database**. File tetap di disk (`server/uploads/`, disajikan di `/uploads/...`). Tabel `px_media` hanya menyimpan **path** (`file_path`), nama file, caption, deskripsi/transkrip AI, status transkrip, durasi, dan (v2.28.0) AI Summary transkrip video (kolom `summary_*`, lihat §12). Menghapus media lewat aplikasi menghapus baris + file fisiknya.
+File foto/video Signature Event **tidak disimpan di database**. File tetap di disk (`server/uploads/`, disajikan di `/uploads/...`). Tabel `px_media` hanya menyimpan **path** (`file_path`), nama file, caption, deskripsi/transkrip AI, status transkrip, durasi, dan (v2.28.0) AI Summary transkrip video (kolom `summary_*`, lihat §12; topik ringkasan video panjang sejak v2.60.0, lihat §29). Menghapus media lewat aplikasi menghapus baris + file fisiknya.
 
 ---
 
@@ -292,3 +292,10 @@ Kolom `px_users.menu_access` (`NVARCHAR(400) NULL`, JSON berisi 6 menu `true`/`f
 - Ubah lewat aplikasi, bukan langsung di tabel (validasi + audit `PART_QUESTIONS_UPDATE`).
 - Ikut `.bak`, `npm run db:export` dan import `migrate.js`; `migrate --reset` mengembalikan ke template seed.
 - Pemeriksaan: `SELECT metric_id, part_key, questions_json FROM dbo.px_metric_parts ORDER BY metric_id, sort_order;`
+
+## 29. AI Summary per topik (v2.60.0)
+
+- Dua kolom baru di `px_media` (nullable, ALTER idempoten saat server start): `summary_topics` (`NVARCHAR(MAX)`, JSON daftar topik + poin ringkasan AI video panjang) dan `summary_topic_stats` (`NVARCHAR(1000)`, JSON statistik proses: jumlah bagian, retry, poin/topik yang dibuang, dst.). `NULL` untuk ringkasan standar/rule-based. Jumlah tabel tetap **41**. Rincian: `docs/08` §30.
+- Diisi aplikasi saat ringkasan dibuat; jangan diubah langsung di tabel.
+- Ikut `.bak`, `npm run db:export` dan import `migrate.js`.
+- Pemeriksaan: `SELECT media_id, file_name, summary_source, summary_topic_stats FROM dbo.px_media WHERE summary_topics IS NOT NULL;`

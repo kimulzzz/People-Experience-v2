@@ -48,7 +48,10 @@ function postJson(urlString, body, timeoutMs) {
         try { json = JSON.parse(raw); } catch (e) { /* non-JSON error body */ }
         if (res.statusCode >= 200 && res.statusCode < 300 && json) return resolve(json);
         const detail = (json && json.error) || raw.slice(0, 200) || `HTTP ${res.statusCode}`;
-        reject(new Error(`Ollama: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`));
+        const err = new Error(`Ollama: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`);
+        err.status = res.statusCode;
+        err.ollamaError = typeof detail === 'string' ? detail : JSON.stringify(detail);
+        reject(err);
       });
     });
     req.setTimeout(timeoutMs, () => req.destroy(new Error(`Ollama did not answer within the ${Math.round(timeoutMs / 60000)} minutes limit`)));
@@ -77,14 +80,34 @@ function assertAiAllowed(scope, subject) {
  * One (non-streaming) generation on the local Ollama model. Throws with a readable reason
  * (offline, model missing, timeout, HTTP error, empty answer); callers decide on their own fallback.
  */
-async function queryLocalOllama(prompt, { model = DEFAULT_LLM_MODEL, timeoutMs = OLLAMA_TIMEOUT_MS, temperature = 0.1, seed, scope, subject } = {}) {
+async function queryLocalOllama(prompt, { model = DEFAULT_LLM_MODEL, timeoutMs = OLLAMA_TIMEOUT_MS, temperature = 0.1, seed, format, numCtx, numPredict, repeatPenalty, repeatLastN, details = false, scope, subject } = {}) {
   assertAiAllowed(scope, subject);
   const body = { model, prompt, stream: false, options: { temperature } };
   if (seed !== undefined) body.options.seed = seed; // fixed seed: the same transcript gives the same wording
+  // v2.60.0 (topic summary of a long video): JSON-only answer, a context window that fits the input, an output cap
+  if (format) body.format = format;
+  if (numCtx) body.options.num_ctx = numCtx;
+  if (numPredict) body.options.num_predict = numPredict;
+  // v2.60.0: repetition guard for a retry after the model looped on the same tokens
+  if (repeatPenalty) body.options.repeat_penalty = repeatPenalty;
+  if (repeatLastN) body.options.repeat_last_n = repeatLastN;
   const data = await postJson(`${OLLAMA_HOST}/api/generate`, body, timeoutMs);
   const text = typeof data.response === 'string' ? data.response.trim() : '';
-  if (!text) throw new Error('Ollama returned an empty answer');
-  return text;
+  if (!text) {
+    const err = new Error('Ollama returned an empty answer');
+    err.soft = true;
+    throw err;
+  }
+  // details: also why the generation stopped (done_reason "stop" / "length" ...) - used to explain an unusable answer in the log
+  return details ? { text, doneReason: data.done_reason || null, evalCount: data.eval_count ?? null } : text;
+}
+
+// v2.60.0: a failure of ONE generation - Ollama aborted it because the model looped on repeated tokens ("prediction aborted,
+// token repeat limit reached") or the answer was empty. Another attempt can succeed, so callers treat it like an unusable answer
+// (their one retry). Everything else - not running / connection reset / timeout / model missing / other HTTP errors - is hard.
+const SOFT_GENERATION_RE = /token repeat limit|prediction aborted|repeat(ed|ing)? tokens?/i;
+function isSoftGenerationError(err) {
+  return !!(err && (err.soft || (err.ollamaError && SOFT_GENERATION_RE.test(err.ollamaError))));
 }
 
 /**
@@ -171,6 +194,7 @@ module.exports = {
   AI_SCOPES,
   assertAiAllowed,
   queryLocalOllama,
+  isSoftGenerationError,
   isOllamaAvailable,
   generateEventSummary,
   generateAlertNarrative,

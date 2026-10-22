@@ -174,7 +174,7 @@ graph TD
 - **Foto** tampil sebagai thumbnail (klik atau tombol *Perbesar* → lightbox ukuran penuh); **video** tampil dengan pemutar bawaan browser (play/pause/seek/volume/fullscreen, mendukung HTTP Range) dan tombol *Putar di layar besar*. Lightbox (`MediaLightbox`) ditutup dengan klik latar, tombol X, atau `Esc`, dan menyediakan tautan "Buka di tab baru".
 - File yang hilang dari server (mis. data seed contoh) tidak menampilkan gambar rusak, tetapi placeholder "File tidak tersedia di server".
 - **Transkrip AI video** (`MediaCard`): status `PROCESSING` → indikator berputar; halaman melakukan polling `GET /api/events/:id` tiap 4 detik **hanya selama ada media yang diproses**, lalu terisi otomatis. Status `DONE` → cuplikan di *AI Description* + panel lipat **Transkrip AI lengkap** berisi segmen bertimestamp; **klik segmen untuk melompat & memutar video dari detik tersebut**. Status `FAILED` → alasan kegagalan + tombol **Coba lagi** (`POST /api/media/:id/transcribe`).
-- **AI Summary video** (sejak v2.28.0, `MediaCard`): lihat catatan v2.28.0 di bawah.
+- **AI Summary video** (sejak v2.28.0, `MediaCard`): lihat catatan v2.28.0 di bawah; ringkasan per topik video panjang dan badge/catatan yang disederhanakan sejak v2.60.0 (lihat "Catatan v2.60.0").
 - Error upload (format tidak didukung, melebihi batas ukuran) kini ditampilkan sebagai alert dengan pesan dari server, bukan diabaikan diam-diam.
 - **Nama file video berganti setelah proses selesai (sejak v2.30.1)**: server me-rename file video ke nama aslinya setelah transkrip + AI Summary selesai, sehingga `file_path` record berubah. `EventManager.jsx` menangani ini dengan tiga hal: (1) `useEffect` yang mereset state `broken` ("File not available on the server") setiap `med.file_path` berubah, dan `<video>`/`<img>` diberi `key={med.file_path}` supaya dimuat ulang dari path baru (sebelumnya 404 pada jendela antara rename dan refetch membuat kartu macet sampai reload; foto seed yang filenya memang tidak ada tetap "not available" tanpa loop); (2) polling 4 detik berhenti begitu tidak ada media `PROCESSING`, jadi `wasProcessing` (ref) memicu **satu** `GET /api/events/:id` tambahan 2,5 detik setelah job terakhir selesai untuk mengambil `file_path` baru; (3) `MediaLightbox` menerima media terbaru dari `eventDetail.media` (dicari lewat `media_id`), bukan salinan lama yang dipegang saat dibuka. Input file memakai daftar ekstensi eksplisit (`.jpg,.jpeg,.png,.gif,.webp,.bmp,.avif,.mp4,.m4v,.mov,.webm,.mkv,.avi,.ogv,.mpg,.mpeg,.3gp,.wmv,.flv`), bukan `image/*,video/*`, agar SVG/HEIC tidak ditawarkan; unggahan yang tetap dipaksakan dijawab 415 dan ditampilkan sebagai alert (lihat `docs/04` "Catatan v2.30.1"). Hanya diuji otomatis lewat pemeriksaan kode sumber (Modul 41); tampilan di browser bukan bagian tes otomatis.
 
@@ -303,7 +303,7 @@ Muncul di `MediaCard` untuk video yang `transcript_status = DONE` dan punya tran
 | `summary_status` | Tampilan |
 | :--- | :--- |
 | `PROCESSING` | Spinner "Ringkasan AI sedang dibuat…"; polling `GET /api/events/:id` tiap 4 dtk kini juga aktif selama ada ringkasan `PROCESSING` |
-| `DONE` | Ringkasan + poin; badge `AI • <model>` (hijau) atau **Automatic (rule-based)** (amber; dulu "Otomatis (aturan)"); waktu dibuat dan kode bahasa; untuk sumber `AI` teks "Dibuat otomatis oleh AI — periksa kembali dengan transkrip."; untuk `RULE` alasan fallback (`summary_error`) |
+| `DONE` | (Diubah v2.60.0, lihat "Catatan v2.60.0".) Ringkasan + poin; badge `AI • <model>` (hijau) atau **Automatic (rule-based)** (amber; dulu "Otomatis (aturan)"); waktu dibuat dan kode bahasa; untuk sumber `AI` teks "Dibuat otomatis oleh AI — periksa kembali dengan transkrip."; untuk `RULE` alasan fallback (`summary_error`) |
 | `FAILED` | "Ringkasan AI gagal: <alasan>" |
 | `INSUFFICIENT` | Pesan "transkrip belum cukup" (< 20 kata); tanpa tombol |
 | kosong | "Belum ada ringkasan untuk video ini." |
@@ -403,6 +403,13 @@ API kini bisa mengirim indeks dan skor `null` serta status `NO_DATA` (lihat `doc
 | `Calculator.jsx` (Explore Metrics) | Baris `NO_DATA`: nilai aktual, skor dan tanggal "—", badge abu-abu "No Data". |
 | `MetricDetailModal.jsx` | Nilai "—", "No survey data in this period - left out of the index", badge abu-abu "No Data", pertanyaan berlabel "No Data" tanpa skor. Catatan "Annual metric: shows the result of Jan–Sep 2026" untuk metrik tahunan pada filter MTD **dihapus di v2.37.0** (MTD kini selalu satu bulan, `period_window.basis = 'MONTH'`). |
 | `TrendChart.jsx` | Titik `null` menjadi celah (garis dipotong per segmen), tooltip "—". |
+
+## Catatan v2.60.0 - AI Summary bertopik pada kartu video (`EventManager.jsx`, `MediaCard`)
+
+- **Ringkasan bertopik**: bila `med.summary_topics` berisi array tidak kosong (`hasTopics`), blok AI Summary menampilkan `summary` (ringkasan umum), lalu judul tebal **"Topics discussed"** dan daftar bernomor `<n>. <title>` dengan butir `points` di bawah setiap judul. Tanpa topik (video pendek, ringkasan lama, `RULE`) tetap daftar `summary_points` seperti sebelumnya. `summary_topic_stats` tidak ditampilkan.
+- **Badge** (permintaan user): `summary_source = 'AI'` -> hanya **"AI"** (hijau; nama model seperti `gemma3:4b` tidak ditampilkan lagi, `summary_model` tetap tersimpan); selain itu **"Automatic (rule-based)"** (amber).
+- **Baris bawah ringkasan**: hanya "Generated <tanggal jam>" (`toLocaleString('en-US')`) bila `summary_generated_at` ada. Dihapus: kode bahasa (`summary_language`) dan baris "Generated automatically by AI — please check it against the transcript.". Alasan fallback (`summary_error`) untuk ringkasan non-AI tetap tampil.
+- Status lain (`PROCESSING`, `FAILED`, `INSUFFICIENT`, kosong) dan tombol Generate/Regenerate tidak berubah. Dicek dengan `vite build` dan di Browser pane (tidak ada teks "gemma"); tampilan tidak diuji otomatis. Backend: `docs/04` "Catatan v2.60.0".
 
 ## Catatan v2.59.0 - Kartu Upload Limits & batas unggahan di Events
 

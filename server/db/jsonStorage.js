@@ -1799,7 +1799,7 @@ const storage = {
       'caption', 'file_path', 'ai_generated_description', 'transcript', 'transcript_segments',
       'transcript_status', 'transcript_error', 'transcript_language', 'duration_seconds',
       'summary', 'summary_points', 'summary_status', 'summary_source', 'summary_model',
-      'summary_language', 'summary_generated_at', 'summary_error'
+      'summary_language', 'summary_generated_at', 'summary_error', 'summary_topics', 'summary_topic_stats'
     ];
     allowed.forEach(k => {
       if (patch[k] !== undefined) media[k] = patch[k];

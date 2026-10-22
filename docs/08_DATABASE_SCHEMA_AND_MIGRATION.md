@@ -50,7 +50,7 @@ Script `scripts/sqlserver/Setup-SqlServer.ps1` (idempoten, log di `scripts/sqlse
 | Reminder | `px_reminder_log` | Catatan tiap email reminder upload survei ke PIC (metrik, periode yang kosong, tanggal, SENT/FAILED) — dasar pencegah duplikat & pengulangan. Ikut terhapus bersama metriknya. |
 | Email | `px_email_settings` | 1 baris: akun pengirim reminder ke PIC (menu "Email Settings"; sebelum v2.30.0 bernama "Setting Email"). Password dienkripsi AES-256-GCM (`server/services/secretBox.js`); kunci `SETTINGS_ENCRYPTION_KEY` ada di `.env` dan harus ikut dibackup. |
 | Pengaturan | `px_app_settings` | Nilai yang ditampilkan di UI dan dikelola admin (JSON): `px_index_target` (garis target chart), `px_index_weights` (bobot Survey/Outcome PX Index, v2.48.0), `event_program_categories`, `event_types`, serta katalog pilihan `metric_types`, `scale_types`, `target_audiences`, `update_frequencies`, `question_types` (hanya label yang boleh diubah). API: `GET /api/settings`, `PUT /api/admin/settings/:key`. |
-| Signature Event | `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` | `UNIQUE(event_id, nip)` pada absensi & feedback (NIP tetap kunci utama responden). FK `ON DELETE CASCADE` ke `px_events`. **`px_media.file_path`** = path file di disk (mis. `/uploads/media-….mp4`) + `caption`, `ai_generated_description`, `transcript`, `transcript_segments` (JSON), `transcript_status`, `duration_seconds`, serta (v2.28.0) 8 kolom AI Summary `summary_*` (lihat §13). |
+| Signature Event | `px_events`, `px_attendances`, `px_feedback_responses`, `px_media` | `UNIQUE(event_id, nip)` pada absensi & feedback (NIP tetap kunci utama responden). FK `ON DELETE CASCADE` ke `px_events`. **`px_media.file_path`** = path file di disk (mis. `/uploads/media-….mp4`) + `caption`, `ai_generated_description`, `transcript`, `transcript_segments` (JSON), `transcript_status`, `duration_seconds`, serta (v2.28.0) 8 kolom AI Summary `summary_*` (lihat §13) dan (v2.60.0) `summary_topics`, `summary_topic_stats` (lihat §30). |
 | Survei | `px_survey_uploads`, `px_survey_uploaded_responses`, `px_acknowledged_alerts` | Responden **dinormalisasi** (lihat bawah). Index `(metric_id, survey_date)` dan `(org_unit_1, org_unit_2)`. Sejak v2.50.0 `px_survey_uploads.questions_snapshot_json` menyimpan set pertanyaan upload (§23). |
 | Ringkasan ESS (v2.32.0) | `px_ess_results` | Data metrik ESS: satu baris per unit org (Bankwide / direktorat) per metrik dan periode, dari file ringkasan `.xlsx` yang diunggah. Batch upload-nya tetap di `px_survey_uploads`. Lihat §17. |
 | Exit Interview (v2.38.0) | `px_exit_interviews`, `px_exit_interview_uploads` | Satu baris per exit karyawan dari file "Termination Report" `.xlsx` + direktorat/divisi; `UNIQUE (nik, effective_date)` (upload ulang = update). Berisi **data per karyawan** (NIK, nama, jawaban terbuka). Tidak dipakai perhitungan skor. Lihat §18. |
@@ -484,3 +484,22 @@ SELECT upload_id, metric_id, part_key, JSON_QUERY(columns_json, '$.questions_sna
 ```
 
 Diverifikasi oleh Modul 62 (`docs/07` §47).
+
+## 30. Pembaruan v2.60.0 - Kolom `px_media.summary_topics` & `summary_topic_stats` (AI Summary per topik)
+
+| Kolom | Tipe | Arti |
+| :--- | :--- | :--- |
+| `px_media.summary_topics` | `NVARCHAR(MAX) NULL` | JSON `[{ "title", "points": [...] }]` - topik ringkasan AI video panjang (transkrip > 5.000 karakter). `NULL` = ringkasan standar, `RULE`, `INSUFFICIENT`, atau belum ada ringkasan |
+| `px_media.summary_topic_stats` | `NVARCHAR(1000) NULL` | JSON `{ parts, retried_parts, skipped_parts, dropped_points, dropped_topics, merge_attempts, aborted_answers, filler_points, duplicate_points, summary_repaired, summary_sentences_removed, summary_from_titles }` (dipotong di 1000 karakter); `NULL` bila `summary_topics` `NULL` |
+
+- Ditambahkan di `schema.sql` per kolom dengan `IF COL_LENGTH(N'dbo.px_media', N'<kolom>') IS NULL ALTER TABLE ... ADD ...` (idempoten, otomatis saat server start). Tidak ada tabel baru (**41 tabel**). Komentar `schema.sql` untuk `summary_topic_stats` baru menyebut 6 field pertama; isinya 12 field seperti di atas.
+- `sqlStorage.rowToMedia` membaca keduanya (JSON, `null` bila kosong) hanya bila `summary_status` tidak `NULL` (sama dengan kolom `summary_*` lain); `updateMedia` menerima keduanya (`null` mengosongkan); `importStore` (`migrate.js`) ikut memuatnya, `npm run db:export` membawanya lewat `getAllMedia()`. Backend JSON: field yang sama di record media `store.json` (whitelist `updateMedia`).
+- Isi diatur aplikasi: setiap penulisan ringkasan mengisi kedua kolom (Regenerate menghapus topik lama), transkrip baru mengosongkannya. Jangan diubah langsung di tabel.
+- Rollback ke versi sebelumnya / ke JSON tidak memerlukan langkah khusus (kolom tambahan diabaikan kode lama).
+
+```sql
+SELECT media_id, file_name, summary_status, summary_source, LEN(summary_topics) AS topics_len, summary_topic_stats
+FROM dbo.px_media WHERE summary_topics IS NOT NULL ORDER BY summary_generated_at DESC;
+```
+
+Diverifikasi oleh Modul 65 (`docs/07` §50). API: `docs/04` "Catatan v2.60.0".

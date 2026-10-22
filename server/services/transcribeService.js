@@ -191,7 +191,7 @@ async function queueMediaTranscription(media_id) {
   await storage.updateMedia(media_id, {
     transcript_status: 'PROCESSING', transcript_error: '',
     summary: null, summary_points: null, summary_status: null, summary_source: null, summary_model: null,
-    summary_language: null, summary_generated_at: null, summary_error: null
+    summary_language: null, summary_generated_at: null, summary_error: null, summary_topics: null, summary_topic_stats: null
   });
 
   (async () => {

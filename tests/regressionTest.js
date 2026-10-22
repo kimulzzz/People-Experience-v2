@@ -4249,6 +4249,8 @@ async function runAllModules() {
           assert.strictEqual((await api('/api/health')).status, 200, 'server still alive');
         });
 
+        // v2.60.0: a long transcript first goes to topic mode (Module 65); this fake never answers JSON, so every part comes back
+        // empty twice and the job hands over to the older part-by-part path tested here.
         await runTest('[POSITIVE] A long transcript is summarized part by part (safe context size) and then combined; the final answer is checked against the whole transcript', async () => {
           oll.calls.length = 0; oll.mode = 'good';
           const long = Array(30).fill(TEXT_ID).join(' ');
@@ -4256,6 +4258,8 @@ async function runAllModules() {
           const done = await waitFor(media.media_id, m => m.summary_status === 'DONE', 30000);
           assert.strictEqual(done.summary_status, 'DONE', done.summary_error);
           assert.strictEqual(done.summary_source, 'AI');
+          assert.strictEqual(done.summary_topics, null, 'no topic summary when topic mode had no usable answer');
+          assert.ok(oll.calls.some(c => c.prompt.includes('Ini bagian 1 dari')), 'the older part prompt was used');
           assert.ok(generateCalls() >= 3, `expected part calls + combine, got ${generateCalls()}`);
           assert.ok(oll.calls.every(c => c.prompt.length < 7500), 'no single prompt may exceed the safe context size');
           assert.ok(oll.calls[0].prompt.includes('bagian 1 dari'));
@@ -10873,6 +10877,605 @@ async function runAllModules() {
       const media = ((await (await adminJson('GET', `/api/events/${EVENT64}`)).json()).media || []);
       assert.ok(!media.some(m => media64.includes(m.media_id)), 'test media deleted');
     });
+  }
+
+  // --- MODULE 65 (v2.60.0): TOPIC SUMMARY OF A LONG VIDEO (map per ~6,000-char part -> merge into 4-8 topics; FAKE Ollama) ---
+  // A transcript over 5,000 characters is summarized by topic; every point/title is fact-checked against the whole transcript
+  // and a failing point is dropped (not the whole summary). Offline checks run on both backends; the pipeline tests start a
+  // throw-away backend with OLLAMA_HOST / TRANSCRIBE_API_URL pointing at in-process fakes over the same SQL database (like Module 38).
+  console.log('\n📦 MODULE 65: Topic summary of a long video - map/merge, retry of an empty part, dropped invented points, fallback (Positive & Negative Testing)');
+  if (!skipModuleBlock(65)) {
+    const sm65 = require('../server/services/mediaSummaryService');
+    const BLOCK65 = 'Hari ini tim membahas program mentoring untuk karyawan baru di kantor pusat. Setiap mentor mendampingi peserta selama enam bulan pertama dan bertemu secara rutin. ' +
+      'Kemudian rapat membahas dashboard People Experience yang menampilkan PX Index per direktorat. Tampilan dashboard masih memakai data dummy dan akan disempurnakan. ' +
+      'Topik berikutnya adalah audit eksternal untuk perizinan ke OJK, dan tim audit meminta update harian selama proses berjalan. ' +
+      'Terakhir dibahas monitoring referral yang masih manual dan belum terintegrasi ke Arjuna, sehingga koordinasi dilakukan lewat email. ';
+    const LONG65 = Array(24).fill(BLOCK65).join('').trim();
+    const SHORT65 = 'Hari ini kami membahas program mentoring untuk karyawan baru di kantor pusat. Setiap mentor mendampingi peserta selama enam bulan pertama, bertemu secara rutin, dan membantu mereka memahami budaya kerja. Peserta merasa lebih percaya diri setelah mengikuti sesi tersebut dan ingin program ini diteruskan.';
+    const MAP65 = [
+      [{ judul: 'Program Mentoring', poin: ['Setiap mentor mendampingi peserta selama enam bulan pertama.'] }, { judul: 'Dashboard People Experience', poin: ['Dashboard menampilkan PX Index per direktorat.'] }],
+      [{ judul: 'Audit Eksternal OJK', poin: ['Tim audit meminta update harian selama proses berjalan.'] }],
+      [{ judul: 'Monitoring Referral', poin: ['Monitoring referral masih manual dan belum terintegrasi ke Arjuna.'] }]
+    ];
+    const FINAL65 = [
+      { judul: 'Program Mentoring Karyawan Baru', poin: ['Setiap mentor mendampingi peserta selama enam bulan pertama.', 'Program mentoring untuk karyawan baru di kantor pusat.'] },
+      { judul: 'Dashboard People Experience', poin: ['Dashboard menampilkan PX Index per direktorat.', 'Tampilan dashboard masih memakai data dummy dan akan disempurnakan.'] },
+      { judul: 'Audit Eksternal OJK', poin: ['Audit eksternal untuk perizinan ke OJK sedang berjalan.', 'Tim audit meminta update harian selama proses berjalan.'] },
+      { judul: 'Monitoring Referral', poin: ['Monitoring referral masih manual dan belum terintegrasi ke Arjuna.'] }
+    ];
+    const RING65 = 'Rapat membahas program mentoring untuk karyawan baru di kantor pusat dan dashboard People Experience yang menampilkan PX Index per direktorat. Tim juga membahas audit eksternal untuk perizinan ke OJK serta monitoring referral yang masih manual.';
+    const BAD_RING65 = 'Rapat yang dipimpin Budi Santoso membahas program mentoring untuk karyawan baru dan dashboard People Experience di kantor pusat.';
+    const SHORT_GOOD65 = 'RINGKASAN: Program mentoring untuk karyawan baru di kantor pusat dibahas. Mentor mendampingi peserta selama enam bulan pertama dan membantu mereka memahami budaya kerja. Peserta merasa lebih percaya diri dan ingin program diteruskan.\n\nPOIN:\n- Program mentoring untuk karyawan baru di kantor pusat.\n- Mentor mendampingi peserta dan bertemu secara rutin.\n- Peserta ingin program ini diteruskan.';
+    const OLD65 = 'RINGKASAN: Rapat membahas program mentoring untuk karyawan baru di kantor pusat dan dashboard People Experience. Tim audit meminta update harian untuk audit eksternal.\n\nPOIN:\n- Program mentoring untuk karyawan baru di kantor pusat.\n- Dashboard menampilkan PX Index per direktorat.\n- Monitoring referral masih manual.';
+
+    await runTest('[POSITIVE] Offline: topic mode only above 5,000 characters; parts of at most 6,000 characters cut at a sentence end; fixture parts = 3; JSON prompts (retry adds "PASTI berisi pembahasan"); context size steps', async () => {
+      assert.strictEqual(sm65.usesTopicMode(SHORT65), false);
+      assert.strictEqual(sm65.usesTopicMode('x'.repeat(5000)), false, 'exactly 5,000 characters = the older single-call path');
+      assert.strictEqual(sm65.usesTopicMode('x '.repeat(2600)), true);
+      const parts = sm65.splitTranscript(LONG65, sm65.TOPIC_PART_CHARS);
+      assert.strictEqual(parts.length, 3, `fixture must give 3 parts, got ${parts.length}`);
+      assert.ok(parts.every(p => p.length <= 6000 && /[.?!]$/.test(p)), 'every part ends at a sentence end');
+      assert.strictEqual(parts.join(' '), LONG65, 'nothing lost between the parts');
+      assert.strictEqual(sm65.TOPIC_MAX_PARTS, 20);
+      const first = sm65.buildTopicPartPrompt(parts[0], 'id', 1, 3, false);
+      const retry = sm65.buildTopicPartPrompt(parts[0], 'id', 1, 3, true);
+      assert.ok(first.includes('bagian 1 dari 3') && first.includes('{"topik":[{"judul"') && !first.includes('PASTI berisi pembahasan'));
+      assert.ok(retry.includes('PASTI berisi pembahasan, jangan kosong'));
+      assert.ok(sm65.buildTopicPartPrompt('x', 'en', 2, 4, true).includes('{"topics":[{"title"'));
+      const merge = sm65.buildTopicMergePrompt([{ part: 1, title: 'A', points: ['p1', 'p2'] }], 'id', 'memuat nama X');
+      assert.ok(merge.includes('[bagian 1] A: p1 | p2') && merge.includes('PERBAIKAN') && merge.includes('{"ringkasan"'));
+      assert.strictEqual(sm65.contextFor('x'.repeat(3000), 1400), 8192);
+      assert.strictEqual(sm65.contextFor('x'.repeat(30000), 1400), 16384);
+      assert.strictEqual(sm65.contextFor('x'.repeat(60000), 1400), 32768);
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] Offline: JSON answers are read also inside a ``` block or with text around them, Indonesian or English keys, capped at 3x3 per part / 8x4 final; garbage gives no topics', async () => {
+      assert.deepStrictEqual(sm65.parseJsonAnswer('```json\n{"topik":[]}\n```'), { topik: [] });
+      assert.deepStrictEqual(sm65.parseJsonAnswer('Berikut jawabannya: {"a":1} selesai'), { a: 1 });
+      assert.strictEqual(sm65.parseJsonAnswer('RINGKASAN: bukan JSON'), null);
+      const many = Array.from({ length: 10 }, (_, i) => ({ judul: `Topik ${i}`, poin: ['Poin pertama yang cukup panjang.', 'Poin kedua yang cukup panjang.', 'Poin ketiga yang cukup panjang.', 'Poin keempat yang cukup panjang.', 'Poin kelima yang cukup panjang.'] }));
+      const part = sm65.normalizeTopics(many, sm65.TOPIC_PART_LIMITS);
+      assert.strictEqual(part.length, 3);
+      assert.ok(part.every(t => t.points.length === 3));
+      const fin = sm65.normalizeTopics(many, sm65.TOPIC_FINAL_LIMITS);
+      assert.strictEqual(fin.length, 8);
+      assert.ok(fin.every(t => t.points.length === 4));
+      assert.deepStrictEqual(sm65.normalizeTopics([{ title: 'English Topic', points: ['An English point here.'] }], sm65.TOPIC_FINAL_LIMITS), [{ title: 'English Topic', points: ['An English point here.'] }]);
+      for (const junk of [null, 'teks', 42, [null, 'x', { judul: '', poin: ['Poin tanpa judul.'] }, { judul: 'Tanpa poin', poin: [] }, { judul: 'Poin pendek', poin: ['ok'] }]]) {
+        assert.deepStrictEqual(sm65.normalizeTopics(junk, sm65.TOPIC_PART_LIMITS), [], JSON.stringify(junk));
+      }
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] Offline fact check per point: invented numbers, names, meta phrases and markup are dropped, the clean points stay; a title in Title Case passes but an invented name after "Pak" or a number does not', async () => {
+      const ctx = sm65.buildCheckContext(LONG65, 'id');
+      assert.strictEqual(sm65.validateAnswer({ summary: RING65, points: [] }, LONG65, 'id'), null, 'fixture overall summary is clean');
+      const clean = sm65.checkTopics(sm65.normalizeTopics(FINAL65, sm65.TOPIC_FINAL_LIMITS), ctx);
+      assert.strictEqual(clean.topics.length, 4);
+      assert.strictEqual(clean.droppedPoints, 0);
+      const bad = [['Program ini diikuti 350 peserta sejak 2019.', /350/], ['Dashboard dirancang oleh Budi Santoso.', /Budi/], ['Video ini membahas program mentoring.', /meta/],
+        ['Mentor <b>mendampingi</b> peserta baru.', /HTML/], ['Program mentoring berlangsung sepuluh bulan.', /sepuluh/]];
+      for (const [p, re] of bad) { const why = sm65.fragmentProblem(p, ctx, 'point'); assert.ok(why && re.test(why), `${p} -> ${why}`); }
+      const mixed = sm65.checkTopics([{ title: 'Program Mentoring', points: ['Setiap mentor mendampingi peserta selama enam bulan pertama.', 'Program ini diikuti 350 peserta sejak 2019.'] },
+        { title: 'Kunjungan Direksi', points: ['Kunjungan oleh Pak Hendra dijadwalkan bulan depan.'] }], ctx);
+      assert.deepStrictEqual(mixed.topics, [{ title: 'Program Mentoring', points: ['Setiap mentor mendampingi peserta selama enam bulan pertama.'] }]);
+      assert.strictEqual(mixed.droppedPoints, 2);
+      assert.strictEqual(mixed.droppedTopics, 1, 'a topic left without points is dropped');
+      assert.strictEqual(sm65.fragmentProblem('Integrasi Sistem & Teknologi', ctx, 'title'), null, 'Title Case words are not names');
+      assert.ok(/Budi/.test(sm65.fragmentProblem('Kunjungan Pak Budi', ctx, 'title')));
+      assert.ok(/2030/.test(sm65.fragmentProblem('Rencana 2030', ctx, 'title')));
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] Offline: "UI/UX" counts as the words UI and UX - it passes when the transcript says UI/UX, and is dropped when the transcript only says "user interface"; an acronym must be a whole word ("ui" inside "melalui" is not UI), a clitic on it still counts', async () => {
+      const said = sm65.buildCheckContext('Tim membahas tampilan UI/UX dashboard melalui rapat mingguan dan SLA-nya dipantau.', 'id');
+      for (const p of ['Tampilan UI/UX dashboard dibahas dalam rapat.', 'UI/UX dashboard dibahas dalam rapat mingguan.', 'Tim memantau SLA dashboard.']) assert.strictEqual(sm65.fragmentProblem(p, said, 'point'), null, p);
+      const notSaid = sm65.buildCheckContext('Tim membahas tampilan user interface dashboard melalui rapat mingguan.', 'id');
+      assert.ok(/UX/.test(sm65.fragmentProblem('Tampilan UI/UX dashboard dibahas dalam rapat.', notSaid, 'point')));
+      assert.ok(/UI/.test(sm65.fragmentProblem('UI dashboard dibahas dalam rapat.', notSaid, 'point')), 'an acronym opening a point is checked too');
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] Offline: an Ollama abort of ONE answer (token repeat limit) or an empty answer is a SOFT failure; not running / reset / timeout / model missing / other HTTP errors stay HARD', async () => {
+      const { isSoftGenerationError } = require('../server/services/localAiService');
+      const ollamaErr = (detail, status = 500) => Object.assign(new Error(`Ollama: ${detail}`), { status, ollamaError: detail });
+      assert.strictEqual(isSoftGenerationError(ollamaErr('prediction aborted, token repeat limit reached')), true);
+      assert.strictEqual(isSoftGenerationError(Object.assign(new Error('Ollama returned an empty answer'), { soft: true })), true);
+      for (const hard of [ollamaErr("model 'gemma3:4b' not found", 404), ollamaErr('llama runner process has terminated', 500), new Error('Ollama is not running at http://localhost:11434'),
+        Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }), new Error('Ollama did not answer within the 120 minutes limit'), null]) {
+        assert.strictEqual(isSoftGenerationError(hard), false, String(hard && hard.message));
+      }
+      assert.deepStrictEqual(sm65.REPEAT_GUARD, { repeatPenalty: 1.15, repeatLastN: 128 });
+    });
+
+    // v2.60.0 review of 3 real summaries: neutral wording for a recording that is no meeting, no filler points, no near-duplicates.
+    const POD_BLOCK65 = 'Dokter menjelaskan bahwa pemeriksaan jantung penting setelah usia tiga puluh lima tahun. Oat bermanfaat untuk mengontrol gula darah. Makanan kaya serat seperti ubi merah dapat mengurangi risiko penyakit jantung. Hindari makan sambil bermain HP untuk menjaga fokus saat makan. Olahraga dan manajemen stres penting untuk kesehatan jantung. Perubahan pola makan harus dilakukan secara bertahap. ';
+    const POD65 = Array(20).fill(POD_BLOCK65).join('').trim(); // a health podcast: "rapat" / "pertemuan" / "meeting" never said
+    const POD_MAP65 = [{ judul: 'Kesehatan Jantung', poin: ['Pemeriksaan jantung penting setelah usia tiga puluh lima tahun.', 'Target waktu tidak disebutkan.'] }, { judul: 'Pola Makan', poin: ['Oat bermanfaat untuk mengontrol gula darah.'] }];
+    const POD_FINAL65 = [
+      { judul: 'Kesehatan Jantung', poin: ['Pemeriksaan jantung penting setelah usia tiga puluh lima tahun.', 'Target waktu: pemahaman kesehatan jantung.', 'Olahraga dan manajemen stres penting untuk kesehatan jantung.'] },
+      { judul: 'Pola Makan', poin: ['Oat bermanfaat untuk mengontrol gula darah.', 'Makanan kaya serat seperti ubi merah dapat mengurangi risiko penyakit jantung.', 'Tidak ada target waktu yang disebutkan untuk perubahan pola makan.'] },
+      { judul: 'Kebiasaan Makan', poin: ['Hindari makan sambil bermain HP untuk menjaga fokus.', 'Jangan makan sambil bermain HP.', 'Fokus utama rapat adalah pola makan sehat.'] },
+      { judul: 'Perubahan Bertahap', poin: ['Perubahan pola makan harus dilakukan secara bertahap.'] }
+    ];
+    const POD_EXPECTED65 = [
+      { title: 'Kesehatan Jantung', points: ['Pemeriksaan jantung penting setelah usia tiga puluh lima tahun.', 'Olahraga dan manajemen stres penting untuk kesehatan jantung.'] },
+      { title: 'Pola Makan', points: ['Oat bermanfaat untuk mengontrol gula darah.', 'Makanan kaya serat seperti ubi merah dapat mengurangi risiko penyakit jantung.'] },
+      { title: 'Kebiasaan Makan', points: ['Hindari makan sambil bermain HP untuk menjaga fokus.'] },
+      { title: 'Perubahan Bertahap', points: ['Perubahan pola makan harus dilakukan secara bertahap.'] }
+    ];
+    const POD_RING_MEETING65 = 'Rapat ini membahas pemeriksaan jantung, pola makan, dan kebiasaan makan untuk kesehatan. Oat bermanfaat untuk mengontrol gula darah dan makanan kaya serat dapat mengurangi risiko penyakit jantung.';
+    const POD_RING65 = 'Pembahasan mencakup pemeriksaan jantung, pola makan, dan kebiasaan makan untuk kesehatan. Oat bermanfaat untuk mengontrol gula darah dan makanan kaya serat dapat mengurangi risiko penyakit jantung.';
+
+    await runTest('[POSITIVE/NEGATIVE] Offline filler filter: "Target waktu: <no time>", "tidak ada target waktu yang disebutkan", "... tidak disebutkan", "no deadline was mentioned" are fillers; real deadlines and content stay; "rapat" in a point is a filler only when the recording never says rapat/meeting', async () => {
+      const pod = sm65.buildCheckContext(POD65, 'id', 'Dokter-Tirta-Punya.mp4');
+      const meeting = sm65.buildCheckContext(LONG65, 'id', 'x.mp4');
+      for (const p of ['Target waktu: pemahaman konsep dasar tentang teori Big Bang.', 'Tidak ada target waktu yang disebutkan untuk pembentukan alam semesta.', 'Target waktu tidak disebutkan.',
+        'Keputusan belum ditentukan oleh tim.', 'Nama pembicara tidak disebutkan.', 'No deadline was mentioned for the rollout.', 'The budget was not decided.', 'Fokus utama rapat adalah pola makan sehat.']) {
+        assert.strictEqual(sm65.isFillerPoint(p, pod), true, p);
+      }
+      for (const p of ['Target waktu: Desember 2026.', 'Deployment server melalui EUC ditargetkan Desember 2026.', 'Hindari makan sambil bermain HP untuk menjaga fokus.',
+        'Oat bermanfaat untuk mengontrol gula darah.', 'Peserta tidak boleh makan sambil bermain HP.', 'Rifki bertanggung jawab tanpa target waktu yang ditetapkan.']) {
+        assert.strictEqual(sm65.isFillerPoint(p, pod), false, p);
+      }
+      assert.strictEqual(sm65.isFillerPoint('Rapat membahas dashboard People Experience.', meeting), false, 'the transcript says "rapat"');
+      assert.strictEqual(pod.eventWordsAllowed, false);
+      assert.strictEqual(sm65.buildCheckContext(POD65, 'id', 'HR Projects Update - Meeting Recording.mp4').eventWordsAllowed, true, 'the uploaded file name may say it too');
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] Offline duplicates: "Hindari makan sambil bermain HP untuk menjaga fokus" + "Jangan makan sambil bermain HP" -> one point (the longer); different points and opposite statements are NOT merged; across topics too, an emptied topic is dropped', async () => {
+      assert.strictEqual(sm65.isDuplicatePoint('Hindari makan sambil bermain HP untuk menjaga fokus', 'Jangan makan sambil bermain HP', 'id'), true);
+      assert.strictEqual(sm65.isDuplicatePoint('Memo diberikan ke experience owner.', 'Proses PX terkait ke dalam memo yang diberikan ke experience owner.', 'id'), true, 'contained point');
+      for (const [a, b] of [
+        ['Teleskop Luar Angkasa Hubble memberikan gambaran alam semesta dari berbagai skala.', 'Teleskop Luar Angkasa James Webb memberikan gambar inframerah yang lebih sensitif dan kedalaman yang sangat tinggi.'],
+        ['Oat bermanfaat untuk mengontrol gula darah dan meningkatkan HDL', 'Makanan kaya serat seperti ubi merah dapat mengurangi risiko penyakit jantung'],
+        ['Deployment server melalui EUC ditargetkan Desember 2026.', 'Monitoring referral dijadwalkan Desember ini.'],
+        ['Peserta boleh makan sambil bermain HP di ruang istirahat.', 'Peserta tidak boleh makan sambil bermain HP di ruang istirahat.'],
+        ['Makan sambil bermain HP membantu fokus.', 'Jangan makan sambil bermain HP.']]) {
+        assert.strictEqual(sm65.isDuplicatePoint(a, b, 'id'), false, `${a} | ${b}`);
+      }
+      const r = sm65.removeDuplicatePoints([{ title: 'A', points: ['Jangan makan sambil bermain HP.', 'Oat bermanfaat untuk mengontrol gula darah.'] },
+        { title: 'B', points: ['Hindari makan sambil bermain HP untuk menjaga fokus.'] }, { title: 'C', points: ['Oat bermanfaat untuk mengontrol gula darah.'] }], 'id');
+      assert.deepStrictEqual(r.topics, [{ title: 'A', points: ['Oat bermanfaat untuk mengontrol gula darah.'] }, { title: 'B', points: ['Hindari makan sambil bermain HP untuk menjaga fokus.'] }]);
+      assert.strictEqual(r.duplicatePoints, 2);
+      assert.strictEqual(r.droppedTopics, 1);
+    });
+
+    await runTest('[POSITIVE] Offline neutral wording: prompts speak of a "rekaman" (meeting, discussion, interview, podcast, educational video), forbid naming the event type and "not mentioned" points, ask for no repeated points and never to open the summary with "Rekaman ini / Video ini / Rapat ini ..."', async () => {
+      const map = sm65.buildTopicPartPrompt('x', 'id', 1, 2, false);
+      assert.ok(map.includes('transkrip rekaman tersebut (bisa rapat, diskusi, wawancara, podcast, atau video edukasi'));
+      assert.ok(map.includes('Jangan pernah menulis poin bahwa sesuatu tidak disebutkan') && map.includes('Jangan menyebut jenis acaranya'));
+      assert.ok(map.includes('HANYA bila benar-benar diucapkan') && !/notulen rapat/.test(map));
+      const merge = sm65.buildTopicMergePrompt([{ part: 1, title: 'A', points: ['p'] }], 'id', '');
+      assert.ok(merge.includes('satu rekaman yang sama') && merge.includes('Jangan mengulang poin yang sama') && merge.includes('Mulai langsung dengan pokok bahasannya sendiri'));
+      const en = sm65.buildTopicMergePrompt([{ part: 1, title: 'A', points: ['p'] }], 'en', '');
+      assert.ok(en.includes('one and the same recording') && en.includes('Do not repeat a point') && !/meeting minutes/.test(sm65.buildTopicPartPrompt('x', 'en', 1, 2)));
+      assert.ok(merge.includes('JANGAN PERNAH membuka dengan "Rekaman ini", "Video ini", "Transkrip ini", "Rapat ini", "Pertemuan ini", "Diskusi ini", atau "Podcast ini"'));
+      assert.ok(en.includes('NEVER with "This recording", "This video"'));
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] Offline summary repair: a "Rekaman ini membahas ..." / "Rapat ini mencakup ..." / "This video discusses ..." opener becomes neutral (also in a meeting), a normal opener is untouched, a meta or forbidden "rapat" sentence is left out, an invented name is NOT repaired; the title summary survives brackets', async () => {
+      const pod = sm65.buildCheckContext(POD65, 'id', 'podcast.mp4');
+      const meeting = sm65.buildCheckContext(LONG65, 'id', 'x.mp4');
+      assert.deepStrictEqual(sm65.repairSummary('Rekaman ini membahas pemeriksaan jantung, pola makan, dan kebiasaan makan untuk kesehatan. Rekaman ini juga menyoroti manfaat oat untuk mengontrol gula darah.', pod),
+        { text: 'Pembahasan mencakup pemeriksaan jantung, pola makan, dan kebiasaan makan untuk kesehatan. Pembahasan juga mencakup manfaat oat untuk mengontrol gula darah.', repaired: true, removed: 0 });
+      assert.deepStrictEqual(sm65.repairSummary(POD_RING_MEETING65, pod), { text: POD_RING65, repaired: true, removed: 0 });
+      assert.deepStrictEqual(sm65.repairSummary(RING65, meeting), { text: RING65, repaired: false, removed: 0 }, '"Rapat membahas ..." (no "ini") in a real meeting is not an opener to repair');
+      assert.strictEqual(sm65.repairSummary(`Rapat ini membahas ${RING65.slice('Rapat membahas '.length)}`, meeting).text, `Pembahasan mencakup ${RING65.slice('Rapat membahas '.length)}`, 'a meeting gets the neutral opener too');
+      const plain = 'Oat bermanfaat untuk mengontrol gula darah dan makanan kaya serat dapat mengurangi risiko penyakit jantung.';
+      assert.deepStrictEqual(sm65.repairSummary(plain, pod), { text: plain, repaired: false, removed: 0 }, 'a non-meta opener is untouched');
+      assert.deepStrictEqual(sm65.repairSummary('Pemeriksaan jantung dan pola makan dibahas untuk kesehatan. Rapat ini menghasilkan beberapa keputusan tentang pola makan.', pod),
+        { text: 'Pemeriksaan jantung dan pola makan dibahas untuk kesehatan.', repaired: true, removed: 1 });
+      assert.ok(/Budi/.test(sm65.repairSummary('Pemeriksaan jantung dijelaskan oleh Budi Santoso untuk kesehatan jantung.', pod).reason), 'invented facts are never repaired');
+      assert.ok(sm65.repairSummary('Rapat ini menghasilkan keputusan. Singkat.', pod).reason, 'too little left -> no repair');
+      const en = sm65.buildCheckContext('Every mentor supports the participants for six months at the head office for new employees and the working culture.', 'en', 'x.mp4');
+      assert.strictEqual(sm65.repairSummary('This video discusses the mentoring of new employees at the head office and the working culture.', en).text,
+        'The discussion covers the mentoring of new employees at the head office and the working culture.');
+      assert.strictEqual(sm65.summaryFromTitles([{ title: 'Kesehatan Jantung' }, { title: 'Pola Makan (Oat & Serat)' }, { title: 'Kebiasaan Makan' }], pod),
+        'Pembahasan mencakup kesehatan jantung, pola makan (Oat & serat), dan kebiasaan makan.');
+    });
+
+    const storage65 = require('../server/db/storage');
+    if (storage65.backend !== 'sql') {
+      console.log('  ⏭️  SKIP: Module 65 pipeline tests need the SQL backend (second backend over the same database)');
+    } else {
+      const http65 = require('http');
+      const { spawn } = require('child_process');
+      const path65 = require('path');
+      const crypto65 = require('crypto');
+      const auth65 = require('../server/services/authService');
+      const EVENT65 = 'ev-perspektif-2024-q1';
+      const sleep65 = ms => new Promise(r => setTimeout(r, ms));
+      // Fake Ollama: answers per prompt kind (map part / merge / older path) and per scenario (oll65.mode).
+      const oll65 = { calls: [], mode: 'topics' };
+      const answer65 = prompt => {
+        const map = prompt.match(/Berikut bagian (\d+) dari (\d+) transkrip rekaman/);
+        if (map) {
+          const part = parseInt(map[1], 10);
+          const retry = prompt.includes('PASTI berisi pembahasan');
+          if (oll65.mode.startsWith('review')) return JSON.stringify({ topik: POD_MAP65 });
+          if (oll65.mode === 'empty-once' && part === 2 && !retry) return 'Maaf, tidak ada topik di bagian ini.';
+          if (oll65.mode === 'empty-twice' && part === 2) return '{"topik":[]}';
+          const topics = MAP65[part - 1].map(t => ({ ...t, poin: [...t.poin] }));
+          if (oll65.mode === 'invented' && part === 3) topics[0].poin.push('Referral dibahas bersama Pak Hendra Wijaya.');
+          return JSON.stringify({ topik: topics });
+        }
+        if (prompt.includes('Berikut daftar topik dan poin')) {
+          const retryMerge = prompt.includes('PERBAIKAN');
+          if (oll65.mode === 'review') return JSON.stringify({ ringkasan: POD_RING_MEETING65, topik: POD_FINAL65 });
+          if (oll65.mode === 'review-sentence') return JSON.stringify({ ringkasan: 'Pemeriksaan jantung dan pola makan dibahas untuk kesehatan. Rapat ini menghasilkan beberapa keputusan tentang pola makan.', topik: POD_FINAL65 });
+          if (oll65.mode === 'rekaman') return JSON.stringify({ ringkasan: `Rekaman ini membahas ${RING65.slice('Rapat membahas '.length)}`, topik: FINAL65 });
+          // attempt 1: good topics, summary with an invented name; attempt 2: cut off (no JSON) / only a good summary
+          if (oll65.mode === 'keep-best') return retryMerge ? '{"ringkasan":"Pembahasan mencakup program mentoring untuk karyawan baru dan' : JSON.stringify({ ringkasan: BAD_RING65, topik: FINAL65 });
+          if (oll65.mode === 'keep-best-spare') return retryMerge ? JSON.stringify({ ringkasan: RING65, topik: [] }) : JSON.stringify({ ringkasan: BAD_RING65, topik: FINAL65 });
+          if (oll65.mode === 'bad-summary') return JSON.stringify({ ringkasan: BAD_RING65, topik: [{ judul: 'Program Mentoring', poin: ['Program ini diikuti 350 peserta sejak 2019.'] }] });
+          if (oll65.mode === 'invented') {
+            const topics = FINAL65.map(t => ({ ...t, poin: [...t.poin] }));
+            topics[0].poin.push('Program ini diikuti 350 peserta sejak 2019.');
+            topics[1].poin.push('Dashboard dirancang oleh Budi Santoso.');
+            topics.push({ judul: 'Kunjungan Direksi', poin: ['Kunjungan oleh Pak Hendra dijadwalkan bulan depan.'] });
+            return JSON.stringify({ ringkasan: RING65, topik: topics });
+          }
+          return '```json\n' + JSON.stringify({ ringkasan: RING65, topik: FINAL65 }) + '\n```';
+        }
+        if (prompt.includes('Ringkas transkrip berikut')) return SHORT_GOOD65; // short transcript: the standard single-call prompt
+        return OLD65; // older path of a long transcript (part summaries, combine)
+      };
+      // v2.60.0 follow-up: Ollama aborting ONE generation (HTTP 500 "prediction aborted, token repeat limit reached")
+      const aborts65 = prompt => {
+        const first = !prompt.includes('PASTI berisi pembahasan') && !prompt.includes('PERBAIKAN');
+        if (oll65.mode === 'abort-map') return /Berikut bagian 2 dari/.test(prompt) && first;
+        if (oll65.mode === 'abort-merge') return prompt.includes('Berikut daftar topik dan poin') && first;
+        if (oll65.mode === 'abort-short') return prompt.includes('Ringkas transkrip berikut') && first;
+        if (oll65.mode === 'abort-short-always') return prompt.includes('Ringkas transkrip berikut');
+        return false;
+      };
+      const fakeOllama65 = http65.createServer((req, res) => {
+        const chunks = [];
+        req.on('data', c => chunks.push(c));
+        req.on('end', () => {
+          let body = {};
+          try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch (_) { /* tags etc. */ }
+          oll65.calls.push({ url: req.url, prompt: body.prompt || '', format: body.format, options: body.options || {} });
+          if (oll65.mode === 'close') return req.socket.destroy();
+          res.setHeader('Content-Type', 'application/json');
+          if (aborts65(body.prompt || '')) { // what Ollama answers when the model loops on repeated tokens
+            res.statusCode = 500;
+            return res.end(JSON.stringify({ error: 'prediction aborted, token repeat limit reached' }));
+          }
+          res.end(JSON.stringify({ response: answer65(body.prompt || ''), done: true }));
+        });
+      });
+      const tr65 = { text: LONG65 };
+      const fakeTranscribe65 = http65.createServer((req, res) => {
+        req.resume();
+        req.on('end', () => {
+          res.setHeader('Content-Type', 'application/json');
+          if (req.method === 'POST' && req.url === '/transcribe') return res.end(JSON.stringify({ text: tr65.text, language: 'id', duration: 900, segments: [{ start: 0, end: 900, text: tr65.text }] }));
+          res.end('{"status":"ok"}');
+        });
+      });
+      const listen65 = srv => new Promise(resolve => srv.listen(0, '127.0.0.1', () => resolve(srv.address().port)));
+      const ollamaPort65 = await listen65(fakeOllama65);
+      const trPort65 = await listen65(fakeTranscribe65);
+      const freePort65 = await (async () => { const s = http65.createServer(); const p = await listen65(s); await new Promise(r => s.close(r)); return p; })();
+      const CHILD65 = `http://127.0.0.1:${freePort65}`;
+      const stamp65 = Date.now().toString(36);
+      const pw65 = crypto65.randomBytes(9).toString('hex') + 'Aa1';
+      const users65 = [];
+      const mediaIds65 = new Set();
+      let child65 = null;
+      let cookie65 = null;
+      const api65 = (p, opts = {}) => realFetch(`${CHILD65}${p}`, { ...opts, headers: { ...(opts.headers || {}), ...(cookie65 ? { Cookie: cookie65 } : {}) } });
+      const generate65 = () => oll65.calls.filter(c => c.url === '/api/generate');
+      const eventMedia65 = async id => (await (await api65(`/api/events/${EVENT65}`)).json()).media.find(m => m.media_id === id);
+      const waitDone65 = async (id, ms = 30000) => {
+        for (let i = 0; i < ms / 250; i++) { const m = await eventMedia65(id); if (m && m.summary_status && m.summary_status !== 'PROCESSING') return m; await sleep65(250); }
+        return eventMedia65(id);
+      };
+      // A video record with a finished transcript (no file needed: the summary reads the transcript from the database).
+      const videoWith65 = async (transcript, extra = {}) => {
+        const m = await storage65.addMedia({ event_id: EVENT65, file_name: `rt65-${stamp65}.mp4`, file_path: `/uploads/rt65-${stamp65}-${mediaIds65.size}.mp4`, file_type: 'VIDEO', caption: 'rt65', transcript_status: 'DONE' });
+        mediaIds65.add(m.media_id);
+        await storage65.updateMedia(m.media_id, { transcript, transcript_language: 'id', transcript_segments: [], ...extra });
+        return m;
+      };
+      const summarize65 = async (id, mode) => {
+        oll65.calls.length = 0; oll65.mode = mode;
+        const r = await api65(`/api/media/${id}/summarize`, { method: 'POST' });
+        assert.strictEqual(r.status, 202);
+        return waitDone65(id);
+      };
+      try {
+        const u = await storage65.createUser({ is_test_account: true, username: `rt65a${stamp65}`, full_name: 'Regression 65 Admin', email: '', role: 'ADMIN', password_hash: await auth65.hashPassword(pw65), must_change_password: false });
+        users65.push(u.user_id);
+        child65 = spawn(process.execPath, [path65.join(__dirname, '..', 'server', 'server.js')], {
+          cwd: path65.join(__dirname, '..'),
+          env: { ...process.env, PORT: String(freePort65), OLLAMA_HOST: `http://127.0.0.1:${ollamaPort65}`, OLLAMA_MODEL: 'gemma3:4b', TRANSCRIBE_API_URL: `http://127.0.0.1:${trPort65}`, PX_DISABLE_SCHEDULERS: '1', PX_DISABLE_RESUME: '1' },
+          stdio: 'ignore'
+        });
+        let booted = false;
+        for (let i = 0; i < 120 && !booted; i++) { try { booted = (await realFetch(`${CHILD65}/api/health`)).ok; } catch (_) { await sleep65(500); } }
+        assert.ok(booted, 'second backend did not start');
+        const login = await realFetch(`${CHILD65}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u.username, password: pw65 }) });
+        assert.strictEqual(login.status, 200);
+        cookie65 = (login.headers.getSetCookie() || []).map(c => c.split(';')[0]).find(c => c.startsWith('px_session='));
+        assert.strictEqual(generate65().length, 0, 'booting the second backend makes no Gemma call (PX_DISABLE_RESUME=1)');
+
+        let topicVideo = null;
+        await runTest('[POSITIVE] A NEW long video (upload -> transcript DONE): 3 map calls (JSON, num_ctx 8192, num_predict 500) + 1 merge call (num_predict 1400); topics stored and returned by the event GET; summary = overall summary, summary_points = "title: first point"', async () => {
+          oll65.calls.length = 0; oll65.mode = 'topics'; tr65.text = LONG65;
+          const form = new FormData();
+          form.append('mediaFile', new Blob([Buffer.from('fake video bytes')], { type: 'video/mp4' }), 'regression-topic-65.mp4');
+          const res = await api65(`/api/events/${EVENT65}/media`, { method: 'POST', body: form });
+          assert.strictEqual(res.status, 201);
+          topicVideo = (await res.json()).media;
+          mediaIds65.add(topicVideo.media_id);
+          const done = await waitDone65(topicVideo.media_id);
+          assert.strictEqual(done.summary_status, 'DONE', done.summary_error);
+          assert.strictEqual(done.summary_source, 'AI');
+          assert.strictEqual(done.summary_model, 'gemma3:4b');
+          assert.strictEqual(done.summary, RING65);
+          assert.deepStrictEqual(done.summary_topics, FINAL65.map(t => ({ title: t.judul, points: t.poin })));
+          assert.deepStrictEqual(done.summary_points, FINAL65.map(t => `${t.judul}: ${t.poin[0]}`));
+          assert.deepStrictEqual(done.summary_topic_stats, { parts: 3, retried_parts: 0, skipped_parts: 0, dropped_points: 0, dropped_topics: 0, merge_attempts: 1, aborted_answers: 0,
+            filler_points: 0, duplicate_points: 0, summary_repaired: 0, summary_sentences_removed: 0, summary_from_titles: 0 });
+          const calls = generate65();
+          assert.strictEqual(calls.length, 4);
+          calls.slice(0, 3).forEach((c, i) => {
+            assert.ok(c.prompt.includes(`bagian ${i + 1} dari 3`), `map call ${i + 1}`);
+            assert.strictEqual(c.format, 'json');
+            assert.strictEqual(c.options.num_ctx, 8192);
+            assert.strictEqual(c.options.num_predict, 500);
+            assert.strictEqual(c.options.temperature, 0.1);
+            assert.strictEqual(c.options.seed, 41);
+            assert.strictEqual(c.options.repeat_penalty, undefined, 'first attempts keep the spike settings');
+          });
+          assert.ok(calls[3].prompt.includes('Berikut daftar topik dan poin') && calls[3].prompt.includes('[bagian 3] Monitoring Referral'));
+          assert.strictEqual(calls[3].format, 'json');
+          assert.strictEqual(calls[3].options.num_predict, 1400);
+          assert.ok(calls[3].options.num_ctx >= 8192);
+          // opening the event again never calls the model
+          oll65.calls.length = 0;
+          assert.strictEqual((await api65(`/api/events/${EVENT65}`)).status, 200);
+          await sleep65(300);
+          assert.strictEqual(oll65.calls.length, 0, 'GET makes zero Ollama requests');
+        });
+
+        await runTest('[POSITIVE] A part whose answer is not usable (no JSON) is asked again ONCE with another seed and "PASTI berisi pembahasan" - the retry succeeds, nothing skipped', async () => {
+          const v = await videoWith65(LONG65);
+          const done = await summarize65(v.media_id, 'empty-once');
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          assert.strictEqual(done.summary_topics.length, 4);
+          assert.strictEqual(done.summary_topic_stats.retried_parts, 1);
+          assert.strictEqual(done.summary_topic_stats.skipped_parts, 0);
+          const calls = generate65();
+          assert.strictEqual(calls.length, 5, 'part 1, part 2, part 2 retry, part 3, merge');
+          assert.ok(calls[2].prompt.includes('bagian 2 dari 3') && calls[2].prompt.includes('PASTI berisi pembahasan, jangan kosong'));
+          assert.ok(!calls[1].prompt.includes('PASTI berisi pembahasan'));
+          assert.strictEqual(calls[1].options.seed, 41);
+          assert.strictEqual(calls[2].options.seed, 42, 'the retry uses another seed');
+        });
+
+        await runTest('[NEGATIVE] A part that stays empty after its one retry is skipped (counted) and the job still finishes as an AI topic summary from the other parts', async () => {
+          const v = await videoWith65(LONG65);
+          const done = await summarize65(v.media_id, 'empty-twice');
+          assert.strictEqual(done.summary_status, 'DONE');
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          assert.ok(done.summary_topics.length >= 2);
+          assert.strictEqual(done.summary_topic_stats.skipped_parts, 1);
+          assert.strictEqual(done.summary_topic_stats.retried_parts, 1);
+          const calls = generate65();
+          assert.strictEqual(calls.length, 5, 'exactly one retry for the empty part');
+          assert.ok(!calls[4].prompt.includes('[bagian 2]'), 'the skipped part gives no topic to the merge');
+          assert.ok(calls[4].prompt.includes('[bagian 1]') && calls[4].prompt.includes('[bagian 3]'));
+        });
+
+        await runTest('[NEGATIVE] Invented points are DROPPED, the rest is kept: a number (350, 2019) and a name (Budi Santoso) in merge points, a topic whose only point names "Pak Hendra", and an invented point of a part (never reaches the merge)', async () => {
+          const v = await videoWith65(LONG65);
+          const done = await summarize65(v.media_id, 'invented');
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          assert.deepStrictEqual(done.summary_topics, FINAL65.map(t => ({ title: t.judul, points: t.poin })), 'only the clean topics/points remain');
+          assert.strictEqual(done.summary_topic_stats.dropped_points, 4, '1 at the part step + 3 at the merge step');
+          assert.strictEqual(done.summary_topic_stats.dropped_topics, 1);
+          const stored = JSON.stringify([done.summary, done.summary_points, done.summary_topics]);
+          assert.ok(!/350|2019|Budi|Santoso|Hendra|Kunjungan Direksi/.test(stored), 'nothing invented is stored');
+          const merge = generate65().find(c => c.prompt.includes('Berikut daftar topik dan poin'));
+          assert.ok(merge && !merge.prompt.includes('Hendra'), 'the invented part point is dropped before the merge');
+        });
+
+        await runTest('[NEGATIVE] Both merge attempts unusable (summary with an invented name AND no topic passing the fact check): one merge retry naming it, then the older part-by-part path (source AI, no topics)', async () => {
+          const v = await videoWith65(LONG65);
+          const done = await summarize65(v.media_id, 'bad-summary');
+          assert.strictEqual(done.summary_status, 'DONE');
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          assert.strictEqual(done.summary_topics, null);
+          assert.strictEqual(done.summary_topic_stats, null);
+          assert.ok(!/Budi/.test(done.summary));
+          assert.ok(/program mentoring/.test(done.summary), 'older-path summary stored');
+          const calls = generate65();
+          const merges = calls.filter(c => c.prompt.includes('Berikut daftar topik dan poin'));
+          assert.strictEqual(merges.length, 2, 'exactly one merge retry');
+          assert.ok(merges[1].prompt.includes('PERBAIKAN') && /Budi/.test(merges[1].prompt), 'the retry names the rejected name');
+          assert.strictEqual(merges[1].options.seed, 42);
+          const older = calls.filter(c => c.prompt.includes('Ini bagian'));
+          assert.strictEqual(older.length, sm65.splitTranscript(LONG65).length, 'the older path summarizes every 5,000-char part');
+          assert.ok(calls[calls.length - 1].prompt.includes('Gabungkan'), 'then combines them');
+          assert.strictEqual(calls.length, 3 + 2 + older.length + 1);
+          assert.ok(older.every(c => c.format === undefined), 'the older path keeps its text format');
+        });
+
+        await runTest('[POSITIVE] A short transcript keeps the standard summary: one call with the old prompt (no JSON format), summary_topics null', async () => {
+          const v = await videoWith65(SHORT65);
+          const done = await summarize65(v.media_id, 'topics');
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          assert.strictEqual(done.summary_topics, null);
+          assert.strictEqual(done.summary_topic_stats, null);
+          assert.ok(done.summary_points.length >= 2);
+          const calls = generate65();
+          assert.strictEqual(calls.length, 1);
+          assert.ok(calls[0].prompt.includes('Ringkas transkrip berikut'));
+          assert.strictEqual(calls[0].format, undefined);
+          assert.strictEqual(calls[0].options.num_ctx, undefined);
+        });
+
+        // Follow-up of the first real run: Ollama aborted one generation ("prediction aborted, token repeat limit reached") and the
+        // whole job went rule-based. Such a per-answer abort now counts as an unusable answer and uses the existing one retry.
+        await runTest('[POSITIVE] A map part ABORTED by Ollama (HTTP 500 "token repeat limit reached") is retried once with seed 42, the retry sentence and the repetition guard (repeat_penalty 1.15, repeat_last_n 128) - topic summary still AI', async () => {
+          const v = await videoWith65(LONG65);
+          const done = await summarize65(v.media_id, 'abort-map');
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          assert.strictEqual(done.summary_topics.length, 4);
+          assert.strictEqual(done.summary_topic_stats.retried_parts, 1);
+          assert.strictEqual(done.summary_topic_stats.aborted_answers, 1);
+          assert.strictEqual(done.summary_topic_stats.skipped_parts, 0);
+          const calls = generate65();
+          assert.strictEqual(calls.length, 5, 'part 1, part 2 (aborted), part 2 retry, part 3, merge');
+          assert.ok(calls[2].prompt.includes('bagian 2 dari 3') && calls[2].prompt.includes('PASTI berisi pembahasan'));
+          assert.deepStrictEqual([calls[2].options.seed, calls[2].options.temperature, calls[2].options.repeat_penalty, calls[2].options.repeat_last_n], [42, 0.1, 1.15, 128]);
+          assert.strictEqual(calls[3].options.repeat_penalty, undefined, 'the next part starts without the guard again');
+        });
+
+        await runTest('[POSITIVE] The MERGE call aborted by Ollama is retried once (PERBAIKAN naming the repetition, repetition guard) - topic summary still AI, merge_attempts 2', async () => {
+          const v = await videoWith65(LONG65);
+          const done = await summarize65(v.media_id, 'abort-merge');
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          assert.strictEqual(done.summary, RING65);
+          assert.strictEqual(done.summary_topics.length, 4);
+          assert.strictEqual(done.summary_topic_stats.merge_attempts, 2);
+          assert.strictEqual(done.summary_topic_stats.aborted_answers, 1);
+          const merges = generate65().filter(c => c.prompt.includes('Berikut daftar topik dan poin'));
+          assert.strictEqual(merges.length, 2);
+          assert.ok(merges[1].prompt.includes('PERBAIKAN') && merges[1].prompt.includes('mengulang kata yang sama'));
+          assert.deepStrictEqual([merges[1].options.seed, merges[1].options.repeat_penalty, merges[1].options.repeat_last_n], [42, 1.15, 128]);
+          assert.strictEqual(merges[1].options.num_predict, 1400);
+        });
+
+        await runTest('[POSITIVE/NEGATIVE] Short transcript: an aborted first answer uses the one existing retry (guard, PERBAIKAN) -> AI; aborted twice -> rule-based with a clear reason', async () => {
+          const a = await videoWith65(SHORT65);
+          const doneA = await summarize65(a.media_id, 'abort-short');
+          assert.strictEqual(doneA.summary_source, 'AI', doneA.summary_error);
+          let calls = generate65();
+          assert.strictEqual(calls.length, 2);
+          assert.ok(calls[1].prompt.includes('PERBAIKAN'));
+          assert.deepStrictEqual([calls[1].options.seed, calls[1].options.repeat_penalty, calls[1].options.repeat_last_n], [42, 1.15, 128]);
+          const b = await videoWith65(SHORT65);
+          const doneB = await summarize65(b.media_id, 'abort-short-always');
+          assert.strictEqual(doneB.summary_source, 'RULE');
+          assert.ok(/aborted the AI answer twice/.test(doneB.summary_error), doneB.summary_error);
+          calls = generate65();
+          assert.strictEqual(calls.length, 2, 'no third call');
+        });
+
+        await runTest('[NEGATIVE] Ollama NOT RUNNING (connection refused) is still a hard error: no retry, rule-based at once, reason shown', async () => {
+          const v = await videoWith65(LONG65);
+          await new Promise(r => { fakeOllama65.close(r); fakeOllama65.closeAllConnections(); });
+          try {
+            const done = await summarize65(v.media_id, 'topics');
+            assert.strictEqual(done.summary_status, 'DONE');
+            assert.strictEqual(done.summary_source, 'RULE');
+            assert.strictEqual(done.summary_topics, null);
+            assert.ok(/not running/i.test(done.summary_error), done.summary_error);
+            assert.strictEqual(generate65().length, 0);
+          } finally {
+            await new Promise(r => fakeOllama65.listen(ollamaPort65, '127.0.0.1', r));
+          }
+        });
+
+        await runTest('[POSITIVE/NEGATIVE] A long PODCAST (never says rapat/meeting): the "Rapat ini membahas ..." opener is repaired at once (no retry); filler points (part + merge) and the HP duplicate are dropped and counted', async () => {
+          const v = await videoWith65(POD65);
+          const done = await summarize65(v.media_id, 'review');
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          assert.strictEqual(done.summary, POD_RING65);
+          assert.deepStrictEqual(done.summary_topics, POD_EXPECTED65);
+          const parts = sm65.splitTranscript(POD65, sm65.TOPIC_PART_CHARS).length;
+          assert.strictEqual(done.summary_topic_stats.filler_points, parts + 3, 'one per part + three at the merge');
+          assert.strictEqual(done.summary_topic_stats.duplicate_points, 1);
+          assert.strictEqual(done.summary_topic_stats.merge_attempts, 1);
+          assert.strictEqual(done.summary_topic_stats.summary_repaired, 1);
+          assert.strictEqual(done.summary_topic_stats.summary_sentences_removed, 0);
+          const merges = generate65().filter(c => c.prompt.includes('Berikut daftar topik dan poin'));
+          assert.strictEqual(merges.length, 1);
+          assert.ok(!merges[0].prompt.includes('Target waktu tidak disebutkan'), 'a filler point of a part never reaches the merge');
+          const stored = JSON.stringify([done.summary, done.summary_points, done.summary_topics]);
+          assert.ok(!/[Rr]apat|Target waktu|tidak disebutkan|Jangan makan/.test(stored));
+        });
+
+        await runTest('[POSITIVE] A "Rapat ini menghasilkan ..." sentence in a podcast summary (no opener verb to rewrite) is left out (summary_sentences_removed 1), no retry, topics kept', async () => {
+          const v = await videoWith65(POD65);
+          const done = await summarize65(v.media_id, 'review-sentence');
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          assert.strictEqual(done.summary, 'Pemeriksaan jantung dan pola makan dibahas untuk kesehatan.');
+          assert.deepStrictEqual(done.summary_topics, POD_EXPECTED65);
+          assert.strictEqual(done.summary_topic_stats.summary_sentences_removed, 1);
+          assert.strictEqual(done.summary_topic_stats.merge_attempts, 1);
+        });
+
+        await runTest('[POSITIVE] Real-run regression: "Rekaman ini membahas ..." (meta phrase) is repaired on attempt 1 - no retry, merge_attempts 1, summary starts "Pembahasan mencakup"', async () => {
+          const v = await videoWith65(LONG65);
+          const done = await summarize65(v.media_id, 'rekaman');
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          assert.ok(done.summary.startsWith('Pembahasan mencakup program mentoring'), done.summary);
+          assert.ok(!/[Rr]ekaman ini/.test(done.summary));
+          assert.strictEqual(done.summary_topics.length, 4);
+          assert.strictEqual(done.summary_topic_stats.merge_attempts, 1);
+          assert.strictEqual(done.summary_topic_stats.summary_repaired, 1);
+          assert.strictEqual(generate65().filter(c => c.prompt.includes('Berikut daftar topik dan poin')).length, 1);
+        });
+
+        await runTest('[POSITIVE] Keep the best attempt: attempt 1 good topics + invented-name summary, attempt 2 cut off (no JSON) -> attempt-1 topics kept with a summary built from the topic titles (source AI, summary_from_titles 1)', async () => {
+          const v = await videoWith65(LONG65);
+          const done = await summarize65(v.media_id, 'keep-best');
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          assert.deepStrictEqual(done.summary_topics, FINAL65.map(t => ({ title: t.judul, points: t.poin })));
+          assert.strictEqual(done.summary, 'Pembahasan mencakup program mentoring karyawan baru, dashboard People Experience, audit eksternal OJK, dan monitoring referral.');
+          assert.ok(!/Budi/.test(done.summary));
+          assert.strictEqual(done.summary_topic_stats.summary_from_titles, 1);
+          assert.strictEqual(done.summary_topic_stats.merge_attempts, 2);
+          assert.ok(!generate65().some(c => c.prompt.includes('Ini bagian')), 'the older path is not used');
+        });
+
+        await runTest('[POSITIVE] Keep the best attempt: attempt 2 has a passing summary but no topics -> attempt-1 topics + attempt-2 summary', async () => {
+          const v = await videoWith65(LONG65);
+          const done = await summarize65(v.media_id, 'keep-best-spare');
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          assert.strictEqual(done.summary, RING65);
+          assert.strictEqual(done.summary_topics.length, 4);
+          assert.strictEqual(done.summary_topic_stats.summary_from_titles, 0);
+          assert.strictEqual(done.summary_topic_stats.merge_attempts, 2);
+        });
+
+        await runTest('[NEGATIVE] Stale topics are cleared: regenerating a video (now short transcript) and a long video falling back to rules (Ollama off) both store summary_topics null', async () => {
+          const stale = { summary_status: 'DONE', summary_source: 'AI', summary: 'Ringkasan lama yang sudah basi dan harus hilang.', summary_points: ['Lama: poin lama.'],
+            summary_topics: [{ title: 'Topik Lama', points: ['Poin lama yang basi.'] }], summary_topic_stats: { parts: 2, retried_parts: 0, skipped_parts: 0, dropped_points: 0, dropped_topics: 0, merge_attempts: 1 } };
+          const a = await videoWith65(SHORT65, stale);
+          assert.deepStrictEqual((await eventMedia65(a.media_id)).summary_topics, stale.summary_topics, 'fixture: topics round-trip through SQL');
+          const doneA = await summarize65(a.media_id, 'topics');
+          assert.strictEqual(doneA.summary_source, 'AI');
+          assert.strictEqual(doneA.summary_topics, null);
+          assert.strictEqual(doneA.summary_topic_stats, null);
+          const b = await videoWith65(LONG65, stale);
+          const doneB = await summarize65(b.media_id, 'close');
+          assert.strictEqual(doneB.summary_status, 'DONE');
+          assert.strictEqual(doneB.summary_source, 'RULE');
+          assert.strictEqual(doneB.summary_topics, null);
+          assert.ok(doneB.summary_error.length > 5, 'reason shown');
+          assert.strictEqual(generate65().length, 1, 'Ollama off: the first call fails and the job goes rule-based at once');
+          assert.strictEqual((await api65('/api/health')).status, 200);
+        });
+      } finally {
+        if (child65) child65.kill();
+        await sleep65(500);
+        for (const id of mediaIds65) {
+          try { const removed = await storage65.deleteMedia(id); const abs = removed && require('../server/services/transcribeService').resolveUploadPath(removed.file_path); if (abs) require('fs').unlink(abs, () => {}); } catch (_) { /* ignore */ }
+        }
+        for (const id of users65) { try { await storage65.deleteUser(id); } catch (_) { /* ignore */ } }
+        await new Promise(r => fakeOllama65.close(r));
+        await new Promise(r => fakeTranscribe65.close(r));
+      }
+      await runTest('[POSITIVE] Clean-up: the Module 65 videos and the temporary admin are gone', async () => {
+        const all = await storage65.getAllMedia();
+        assert.ok(!all.some(m => mediaIds65.has(m.media_id)), 'test media deleted');
+        for (const id of users65) assert.ok(!(await storage65.getUserById(id)), 'temporary admin deleted');
+      });
+    }
   }
 }
 

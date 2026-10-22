@@ -59,7 +59,7 @@ inherited `PORT` env var collide with the frontend's port 3000.
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(489-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(515-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -75,7 +75,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (489 cases on SQL; v2.59.0 run 482/482, 7 skipped (event modules 8/24 only, media modules run); full JSON suite not re-run since v2.30.1) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (515 cases on SQL; v2.60.0 run 515/515, 0 skipped (media + event modules run); full JSON suite not re-run since v2.30.1) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (41 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
@@ -840,6 +840,21 @@ domain model, not just descriptive:
   `REQUEST_TIMEOUT_MS` (Node default 5 min cut long uploads). Gotchas: production reverse proxy must allow bodies >= the limit + long timeouts; no free-disk check (`server/uploads/`,
   gitignored, not in the .bak); videos > ~2 h may exceed the 120-min transcript limit. Module 64 (6) -> SQL 482/482, 7 skipped (media modules RUN, 8/24 skipped; suite 489 by count);
   JSON full suite not run. The developer's in-process JSON check rewrote `store.json` (restored from backup) - back it up first.
+
+- **v2.60.0** (2026-10-22, see `CHANGELOG.md` [2.60.0], `docs/04`/`05` "Catatan v2.60.0", `docs/06`, `docs/07` §50, `docs/08` §30, `SQLServerDB.md` §29): user: the AI Summary of a long
+  meeting video ("HR Projects Update", 25,411 chars) was short and lost most topics (old path: 5,000-char chunks -> summary of summaries, fixed 2-4 sentences + 3-5 points). Now transcripts
+  over 5,000 chars go to TOPIC MODE (`summarizeByTopics`): map per ~6,000-char part (`TOPIC_PART_CHARS`, max 20 parts; JSON, seed 41, num_ctx 8192, num_predict 500; one retry seed 42 +
+  "PASTI berisi pembahasan", still empty -> part skipped) -> one merge (num_predict 1400, num_ctx 8192/16384/32768) = 4-8 topics x 1-4 points + `ringkasan`; < 2 topics -> older chunk path.
+  Shorter transcripts = old single call. Per-point fact check vs the full transcript (numbers, unknown names/acronyms, meta, HTML, novel words) DROPS points, not the summary; filler points
+  (`isFillerPoint`) and near-duplicates (`removeDuplicatePoints`) dropped; "rekaman" wording, rapat/meeting only if transcript or file name says so; `repairSummary` rewrites "Rekaman ini
+  membahas ..." to "Pembahasan mencakup ..."; keep-best merge (topics kept, summary from a spare or from titles). Ollama "token repeat limit" / empty answer = soft error
+  (`localAiService.isSoftGenerationError`) -> existing one retry with `REPEAT_GUARD` (repeat_penalty 1.15, repeat_last_n 128); hard errors -> RULE. New `px_media.summary_topics` /
+  `summary_topic_stats` (JSON, idempotent ALTER, still 41 tables); `summary` = ringkasan, `summary_points` = "title: first point" (PPT unchanged). UI `MediaCard`: "Topics discussed",
+  badge only "AI" (no model name), only "Generated <date time>" below. Gating unchanged. Real runs (Gemma 4B, iGPU): 20,684 / 25,411 chars -> AI 5 / 4 topics in ~3 min; 52,282-char
+  podcast -> Gemma looped -> older path, AI without topics, 17 min (known limit; model testing moved to a separate session). Gotchas: the Regenerate button only shows for empty/FAILED/RULE
+  summaries, so old AI summaries of long videos are only redone via `POST /api/media/:id/summarize`; ringkasan may repeat "Pembahasan mencakup"; the suite's 2nd backend (:5002) uses the
+  real Ollama (Modules 27/32 videos get real summaries); Ollama models live in `D:\Ollama\models` (user env `OLLAMA_MODELS`, not app config). Module 65 (26; 17 SQL-only) + 2 asserts in
+  Module 38 -> SQL 515/515, 0 skipped (no skip list); JSON full suite not run.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

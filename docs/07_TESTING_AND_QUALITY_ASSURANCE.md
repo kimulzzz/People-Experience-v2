@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    64 MODUL PENGUJIAN    │     489 AUTOMATED TESTS     │       100% PASS RATE          │
+│    65 MODUL PENGUJIAN    │     515 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -1471,3 +1471,50 @@ Memakai event `ev-perspektif-2024-q1`, foto uji (`image/jpeg`) berukuran sinteti
 Run suite penuh SQL (developer): **482/482 lulus, 0 gagal, 7 tes dilewati** - modul media 27, 32, 38, 41, 42, 43 **dijalankan** (diff menyentuh route media), hanya modul event 8 dan 24 dilewati. Suite JSON penuh tidak dijalankan. Ukuran suite = **489** menurut hitungan: `await runTest(` statis 476 (v2.58.0: 470; +6 = Modul 64) + selisih 13 yang sama sejak v2.30.2; 482 + 7 = 489.
 
 **Tidak diuji otomatis**: tampilan kartu Upload Limits dan teks/penolakan sisi browser di Events; unggahan 300 MB lewat proxy Vite (dicek manual developer -> 201); reverse proxy produksi.
+
+## 50. v2.60.0 - Modul 65: AI Summary video panjang per topik
+
+### Modul 65 - map/merge per topik, cek fakta per poin, soft error Ollama (26 tes; 9 offline, 17 khusus SQL)
+
+Tes offline memanggil `mediaSummaryService` langsung (tanpa Ollama/database) dan jalan di kedua backend. Tes pipeline butuh backend SQL: suite menyalakan backend sekali pakai dengan `OLLAMA_HOST` / `TRANSCRIBE_API_URL` ke Ollama dan Video Extractor palsu di dalam proses, atas database SQL yang sama (seperti Modul 38); di JSON dicetak SKIP. Video uji dan admin sementara dihapus di akhir.
+
+| # | Jenis | Skenario |
+| :--- | :--- | :--- |
+| 1 | Positif | Offline: mode topik hanya di atas 5.000 karakter (tepat 5.000 = jalur lama); bagian maks. 6.000 karakter dipotong di akhir kalimat; prompt JSON (retry memuat "PASTI berisi pembahasan"); tingkat `num_ctx` |
+| 2 | Positif/Negatif | Offline: jawaban JSON juga terbaca di dalam blok ``` atau berteks di sekitarnya, kunci Indonesia/Inggris, dibatasi 3x3 per bagian / 8x4 final; jawaban sampah = tanpa topik |
+| 3 | Positif/Negatif | Offline cek fakta per poin: angka, nama, frasa meta, markup karangan dibuang, poin bersih tetap; judul Title Case lolos, nama karangan setelah "Pak" atau angka tidak |
+| 4 | Positif/Negatif | Offline: "UI/UX" = kata UI dan UX (lolos bila transkrip menyebut UI/UX, dibuang bila hanya "user interface"); akronim harus kata utuh ("ui" dalam "melalui" bukan UI), klitik tetap cocok |
+| 5 | Positif/Negatif | Offline: abort satu jawaban (token repeat limit) atau jawaban kosong = soft; tidak jalan / reset / timeout / model tidak ada / HTTP lain = hard |
+| 6 | Positif/Negatif | Offline filter pengisi: "Target waktu: <tanpa waktu>", "tidak ada target waktu yang disebutkan", "... tidak disebutkan", "no deadline was mentioned" dibuang; tenggat nyata dan isi tetap; "rapat" dalam poin dibuang hanya bila rekaman tidak pernah menyebut rapat/meeting |
+| 7 | Positif/Negatif | Offline duplikat: dua poin "makan sambil bermain HP" -> satu (yang lebih panjang); poin berbeda dan pernyataan berlawanan tidak digabung; lintas topik juga, topik yang kosong dibuang |
+| 8 | Positif | Offline kata netral: prompt menyebut "rekaman" (rapat, diskusi, wawancara, podcast, video edukasi), melarang menyebut jenis acara dan poin "tidak disebutkan", meminta tanpa poin berulang dan tidak membuka ringkasan dengan "Rekaman ini / Video ini / Rapat ini ..." |
+| 9 | Positif/Negatif | Offline perbaikan ringkasan: pembuka "Rekaman ini membahas ..." / "Rapat ini mencakup ..." / "This video discusses ..." menjadi netral (juga pada rapat), pembuka biasa tidak disentuh, kalimat meta atau "rapat" terlarang dibuang, nama karangan TIDAK diperbaiki; ringkasan dari judul tahan tanda kurung |
+| 10 | Positif | Video panjang BARU (upload -> transkrip `DONE`): 3 panggilan map (JSON, `num_ctx` 8192, `num_predict` 500) + 1 merge (`num_predict` 1400); topik tersimpan dan dikirim GET event; `summary` = ringkasan umum, `summary_points` = "judul: poin pertama" |
+| 11 | Positif | Bagian yang jawabannya tak terpakai (bukan JSON) ditanya ulang SEKALI dengan seed lain dan "PASTI berisi pembahasan" - berhasil, tidak ada yang dilewati |
+| 12 | Negatif | Bagian yang tetap kosong setelah retry dilewati (dihitung); job tetap selesai sebagai ringkasan AI bertopik dari bagian lain |
+| 13 | Negatif | Poin karangan dibuang, sisanya tetap: angka (350, 2019) dan nama (Budi Santoso) di poin merge, topik yang satu-satunya poinnya menyebut "Pak Hendra", poin karangan bagian (tidak sampai ke merge) |
+| 14 | Negatif | Kedua percobaan merge tak terpakai (ringkasan dengan nama karangan DAN tidak ada topik lolos): satu retry merge, lalu jalur lama per potongan (sumber AI, tanpa topik) |
+| 15 | Positif | Transkrip pendek tetap ringkasan standar: satu panggilan prompt lama (tanpa format JSON), `summary_topics` null |
+| 16 | Positif | Bagian map yang DIHENTIKAN Ollama (HTTP 500 "token repeat limit reached") dicoba ulang sekali dengan seed 42, kalimat retry dan `repeat_penalty` 1.15 / `repeat_last_n` 128 - tetap AI bertopik |
+| 17 | Positif | Panggilan MERGE yang dihentikan dicoba ulang sekali (PERBAIKAN + guard) - tetap AI, `merge_attempts` 2 |
+| 18 | Positif/Negatif | Transkrip pendek: jawaban pertama dihentikan -> retry yang sudah ada (guard, PERBAIKAN) -> AI; dua kali dihentikan -> rule-based dengan alasan jelas |
+| 19 | Negatif | Ollama TIDAK JALAN (connection refused) tetap hard error: tanpa retry, langsung rule-based, alasan tampil |
+| 20 | Positif/Negatif | Podcast panjang (tidak pernah menyebut rapat/meeting): pembuka "Rapat ini membahas ..." diperbaiki langsung (tanpa retry); poin pengisi (bagian + merge) dan duplikat HP dibuang dan dihitung |
+| 21 | Positif | Kalimat "Rapat ini menghasilkan ..." di ringkasan podcast (tanpa kata kerja pembuka yang bisa ditulis ulang) dibuang (`summary_sentences_removed` 1), tanpa retry, topik tetap |
+| 22 | Positif | Regresi dari uji nyata: "Rekaman ini membahas ..." diperbaiki pada percobaan 1 - tanpa retry, `merge_attempts` 1, ringkasan diawali "Pembahasan mencakup" |
+| 23 | Positif | Keep-best: percobaan 1 topik bagus + ringkasan bernama karangan, percobaan 2 terpotong (bukan JSON) -> topik percobaan 1 dengan ringkasan dari judul topik (sumber AI, `summary_from_titles` 1) |
+| 24 | Positif | Keep-best: percobaan 2 ringkasannya lolos tetapi tanpa topik -> topik percobaan 1 + ringkasan percobaan 2 |
+| 25 | Negatif | Topik lama dihapus: regenerate video (kini transkrip pendek) dan video panjang yang jatuh ke rules (Ollama mati) sama-sama menyimpan `summary_topics` null |
+| 26 | Positif | Clean-up: video Modul 65 dan admin sementara sudah tidak ada |
+
+### Modul lama disesuaikan
+
+Modul 38 (tes "transkrip panjang diringkas per bagian lalu digabung"): Ollama palsunya tidak pernah menjawab JSON, jadi mode topik menyerah dan job pindah ke jalur lama yang diuji di sini. Dua asersi baru: `summary_topics` null dan prompt bagian lama ("Ini bagian 1 dari") dipakai. Jumlah tes Modul 38 tidak berubah.
+
+### Hasil
+
+Run suite penuh SQL (developer, backend kedua :5002, TANPA daftar skip - modul media 27, 32, 38, 41, 42, 43 dan event 8, 24 dijalankan): **515/515 lulus, 0 gagal, 0 dilewati**. Ukuran suite = **515** = 489 + 26 (Modul 65); `await runTest(` statis 502 (v2.59.0: 476; +26) + selisih 13 yang sama sejak v2.30.2. Suite JSON penuh tidak dijalankan (hanya cek whitelist `updateMedia` in-process).
+
+**Catatan harness**: pada backend kedua suite, `OLLAMA_HOST` (:5002) mengarah ke Ollama asli, jadi video uji Modul 27/32 ikut diringkas Gemma asli (lebih lama bila Ollama hidup).
+
+**Tidak diuji otomatis**: kualitas ringkasan Gemma asli (hanya uji nyata manual pada 4 video, lihat `CHANGELOG.md` [2.60.0]); tampilan "Topics discussed", badge "AI" dan baris "Generated <tanggal jam>" (dicek `vite build` + Browser pane).
