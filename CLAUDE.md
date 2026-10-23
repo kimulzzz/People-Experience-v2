@@ -890,8 +890,12 @@ langkah-langkah ini sebelum melaporkan pekerjaan selesai — jangan tunggu dimin
    feedback/PPT (`EventManager.jsx`, `pptGenerator.js`, route `/api/events*`), modul 8 dan 24 juga di-skip, mis.
    `TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`.
 2. **Versioning**: naikkan angka versi di `server/server.js` (field `version` pada endpoint
-   `/api/health`), dan tambahkan entri baru di `CHANGELOG.md` (format `## [x.y.z] - YYYY-MM-DD`
-   yang sudah konsisten dipakai di file ini) menjelaskan apa yang berubah dan mengapa.
+   `/api/health`), lalu catat perubahannya **per versi dalam file tersendiri** (permintaan user 2026-10-23):
+   buat file baru `changelog/v<x.y.z>.md` (baris pertama `# [x.y.z] - YYYY-MM-DD`, lalu heading
+   `### <emoji> Judul (Added|Changed|Fixed)` dan isi seperti biasa) yang menjelaskan apa yang berubah dan mengapa,
+   dan tambahkan SATU baris di paling atas tabel indeks `CHANGELOG.md` (`| [x.y.z](changelog/vx.y.z.md) | tanggal | judul |`).
+   Jangan menulis isi versi langsung di `CHANGELOG.md` lagi; rujukan "CHANGELOG.md [x.y.z]" di catatan lama tetap
+   berlaku lewat indeks itu.
 3. **Update dokumentasi**: perbarui file `docs/*.md` yang relevan dengan area yang diubah
    (UI/komponen → `docs/05`, API/backend → `docs/04`, perubahan test suite → `docs/07`, dst.),
    dan tambahkan catatan ringkas di section `## Notes` file ini (`CLAUDE.md`) mengikuti pola
