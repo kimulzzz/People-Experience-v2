@@ -180,6 +180,16 @@ Browser --GET /api/... (cookie otomatis)--> authGate: cookie -> hash -> px_sessi
 
 ---
 
+## 🌐 Port Default & Akses lewat Tunnel ngrok (v2.60.2)
+
+- **Port default di satu tempat** (`vite.config.mjs`): frontend **3000** (`DEFAULT_FRONTEND_PORT`, `strictPort`, host `0.0.0.0`) dan backend **5000** (`DEFAULT_BACKEND_PORT`). Bisa diganti lewat `.env`: `FRONTEND_PORT` (opsional) dan `PORT` (variabel yang juga dibaca `server/server.js`). Proxy `/api`, `/uploads`, `/exports` selalu menunjuk `http://localhost:<PORT>`; port yang sama untuk keduanya membuat Vite berhenti dengan pesan jelas. `npm run dev`/`client`/`preview` tidak lagi membawa `--port`.
+- **Hanya port frontend yang dibuka ke luar.** Browser (atau tunnel) berbicara ke 3000; backend 5000 tetap internal dan dicapai lewat proxy Vite.
+- **ngrok**: `server.allowedHosts`/`preview.allowedHosts` mengizinkan `.ngrok-free.app`, `.ngrok-free.dev`, `.ngrok.app`, `.ngrok.dev`, `.ngrok.io` (+ `ALLOWED_HOSTS` di `.env` untuk domain lain); host lain tetap 403 dari Vite. Jalankan `ngrok http 3000`, **tanpa** `--host-header=rewrite`, supaya Host = Origin dan pemeriksaan CSRF backend lolos (login dari Origin asing tetap 403).
+- **Kepatuhan**: ngrok adalah layanan cloud. Semua lalu lintas, termasuk login dan data karyawan, melewati server ngrok, sehingga bertentangan dengan aturan 100% on-premise. Pakai hanya untuk demo/uji, sebaiknya dengan data dummy.
+- **Batasan**: lewat proxy semua pengguna terlihat sebagai `127.0.0.1`, jadi rate limit login per IP berlaku bersama. `TRUST_PROXY=1` membuat backend membaca `X-Forwarded-For` dari ngrok, tetapi header itu bisa dipalsukan oleh klien lokal yang tidak lewat ngrok. Cookie sesi tanpa flag `Secure` (Vite → backend memakai http), tetap terkirim di https ngrok.
+
+---
+
 ## 🤖 Aturan Produk AI Lokal & Alur AI Summary Video (v2.28.0)
 
 **Aturan produk**: model lokal (Gemma 3 4B via Ollama, `http://localhost:11434`) dipakai untuk **satu hal saja** — ringkasan transkrip video Signature Program Event. Analisis metrik WARNING/CRITICAL direncanakan sebagai langkah berikutnya, belum ada. Semua pemrosesan on-premise: transkrip dan prompt tidak keluar dari mesin.

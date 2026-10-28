@@ -6,8 +6,8 @@
   "scripts": {
     "start": "node server/server.js",
     "server": "node server/server.js",
-    "client": "vite --host 0.0.0.0 --port 3000",
-    "dev": "concurrently \"node server/server.js\" \"vite --host 0.0.0.0 --port 3000\"",
+    "client": "vite",
+    "dev": "concurrently \"node server/server.js\" \"vite\"",
     "build": "vite build",
     "preview": "vite preview",
     "db:migrate": "node server/db/migrate.js",

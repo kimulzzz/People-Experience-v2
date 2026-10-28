@@ -53,9 +53,10 @@ npm install
 npm run dev    # runs backend (port 5000) + vite frontend (port 3000) concurrently
 ```
 
-Frontend proxies `/api`, `/uploads`, `/exports` to `http://localhost:5000` (see
-`vite.config.mjs`). Backend defaults to port 5000 (`server/server.js`); do not let an
-inherited `PORT` env var collide with the frontend's port 3000.
+Frontend proxies `/api`, `/uploads`, `/exports` to `http://localhost:<PORT>` (see
+`vite.config.mjs`). Default ports live in `vite.config.mjs` (since v2.60.2): frontend 3000
+(`FRONTEND_PORT`), backend 5000 (`PORT`, also read by `server/server.js`); the two may not be equal
+(Vite stops with an error). For ngrok: `ngrok http 3000` (only the frontend port; no `--host-header=rewrite`).
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
@@ -870,6 +871,15 @@ domain model, not just descriptive:
   without the word in transcript/file name get no agendas; agenda mode untried with real Gemma in English; some details still lost (HR: exit interview, "status complete 100%"); the main
   session regenerates the 4 live videos itself (backup first). Module 66 (15; 8 SQL-only) + Module 65 adjusted (detect calls counted apart; bad-summary -> block fallback) -> SQL 523/523,
   7 skipped (event 8/24; all media modules run; suite 530 by count); JSON full suite not run.
+
+- **v2.60.2** (2026-10-28, see `changelog/v2.60.2.md`, `docs/03` "Port Default & Akses lewat Tunnel ngrok"): user: set the default port, the frontend
+  will later be reached through ngrok. Ports were already 3000/5000 but 3000 was written in 3 places and the proxy target was a fixed
+  `localhost:5000`. Now `vite.config.mjs` holds `DEFAULT_FRONTEND_PORT` 3000 / `DEFAULT_BACKEND_PORT` 5000 (`.env` `FRONTEND_PORT` / `PORT`, `loadEnv`),
+  proxy follows `PORT`, equal ports -> error; `npm run dev`/`client` = plain `vite`; `allowedHosts` (server + preview) = ngrok domains + `ALLOWED_HOSTS`.
+  Probed: ngrok Host -> 200 (page + proxy), foreign Host -> 403, login with ngrok Origin -> 401 (CSRF check passes), foreign Origin -> 403. Gotchas:
+  ngrok is a cloud service (conflicts with 100% on-premise; demo/dummy data only); through the proxy every ngrok user is `127.0.0.1` for the login
+  rate limit (`TRUST_PROXY=1` reads ngrok's `X-Forwarded-For` but lets local clients spoof it - not changed); never use `--host-header=rewrite`.
+  Frontend/config only, no backend/API/DB change. Suite SQL 444/444, 16 skipped (`TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`).
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

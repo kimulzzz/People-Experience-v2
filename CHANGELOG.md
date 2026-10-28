@@ -6,6 +6,7 @@ Sejak 2026-10-23 catatan setiap versi disimpan dalam file tersendiri di folder [
 
 | Versi | Tanggal | Ringkasan |
 |---|---|---|
+| [2.60.2](changelog/v2.60.2.md) | 2026-10-28 | 🌐 Port default di satu tempat dan domain ngrok diizinkan (Changed) |
 | [2.60.1](changelog/v2.60.1.md) | 2026-10-23 | 🧠 AI Summary rapat per agenda, merge per blok, Regenerate untuk ringkasan AI (Changed / Fixed) |
 | [2.60.0](changelog/v2.60.0.md) | 2026-10-22 | 🧠 AI Summary video panjang per topik (Added / Changed) |
 | [2.59.0](changelog/v2.59.0.md) | 2026-10-23 | 📦 Batas ukuran unggahan foto/video Signature Program Events diatur Admin (Added / Changed) |
