@@ -250,7 +250,7 @@ Metrik OUTCOME tidak punya Survey Source (dropdown tidak muncul). Pilihan tampil
 
 **Tombol di layar sempit**: tombol Template / Upload di menu **Survey Templates** dan tombol Survey Data Operations di detail metrik turun ke baris berikutnya bila ruang tidak cukup.
 
-**Galeri media event**: ringkasan **AI Summary** video bisa dilipat dengan mengklik judulnya (default terbuka); blok "AI Description" kini hanya untuk foto; nama file media tidak lagi diawali "Documentation ".
+**Galeri media event**: ringkasan **AI Summary** video bisa dilipat dengan mengklik judulnya (default terbuka; sejak v2.60.4 default tertutup, sama seperti Full AI transcript); blok "AI Description" kini hanya untuk foto; nama file media tidak lagi diawali "Documentation ".
 
 Catatan / belum diperbaiki: importer Admin yang menerima `metric_id` form non-numerik memakai metrik Survey pertama; NIP kembar belum ditolak importer.
 

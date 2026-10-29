@@ -404,6 +404,10 @@ API kini bisa mengirim indeks dan skor `null` serta status `NO_DATA` (lihat `doc
 | `MetricDetailModal.jsx` | Nilai "—", "No survey data in this period - left out of the index", badge abu-abu "No Data", pertanyaan berlabel "No Data" tanpa skor. Catatan "Annual metric: shows the result of Jan–Sep 2026" untuk metrik tahunan pada filter MTD **dihapus di v2.37.0** (MTD kini selalu satu bulan, `period_window.basis = 'MONTH'`). |
 | `TrendChart.jsx` | Titik `null` menjadi celah (garis dipotong per segmen), tooltip "—". |
 
+## Catatan v2.60.4 - AI Summary dan transkrip video tertutup secara default (`EventManager.jsx`, `MediaCard`)
+
+- Blok `<details>` **AI Summary** tidak lagi punya atribut `open`: saat event dibuka, AI Summary dan **Full AI transcript** di setiap kartu video sama-sama tertutup; satu klik pada judul membukanya (permintaan user 2026-10-29). Isi, badge, tombol Regenerate, dan polling tidak berubah. Dicek dengan `vite build` dan di Browser pane (8 blok tertutup pada event berisi 4 video).
+
 ## Catatan v2.60.1 - Topik per agenda & Regenerate untuk ringkasan AI (`EventManager.jsx`, `MediaCard`)
 
 - **Topik per agenda**: bila ada topik di `med.summary_topics` yang memuat `agenda` (mode agenda rapat, lihat `docs/04` "Catatan v2.60.1"), `agendaGroups` mengelompokkan topik berurutan yang nama agendanya sama. Setiap kelompok tampil di bawah "Topics discussed" dengan judul agenda tebal berwarna tema (`text-[var(--theme-base)]`, garis kiri `border-l-2 border-[var(--theme-base)]`); nomor topik dimulai lagi dari 1 per agenda. Topik tanpa `agenda` (single merge atau merge per blok) tampil seperti v2.60.0; kedua tampilan memakai helper `renderTopics` yang sama.

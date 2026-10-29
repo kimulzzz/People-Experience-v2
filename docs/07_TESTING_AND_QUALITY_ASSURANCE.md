@@ -1583,3 +1583,11 @@ Tes offline memanggil `mediaSummaryService` langsung dan jalan di kedua backend.
 Run suite penuh SQL (developer, backend kedua :5002): **532/532 lulus, 0 gagal, 7 dilewati** (modul event 8 dan 24, juga dilewati sebagai blok modul). Semua modul media (27, 32, 38, 41, 42, 43, 65, 66, 67) dijalankan. Ukuran suite = **539** = 530 + 9 (Modul 67); `await runTest(` statis 526 (v2.60.1: 517; +9) + selisih 13 yang sama sejak v2.30.2. Angka dicocokkan dengan log run developer (`fullsuite_v2603.log`, ringkasan "532/532 Tests Passed (0 Failed), 7 test(s) SKIPPED", exit 0). Suite JSON penuh tidak dijalankan.
 
 **Tidak diuji otomatis**: kualitas ringkasan Gemma asli (uji nyata baca-saja pada rapat HR Projects Update: cakupan 34% -> 70% dari 22 poin acuan, lihat `changelog/v2.60.3.md`); jalur blok (podcast) dan bahasa Inggris dengan Gemma asli pada kode baru; hasil Gemma di GPU tidak deterministik, jadi skor cakupan bisa bergeser antar run.
+
+---
+
+## 53. v2.60.4 - AI Summary video tertutup secara default (tanpa tes baru)
+
+- Perubahan hanya di frontend (`EventManager.jsx`, atribut `open` blok AI Summary dihapus); tidak ada modul atau tes baru, jumlah suite tetap 539.
+- Suite penuh di backend kedua :5002 dengan `TEST_SKIP_MODULES=27,32,38,41,42,43` (modul media di-skip karena kode media/ringkasan tidak tersentuh; modul event 8 dan 24 IKUT jalan karena `EventManager.jsx` tersentuh): **460/460 PASS, 0 gagal, 9 tes di-skip** + 6 modul media di-skip sebagai blok.
+- Tampilan dicek di Browser pane: pada event berisi 4 video, 8 blok `<details>` (AI Summary + Full AI transcript) tertutup saat event dibuka; klik judul membukanya. Tidak ada tes UI otomatis.

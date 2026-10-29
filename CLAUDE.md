@@ -894,6 +894,10 @@ domain model, not just descriptive:
   (glossary postponed); "akan"/"will" not added to protect words. Restart the backend; the main session regenerates the 4 live videos (backup first). Module 67 (9; 5 SQL-only),
   Modules 65/66 adjusted -> SQL 532/532, 7 skipped (event 8/24; all media modules run; suite 539 by count); JSON full suite not run.
 
+- **v2.60.4** (2026-10-29, see `changelog/v2.60.4.md`, `docs/05` "Catatan v2.60.4", `docs/07` §53): Signature Program Events - the AI Summary block of every video card
+  is collapsed by default like the Full AI transcript (`<details open>` removed in `EventManager.jsx`; user request). Frontend only. Suite SQL 460/460, 9 skipped + media modules
+  27/32/38/41/42/43 skipped, event modules 8/24 ran.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan

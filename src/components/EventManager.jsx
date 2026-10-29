@@ -220,7 +220,8 @@ function MediaCard({ med, onDelete, onOpen, onRetryTranscript, retrying = false,
       )}
 
       {isVideo && med.transcript_status === 'DONE' && med.transcript && (
-        <details open className="group bg-white rounded border border-[var(--theme-base)]/25 text-[10px] text-gray-700">
+        // v2.60.4: collapsed by default like the transcript below (user request); a click opens it
+        <details className="group bg-white rounded border border-[var(--theme-base)]/25 text-[10px] text-gray-700">
           <summary className="cursor-pointer select-none p-2 flex items-center justify-between gap-2">
             <div className="flex items-center space-x-1 font-bold text-[var(--theme-base)]">
               <Sparkles className="w-3 h-3" />
