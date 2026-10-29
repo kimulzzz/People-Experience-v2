@@ -525,3 +525,14 @@ FROM dbo.px_media WHERE summary_topics IS NOT NULL ORDER BY summary_generated_at
 ```
 
 Diverifikasi oleh Modul 66 (`docs/07` §51). API: `docs/04` "Catatan v2.60.1".
+
+## 32. Pembaruan v2.60.3 - Field `protected_points` di `summary_topic_stats` (tanpa perubahan skema)
+
+Tidak ada tabel, kolom, atau ALTER baru (tetap **41 tabel**). JSON `px_media.summary_topic_stats` mendapat satu field: `protected_points` (jumlah poin map berangka/berkeputusan yang dikembalikan langkah protect setelah merge; total 19 field). Isi `summary_topics` tetap `{ "agenda"?, "title", "points" }`, hanya satu topik kini bisa memuat sampai 5 poin. Ringkasan tersimpan tidak berubah sampai Regenerate.
+
+```sql
+SELECT media_id, file_name, JSON_VALUE(summary_topic_stats, '$.protected_points') AS protected_points
+FROM dbo.px_media WHERE summary_topics IS NOT NULL ORDER BY summary_generated_at DESC;
+```
+
+Diverifikasi oleh Modul 67 (`docs/07` §52). API: `docs/04` "Catatan v2.60.3".

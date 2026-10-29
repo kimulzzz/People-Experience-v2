@@ -60,7 +60,7 @@ Frontend proxies `/api`, `/uploads`, `/exports` to `http://localhost:<PORT>` (se
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(530-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(539-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -76,7 +76,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (530 cases on SQL; v2.60.1 run 523/523, 7 skipped (event modules 8/24; media modules run); full JSON suite not re-run since v2.30.1) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (539 cases on SQL; v2.60.3 run 532/532, 7 skipped (event modules 8/24; media modules run); full JSON suite not re-run since v2.30.1) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (41 `px_*` tables), JSON→SQL migration, rollback |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
@@ -880,6 +880,19 @@ domain model, not just descriptive:
   ngrok is a cloud service (conflicts with 100% on-premise; demo/dummy data only); through the proxy every ngrok user is `127.0.0.1` for the login
   rate limit (`TRUST_PROXY=1` reads ngrok's `X-Forwarded-For` but lets local clients spoof it - not changed); never use `--host-header=rewrite`.
   Frontend/config only, no backend/API/DB change. Suite SQL 444/444, 16 skipped (`TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`).
+
+- **v2.60.3** (2026-10-29, see `changelog/v2.60.3.md`, `docs/04` "Catatan v2.60.3", `docs/06`, `docs/07` §52, `docs/08` §32, `SQLServerDB.md` §29): user compared the AI Summary
+  of "HR Projects Update…Meeting Recording" with an internal manual minutes (22-point reference; never quote its content in docs): live v2.60.1 covered 34%. Spikes with the real
+  Gemma: (1) with `format: 'json'` Gemma broke the JSON in the map step and looped until num_predict / "token repeat limit" -> the densest part was dropped; (2) the merge dropped
+  numbers/decisions. `mediaSummaryService.js`: every topic-mode call (detect, group, map, single merge, agenda/block merge) sends a JSON SCHEMA as `format` (`topicSchema`/`mapSchema`/
+  `agendaDetectSchema`/`agendaGroupSchema`, keys per prompt language, all required); map part >= 2000 chars (`TOPIC_SHORT_PART_CHARS`) = 2-4 topics x 2-3 points (shorter 1-3 x 1-3),
+  map num_predict 700, single merge min(4,n)-8 topics, agenda min(2,n)-5, block min(2,n)-4, all up to 4 points, `GROUP_MERGE_PREDICT` 1300. Protect step (`protectPoints`) after every
+  merge: a checked map point with a digit / month / decision-target-progress word that keeps < 60% of its word prefixes or loses a number is put back (similar topic with < 5 points, else own
+  topic below the cap; fact check again); stat `protected_points` (19 fields, no schema change). `isDuplicatePoint`: different numbers never duplicates; "Agenda/Bagian/Potongan ini" and
+  "This agenda/section" openers repaired; first opener loses "juga"/"also". Gating, fact checks, agenda gate, block 15/10 unchanged; no DB/endpoint/UI/env change. Real Gemma (HR meeting):
+  34% -> 70%, 11 topics / 28 points, 6.0 min (was ~3.3); not deterministic on GPU; podcast/English not run on the new code. Known: Talent Factory still weakest; Whisper mis-hearings
+  (glossary postponed); "akan"/"will" not added to protect words. Restart the backend; the main session regenerates the 4 live videos (backup first). Module 67 (9; 5 SQL-only),
+  Modules 65/66 adjusted -> SQL 532/532, 7 skipped (event 8/24; all media modules run; suite 539 by count); JSON full suite not run.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

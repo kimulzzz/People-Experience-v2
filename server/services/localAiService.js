@@ -84,7 +84,8 @@ async function queryLocalOllama(prompt, { model = DEFAULT_LLM_MODEL, timeoutMs =
   assertAiAllowed(scope, subject);
   const body = { model, prompt, stream: false, options: { temperature } };
   if (seed !== undefined) body.options.seed = seed; // fixed seed: the same transcript gives the same wording
-  // v2.60.0 (topic summary of a long video): JSON-only answer, a context window that fits the input, an output cap
+  // v2.60.0 (topic summary of a long video): JSON-only answer, a context window that fits the input, an output cap.
+  // v2.60.3: `format` is a JSON schema object there (Ollama structured outputs), passed on unchanged.
   if (format) body.format = format;
   if (numCtx) body.options.num_ctx = numCtx;
   if (numPredict) body.options.num_predict = numPredict;

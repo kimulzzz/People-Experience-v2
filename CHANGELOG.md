@@ -6,6 +6,7 @@ Sejak 2026-10-23 catatan setiap versi disimpan dalam file tersendiri di folder [
 
 | Versi | Tanggal | Ringkasan |
 |---|---|---|
+| [2.60.3](changelog/v2.60.3.md) | 2026-10-29 | 🧠 AI Summary rapat lebih lengkap: JSON schema per panggilan Gemma & poin penting dilindungi saat merge (Changed / Fixed) |
 | [2.60.2](changelog/v2.60.2.md) | 2026-10-28 | 🌐 Port default di satu tempat dan domain ngrok diizinkan (Changed) |
 | [2.60.1](changelog/v2.60.1.md) | 2026-10-23 | 🧠 AI Summary rapat per agenda, merge per blok, Regenerate untuk ringkasan AI (Changed / Fixed) |
 | [2.60.0](changelog/v2.60.0.md) | 2026-10-22 | 🧠 AI Summary video panjang per topik (Added / Changed) |

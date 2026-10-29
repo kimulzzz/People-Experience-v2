@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    66 MODUL PENGUJIAN    │     530 AUTOMATED TESTS     │       100% PASS RATE          │
+│    67 MODUL PENGUJIAN    │     539 AUTOMATED TESTS     │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -1554,3 +1554,32 @@ Run suite penuh SQL (developer, backend kedua :5002): **523/523 lulus, 0 gagal, 
 **Catatan harness**: seperti v2.60.0, `OLLAMA_HOST` backend kedua (:5002) mengarah ke Ollama asli, jadi video uji Modul 27/32 ikut diringkas Gemma asli.
 
 **Tidak diuji otomatis**: kualitas ringkasan Gemma asli (uji nyata baca-saja pada HR Projects Update dan podcast, lihat `CHANGELOG.md` [2.60.1]); mode agenda dengan Gemma asli berbahasa Inggris; tampilan judul agenda dan tombol Regenerate untuk ringkasan AI (tanpa tes UI).
+
+## 52. v2.60.3 - Modul 67: JSON schema per panggilan, langkah protect, perbaikan pembuka
+
+### Modul 67 - structured outputs (JSON schema sebagai `format`), protect setelah setiap merge, perbaikan pembuka ringkasan (9 tes; 4 offline, 5 khusus SQL)
+
+Tes offline memanggil `mediaSummaryService` langsung dan jalan di kedua backend. Tes pipeline butuh backend SQL: backend sekali pakai dengan `OLLAMA_HOST` ke Ollama palsu di dalam proses yang mencatat `format` dan `options` setiap panggilan (seperti Modul 65/66); di JSON dicetak SKIP.
+
+| # | Jenis | Skenario |
+| :--- | :--- | :--- |
+| 1 | Positif | Offline skema: `topicSchema`/`mapSchema`/`agendaDetectSchema`/`agendaGroupSchema` memakai key bahasa prompt (id `topik`/`judul`/`poin`/`ringkasan`, `agenda_baru`/`nama`/`kutipan`, `agenda`/`nama`/`mulai`; en dan bahasa lain key Inggris), semua field wajib, min/max topik dan poin sesuai; bagian >= 2.000 karakter meminta "2 sampai 4" topik, yang lebih pendek "1 sampai 3" |
+| 2 | Positif/Negatif | Offline protect: poin map berangka/berkeputusan yang hilang masuk ke topik akhir paling mirip, selain itu menjadi topik sendiri (urut bagian, di bawah cap); poin yang masih ada (>= 60% prefiks) atau tanpa angka/kata keputusan tidak ditambahkan; topik penuh (5 poin) tidak dipakai; hitungan `restored` |
+| 3 | Negatif | Offline protect tidak pernah memasukkan yang ditolak cek fakta: angka karangan, nama karangan, atau poin pengisi tidak dikembalikan; topik sendiri dengan judul map yang menyebut orang tak dikenal tidak dibuka |
+| 4 | Positif/Negatif | Offline pembuka: "Agenda ini / Bagian ini / Potongan ini membahas ..." dan "This agenda / section covers ..." mendapat pembuka netral; pembuka netral PERTAMA dengan "juga"/"also" kehilangan kata itu, berikutnya tetap/mendapatnya; kalimat biasa yang diawali "Agenda" tidak disentuh |
+| 5 | Positif | Video panjang Indonesia: panggilan map mengirim skema (2-4 topik x 2-3 poin untuk bagian 5.984 karakter, 1-3 x 1-3 untuk ekor 1.196 karakter; `num_predict` 700) dengan teks prompt yang sesuai; single merge skema min(4, topik map)-8 topik x 4 poin + `ringkasan`; poin berangka/target yang hilang di merge dikembalikan (`protected_points` 3); poin dengan angka karangan tidak pernah kembali |
+| 6 | Positif | Video panjang Inggris bernama "... Meeting Recording": deteksi mengirim skema Inggris (`new_agendas`/`name`/`quote`), map "(2 to 4 topics)" / "(1 to 3 topics)" dengan key `topics`/`title`/`points`, merge key `summary`/`topics`; poin "approved" dan "next week" yang hilang dikembalikan |
+| 7 | Negatif | Merge blok: blok yang `ringkasan`-nya gagal dua kali (nama karangan) DIBUANG ringkasannya - ringkasan blok lain tetap (pembuka diperbaiki), blok gagal menambah satu kalimat dari judul topiknya sendiri; merge blok mengirim skema blok (2-4 topik x 4 poin, `num_predict` 1300) |
+| 8 | Positif | Ringkasan blok "Bagian ini juga membahas ..." + "Potongan ini membahas ...": ringkasan gabungan dibuka "Pembahasan mencakup" ("juga" di awal dibuang), kalimat kedua "Pembahasan juga mencakup" |
+| 9 | Positif | Clean-up: video Modul 67 dan admin sementara sudah tidak ada |
+
+### Modul lama disesuaikan (jumlah tes tetap: Modul 65 = 26, Modul 66 = 15)
+
+- **Modul 65**: tes offline parsing kini memakai batas 4x3 per bagian (dulu 3x3); video panjang baru: map mengirim skema 2-4 topik (1-3 untuk bagian pendek terakhir), `num_predict` 700, merge skema 4-8 topik x 4 poin (`num_predict` 1400); panggilan deteksi diperiksa mengirim skema `agenda_baru`; merge blok `num_predict` 1300.
+- **Modul 66**: deteksi/pengelompokan mengirim skema (`required` `agenda_baru` / `agenda` dengan `nama`+`mulai`), merge agenda `num_predict` 1300 dengan skema min(2, n)-5 topik x 4 poin, merge blok skema 2-4 topik `num_predict` 1300; prompt merge agenda "1-4 poin".
+
+### Hasil
+
+Run suite penuh SQL (developer, backend kedua :5002): **532/532 lulus, 0 gagal, 7 dilewati** (modul event 8 dan 24, juga dilewati sebagai blok modul). Semua modul media (27, 32, 38, 41, 42, 43, 65, 66, 67) dijalankan. Ukuran suite = **539** = 530 + 9 (Modul 67); `await runTest(` statis 526 (v2.60.1: 517; +9) + selisih 13 yang sama sejak v2.30.2. Angka dicocokkan dengan log run developer (`fullsuite_v2603.log`, ringkasan "532/532 Tests Passed (0 Failed), 7 test(s) SKIPPED", exit 0). Suite JSON penuh tidak dijalankan.
+
+**Tidak diuji otomatis**: kualitas ringkasan Gemma asli (uji nyata baca-saja pada rapat HR Projects Update: cakupan 34% -> 70% dari 22 poin acuan, lihat `changelog/v2.60.3.md`); jalur blok (podcast) dan bahasa Inggris dengan Gemma asli pada kode baru; hasil Gemma di GPU tidak deterministik, jadi skor cakupan bisa bergeser antar run.

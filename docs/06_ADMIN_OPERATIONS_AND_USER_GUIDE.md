@@ -291,6 +291,13 @@ Catatan / belum diperbaiki: importer Admin yang menerima `metric_id` form non-nu
 - Kalimat "Pembahasan mencakup ..." tidak lagi berulang: pembuka berikutnya menjadi "Pembahasan juga mencakup ...".
 - Tetap periksa ringkasan AI dengan transkrip: sebagian detail bisa terlewat (pada HR Projects Update antara lain exit interview dan "status complete 100%") dan distorsi makna halus tidak terdeteksi.
 
+### Ringkasan rapat lebih lengkap (v2.60.3)
+- Ringkasan video panjang kini lebih lengkap: angka, bulan, keputusan, target, dan progres yang sempat hilang saat topik digabung dimasukkan kembali (tetap hanya bila memang ada di transkrip). Daftar topik bisa lebih panjang; satu topik bisa berisi sampai 5 poin.
+- Uji nyata "HR Projects Update": cakupan terhadap notulen manual naik dari sekitar sepertiga menjadi sekitar 70%. Bagian Talent Factory masih paling banyak yang terlewat.
+- **Lebih lama**: rapat ~25.000 karakter sekitar 6-7 menit (v2.60.1 ~3 menit). Kartu terisi sendiri.
+- Hasil bisa sedikit berbeda setiap kali **Regenerate summary** ditekan (Gemma di GPU tidak sepenuhnya deterministik).
+- Ringkasan lama tidak berubah otomatis: restart backend setelah memperbarui ke v2.60.3, lalu tekan **Regenerate summary** pada video yang ingin dibuat ulang. Tetap periksa ringkasan AI dengan transkrip (salah dengar transkrip dan distorsi makna halus tidak terdeteksi).
+
 ### Memasang Ollama + Gemma (sekali per mesin)
 ```powershell
 winget install Ollama.Ollama

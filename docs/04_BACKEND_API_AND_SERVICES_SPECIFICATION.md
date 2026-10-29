@@ -345,7 +345,7 @@ Tidak diubah / belum diputuskan: importer tidak menolak NIP kembar (dalam satu C
 | `summary_language` | Mengikuti `transcript_language`; kode tak dikenal -> `id` |
 | `summary_generated_at`, `summary_error` | Waktu dibuat; alasan fallback/gagal (teks Indonesia, maks. 500 karakter) |
 
-Sejak v2.60.0 ditambah `summary_topics` dan `summary_topic_stats` untuk ringkasan per topik video panjang (lihat "Catatan v2.60.0"). Sejak v2.60.1 topik rapat bisa memuat `agenda` dan `summary_topic_stats` mendapat 6 field baru (lihat "Catatan v2.60.1").
+Sejak v2.60.0 ditambah `summary_topics` dan `summary_topic_stats` untuk ringkasan per topik video panjang (lihat "Catatan v2.60.0"). Sejak v2.60.1 topik rapat bisa memuat `agenda` dan `summary_topic_stats` mendapat 6 field baru (lihat "Catatan v2.60.1"). Sejak v2.60.3 `summary_topic_stats` juga memuat `protected_points` (lihat "Catatan v2.60.3").
 
 **Service**
 
@@ -604,6 +604,46 @@ Pengujian: `docs/07` §30 (Modul 46).
 **Seed ESS**: `seedData.generateInitialEssResults()` juga membuat periode dummy `ESS_SEED_DUMMY_PERIODS` (2026-03, 2026-06, 2026-09; 429 baris + 33 batch). `sqlStorage.topUpEssSeed()` / `jsonStorage.topUpStoreEssSeed()` kini menyisipkan per (metrik, periode) yang belum punya baris dan mengembalikan daftar `upload_id` yang ditambahkan. Rincian: `docs/08` §17, `CHANGELOG.md` [2.37.0].
 
 Pengujian: `docs/07` §31 (Modul 46).
+
+---
+
+## Catatan v2.60.3 - JSON schema per panggilan Gemma & langkah protect
+
+**Masalah**: AI Summary rapat "HR Projects Update" (v2.60.1) hanya mencakup 34% dari 22 poin acuan (notulen manual rapat internal). Spike baca-saja dengan Gemma asli: (1) dengan `format: 'json'` Gemma merusak struktur JSON di langkah map lalu berputar sampai `num_predict` / "token repeat limit", sehingga bagian rapat yang paling padat keputusan dihitung kosong; (2) merge membuang angka, keputusan, dan target yang masih ada di topik map. Detail dan hasil uji nyata: `changelog/v2.60.3.md`.
+
+**Structured outputs**: setiap panggilan mode topik mengirim JSON SCHEMA sebagai `format` (bukan lagi `'json'`); `queryLocalOllama` meneruskannya apa adanya (`localAiService.js` hanya mendapat komentar). Semua field `required`; key mengikuti bahasa prompt (`SCHEMA_KEYS`: id `topik`/`judul`/`poin`/`ringkasan`, `agenda_baru`/`nama`/`kutipan`, `agenda`/`nama`/`mulai`; bahasa lain key Inggris `topics`/`title`/`points`/`summary`, `new_agendas`/`name`/`quote`, `agendas`/`name`/`start`). `parseJsonAnswer`/`normalizeTopics` dan retry `REPEAT_GUARD` tetap.
+
+| Panggilan | Builder | Topik (`minItems`-`maxItems`) | Poin per topik | `num_predict` |
+| :--- | :--- | :--- | :--- | :--- |
+| Map, bagian >= `TOPIC_SHORT_PART_CHARS` (2000) | `mapSchema(text, lang)` | 2-4 (prompt "2 sampai 4 topik") | 2-3 | 700 (`TOPIC_MAP_OPTIONS`, dulu 500) |
+| Map, bagian < 2000 | `mapSchema` | 1-3 (prompt "1 sampai 3 topik") | 1-3 | 700 |
+| Single merge (`mergeAllTopics`) | `topicSchema(..., withSummary)` | min(4, topik map)-8 | 1-4 | 1400 |
+| Merge agenda (`mergeGroup`) | `topicSchema(..., withSummary)` | min(2, topik masukan)-5 | 1-4 (dulu 1-3) | 1300 (`GROUP_MERGE_PREDICT`, dulu 900) |
+| Merge blok (`mergeGroup`) | `topicSchema(..., withSummary)` | min(2, topik masukan)-4 | 1-4 (dulu 1-3) | 1300 |
+| Deteksi agenda | `agendaDetectSchema(lang)` | bentuk saja | - | 250 |
+| Pengelompokan agenda | `agendaGroupSchema(lang)` (`mulai`/`start` integer) | bentuk saja | - | 200 |
+
+`TOPIC_PART_LIMITS` = `{ topics: 4, points: 3 }`; `GROUP_LIMITS` = agenda `{ topics: 5, points: 4, cap: 6 }`, blok `{ topics: 4, points: 4, cap: 5 }`. Prompt merge grup kini "1 sampai 4 poin"; prompt map tetap menulis "1 sampai 3 poin" per topik (minimal 2 poin bagian panjang hanya dari skema).
+
+**Langkah protect** (`protectPoints(topics, items, cap, ctx)`, `isProtectedPoint(text)`): deterministik, tanpa panggilan Gemma.
+
+| Aspek | Perilaku |
+| :--- | :--- |
+| Poin dilindungi | Poin map (sudah lolos `checkTopics` di langkah map) yang cocok `PROTECT_RE`: angka, nama bulan id/en ("may" sengaja tidak), atau kata keputusan/target/progres (setuju, disetujui, disepakati, target, ditargetkan, tindak lanjut, selesai, complete(d), minggu ini/depan/lalu, tahun depan, agreed, approved, decided, targeted, follow-up(s), finished, this/next/last week, next year) |
+| Dianggap hilang | < `PROTECT_KEEP` (0,6) prefiksnya (6 huruf pertama kata >= 4 huruf) ada di seluruh topik akhir, ATAU satu angkanya (`digitTokens`, "1.000" = "1000") tidak ada |
+| Penempatan | Topik akhir dengan prefiks bersama terbanyak (judul map + poin) bila poinnya < `PROTECT_TOPIC_POINTS` (5); selain itu topik sendiri `{ title: judul map, points: [poin] }` setelah topik terakhir dari bagian yang sama/lebih awal, hanya bila jumlah topik < cap dan judul lolos `fragmentProblem(..., 'title')` |
+| Penolakan | Poin yang gagal `isFillerPoint` / `fragmentProblem(..., 'point')` tidak pernah dikembalikan |
+| Urutan | Merge agenda/blok: `restoreCoverage` -> `protectPoints` (cap grup) -> `removeDuplicatePoints`. Single merge: `removeDuplicatePoints` -> `protectPoints` (cap 8) -> `removeDuplicatePoints` |
+
+**Lain-lain**: `isDuplicatePoint` mengembalikan `false` bila himpunan angka kedua poin berbeda. `META_OPENER_ID_RE` / `META_OPENER_EN_RE` kini juga mengenali "Agenda/Bagian/Potongan ini ..." dan "This agenda/section ..."; `dedupeOpenerSentences` menghapus "juga"/"also" dari pembuka netral PERTAMA. Helper `topicPart` (bagian asal topik) dipisah dari `restoreCoverage` dan dipakai protect. `mergeGroups` tidak berubah: ringkasan grup yang gagal diganti satu kalimat `summaryFromTitles` dari topik grup itu.
+
+**Field media**: `summary_topic_stats` mendapat `protected_points` (total 19 field); tanpa perubahan skema (`docs/08` §32).
+
+**Tidak berubah**: endpoint, setting, tabel, kolom, env, UI; gating Gemma (`assertAiAllowed`, scope `EVENT_VIDEO_SUMMARY`, pemicu sama); aturan cek fakta; gerbang/deteksi/pengelompokan agenda; `TOPIC_BLOCK_THRESHOLD` 15, `TOPIC_BLOCK_SIZE` 10. `/api/health` `version` = `2.60.3`.
+
+**Ekspor modul baru**: `topicSchema`, `mapSchema`, `agendaDetectSchema`, `agendaGroupSchema`, `protectPoints`, `isProtectedPoint`, `TOPIC_SHORT_PART_CHARS`, `PROTECT_KEEP`, `PROTECT_TOPIC_POINTS`, `GROUP_MERGE_PREDICT`.
+
+**Batasan**: hasil Gemma tidak deterministik di GPU (seed sama, jawaban bisa beda); rapat HR kini ~6-7 menit (v2.60.1 ~3,3 menit); Talent Factory tetap paling lemah (10 topik map dipadatkan ke maks. 5); jalur blok dan bahasa Inggris belum dijalankan dengan Gemma asli pada kode baru; distorsi makna halus dan salah dengar Whisper tetap lolos. Pengujian: `docs/07` §52 (Modul 67).
 
 ---
 

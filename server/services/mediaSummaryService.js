@@ -289,6 +289,7 @@ function tooManyNovelWords(novelCount, total, transcript) {
 }
 
 const normNumber = token => token.replace(/[.,]+$/, '').replace(/[.,]/g, '');
+const digitTokens = text => new Set((String(text).match(/\d[\d.,]*/g) || []).map(normNumber).filter(Boolean)); // "1.000" = "1000", "70-30" = 70 + 30
 
 // Numbers written as WORDS are facts too ("enam bulan" -> "sepuluh bulan" is an invented number), so they are checked
 // like digits: every number word of the summary must also occur in the transcript, as the same word or as the equal digit.
@@ -483,7 +484,8 @@ async function summarizeWithAi(media, lang, deadline = Date.now() + SUMMARY_JOB_
 // ------------------------------------------------------------------ topic mode (v2.60.0): long transcripts
 // "Summary of the part summaries" dropped most of the middle topics of a long meeting. A transcript longer than CHUNK_CHARS
 // is therefore summarised BY TOPIC (map / reduce, JSON answers):
-//   map    - every part of about TOPIC_PART_CHARS -> 1-3 topics with 1-3 points. An unreadable or empty answer is asked again
+//   map    - every part of about TOPIC_PART_CHARS -> 1-3 topics with 1-3 points (v2.60.3: 2-4 topics x 2-3 points for a part of 2,000+
+//            characters). An unreadable or empty answer is asked again
 //            ONCE (another seed + "this part certainly contains a discussion"); still empty -> that part is skipped (counted);
 //   reduce - one call merges the topics of all parts into 4-8 topics in meeting order + an overall summary of 3-5 sentences.
 // Nothing is trusted blindly: every point and topic title is checked against the WHOLE transcript with the rules of the short
@@ -493,23 +495,65 @@ async function summarizeWithAi(media, lang, deadline = Date.now() + SUMMARY_JOB_
 // the map step -> null, and the job continues on the older part-by-part path (which can end in the rule-based summary).
 // v2.60.1 (see "agendas of a meeting, blocks of many topics" below): a meeting with 2+ agendas is mapped and merged per agenda;
 // more than TOPIC_BLOCK_THRESHOLD map topics (or a single merge without a usable attempt) are merged in blocks.
+// v2.60.3 (see "structured outputs" and "protect step" below): every topic-mode call sends a JSON SCHEMA as `format`, a map part of
+// TOPIC_SHORT_PART_CHARS or more asks for 2-4 topics with 2-3 points, and map points with a number/decision that a merge lost are put back.
 const TOPIC_PART_CHARS = 6000;
 const TOPIC_MAX_PARTS = 20;          // more parts (about 120,000 characters): the older path, which goes rule-based above MAX_CHUNKS
 const TOPIC_MIN_MAPPED = 2;          // fewer topics from all parts together: the older path
 const TOPIC_MIN_FINAL = 2;           // fewer topics left after the fact check: the older path
-const TOPIC_PART_LIMITS = { topics: 3, points: 3 };
+const TOPIC_PART_LIMITS = { topics: 4, points: 3 };
 const TOPIC_FINAL_LIMITS = { topics: 8, points: 4 };
-const TOPIC_MAP_OPTIONS = { numCtx: 8192, numPredict: 500 };
+const TOPIC_MAP_OPTIONS = { numCtx: 8192, numPredict: 700 };
 const TOPIC_MERGE_PREDICT = 1400;
 const TOPIC_SEEDS = [41, 42];        // first answer / the one retry (map part and merge)
+const TOPIC_SHORT_PART_CHARS = 2000; // a shorter map part (the tail of a transcript) asks for 1-3 topics, a longer one for 2-4
 
 const usesTopicMode = transcript => String(transcript || '').trim().length > CHUNK_CHARS;
+const mapTopicRange = text => (String(text || '').length >= TOPIC_SHORT_PART_CHARS ? { min: 2, max: 4, minPoints: 2 } : { min: 1, max: 3, minPoints: 1 });
+
+// ------------------------------------------------------------------ v2.60.3: structured outputs (JSON schema as `format`)
+// With format 'json' Gemma often wrote the right content but broke the JSON structure ('"}] , [": ...') and then looped on
+// '0} 0} 0}' until num_predict or Ollama's token repeat limit, so the part counted as empty - on the most decision-dense part of
+// a meeting too. Ollama's structured outputs take a JSON SCHEMA as `format` and only let the model write text that fits it. The
+// keys follow the prompt's language (the English prompts, with English keys, serve every language except Indonesian);
+// minItems / maxItems fix the topic and point counts per call type. parseJsonAnswer / normalizeTopics stay as a second line of defence.
+const SCHEMA_KEYS = {
+  id: { topics: 'topik', title: 'judul', points: 'poin', summary: 'ringkasan', detect: 'agenda_baru', name: 'nama', quote: 'kutipan', groups: 'agenda', start: 'mulai' },
+  en: { topics: 'topics', title: 'title', points: 'points', summary: 'summary', detect: 'new_agendas', name: 'name', quote: 'quote', groups: 'agendas', start: 'start' }
+};
+const schemaKeys = lang => (lang === 'id' ? SCHEMA_KEYS.id : SCHEMA_KEYS.en);
+const objectSchema = properties => ({ type: 'object', properties, required: Object.keys(properties) });
+const STRING_SCHEMA = { type: 'string' };
+
+// { topik|topics: [{ judul|title, poin|points }] } (+ ringkasan|summary first when withSummary), minPoints..maxPoints points per topic.
+function topicSchema(lang, { minTopics, maxTopics, minPoints = 1, maxPoints, withSummary = false }) {
+  const k = schemaKeys(lang);
+  const topic = objectSchema({ [k.title]: STRING_SCHEMA, [k.points]: { type: 'array', minItems: minPoints, maxItems: maxPoints, items: STRING_SCHEMA } });
+  return objectSchema({ ...(withSummary ? { [k.summary]: STRING_SCHEMA } : {}), [k.topics]: { type: 'array', minItems: minTopics, maxItems: maxTopics, items: topic } });
+}
+// Map part: 2-4 topics with 2-3 points each for a part of TOPIC_SHORT_PART_CHARS or more, 1-3 topics with 1-3 points for a shorter
+// one. The 2-point minimum: with 1 allowed, Gemma answered the most decision-dense part of a real meeting with 4 topics x 1 point (the
+// numbers and decisions were left out); with 2 required it wrote 3 x 3 (map coverage of the manual minutes 57% -> 82%).
+function mapSchema(text, lang) {
+  const range = mapTopicRange(text);
+  return topicSchema(lang, { minTopics: range.min, maxTopics: range.max, minPoints: range.minPoints, maxPoints: TOPIC_PART_LIMITS.points });
+}
+// Agenda detect / group: the shapes of their prompts, no counts (an empty list = no new agenda in this part).
+const agendaDetectSchema = lang => {
+  const k = schemaKeys(lang);
+  return objectSchema({ [k.detect]: { type: 'array', items: objectSchema({ [k.name]: STRING_SCHEMA, [k.quote]: STRING_SCHEMA }) } });
+};
+const agendaGroupSchema = lang => {
+  const k = schemaKeys(lang);
+  return objectSchema({ [k.groups]: { type: 'array', items: objectSchema({ [k.name]: STRING_SCHEMA, [k.start]: { type: 'integer' } }) } });
+};
 
 function buildTopicPartPrompt(text, lang, index, total, insist = false) {
+  const range = mapTopicRange(text);
   if (lang === 'id') {
     return `Anda meringkas isi sebuah rekaman dalam Bahasa Indonesia. Berikut bagian ${index} dari ${total} transkrip rekaman tersebut (bisa rapat, diskusi, wawancara, podcast, atau video edukasi; hasil speech-to-text, bisa ada salah ketik).
 
-Tugas: ambil TOPIK-TOPIK yang dibahas di bagian ini (1 sampai 3 topik). Untuk setiap topik tulis 1 sampai 3 poin singkat tentang isi yang dibahas. Keputusan, tindak lanjut, dan target waktu ditulis HANYA bila benar-benar diucapkan.${insist ? '\nBagian ini PASTI berisi pembahasan, jangan kosong: tulis minimal 1 topik dengan 1 poin.' : ''}
+Tugas: ambil TOPIK-TOPIK yang dibahas di bagian ini (${range.min} sampai ${range.max} topik). Untuk setiap topik tulis 1 sampai 3 poin singkat tentang isi yang dibahas. Keputusan, tindak lanjut, dan target waktu ditulis HANYA bila benar-benar diucapkan.${insist ? '\nBagian ini PASTI berisi pembahasan, jangan kosong: tulis minimal 1 topik dengan 1 poin.' : ''}
 Aturan:
 - Hanya isi yang benar-benar diucapkan. Dilarang menambah angka, tanggal, nama, atau kesimpulan yang tidak ada di transkrip.
 - Jangan pernah menulis poin bahwa sesuatu tidak disebutkan, tidak ada, atau belum diputuskan (misalnya "tidak ada target waktu").
@@ -525,7 +569,7 @@ ${text}
   }
   return `You summarize the content of a recording in ${LANGUAGES[lang]}. Below is part ${index} of ${total} of its transcript (it may be a meeting, discussion, interview, podcast or educational video; speech-to-text, may contain typos).
 
-Task: list the TOPICS discussed in this part (1 to 3 topics). For each topic write 1 to 3 short points about what was discussed. Write decisions, follow-ups and deadlines ONLY when they were really said.${insist ? '\nThis part DEFINITELY contains a discussion, do not answer empty: write at least 1 topic with 1 point.' : ''}
+Task: list the TOPICS discussed in this part (${range.min} to ${range.max} topics). For each topic write 1 to 3 short points about what was discussed. Write decisions, follow-ups and deadlines ONLY when they were really said.${insist ? '\nThis part DEFINITELY contains a discussion, do not answer empty: write at least 1 topic with 1 point.' : ''}
 Rules:
 - Only what was really said. Never add numbers, dates, names or conclusions that are not in the transcript.
 - Never write a point saying that something was not mentioned, does not exist or was not decided (e.g. "no deadline was mentioned").
@@ -555,7 +599,7 @@ ${list}
 
 Tugas:
 1. Gabungkan topik yang sama atau sangat mirip menjadi satu. Hasilkan ${count} topik akhir, urut sesuai jalannya rekaman.
-2. Untuk setiap topik akhir tulis ${group ? '1 sampai 3' : '1 sampai 4'} poin singkat (satu kalimat, maksimal 25 kata) tentang isinya; keputusan, tindak lanjut, dan target waktu hanya bila ada di daftar. Jangan mengulang poin yang sama atau yang maknanya sama, juga di topik lain.
+2. Untuk setiap topik akhir tulis 1 sampai 4 poin singkat (satu kalimat, maksimal 25 kata) tentang isinya; keputusan, tindak lanjut, dan target waktu hanya bila ada di daftar. Jangan mengulang poin yang sama atau yang maknanya sama, juga di topik lain.
 3. ${summary} Mulai langsung dengan pokok bahasannya sendiri, JANGAN PERNAH membuka dengan "Rekaman ini", "Video ini", "Transkrip ini", "Rapat ini", "Pertemuan ini", "Diskusi ini", atau "Podcast ini"; jangan menyebut jenis acaranya ("dalam rapat", "video ini") kecuali daftar di atas menyebutnya.
 Aturan: hanya pakai informasi dari daftar di atas; dilarang menambah angka, tanggal, nama, atau kesimpulan baru; jangan pernah menulis poin bahwa sesuatu tidak disebutkan, tidak ada, atau belum diputuskan.${feedback ? `\n\nPERBAIKAN: jawaban Anda sebelumnya ditolak karena ${feedback}. Tulis ulang, JANGAN memakai kata/angka/nama yang disebut itu, dan pakai hanya kata yang benar-benar ada di daftar.` : ''}
 Jawab HANYA JSON: {"ringkasan":"...","topik":[{"judul":"...","poin":["..."]}]}`;
@@ -570,7 +614,7 @@ ${list}
 
 Task:
 1. Merge topics that are the same or very similar. Give ${count} final topics, in the order of the recording.
-2. For each final topic write ${group ? '1 to 3' : '1 to 4'} short points (one sentence, at most 25 words) about its content; decisions, follow-ups and deadlines only when they are in the list. Do not repeat a point or one with the same meaning, also not in another topic.
+2. For each final topic write 1 to 4 short points (one sentence, at most 25 words) about its content; decisions, follow-ups and deadlines only when they are in the list. Do not repeat a point or one with the same meaning, also not in another topic.
 3. ${summary} Start with the subject itself, NEVER with "This recording", "This video", "This transcript", "This meeting", "This discussion" or "This podcast"; do not name the type of event ("in the meeting", "this video") unless the list above does.
 Rules: use only information from the list above; never add new numbers, dates, names or conclusions; never write a point saying that something was not mentioned, does not exist or was not decided. Write in ${LANGUAGES[lang]}.${feedback ? `\n\nFIX: your previous answer was rejected because ${feedback}. Rewrite it, do NOT use the words/numbers/names mentioned, and use only words that really occur in the list.` : ''}
 Answer ONLY JSON: {"summary":"...","topics":[{"title":"...","points":["..."]}]}`;
@@ -720,6 +764,11 @@ function contentStems(text, lang) {
 }
 function isDuplicatePoint(a, b, lang) {
   if (NEGATION_RE.test(a) !== NEGATION_RE.test(b)) return false;
+  // v2.60.3: points with different numbers carry different facts ("Sesi pertama diikuti 46 partisipan" vs a merged "Sesi pertama
+  // ... partisipan" without the 46): never merged, so the protect step's number is not dropped again.
+  const da = digitTokens(a);
+  const db = digitTokens(b);
+  if (da.size !== db.size || [...da].some(d => !db.has(d))) return false;
   const A = contentStems(a, lang);
   const B = contentStems(b, lang);
   if (Math.min(A.length, B.length) < DUPLICATE_LIMITS.minWords) return false;
@@ -751,8 +800,9 @@ function removeDuplicatePoints(topics, lang) {
 //  2. if it still fails, the sentences with a meta phrase or a forbidden event word ("rapat" in a podcast) are left out, as long as
 //     at least 40 characters remain and the rest passes validateAnswer.
 // { text, repaired, removed } or { reason } (= the summary fails).
-const META_OPENER_ID_RE = /^(?:dalam\s+)?(?:rekaman|video|transkrip|rapat|pertemuan|diskusi|podcast|percakapan|wawancara)\s+(?:ini|tersebut)\s+(juga\s+)?(?:membahas|berisi|menjelaskan|mengulas|menyoroti|berfokus pada|mencakup|memuat|menekankan)\s+/i;
-const META_OPENER_EN_RE = /^(?:in\s+)?(?:this|the)\s+(?:recording|video|transcript|meeting|discussion|podcast|conversation|interview)\s+(also\s+)?(?:discusses|covers|explains|describes|focuses on|highlights|contains|is about|emphasizes)\s+/i;
+// v2.60.3: an agenda / block summary also opened with "Agenda ini / Bagian ini / Potongan ini ..." ("This agenda / section ...").
+const META_OPENER_ID_RE = /^(?:dalam\s+)?(?:rekaman|video|transkrip|rapat|pertemuan|diskusi|podcast|percakapan|wawancara|agenda|bagian|potongan)\s+(?:ini|tersebut)\s+(juga\s+)?(?:membahas|berisi|menjelaskan|mengulas|menyoroti|berfokus pada|mencakup|memuat|menekankan)\s+/i;
+const META_OPENER_EN_RE = /^(?:in\s+)?(?:this|the)\s+(?:recording|video|transcript|meeting|discussion|podcast|conversation|interview|agenda|section)\s+(also\s+)?(?:discusses|covers|explains|describes|focuses on|highlights|contains|is about|emphasizes)\s+/i;
 const sentencesOf = text => String(text).split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
 function neutralOpener(sentence) {
   let m = META_OPENER_ID_RE.exec(sentence);
@@ -763,7 +813,8 @@ function neutralOpener(sentence) {
 }
 // v2.60.1: only the first sentence that opens with the neutral opener keeps "Pembahasan mencakup ..." / "The discussion covers
 // ..."; later ones read "Pembahasan juga mencakup ..." / "The discussion also covers ..." (a summary joined from several agendas
-// or blocks otherwise repeats the same opener).
+// or blocks otherwise repeats the same opener). v2.60.3: the FIRST one never says "juga" / "also" (a podcast summary whose first
+// block summary had failed started with "Pembahasan juga mencakup ...").
 const NEUTRAL_OPENER_RE = /^(pembahasan|the discussion)\s+(juga\s+|also\s+)?(mencakup|covers)\s+/i;
 function dedupeOpenerSentences(sentences) {
   let seen = false;
@@ -772,9 +823,11 @@ function dedupeOpenerSentences(sentences) {
     if (!m) return sentence;
     const repeated = seen;
     seen = true;
-    if (!repeated || m[2]) return sentence;
+    if (repeated === !!m[2]) return sentence; // a later one with "juga", or the first one without it
     const rest = sentence.slice(m[0].length);
-    return /^the discussion$/i.test(m[1]) ? `The discussion also covers ${rest}` : `Pembahasan juga mencakup ${rest}`;
+    const en = /^the discussion$/i.test(m[1]);
+    if (!repeated) return en ? `The discussion covers ${rest}` : `Pembahasan mencakup ${rest}`;
+    return en ? `The discussion also covers ${rest}` : `Pembahasan juga mencakup ${rest}`;
   });
 }
 const dedupeOpeners = text => dedupeOpenerSentences(sentencesOf(text)).join(' ');
@@ -830,9 +883,11 @@ const AGENDA_REFINE_CHARS = 1500;      // how far back the start may move to the
 const AGENDA_REFINE_NEAR = 60;         // two of the agenda's own words within this many characters = the announcement
 const TOPIC_BLOCK_THRESHOLD = 15;      // more map topics than this: merge in blocks instead of one call
 const TOPIC_BLOCK_SIZE = 10;           // at most this many map topics per block (a part is never split)
-const GROUP_MERGE_PREDICT = 900;
-// Final topics/points per answer of one agenda / block, and the cap up to which the coverage guard may put map topics back.
-const GROUP_LIMITS = { agenda: { topics: 5, points: 3, cap: 6 }, block: { topics: 4, points: 3, cap: 5 } };
+// v2.60.3: 1300 (was 900) - up to 5 topics x 4 points + the summary, the size the schema spike ran with.
+const GROUP_MERGE_PREDICT = 1300;
+// Final topics/points per answer of one agenda / block (v2.60.3: 4 points, was 3), and the cap up to which the coverage guard
+// and the protect step may add topics.
+const GROUP_LIMITS = { agenda: { topics: 5, points: 4, cap: 6 }, block: { topics: 4, points: 4, cap: 5 } };
 const COVERAGE_MIN = 0.35;
 
 // `current` = the agenda found last in an earlier part ('' = none yet). Part 1 uses the spike's wording; a later part without any
@@ -986,7 +1041,7 @@ async function findAgendas(media, lang, ctx, parts, deadline, stats) {
     stats.detect_calls++;
     // A soft failure (aborted / empty answer) = no candidates for this part; hard errors throw like every other call.
     const raw = await askModelOrNull(buildAgendaDetectPrompt(parts[i], lang, i + 1, parts.length, current), media, deadline,
-      { seed: TOPIC_SEEDS[0], format: 'json', ...AGENDA_DETECT_OPTIONS }, stats);
+      { seed: TOPIC_SEEDS[0], format: agendaDetectSchema(lang), ...AGENDA_DETECT_OPTIONS }, stats);
     const list = fieldOf(parseJsonAnswer(raw), ['agenda_baru', 'new_agendas']);
     (Array.isArray(list) ? list : []).forEach(a => {
       const name = agendaName(fieldOf(a, ['nama', 'name']));
@@ -1003,7 +1058,7 @@ async function findAgendas(media, lang, ctx, parts, deadline, stats) {
   if (candidates.length < 2) return [];
   const prompt = buildAgendaGroupPrompt(candidates, ctx.transcript.length, lang);
   const raw = await askModelOrNull(prompt, media, deadline,
-    { seed: TOPIC_SEEDS[0], format: 'json', numCtx: contextFor(prompt, AGENDA_GROUP_PREDICT), numPredict: AGENDA_GROUP_PREDICT }, stats);
+    { seed: TOPIC_SEEDS[0], format: agendaGroupSchema(lang), numCtx: contextFor(prompt, AGENDA_GROUP_PREDICT), numPredict: AGENDA_GROUP_PREDICT }, stats);
   return agendasFromGroups(fieldOf(parseJsonAnswer(raw), ['agenda', 'agendas']), candidates, ctx);
 }
 
@@ -1051,17 +1106,18 @@ function coverageOf(topic, covered) {
   if (!own.size) return 1;
   return [...own].filter(p => covered.has(p)).length / own.size;
 }
+// The part a merged topic comes from: the input topic sharing the most prefixes with it.
+function topicPart(topic, items) {
+  const own = prefixesOf(topic);
+  let best = { part: Infinity, score: -1 };
+  items.forEach(it => {
+    const score = [...prefixesOf(it)].filter(p => own.has(p)).length;
+    if (score > best.score) best = { part: it.part, score };
+  });
+  return best.part;
+}
 function restoreCoverage(topics, items, cap, ctx) {
-  const partOf = topic => {
-    const own = prefixesOf(topic);
-    let best = { part: Infinity, score: -1 };
-    items.forEach(it => {
-      const score = [...prefixesOf(it)].filter(p => own.has(p)).length;
-      if (score > best.score) best = { part: it.part, score };
-    });
-    return best.part;
-  };
-  const out = topics.map((topic, order) => ({ topic, part: partOf(topic), order }));
+  const out = topics.map((topic, order) => ({ topic, part: topicPart(topic, items), order }));
   const covered = () => new Set(out.flatMap(o => [...prefixesOf(o.topic)]));
   const low = items.map(it => ({ it, cov: coverageOf(it, covered()) })).filter(x => x.cov < COVERAGE_MIN).sort((a, b) => a.cov - b.cov);
   let restored = 0;
@@ -1075,24 +1131,75 @@ function restoreCoverage(topics, items, cap, ctx) {
   return { topics: out.map(o => o.topic), restored };
 }
 
+// ------------------------------------------------------------------ v2.60.3: protect step (after every merge)
+// Measured on a real meeting: the map topics held 64-84% of the points of the manual minutes, the merged result only 34-48% -
+// the merge "summarised away" numbers, decisions and targets. A map point (already fact-checked by checkTopics in the map step) that
+// holds a digit, a month name or a decision / target / progress word is PROTECTED: when less than PROTECT_KEEP of its word prefixes
+// (first 6 letters of its words of 4+ letters) occur anywhere in the final topics, or one of its numbers (digits) does not occur there
+// (real run: "Sesi pertama diikuti 46 partisipan" kept its words in a merged point, but not the 46), it is put back - into the most similar final topic
+// (most prefixes shared with the map title + point) while that topic has fewer than PROTECT_TOPIC_POINTS points, otherwise as a
+// topic of its own with the map title (title checked, in recording order, only below the cap). Deterministic, no extra Gemma call.
+const PROTECT_RE = /\d|\b(?:januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember|january|february|march|june|july|august|october|december|setuju|disetujui|disepakati|target|ditargetkan|tindak\s+lanjut|selesai|complete|completed|minggu\s+(?:ini|depan|lalu)|tahun\s+depan|agreed|approved|decided|targeted|follow[-\s]ups?|finished|(?:this|next|last)\s+week|next\s+year)\b/i; // "may" left out: an English modal verb
+const PROTECT_KEEP = 0.6;
+const PROTECT_TOPIC_POINTS = 5;
+const protectPrefixes = text => new Set(String(text).toLowerCase().split(/[^\p{L}\d]+/u).filter(w => w.length >= 4).map(w => w.slice(0, 6)));
+const topicText = t => [t.title, ...t.points].join(' ');
+const isProtectedPoint = text => PROTECT_RE.test(String(text || ''));
+// topics = the final topics of one merge, items = the map topics it was given ([{ part, title, points }]). { topics, restored }.
+function protectPoints(topics, items, cap, ctx) {
+  const out = topics.map(t => ({ ...t, points: [...t.points] }));
+  let restored = 0;
+  for (const it of items) {
+    for (const p of it.points) {
+      if (!isProtectedPoint(p)) continue;
+      const own = protectPrefixes(p);
+      const presentText = out.map(topicText).join(' ');
+      const present = protectPrefixes(presentText);
+      const presentDigits = digitTokens(presentText);
+      const wordsKept = !own.size || [...own].filter(x => present.has(x)).length / own.size >= PROTECT_KEEP;
+      if (wordsKept && [...digitTokens(p)].every(d => presentDigits.has(d))) continue; // still there
+      if (isFillerPoint(p, ctx) || fragmentProblem(p, ctx, 'point')) continue; // never put back what the fact check refuses
+      const probe = protectPrefixes(`${it.title} ${p}`);
+      let best = -1;
+      let bestScore = 0;
+      out.forEach((t, k) => {
+        const score = [...protectPrefixes(topicText(t))].filter(x => probe.has(x)).length;
+        if (score > bestScore) { best = k; bestScore = score; }
+      });
+      if (best >= 0 && out[best].points.length < PROTECT_TOPIC_POINTS) {
+        out[best].points.push(p);
+        restored++;
+        continue;
+      }
+      if (out.length >= cap || fragmentProblem(it.title, ctx, 'title')) continue; // the map step did not check its titles
+      const at = out.reduce((pos, t, k) => (topicPart(t, items) <= it.part ? k + 1 : pos), 0); // after the last topic of an earlier/same part
+      out.splice(at, 0, { title: it.title, points: [p] });
+      restored++;
+    }
+  }
+  return { topics: out, restored };
+}
+
 const pointCount = topics => topics.reduce((n, t) => n + t.points.length, 0);
 
 // One agenda or block: { kind, name?, items } -> { topics, summary } (summary '' = none passed). Attempt 1 seed 41, attempt 2 seed
 // 42 + REPEAT_GUARD; an attempt is accepted with >= min(input topics, 2) topics and >= min(input points, 4) points after the checks.
 // The accepted attempt with the most points wins; the first passing summary is kept as a spare. No accepted attempt: the map
-// topics themselves (titles checked, deduplicated, capped). Then the coverage guard.
+// topics themselves (titles checked, deduplicated, capped). Then the coverage guard, then the protect step (v2.60.3: it only adds
+// points that are still missing after the coverage guard, so the two never insert the same point), then the duplicate filter.
 async function mergeGroup(media, lang, ctx, group, deadline, stats) {
   const { items } = group;
   const limits = GROUP_LIMITS[group.kind];
   const need = { topics: Math.min(items.length, 2), points: Math.min(pointCount(items), 4) };
   const label = group.kind === 'agenda' ? `agenda "${group.name}"` : `block ${group.index}/${group.total}`;
+  const format = topicSchema(lang, { minTopics: Math.min(2, items.length), maxTopics: limits.topics, maxPoints: limits.points, withSummary: true });
   let best = null;
   let spare = null;
   for (let attempt = 1; attempt <= 2 && !(best && !best.fix.reason); attempt++) {
     stats.merge_attempts++;
     const prompt = buildTopicMergePrompt(items, lang, '', group);
     const res = await askModelOrNull(prompt, media, deadline,
-      { seed: TOPIC_SEEDS[attempt - 1], format: 'json', numCtx: contextFor(prompt, GROUP_MERGE_PREDICT), numPredict: GROUP_MERGE_PREDICT, ...(attempt === 2 ? REPEAT_GUARD : {}), details: true }, stats);
+      { seed: TOPIC_SEEDS[attempt - 1], format, numCtx: contextFor(prompt, GROUP_MERGE_PREDICT), numPredict: GROUP_MERGE_PREDICT, ...(attempt === 2 ? REPEAT_GUARD : {}), details: true }, stats);
     const answer = parseJsonAnswer(res && res.text);
     const rawSummary = cleanLine(textOf(fieldOf(answer, ['ringkasan', 'summary'])));
     const checked = checkTopics(normalizeTopics(fieldOf(answer, ['topik', 'topics']), limits), ctx);
@@ -1120,7 +1227,9 @@ async function mergeGroup(media, lang, ctx, group, deadline, stats) {
   }
   const covered = restoreCoverage(topics, items, limits.cap, ctx);
   stats.coverage_restored += covered.restored;
-  const final = removeDuplicatePoints(covered.topics, lang);
+  const kept = protectPoints(covered.topics, items, limits.cap, ctx);
+  stats.protected_points += kept.restored;
+  const final = removeDuplicatePoints(kept.topics, lang);
   stats.duplicate_points += final.duplicatePoints;
   const summaryFix = best && !best.fix.reason ? best.fix : spare;
   if (summaryFix) {
@@ -1164,8 +1273,8 @@ async function mergeInBlocks(media, lang, ctx, mapped, deadline, stats) {
   return mergeGroups(media, lang, ctx, blocks.map((items, k) => ({ kind: 'block', index: k + 1, total: blocks.length, items })), deadline, stats);
 }
 
-// Map step: every part -> 1-3 topics; an unusable answer is asked again ONCE (seed 42 + "PASTI berisi pembahasan" + REPEAT_GUARD),
-// still empty -> the part is skipped. Invented points are dropped here already, so they never reach a merge.
+// Map step: every part -> 1-3 topics (2-4 with 2-3 points for a part of TOPIC_SHORT_PART_CHARS+); an unusable answer is asked again ONCE
+// (seed 42 + "PASTI berisi pembahasan" + REPEAT_GUARD), still empty -> the part is skipped. Invented points are dropped here already, so they never reach a merge.
 // parts = [{ text, agenda? }] -> [{ part, agenda?, title, points }] (part = 1-based position in `parts`).
 async function mapTopicParts(media, lang, ctx, parts, deadline, stats) {
   const mapped = [];
@@ -1174,7 +1283,7 @@ async function mapTopicParts(media, lang, ctx, parts, deadline, stats) {
     for (let attempt = 1; attempt <= 2 && !topics.length; attempt++) {
       if (attempt === 2) stats.retried_parts++;
       const res = await askModelOrNull(buildTopicPartPrompt(parts[i].text, lang, i + 1, parts.length, attempt === 2), media, deadline,
-        { seed: TOPIC_SEEDS[attempt - 1], format: 'json', ...TOPIC_MAP_OPTIONS, ...(attempt === 2 ? REPEAT_GUARD : {}), details: true }, stats);
+        { seed: TOPIC_SEEDS[attempt - 1], format: mapSchema(parts[i].text, lang), ...TOPIC_MAP_OPTIONS, ...(attempt === 2 ? REPEAT_GUARD : {}), details: true }, stats);
       topics = normalizeTopics(fieldOf(parseJsonAnswer(res && res.text), ['topik', 'topics']), TOPIC_PART_LIMITS);
       if (res && !topics.length) logUnusableAnswer(media, `part ${i + 1}/${parts.length} attempt ${attempt}`, res);
     }
@@ -1193,22 +1302,29 @@ async function mapTopicParts(media, lang, ctx, parts, deadline, stats) {
 }
 
 // The single merge of v2.60.0 (all map topics in one call, 4-8 topics + a 3-5 sentence summary): result or null.
+// v2.60.3: then the protect step (up to TOPIC_FINAL_LIMITS.topics topics) and the duplicate filter.
 async function mergeAllTopics(media, lang, ctx, mapped, deadline, stats) {
-  const result = (summaryFix, checked, unique, fromTitles = 0) => ({
-    summary: summaryFix.text,
-    points: unique.topics.map(t => `${t.title}: ${t.points[0]}`), // compatibility: PPT and older readers use summary/summary_points
-    topics: unique.topics,
-    stats: {
-      ...stats,
-      dropped_points: stats.dropped_points + checked.droppedPoints,
-      dropped_topics: stats.dropped_topics + checked.droppedTopics + unique.droppedTopics,
-      filler_points: stats.filler_points + checked.fillerPoints,
-      duplicate_points: unique.duplicatePoints,
-      summary_repaired: summaryFix.repaired ? 1 : 0,
-      summary_sentences_removed: summaryFix.removed,
-      summary_from_titles: fromTitles
-    }
-  });
+  const result = (summaryFix, checked, unique, fromTitles = 0) => {
+    const kept = protectPoints(unique.topics, mapped, TOPIC_FINAL_LIMITS.topics, ctx);
+    const final = removeDuplicatePoints(kept.topics, lang);
+    return {
+      summary: summaryFix.text,
+      points: final.topics.map(t => `${t.title}: ${t.points[0]}`), // compatibility: PPT and older readers use summary/summary_points
+      topics: final.topics,
+      stats: {
+        ...stats,
+        dropped_points: stats.dropped_points + checked.droppedPoints,
+        dropped_topics: stats.dropped_topics + checked.droppedTopics + unique.droppedTopics + final.droppedTopics,
+        filler_points: stats.filler_points + checked.fillerPoints,
+        duplicate_points: unique.duplicatePoints + final.duplicatePoints,
+        summary_repaired: summaryFix.repaired ? 1 : 0,
+        summary_sentences_removed: summaryFix.removed,
+        summary_from_titles: fromTitles,
+        protected_points: stats.protected_points + kept.restored
+      }
+    };
+  };
+  const format = topicSchema(lang, { minTopics: Math.min(4, mapped.length), maxTopics: TOPIC_FINAL_LIMITS.topics, maxPoints: TOPIC_FINAL_LIMITS.points, withSummary: true });
   // An attempt with good topics but a failing summary is kept (best = most topics), as is a passing summary of an attempt whose
   // topics failed: the merge only gives up when NO attempt gave TOPIC_MIN_FINAL valid topics.
   let best = null;
@@ -1219,7 +1335,7 @@ async function mergeAllTopics(media, lang, ctx, mapped, deadline, stats) {
     stats.merge_attempts = attempt;
     const prompt = buildTopicMergePrompt(mapped, lang, feedback);
     const res = await askModelOrNull(prompt, media, deadline,
-      { seed: TOPIC_SEEDS[attempt - 1], format: 'json', numCtx: contextFor(prompt, TOPIC_MERGE_PREDICT), numPredict: TOPIC_MERGE_PREDICT, ...(attempt === 2 ? REPEAT_GUARD : {}), details: true }, stats);
+      { seed: TOPIC_SEEDS[attempt - 1], format, numCtx: contextFor(prompt, TOPIC_MERGE_PREDICT), numPredict: TOPIC_MERGE_PREDICT, ...(attempt === 2 ? REPEAT_GUARD : {}), details: true }, stats);
     const answer = parseJsonAnswer(res && res.text);
     const rawSummary = cleanLine(textOf(fieldOf(answer, ['ringkasan', 'summary'])));
     const topics = normalizeTopics(fieldOf(answer, ['topik', 'topics']), TOPIC_FINAL_LIMITS);
@@ -1258,7 +1374,7 @@ async function summarizeByTopics(media, lang, deadline) {
   const ctx = buildCheckContext(transcript, lang, media.file_name);
   const stats = { parts: parts.length, retried_parts: 0, skipped_parts: 0, dropped_points: 0, dropped_topics: 0, merge_attempts: 0, aborted_answers: 0,
     filler_points: 0, duplicate_points: 0, summary_repaired: 0, summary_sentences_removed: 0, summary_from_titles: 0,
-    agenda_mode: false, agendas: [], detect_calls: 0, agenda_candidates: 0, blocks: 0, coverage_restored: 0 };
+    agenda_mode: false, agendas: [], detect_calls: 0, agenda_candidates: 0, blocks: 0, coverage_restored: 0, protected_points: 0 };
 
   const agendas = ctx.eventWordsAllowed ? await findAgendas(media, lang, ctx, parts, deadline, stats) : [];
   if (agendas.length >= 2) {
@@ -1420,6 +1536,17 @@ module.exports = {
   agendasFromGroups,
   topicBlocks,
   restoreCoverage,
+  // v2.60.3: structured outputs, protect step
+  topicSchema,
+  mapSchema,
+  agendaDetectSchema,
+  agendaGroupSchema,
+  protectPoints,
+  isProtectedPoint,
+  TOPIC_SHORT_PART_CHARS,
+  PROTECT_KEEP,
+  PROTECT_TOPIC_POINTS,
+  GROUP_MERGE_PREDICT,
   MAX_AGENDAS,
   AGENDA_MIN_SHARE,
   TOPIC_BLOCK_THRESHOLD,

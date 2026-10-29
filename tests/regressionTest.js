@@ -10929,13 +10929,13 @@ async function runAllModules() {
       assert.strictEqual(sm65.contextFor('x'.repeat(60000), 1400), 32768);
     });
 
-    await runTest('[POSITIVE/NEGATIVE] Offline: JSON answers are read also inside a ``` block or with text around them, Indonesian or English keys, capped at 3x3 per part / 8x4 final; garbage gives no topics', async () => {
+    await runTest('[POSITIVE/NEGATIVE] Offline: JSON answers are read also inside a ``` block or with text around them, Indonesian or English keys, capped at 4x3 per part (v2.60.3, was 3x3) / 8x4 final; garbage gives no topics', async () => {
       assert.deepStrictEqual(sm65.parseJsonAnswer('```json\n{"topik":[]}\n```'), { topik: [] });
       assert.deepStrictEqual(sm65.parseJsonAnswer('Berikut jawabannya: {"a":1} selesai'), { a: 1 });
       assert.strictEqual(sm65.parseJsonAnswer('RINGKASAN: bukan JSON'), null);
       const many = Array.from({ length: 10 }, (_, i) => ({ judul: `Topik ${i}`, poin: ['Poin pertama yang cukup panjang.', 'Poin kedua yang cukup panjang.', 'Poin ketiga yang cukup panjang.', 'Poin keempat yang cukup panjang.', 'Poin kelima yang cukup panjang.'] }));
       const part = sm65.normalizeTopics(many, sm65.TOPIC_PART_LIMITS);
-      assert.strictEqual(part.length, 3);
+      assert.strictEqual(part.length, 4);
       assert.ok(part.every(t => t.points.length === 3));
       const fin = sm65.normalizeTopics(many, sm65.TOPIC_FINAL_LIMITS);
       assert.strictEqual(fin.length, 8);
@@ -11205,7 +11205,7 @@ async function runAllModules() {
         assert.strictEqual(generate65().length, 0, 'booting the second backend makes no Gemma call (PX_DISABLE_RESUME=1)');
 
         let topicVideo = null;
-        await runTest('[POSITIVE] A NEW long video (upload -> transcript DONE): 3 map calls (JSON, num_ctx 8192, num_predict 500) + 1 merge call (num_predict 1400); topics stored and returned by the event GET; summary = overall summary, summary_points = "title: first point"', async () => {
+        await runTest('[POSITIVE] A NEW long video (upload -> transcript DONE): 3 map calls (JSON schema 2-4 topics, 1-3 for the short last part, num_ctx 8192, num_predict 700) + 1 merge call (schema 4-8 topics, num_predict 1400); topics stored and returned by the event GET; summary = overall summary, summary_points = "title: first point"', async () => {
           oll65.calls.length = 0; oll65.mode = 'topics'; tr65.text = LONG65;
           const form = new FormData();
           form.append('mediaFile', new Blob([Buffer.from('fake video bytes')], { type: 'video/mp4' }), 'regression-topic-65.mp4');
@@ -11222,22 +11222,26 @@ async function runAllModules() {
           assert.deepStrictEqual(done.summary_points, FINAL65.map(t => `${t.judul}: ${t.poin[0]}`));
           assert.deepStrictEqual(done.summary_topic_stats, { parts: 3, retried_parts: 0, skipped_parts: 0, dropped_points: 0, dropped_topics: 0, merge_attempts: 1, aborted_answers: 0,
             filler_points: 0, duplicate_points: 0, summary_repaired: 0, summary_sentences_removed: 0, summary_from_titles: 0,
-            agenda_mode: false, agendas: [], detect_calls: 3, agenda_candidates: 0, blocks: 0, coverage_restored: 0 });
+            agenda_mode: false, agendas: [], detect_calls: 3, agenda_candidates: 0, blocks: 0, coverage_restored: 0, protected_points: 0 });
           assert.strictEqual(detect65().length, 3, 'v2.60.1: a meeting gets one agenda-detect call per part; no candidates -> no group call, normal topic path');
-          assert.ok(detect65().every(c => c.format === 'json' && c.options.num_predict === 250 && c.options.num_ctx === 8192 && c.options.seed === 41));
+          assert.ok(detect65().every(c => c.format && c.format.type === 'object' && c.format.properties.agenda_baru && c.options.num_predict === 250 && c.options.num_ctx === 8192 && c.options.seed === 41), 'v2.60.3: the detect call sends its JSON schema');
           const calls = generate65();
           assert.strictEqual(calls.length, 4);
           calls.slice(0, 3).forEach((c, i) => {
             assert.ok(c.prompt.includes(`bagian ${i + 1} dari 3`), `map call ${i + 1}`);
-            assert.strictEqual(c.format, 'json');
+            // v2.60.3: parts 1-2 (5,972 / 5,971 chars) ask for 2-4 topics, part 3 (1,998 chars) for 1-3
+            const range = i < 2 ? [2, 4] : [1, 3];
+            assert.ok(c.prompt.includes(`(${range[0]} sampai ${range[1]} topik)`), `map call ${i + 1}: ${range.join('-')} topics`);
+            assert.deepStrictEqual([c.format.properties.topik.minItems, c.format.properties.topik.maxItems, c.format.properties.topik.items.properties.poin.maxItems], [...range, 3]);
             assert.strictEqual(c.options.num_ctx, 8192);
-            assert.strictEqual(c.options.num_predict, 500);
+            assert.strictEqual(c.options.num_predict, 700);
             assert.strictEqual(c.options.temperature, 0.1);
             assert.strictEqual(c.options.seed, 41);
             assert.strictEqual(c.options.repeat_penalty, undefined, 'first attempts keep the spike settings');
           });
           assert.ok(calls[3].prompt.includes('Berikut daftar topik dan poin') && calls[3].prompt.includes('[bagian 3] Monitoring Referral'));
-          assert.strictEqual(calls[3].format, 'json');
+          assert.deepStrictEqual(calls[3].format.required, ['ringkasan', 'topik'], 'v2.60.3: the merge sends its JSON schema');
+          assert.deepStrictEqual([calls[3].format.properties.topik.minItems, calls[3].format.properties.topik.maxItems, calls[3].format.properties.topik.items.properties.poin.maxItems], [4, 8, 4], 'min(4, 4 map topics) .. 8 topics, 4 points');
           assert.strictEqual(calls[3].options.num_predict, 1400);
           assert.ok(calls[3].options.num_ctx >= 8192);
           // opening the event again never calls the model
@@ -11307,7 +11311,7 @@ async function runAllModules() {
           assert.strictEqual(merges.length, 4);
           assert.ok(merges[1].prompt.includes('PERBAIKAN') && /Budi/.test(merges[1].prompt), 'the single-merge retry names the rejected name');
           assert.strictEqual(merges[1].options.seed, 42);
-          assert.ok(merges.slice(2).every(c => c.prompt.includes('dari satu potongan berurutan sebuah rekaman') && c.options.num_predict === 900), 'then the block merge prompt');
+          assert.ok(merges.slice(2).every(c => c.prompt.includes('dari satu potongan berurutan sebuah rekaman') && c.options.num_predict === 1300), 'then the block merge prompt (v2.60.3: num_predict 1300)');
           assert.deepStrictEqual(merges.slice(2).map(c => [c.options.seed, c.options.repeat_penalty]), [[41, undefined], [42, 1.15]]);
           assert.ok(!calls.some(c => c.prompt.includes('Ini bagian')), 'the older path is not used');
         });
@@ -11610,7 +11614,7 @@ async function runAllModules() {
 
     await runTest('[POSITIVE/NEGATIVE] Offline coverage guard: a map topic with < 35% of its word prefixes in the merged result is put back (lowest coverage first, up to the cap, title checked), ordered by its part; covered topics and topics over the cap are not', async () => {
       assert.strictEqual(sm66.COVERAGE_MIN, 0.35);
-      assert.deepStrictEqual(sm66.GROUP_LIMITS, { agenda: { topics: 5, points: 3, cap: 6 }, block: { topics: 4, points: 3, cap: 5 } });
+      assert.deepStrictEqual(sm66.GROUP_LIMITS, { agenda: { topics: 5, points: 4, cap: 6 }, block: { topics: 4, points: 4, cap: 5 } }, 'v2.60.3: 4 points per topic (was 3)');
       const ctx = sm66.buildCheckContext(MEET66, 'id', 'x.mp4');
       const items = [
         { part: 1, title: 'Tahap Akhir Talent Factory', points: ['Talent factory sudah sampai di tahap akhir.'] },
@@ -11643,7 +11647,7 @@ async function runAllModules() {
         'Pembahasan mencakup dashboard People Experience yang menampilkan indeks. Pembahasan juga mencakup talent factory yang sudah sampai di tahap akhir.', 'also when the model wrote the opener itself');
     });
 
-    await runTest('[POSITIVE] Offline prompts: detect (JSON {"agenda_baru":[{nama,kutipan}]}, carries the running agenda), group (candidates with % position), merge variants for an agenda ("dari agenda X", 2-5 topics, 1-3 points, first sentence names X) and a block ("satu potongan berurutan", 2-4 topics)', async () => {
+    await runTest('[POSITIVE] Offline prompts: detect (JSON {"agenda_baru":[{nama,kutipan}]}, carries the running agenda), group (candidates with % position), merge variants for an agenda ("dari agenda X", 2-5 topics, 1-4 points since v2.60.3, first sentence names X) and a block ("satu potongan berurutan", 2-4 topics)', async () => {
       const first = sm66.buildAgendaDetectPrompt('teks', 'id', 1, 5, '');
       assert.ok(first.includes('bagian 1 dari 5') && first.includes('Ini bagian pertama.') && first.includes('MEMULAI AGENDA BESAR BARU') && first.includes('{"agenda_baru":[{"nama":"...","kutipan":"..."}]}'));
       assert.ok(first.includes('sebut juga agenda pertama'));
@@ -11656,7 +11660,7 @@ async function runAllModules() {
       assert.ok(group.includes('1. "People Experience" (posisi 0%): "yang pertama"') && group.includes('2. "Talent Factory" (posisi 50%)') && group.includes('{"agenda":[{"nama":"...","mulai":1}]}'));
       const items = [{ part: 1, title: 'A', points: ['p'] }];
       const agenda = sm66.buildTopicMergePrompt(items, 'id', '', { kind: 'agenda', name: 'Talent Factory' });
-      assert.ok(agenda.includes('dari agenda "Talent Factory" dalam sebuah rekaman') && agenda.includes('Hasilkan 2 sampai 5 topik akhir') && agenda.includes('tulis 1 sampai 3 poin singkat') && agenda.includes('kalimat pertama menyebut "Talent Factory"'));
+      assert.ok(agenda.includes('dari agenda "Talent Factory" dalam sebuah rekaman') && agenda.includes('Hasilkan 2 sampai 5 topik akhir') && agenda.includes('tulis 1 sampai 4 poin singkat') && agenda.includes('kalimat pertama menyebut "Talent Factory"'));
       const block = sm66.buildTopicMergePrompt(items, 'id', '', { kind: 'block' });
       assert.ok(block.includes('dari satu potongan berurutan sebuah rekaman') && block.includes('Hasilkan 2 sampai 4 topik akhir') && block.includes('1 sampai 2 kalimat tentang isi potongan ini'));
       const whole = sm66.buildTopicMergePrompt(items, 'id', '');
@@ -11804,7 +11808,7 @@ async function runAllModules() {
         cookie66 = (login.headers.getSetCookie() || []).map(c => c.split(';')[0]).find(c => c.startsWith('px_session='));
         assert.strictEqual(generate66().length, 0, 'booting the second backend makes no Gemma call');
 
-        await runTest('[POSITIVE] A meeting with two agendas: one detect call per part (JSON, num_predict 250), ONE group call (num_predict 200); the start of Talent Factory comes from its name (model number 99 is wrong) and moves back to the announcement; no map part crosses the agenda boundary; one merge per agenda; topics carry `agenda` and are returned by the event GET; the dropped socialisation topic is put back; summary openers deduplicated', async () => {
+        await runTest('[POSITIVE] A meeting with two agendas: one detect call per part (JSON schema, num_predict 250), ONE group call (JSON schema, num_predict 200); the start of Talent Factory comes from its name (model number 99 is wrong) and moves back to the announcement; no map part crosses the agenda boundary; one merge per agenda; topics carry `agenda` and are returned by the event GET; the dropped socialisation topic is put back; summary openers deduplicated', async () => {
           const v = await videoWith66(MEET66, 'HR Projects Update - Meeting Recording.mp4');
           const done = await summarize66(v.media_id);
           assert.strictEqual(done.summary_status, 'DONE', done.summary_error);
@@ -11822,11 +11826,11 @@ async function runAllModules() {
           assert.deepStrictEqual(calls.map(kind66), [...Array(plainParts).fill('detect'), 'group', ...Array(segParts).fill('map'), 'agenda-merge', 'agenda-merge']);
           calls.filter(c => kind66(c) === 'detect').forEach((c, i) => {
             assert.ok(c.prompt.includes(`bagian ${i + 1} dari ${plainParts}`));
-            assert.deepStrictEqual([c.format, c.options.seed, c.options.num_ctx, c.options.num_predict], ['json', 41, 8192, 250]);
+            assert.deepStrictEqual([c.format.required, c.options.seed, c.options.num_ctx, c.options.num_predict], [['agenda_baru'], 41, 8192, 250]);
           });
           assert.ok(calls[1].prompt.includes('sejak bagian sebelumnya: "Dashboard People Experience"'), 'the next detect call carries the running agenda');
           const group = calls.find(c => kind66(c) === 'group');
-          assert.deepStrictEqual([group.format, group.options.seed, group.options.num_predict], ['json', 41, 200]);
+          assert.deepStrictEqual([group.format.required, group.format.properties.agenda.items.required, group.options.seed, group.options.num_predict], [['agenda'], ['nama', 'mulai'], 41, 200]);
           assert.ok(group.prompt.includes('1. "People Experience" (posisi 0%)') && !group.prompt.includes('Hendra') && !group.prompt.includes('Anggaran'), 'dropped candidates never reach the group call');
           const maps = calls.filter(c => kind66(c) === 'map').map(c => textOfPrompt66(c.prompt));
           assert.ok(maps.every(t => !(t.includes('Dashboard People Experience') && t.includes('Talent factory sudah'))), 'no part crosses the agenda boundary');
@@ -11834,7 +11838,8 @@ async function runAllModules() {
           const merges = calls.filter(c => kind66(c) === 'agenda-merge');
           assert.ok(merges[0].prompt.includes('dari agenda "People Experience"') && !merges[0].prompt.includes('Talent'), 'agenda 1 merges only its own topics');
           assert.ok(merges[1].prompt.includes('dari agenda "Talent Factory Project"') && merges[1].prompt.includes('Sosialisasi Dua Sesi'));
-          assert.deepStrictEqual([merges[0].options.num_predict, merges[0].options.seed, merges[0].options.repeat_penalty], [900, 41, undefined]);
+          assert.deepStrictEqual([merges[0].options.num_predict, merges[0].options.seed, merges[0].options.repeat_penalty], [1300, 41, undefined]);
+          assert.deepStrictEqual([merges[0].format.properties.topik.minItems, merges[0].format.properties.topik.maxItems, merges[0].format.properties.topik.items.properties.poin.maxItems], [2, 5, 4], 'agenda merge schema: min(2, n) .. 5 topics, 4 points');
           // the event GET returns the agenda topics (SQL round trip) and never calls the model
           oll66.calls.length = 0;
           assert.deepStrictEqual((await eventMedia66(v.media_id)).summary_topics, EXPECTED_AGENDA66);
@@ -11895,7 +11900,7 @@ async function runAllModules() {
           assert.deepStrictEqual(calls.map(kind66), [...Array(6).fill('map'), 'block-merge', 'block-merge']);
           const blockItems = calls.filter(c => kind66(c) === 'block-merge').map(c => itemsOfPrompt66(c.prompt));
           assert.deepStrictEqual(blockItems.map(b => b.map(t => t.part)), [[1, 1, 1, 2, 2, 2, 3, 3, 3], [4, 4, 4, 5, 5, 5, 6, 6, 6]]);
-          calls.filter(c => kind66(c) === 'block-merge').forEach(c => assert.deepStrictEqual([c.format, c.options.num_predict, c.options.seed], ['json', 900, 41]));
+          calls.filter(c => kind66(c) === 'block-merge').forEach(c => assert.deepStrictEqual([c.format.required, c.format.properties.topik.minItems, c.format.properties.topik.maxItems, c.options.num_predict, c.options.seed], [['ringkasan', 'topik'], 2, 4, 1300, 41]));
           const st = done.summary_topic_stats;
           assert.deepStrictEqual([st.agenda_mode, st.blocks, st.merge_attempts, st.coverage_restored, st.parts], [false, 2, 2, 2, 6]);
           assert.strictEqual(done.summary_topics.length, 10, '4 merged + 1 put back, per block');
@@ -11950,6 +11955,341 @@ async function runAllModules() {
         const all = await storage66.getAllMedia();
         assert.ok(!all.some(m => mediaIds66.has(m.media_id)), 'test media deleted');
         for (const id of users66) assert.ok(!(await storage66.getUserById(id)), 'temporary admin deleted');
+      });
+    }
+  }
+
+  // --- MODULE 67 (v2.60.3): STRUCTURED OUTPUTS (JSON SCHEMA AS `format`), PROTECT STEP AFTER EVERY MERGE, SUMMARY OPENER REPAIRS (FAKE Ollama) ---
+  // Every topic-mode Gemma call (detect, group, map, single merge, agenda/block merge) sends a JSON SCHEMA as Ollama's `format`
+  // (keys of the prompt's language, min/max topics and points per call type); a map part of 2,000+ characters asks for 2-4 topics.
+  // After every merge a map point with a number / month / decision word that the merge lost is put back (protected_points).
+  // Offline checks run on both backends; the pipeline tests start a throw-away backend with OLLAMA_HOST pointing at an in-process fake.
+  console.log('\n📦 MODULE 67: AI summary structured outputs & protect step - JSON schema per call, 2-4 map topics, lost numbers/decisions put back, opener repairs (Positive & Negative Testing)');
+  if (!skipModuleBlock(67)) {
+    const sm67 = require('../server/services/mediaSummaryService');
+    // An Indonesian talk full of numbers and decisions (never says rapat / pertemuan / meeting): 2 parts, the second shorter than 2,000.
+    const BLOCK67 = 'Program literasi keuangan untuk karyawan baru dimulai di kantor pusat. Nilai indeks kepuasan saat ini 89 dan kategori eksepsional berada di rentang 85 sampai 100. Usulan bobot survei 70 persen disetujui oleh semua peserta. Modul pelatihan akan selesai minggu depan. Dashboard menampilkan hasil per direktorat dan dipantau setiap bulan. Sosialisasi kepada experience owner dilakukan secara bertahap. ';
+    const LONG67 = Array(18).fill(BLOCK67).join('').trim();
+    const EN_BLOCK67 = 'The onboarding program for new employees started at the head office. The satisfaction index is 89 today and the exceptional category runs from 85 to 100. The proposal to weight the survey at 70 percent was approved by all participants. The training module will be finished next week. The dashboard shows results per directorate and is checked every month. ';
+    const EN67 = Array(20).fill(EN_BLOCK67).join('').trim();
+    // A lecture of 24 distinct sentences, 6 parts x 3 map topics = 18 (> 15: block merge).
+    const SENT67 = ['Jantung yang sehat membutuhkan olahraga teratur setiap pagi.', 'Sayuran hijau mengandung serat yang membantu pencernaan.', 'Tidur malam yang cukup memulihkan tenaga tubuh.',
+      'Air putih menjaga cairan tubuh tetap seimbang.', 'Peregangan ringan mengurangi kaku pada otot punggung.', 'Garam berlebihan menaikkan tekanan darah.',
+      'Buah segar memberikan vitamin alami bagi anak.', 'Meditasi singkat menenangkan pikiran yang gelisah.', 'Sarapan bergizi menjaga konsentrasi belajar siswa.',
+      'Gula tambahan sebaiknya dibatasi pada minuman kemasan.', 'Postur duduk tegak mencegah nyeri leher.', 'Kalsium dari susu memperkuat tulang remaja.',
+      'Protein nabati berasal dari kacang kedelai.', 'Mencuci tangan dengan sabun mencegah penularan kuman.', 'Bersepeda santai melatih kekuatan kaki.',
+      'Camilan kacang lebih baik daripada keripik.', 'Pernapasan perlahan membantu mengatasi rasa cemas.', 'Sinar matahari pagi membantu pembentukan vitamin.',
+      'Berjalan kaki setiap sore menambah kebugaran.', 'Kolesterol tinggi berkaitan dengan makanan berlemak.', 'Imunitas tubuh meningkat dengan pola hidup aktif.',
+      'Puasa teratur melatih pengendalian diri.', 'Lemak sehat terdapat pada alpukat dan ikan.', 'Stres kerja dapat diredakan dengan hobi.'];
+    const LECT67 = Array(30).fill(SENT67.join(' ') + ' ').join('').trim();
+    const titleOf67 = s => s.split(' ').slice(0, 2).map(w => w[0].toUpperCase() + w.slice(1)).join(' ').replace(/[.,]$/, '');
+    const lowerFirst67 = s => `${s[0].toLowerCase()}${s.slice(1)}`;
+    const P89 = 'Nilai indeks kepuasan saat ini 89 dan kategori eksepsional 85 sampai 100.';
+    const P70 = 'Usulan bobot survei 70 persen disetujui oleh semua peserta.';
+    const PMODUL = 'Modul pelatihan akan selesai minggu depan.';
+    const PLIT = 'Program literasi keuangan untuk karyawan baru dimulai di kantor pusat.';
+    const PDASH = 'Dashboard menampilkan hasil per direktorat dan dipantau setiap bulan.';
+    const PSOS = 'Sosialisasi kepada experience owner dilakukan secara bertahap.';
+    const MAP67 = [
+      [{ judul: 'Indeks Kepuasan', poin: [P89, 'Dashboard menampilkan hasil per direktorat.'] }, { judul: 'Bobot Survei', poin: [P70] },
+        { judul: 'Program Literasi', poin: [PLIT, 'Program ini diikuti 350 peserta.'] }], // 350 is invented: dropped by the map check
+      [{ judul: 'Modul Pelatihan', poin: [PMODUL] }, { judul: 'Sosialisasi Experience Owner', poin: [PSOS] }]
+    ];
+    // the merge keeps the general points and loses the 89 / 70 / "minggu depan" points
+    const MERGE67 = { ringkasan: 'Pembahasan mencakup program literasi keuangan untuk karyawan baru dan dashboard per direktorat.', topik: [
+      { judul: 'Program Literasi Keuangan', poin: [PLIT] }, { judul: 'Dashboard Indeks Kepuasan', poin: [PDASH] }, { judul: 'Sosialisasi Experience Owner', poin: [PSOS] }] };
+    const EXPECTED67 = [
+      { title: 'Program Literasi Keuangan', points: [PLIT] },
+      { title: 'Dashboard Indeks Kepuasan', points: [PDASH, P89] },   // most similar topic (indeks, kepuasan)
+      { title: 'Bobot Survei', points: [P70] },                        // no similar topic: its own topic, after the part-1 topics
+      { title: 'Sosialisasi Experience Owner', points: [PSOS] },
+      { title: 'Modul Pelatihan', points: [PMODUL] }                   // part 2: at the end
+    ];
+    const E89 = 'The satisfaction index is 89 today and the exceptional category runs from 85 to 100.';
+    const E70 = 'The proposal to weight the survey at 70 percent was approved by all participants.';
+    const EMOD = 'The training module will be finished next week.';
+    const EONB = 'The onboarding program for new employees started at the head office.';
+    const EDASH = 'The dashboard shows results per directorate and is checked every month.';
+    const EN_MAP67 = [
+      [{ title: 'Satisfaction Index', points: [E89] }, { title: 'Survey Weight', points: [E70] }, { title: 'Onboarding Program', points: [EONB] }],
+      [{ title: 'Training Module', points: [EMOD] }]
+    ];
+    const EN_MERGE67 = { summary: 'The discussion covers the onboarding program for new employees and the dashboard per directorate.', topics: [
+      { title: 'Onboarding Program', points: [EONB] }, { title: 'Satisfaction Index', points: [E89] }, { title: 'Dashboard Results', points: [EDASH] }] };
+
+    await runTest('[POSITIVE] Offline schemas: topicSchema/mapSchema/agendaDetectSchema/agendaGroupSchema use the keys of the prompt language (id: topik/judul/poin/ringkasan, agenda_baru/nama/kutipan, agenda/nama/mulai; en and others: the English keys), all fields required, min/max topics and points as asked; a part of 2,000+ characters asks for "2 sampai 4" topics, a shorter one for "1 sampai 3"', async () => {
+      assert.strictEqual(sm67.TOPIC_SHORT_PART_CHARS, 2000);
+      assert.deepStrictEqual(sm67.TOPIC_PART_LIMITS, { topics: 4, points: 3 });
+      assert.strictEqual(sm67.GROUP_MERGE_PREDICT, 1300);
+      const id = sm67.topicSchema('id', { minTopics: 4, maxTopics: 8, maxPoints: 4, withSummary: true });
+      assert.deepStrictEqual(id, { type: 'object', required: ['ringkasan', 'topik'], properties: { ringkasan: { type: 'string' }, topik: { type: 'array', minItems: 4, maxItems: 8,
+        items: { type: 'object', required: ['judul', 'poin'], properties: { judul: { type: 'string' }, poin: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'string' } } } } } } });
+      const en = sm67.topicSchema('en', { minTopics: 2, maxTopics: 4, maxPoints: 4, withSummary: true });
+      assert.deepStrictEqual([en.required, en.properties.topics.items.required, en.properties.topics.minItems, en.properties.topics.maxItems], [['summary', 'topics'], ['title', 'points'], 2, 4]);
+      assert.deepStrictEqual(sm67.topicSchema('ms', { minTopics: 1, maxTopics: 3, maxPoints: 3 }).required, ['topics'], 'every language except Indonesian uses the English prompt keys');
+      const long = sm67.mapSchema('x'.repeat(2000), 'id');
+      assert.deepStrictEqual([long.required, long.properties.topik.minItems, long.properties.topik.maxItems, long.properties.topik.items.properties.poin.minItems, long.properties.topik.items.properties.poin.maxItems],
+        [['topik'], 2, 4, 2, 3], 'a long part: 2-4 topics with 2-3 points each');
+      const short = sm67.mapSchema('x'.repeat(1999), 'en');
+      assert.deepStrictEqual([short.required, short.properties.topics.minItems, short.properties.topics.maxItems, short.properties.topics.items.properties.points.minItems], [['topics'], 1, 3, 1]);
+      assert.deepStrictEqual(sm67.agendaDetectSchema('id'), { type: 'object', required: ['agenda_baru'], properties: { agenda_baru: { type: 'array', items: { type: 'object', required: ['nama', 'kutipan'], properties: { nama: { type: 'string' }, kutipan: { type: 'string' } } } } } });
+      assert.deepStrictEqual(sm67.agendaDetectSchema('en').properties.new_agendas.items.required, ['name', 'quote']);
+      assert.deepStrictEqual(sm67.agendaGroupSchema('id').properties.agenda.items, { type: 'object', required: ['nama', 'mulai'], properties: { nama: { type: 'string' }, mulai: { type: 'integer' } } });
+      assert.deepStrictEqual(sm67.agendaGroupSchema('en').properties.agendas.items.required, ['name', 'start']);
+      const idLong = sm67.buildTopicPartPrompt('x'.repeat(2500), 'id', 1, 2, false);
+      const idShort = sm67.buildTopicPartPrompt('x'.repeat(1500), 'id', 2, 2, false);
+      assert.ok(idLong.includes('(2 sampai 4 topik)') && !idLong.includes('(1 sampai 3 topik)'));
+      assert.ok(idShort.includes('(1 sampai 3 topik)') && !idShort.includes('(2 sampai 4 topik)'));
+      assert.ok(sm67.buildTopicPartPrompt('x'.repeat(2500), 'en', 1, 2).includes('(2 to 4 topics)') && sm67.buildTopicPartPrompt('x', 'en', 2, 2).includes('(1 to 3 topics)'));
+      assert.ok(idLong.includes('1 sampai 3 poin singkat'), 'still 1-3 points per map topic');
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] Offline protect step: a lost map point with a number / decision goes into the most similar final topic, otherwise into a topic of its own (part order, below the cap); a point still present (>= 60% of its prefixes) or without number/decision words is not added; a full topic (5 points) is not used; counts restored', async () => {
+      const ctx = sm67.buildCheckContext(LONG67, 'id', 'x.mp4');
+      const items = MAP67.flatMap((ts, p) => ts.map(t => ({ part: p + 1, title: t.judul, points: t.poin.filter(x => !/350/.test(x)) })));
+      const final = MERGE67.topik.map(t => ({ title: t.judul, points: [...t.poin] }));
+      const r = sm67.protectPoints(final, items, 8, ctx);
+      assert.deepStrictEqual(r.topics, EXPECTED67);
+      assert.strictEqual(r.restored, 3);
+      assert.deepStrictEqual(final, MERGE67.topik.map(t => ({ title: t.judul, points: t.poin })), 'the input is not changed');
+      assert.strictEqual(sm67.protectPoints(EXPECTED67, items, 8, ctx).restored, 0, 'everything present: nothing added');
+      // present with a different wording: >= 60% of the prefixes found -> not added
+      const reworded = [{ title: 'Bobot', points: ['Usulan bobot survei 70 persen disetujui peserta.'] }];
+      assert.strictEqual(sm67.protectPoints(reworded, [{ part: 1, title: 'Bobot Survei', points: [P70] }], 8, ctx).restored, 0);
+      // a lost point WITHOUT number / decision word is not protected
+      assert.strictEqual(sm67.protectPoints([{ title: 'Program Literasi', points: [PLIT] }], [{ part: 1, title: 'Sosialisasi', points: [PSOS] }], 8, ctx).restored, 0);
+      // the most similar topic is full (5 points): its own topic instead; at the cap: not put back at all
+      const full = [{ title: 'Dashboard Indeks Kepuasan', points: [PDASH, PLIT, PSOS, 'Dashboard menampilkan hasil per direktorat.', 'Program literasi keuangan dimulai di kantor pusat.'] }];
+      const viaOwn = sm67.protectPoints(full, [{ part: 1, title: 'Indeks Kepuasan', points: [P89] }], 2, ctx);
+      assert.deepStrictEqual(viaOwn.topics.map(t => [t.title, t.points.length]), [['Dashboard Indeks Kepuasan', 5], ['Indeks Kepuasan', 1]]);
+      assert.strictEqual(sm67.protectPoints(full, [{ part: 1, title: 'Indeks Kepuasan', points: [P89] }], 1, ctx).restored, 0, 'cap reached');
+      assert.strictEqual(sm67.PROTECT_KEEP, 0.6);
+      assert.strictEqual(sm67.PROTECT_TOPIC_POINTS, 5);
+      // the words are still there but the NUMBER is not: lost, put back, and the duplicate filter keeps it (different numbers = different facts)
+      const noNumber = [{ title: 'Indeks Kepuasan', points: ['Nilai indeks kepuasan saat ini dan kategori eksepsional sampai batas atas.'] }];
+      const withNumber = sm67.protectPoints(noNumber, [{ part: 1, title: 'Indeks Kepuasan', points: [P89] }], 8, ctx);
+      assert.strictEqual(withNumber.restored, 1, 'the 89 / 85 / 100 were missing');
+      assert.deepStrictEqual(sm67.removeDuplicatePoints(withNumber.topics, 'id').topics[0].points, [noNumber[0].points[0], P89]);
+      assert.strictEqual(sm67.protectPoints([{ title: 'Indeks', points: [P89] }], [{ part: 1, title: 'Indeks', points: ['Kategori eksepsional 85 sampai 100 untuk indeks kepuasan.'] }], 8, ctx).restored, 0, 'words and numbers present: nothing added');
+      assert.strictEqual(sm67.isDuplicatePoint('Sesi pertama diikuti 46 partisipan dari berbagai bidang.', 'Sesi pertama diikuti partisipan dari berbagai bidang.', 'id'), false, 'a number on one side only');
+      assert.strictEqual(sm67.isDuplicatePoint('Sesi pertama diikuti 46 partisipan.', 'Sesi pertama diikuti 12 partisipan.', 'id'), false, 'different numbers');
+      assert.strictEqual(sm67.isDuplicatePoint('Sesi pertama diikuti 46 partisipan dari berbagai bidang.', 'Sesi pertama diikuti 46 partisipan.', 'id'), true, 'same number: still a duplicate');
+      // what counts as protected
+      for (const p of [P89, P70, PMODUL, 'Laporan dikirim bulan Desember.', 'Tindak lanjut dibahas dengan HR.', 'Usulan itu disepakati bersama.', 'Survei ditargetkan tahun depan.', 'Status proyek complete.',
+        'The proposal was approved.', 'The module is finished next week.', 'Follow-up with the owners in March.']) assert.strictEqual(sm67.isProtectedPoint(p), true, p);
+      for (const p of [PLIT, PSOS, 'The dashboard may show more data.', 'Sosialisasi berjalan bertahap.']) assert.strictEqual(sm67.isProtectedPoint(p), false, p);
+    });
+
+    await runTest('[NEGATIVE] Offline protect step never inserts what the fact check refuses: an invented number (350), an invented name (Pak Hendra) or a filler point is not put back, and an own topic whose map title names an unknown person is not opened', async () => {
+      const ctx = sm67.buildCheckContext(LONG67, 'id', 'x.mp4');
+      const final = [{ title: 'Program Literasi Keuangan', points: [PLIT] }];
+      const bad = [{ part: 1, title: 'Program Literasi', points: ['Program ini diikuti 350 peserta sejak 2019.', 'Bobot survei disetujui oleh Pak Hendra Wijaya.', 'Target waktu: tidak disebutkan.', 'Tidak ada tindak lanjut yang disebutkan.'] }];
+      const r = sm67.protectPoints(final, bad, 8, ctx);
+      assert.strictEqual(r.restored, 0);
+      assert.deepStrictEqual(r.topics, final);
+      const badTitle = sm67.protectPoints(final, [{ part: 1, title: 'Kunjungan Pak Hendra', points: [P70] }], 8, ctx);
+      assert.strictEqual(badTitle.restored, 0, 'the map title is checked before it opens a topic');
+    });
+
+    await runTest('[POSITIVE/NEGATIVE] Offline opener repairs: "Agenda ini / Bagian ini / Potongan ini membahas ..." and "This agenda / section covers ..." get the neutral opener; a summary whose FIRST neutral opener says "juga" / "also" loses it, later ones keep or get it; an ordinary sentence starting with "Agenda" is untouched', async () => {
+      const ctx = sm67.buildCheckContext(LONG67, 'id', 'x.mp4');
+      assert.strictEqual(sm67.repairSummary('Agenda ini membahas program literasi keuangan untuk karyawan baru di kantor pusat.', ctx).text, 'Pembahasan mencakup program literasi keuangan untuk karyawan baru di kantor pusat.');
+      assert.strictEqual(sm67.repairSummary('Bagian ini juga membahas dashboard yang menampilkan hasil per direktorat.', ctx).text, 'Pembahasan mencakup dashboard yang menampilkan hasil per direktorat.', 'a first "juga" is dropped');
+      assert.strictEqual(sm67.repairSummary('Potongan ini menjelaskan sosialisasi kepada experience owner. Agenda ini juga membahas modul pelatihan.', ctx).text,
+        'Pembahasan mencakup sosialisasi kepada experience owner. Pembahasan juga mencakup modul pelatihan.');
+      const en = sm67.buildCheckContext(EN67, 'en', 'x.mp4');
+      assert.strictEqual(sm67.repairSummary('This agenda covers the onboarding program for new employees at the head office.', en).text, 'The discussion covers the onboarding program for new employees at the head office.');
+      assert.strictEqual(sm67.repairSummary('This section discusses the dashboard results per directorate.', en).text, 'The discussion covers the dashboard results per directorate.');
+      assert.strictEqual(sm67.dedupeOpeners('Pembahasan juga mencakup program literasi. Pembahasan mencakup dashboard.'), 'Pembahasan mencakup program literasi. Pembahasan juga mencakup dashboard.');
+      assert.strictEqual(sm67.dedupeOpeners('The discussion also covers the onboarding. The discussion covers the dashboard.'), 'The discussion covers the onboarding. The discussion also covers the dashboard.');
+      assert.strictEqual(sm67.dedupeOpeners('Pembahasan mencakup memo. Pembahasan juga mencakup modul.'), 'Pembahasan mencakup memo. Pembahasan juga mencakup modul.', 'already right: unchanged');
+      const plain = 'Agenda pelatihan disetujui oleh semua peserta.';
+      assert.strictEqual(sm67.repairSummary(plain, ctx).text, plain, 'no "ini" + opener verb: not a meta opener');
+    });
+
+    const storage67 = require('../server/db/storage');
+    if (storage67.backend !== 'sql') {
+      console.log('  ⏭️  SKIP: Module 67 pipeline tests need the SQL backend (second backend over the same database)');
+    } else {
+      const http67 = require('http');
+      const { spawn } = require('child_process');
+      const path67 = require('path');
+      const crypto67 = require('crypto');
+      const auth67 = require('../server/services/authService');
+      const EVENT67 = 'ev-perspektif-2024-q1';
+      const sleep67 = ms => new Promise(r => setTimeout(r, ms));
+      const textOfPrompt67 = prompt => { const m = prompt.match(/"""\n([\s\S]*)\n"""/); return m ? m[1] : ''; };
+      const itemsOfPrompt67 = prompt => [...prompt.matchAll(/^\d+\. \[bagian (\d+)\] (.+?): (.+)$/gm)].map(m => ({ part: Number(m[1]), judul: m[2], poin: m[3].split(' | ') }));
+      const oll67 = { calls: [], mode: 'normal' };
+      const kind67 = c => (c.prompt.includes('MEMULAI AGENDA BESAR BARU') || c.prompt.includes('START A NEW MAJOR AGENDA') ? 'detect'
+        : /Berikut bagian \d+ dari \d+ transkrip rekaman|Below is part \d+ of \d+ of its transcript/.test(c.prompt) ? 'map'
+          : c.prompt.includes('dari satu potongan berurutan') ? 'block-merge'
+            : c.prompt.includes('Berikut daftar topik dan poin') || c.prompt.includes('Below are the topics and points extracted') ? 'single-merge' : 'other');
+      const answer67 = prompt => {
+        const kind = kind67({ prompt });
+        if (kind === 'detect') return prompt.includes('START A NEW MAJOR AGENDA') ? '{"new_agendas":[]}' : '{"agenda_baru":[]}';
+        if (kind === 'map') {
+          const text = textOfPrompt67(prompt);
+          const part = Number((prompt.match(/(?:bagian|part) (\d+)/) || [])[1]);
+          if (text.includes('literasi keuangan')) return JSON.stringify({ topik: MAP67[part - 1] });
+          if (text.includes('onboarding program')) return JSON.stringify({ topics: EN_MAP67[part - 1] });
+          return JSON.stringify({ topik: SENT67.slice((part - 1) * 3, part * 3).map(s => ({ judul: titleOf67(s), poin: [s] })) });
+        }
+        if (kind === 'single-merge') return JSON.stringify(prompt.includes('Below are') ? EN_MERGE67 : MERGE67);
+        if (kind === 'block-merge') {
+          const items = itemsOfPrompt67(prompt);
+          const first = items[0].part === 1;
+          const topik = items.slice(0, 4).map(t => ({ judul: t.judul, poin: t.poin }));
+          let ringkasan;
+          if (oll67.mode === 'block-fail') ringkasan = first ? 'Pembahasan dipimpin oleh Budi Santoso tentang olahraga dan sayuran hijau.' : `Potongan ini membahas ${lowerFirst67(items[0].poin[0])}`;
+          else ringkasan = first ? `Bagian ini juga membahas ${lowerFirst67(items[0].poin[0])}` : `Potongan ini membahas ${lowerFirst67(items[0].poin[0])}`;
+          return JSON.stringify({ ringkasan, topik });
+        }
+        return 'RINGKASAN: tidak dipakai.\n\nPOIN:\n- tidak dipakai di modul ini.\n- tidak dipakai di modul ini.';
+      };
+      const fakeOllama67 = http67.createServer((req, res) => {
+        const chunks = [];
+        req.on('data', c => chunks.push(c));
+        req.on('end', () => {
+          let body = {};
+          try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch (_) { /* tags etc. */ }
+          oll67.calls.push({ url: req.url, prompt: body.prompt || '', format: body.format, options: body.options || {} });
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ response: answer67(body.prompt || ''), done: true }));
+        });
+      });
+      const fakeTranscribe67 = http67.createServer((req, res) => { req.resume(); req.on('end', () => { res.setHeader('Content-Type', 'application/json'); res.end('{"status":"ok"}'); }); });
+      const listen67 = srv => new Promise(resolve => srv.listen(0, '127.0.0.1', () => resolve(srv.address().port)));
+      const ollamaPort67 = await listen67(fakeOllama67);
+      const trPort67 = await listen67(fakeTranscribe67);
+      const freePort67 = await (async () => { const s = http67.createServer(); const p = await listen67(s); await new Promise(r => s.close(r)); return p; })();
+      const CHILD67 = `http://127.0.0.1:${freePort67}`;
+      const stamp67 = Date.now().toString(36);
+      const pw67 = crypto67.randomBytes(9).toString('hex') + 'Aa1';
+      const users67 = [];
+      const mediaIds67 = new Set();
+      let child67 = null;
+      let cookie67 = null;
+      const api67 = (p, opts = {}) => realFetch(`${CHILD67}${p}`, { ...opts, headers: { ...(opts.headers || {}), ...(cookie67 ? { Cookie: cookie67 } : {}) } });
+      const generate67 = () => oll67.calls.filter(c => c.url === '/api/generate');
+      const eventMedia67 = async id => (await (await api67(`/api/events/${EVENT67}`)).json()).media.find(m => m.media_id === id);
+      const waitDone67 = async (id, ms = 30000) => {
+        for (let i = 0; i < ms / 250; i++) { const m = await eventMedia67(id); if (m && m.summary_status && m.summary_status !== 'PROCESSING') return m; await sleep67(250); }
+        return eventMedia67(id);
+      };
+      const videoWith67 = async (transcript, fileName, language = 'id') => {
+        const m = await storage67.addMedia({ event_id: EVENT67, file_name: fileName, file_path: `/uploads/rt67-${stamp67}-${mediaIds67.size}.mp4`, file_type: 'VIDEO', caption: 'rt67', transcript_status: 'DONE' });
+        mediaIds67.add(m.media_id);
+        await storage67.updateMedia(m.media_id, { transcript, transcript_language: language, transcript_segments: [] });
+        return m;
+      };
+      const summarize67 = async (id, mode = 'normal') => {
+        oll67.calls.length = 0; oll67.mode = mode;
+        const r = await api67(`/api/media/${id}/summarize`, { method: 'POST' });
+        assert.strictEqual(r.status, 202);
+        return waitDone67(id);
+      };
+      const counts67 = (format, key, pointsKey) => [format.properties[key].minItems, format.properties[key].maxItems, format.properties[key].items.properties[pointsKey].maxItems];
+      try {
+        const u = await storage67.createUser({ is_test_account: true, username: `rt67a${stamp67}`, full_name: 'Regression 67 Admin', email: '', role: 'ADMIN', password_hash: await auth67.hashPassword(pw67), must_change_password: false });
+        users67.push(u.user_id);
+        child67 = spawn(process.execPath, [path67.join(__dirname, '..', 'server', 'server.js')], {
+          cwd: path67.join(__dirname, '..'),
+          env: { ...process.env, PORT: String(freePort67), OLLAMA_HOST: `http://127.0.0.1:${ollamaPort67}`, OLLAMA_MODEL: 'gemma3:4b', TRANSCRIBE_API_URL: `http://127.0.0.1:${trPort67}`, PX_DISABLE_SCHEDULERS: '1', PX_DISABLE_RESUME: '1' },
+          stdio: 'ignore'
+        });
+        let booted = false;
+        for (let i = 0; i < 120 && !booted; i++) { try { booted = (await realFetch(`${CHILD67}/api/health`)).ok; } catch (_) { await sleep67(500); } }
+        assert.ok(booted, 'second backend did not start');
+        const login = await realFetch(`${CHILD67}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u.username, password: pw67 }) });
+        assert.strictEqual(login.status, 200);
+        cookie67 = (login.headers.getSetCookie() || []).map(c => c.split(';')[0]).find(c => c.startsWith('px_session='));
+        assert.strictEqual(generate67().length, 0, 'booting the second backend makes no Gemma call');
+
+        await runTest('[POSITIVE] Indonesian long video: map calls send a JSON schema (2-4 topics x 2-3 points for the 5,984-char part, 1-3 x 1-3 for the 1,196-char tail; num_predict 700) with matching prompt text, the single merge a schema of min(4, map topics)..8 topics x 4 points + ringkasan; the 89 / 70% / "minggu depan" points the merge lost are put back (protected_points 3); the invented 350 point never comes back', async () => {
+          const v = await videoWith67(LONG67, `rt67-literasi-${stamp67}.mp4`);
+          const done = await summarize67(v.media_id);
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          assert.deepStrictEqual(done.summary_topics, EXPECTED67);
+          assert.strictEqual(done.summary, MERGE67.ringkasan);
+          assert.deepStrictEqual(done.summary_points, EXPECTED67.map(t => `${t.title}: ${t.points[0]}`));
+          const st = done.summary_topic_stats;
+          assert.deepStrictEqual([st.protected_points, st.dropped_points, st.merge_attempts, st.detect_calls, st.parts, st.coverage_restored], [3, 1, 1, 0, 2, 0]);
+          assert.ok(!/350/.test(JSON.stringify([done.summary, done.summary_points, done.summary_topics])), 'nothing invented stored');
+          const calls = generate67();
+          assert.deepStrictEqual(calls.map(kind67), ['map', 'map', 'single-merge']);
+          assert.ok(calls[0].prompt.includes('(2 sampai 4 topik)') && calls[1].prompt.includes('(1 sampai 3 topik)'));
+          assert.deepStrictEqual(counts67(calls[0].format, 'topik', 'poin'), [2, 4, 3]);
+          assert.deepStrictEqual(counts67(calls[1].format, 'topik', 'poin'), [1, 3, 3]);
+          assert.deepStrictEqual(calls[0].format.required, ['topik']);
+          assert.deepStrictEqual(calls.slice(0, 2).map(c => c.format.properties.topik.items.properties.poin.minItems), [2, 1], 'at least 2 points per topic for the long part only');
+          assert.ok(calls.slice(0, 2).every(c => c.options.num_predict === 700 && c.options.num_ctx === 8192 && c.options.seed === 41));
+          assert.deepStrictEqual(calls[2].format.required, ['ringkasan', 'topik']);
+          assert.deepStrictEqual(counts67(calls[2].format, 'topik', 'poin'), [4, 8, 4], '5 map topics -> min 4');
+          assert.ok(!calls.some(c => c.format === 'json'), 'no call sends the plain "json" format any more');
+        });
+
+        await runTest('[POSITIVE] English long video named "... Meeting Recording": detect calls send the English schema (new_agendas / name / quote), map calls "(2 to 4 topics)" / "(1 to 3 topics)" with topics/title/points keys, the merge summary/topics keys; the lost "approved" and "next week" points are put back', async () => {
+          const v = await videoWith67(EN67, 'Team Update - Meeting Recording.mp4', 'en');
+          const done = await summarize67(v.media_id);
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          assert.strictEqual(done.summary_language, 'en');
+          const calls = generate67();
+          assert.deepStrictEqual(calls.map(kind67), ['detect', 'detect', 'map', 'map', 'single-merge']);
+          calls.filter(c => kind67(c) === 'detect').forEach(c => assert.deepStrictEqual([c.format.required, c.format.properties.new_agendas.items.required], [['new_agendas'], ['name', 'quote']]));
+          const maps = calls.filter(c => kind67(c) === 'map');
+          assert.ok(maps[0].prompt.includes('(2 to 4 topics)') && maps[1].prompt.includes('(1 to 3 topics)'));
+          assert.deepStrictEqual(counts67(maps[0].format, 'topics', 'points'), [2, 4, 3]);
+          assert.deepStrictEqual(counts67(maps[1].format, 'topics', 'points'), [1, 3, 3]);
+          const merge = calls[calls.length - 1];
+          assert.deepStrictEqual(merge.format.required, ['summary', 'topics']);
+          assert.deepStrictEqual(counts67(merge.format, 'topics', 'points'), [4, 8, 4]);
+          assert.strictEqual(done.summary_topic_stats.protected_points, 2);
+          const all = JSON.stringify(done.summary_topics);
+          assert.ok(all.includes(E70) && all.includes(EMOD), 'approved / next week points are back');
+          assert.deepStrictEqual(done.summary_topics.slice(0, 3).map(t => t.title), ['Onboarding Program', 'Satisfaction Index', 'Dashboard Results'], 'the merged topics keep their place');
+        });
+
+        await runTest('[NEGATIVE] Block merge: a block whose ringkasan fails twice (invented name) is DROPPED - the other block\'s ringkasan is kept (opener repaired), the failed block adds a sentence from its own topic titles; block merges send the block schema (2-4 topics x 4 points, num_predict 1300)', async () => {
+          const v = await videoWith67(LECT67, `rt67-lecture-fail-${stamp67}.mp4`);
+          const done = await summarize67(v.media_id, 'block-fail');
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          const st = done.summary_topic_stats;
+          assert.deepStrictEqual([st.blocks, st.merge_attempts, st.summary_from_titles], [2, 3, 1], 'block 1 twice (summary retry), block 2 once');
+          assert.ok(!/Budi|Santoso|dipimpin/.test(JSON.stringify([done.summary, done.summary_topics])), 'the failed ringkasan is not stored');
+          assert.ok(done.summary.startsWith('Pembahasan mencakup '), done.summary);
+          assert.ok(done.summary.endsWith(`Pembahasan juga mencakup ${lowerFirst67(SENT67[9])}`), done.summary);
+          const blocks = generate67().filter(c => kind67(c) === 'block-merge');
+          assert.strictEqual(blocks.length, 3);
+          blocks.forEach(c => {
+            assert.deepStrictEqual(c.format.required, ['ringkasan', 'topik']);
+            assert.deepStrictEqual(counts67(c.format, 'topik', 'poin'), [2, 4, 4]);
+            assert.strictEqual(c.options.num_predict, 1300);
+            assert.ok(c.prompt.includes('tulis 1 sampai 4 poin singkat'));
+          });
+        });
+
+        await runTest('[POSITIVE] Block summaries "Bagian ini juga membahas ..." + "Potongan ini membahas ...": the joined summary starts with "Pembahasan mencakup" (the leading "juga" dropped) and the second reads "Pembahasan juga mencakup"', async () => {
+          const v = await videoWith67(LECT67, `rt67-lecture-opener-${stamp67}.mp4`);
+          const done = await summarize67(v.media_id, 'opener');
+          assert.strictEqual(done.summary_source, 'AI', done.summary_error);
+          assert.strictEqual(done.summary, `Pembahasan mencakup ${lowerFirst67(SENT67[0])} Pembahasan juga mencakup ${lowerFirst67(SENT67[9])}`);
+          assert.deepStrictEqual([done.summary_topic_stats.summary_repaired, done.summary_topic_stats.summary_from_titles, done.summary_topic_stats.merge_attempts], [2, 0, 2]);
+        });
+      } finally {
+        if (child67) child67.kill();
+        await sleep67(500);
+        for (const id of mediaIds67) {
+          try { const removed = await storage67.deleteMedia(id); const abs = removed && require('../server/services/transcribeService').resolveUploadPath(removed.file_path); if (abs) require('fs').unlink(abs, () => {}); } catch (_) { /* ignore */ }
+        }
+        for (const id of users67) { try { await storage67.deleteUser(id); } catch (_) { /* ignore */ } }
+        await new Promise(r => fakeOllama67.close(r));
+        await new Promise(r => fakeTranscribe67.close(r));
+      }
+      await runTest('[POSITIVE] Clean-up: the Module 67 videos and the temporary admin are gone', async () => {
+        const all = await storage67.getAllMedia();
+        assert.ok(!all.some(m => mediaIds67.has(m.media_id)), 'test media deleted');
+        for (const id of users67) assert.ok(!(await storage67.getUserById(id)), 'temporary admin deleted');
       });
     }
   }

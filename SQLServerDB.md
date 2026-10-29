@@ -299,4 +299,5 @@ Kolom `px_users.menu_access` (`NVARCHAR(400) NULL`, JSON berisi 6 menu `true`/`f
 - Diisi aplikasi saat ringkasan dibuat; jangan diubah langsung di tabel.
 - Ikut `.bak`, `npm run db:export` dan import `migrate.js`.
 - Sejak v2.60.1 (tanpa perubahan skema): topik rapat bisa memuat `agenda`, dan `summary_topic_stats` mendapat `agenda_mode`, `agendas`, `detect_calls`, `agenda_candidates`, `blocks`, `coverage_restored`. Rincian: `docs/08` §31.
+- Sejak v2.60.3 (tanpa perubahan skema): `summary_topic_stats` mendapat `protected_points`. Rincian: `docs/08` §32.
 - Pemeriksaan: `SELECT media_id, file_name, summary_source, summary_topic_stats FROM dbo.px_media WHERE summary_topics IS NOT NULL;`
