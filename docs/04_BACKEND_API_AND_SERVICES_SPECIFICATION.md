@@ -607,6 +607,24 @@ Pengujian: `docs/07` §31 (Modul 46).
 
 ---
 
+## Catatan v2.61.0 - Backend ketiga PostgreSQL (`STORAGE_BACKEND=pg`) lewat lapisan dialek
+
+**Ringkasan**: `server/db/storage.js` mengenal `STORAGE_BACKEND` = `sql` | `pg` | `json` (nilai lain -> `json`). `sql` dan `pg` sama-sama memuat `sqlStorage.js`; dialeknya (`server/db/dialects/index.js` -> `mssql.js` atau `pg.js`) memegang driver, konversi parameter, transaksi, `upsert`, `rowCount`, insert id eksplisit, bulk insert, cek katalog, I/O snapshot konfigurasi dan fragmen SQL. Kontrak storage untuk `server.js` dan service tidak berubah. Tujuan: SQL Server = produksi on-premise, PostgreSQL = UAT sementara (Render, belum di-deploy; data dummy saja). Skema, koneksi dan batasan: `docs/08` §33; rincian: `changelog/v2.61.0.md`.
+
+| Bagian | Perubahan |
+| :--- | :--- |
+| `GET /api/health` | `version` `2.61.0`. Dengan login: `database.backend` `"sql"` atau `"pg"`, `mode` `"MS SQL Server (Connected)"` / `"PostgreSQL (Connected)"` (gagal: `(ERROR)` + `error`); `server`, `database`, `edition` (`PostgreSQL <versi>`), `version`, `tables`. Tanpa login tetap status saja. Tidak ada password di respons maupun log |
+| `sqlStorage.js` | Konstruksi khusus T-SQL (tabel temp, `DECLARE`/`IF`, `UPDATE ... FROM`, `DELETE alias FROM`, batch multi-statement, `@@ROWCOUNT`, `ISNULL`) ditulis ulang ke bentuk yang jalan di kedua dialek. `rowCount()` SQL Server = statement + `SELECT @@ROWCOUNT` satu batch (benar juga dengan `SET NOCOUNT ON`). `holdlock` upsert hanya di `saveExitInterviewUpload` dan `saveSocialMediaStats`. `init()` memanggil `syncIdentities()` setelah seed (no-op di SQL Server) |
+| `migrate.js`, `exportToJson.js`, `scripts/create-admin.js` | Jalan di PostgreSQL dengan `STORAGE_BACKEND=pg` (`migrate.js` mencetak label dialek dan `STORAGE_BACKEND=<sql|pg>` di pesan akhir) |
+| Env baru (opsional) | `DATABASE_URL`, `PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE`, `PG_SSL`, `PG_POOL_MAX` - hanya dibaca bila `STORAGE_BACKEND=pg` |
+| Dependensi | `pg` ^8.23.1 |
+
+Tidak ada endpoint, setting, tabel atau UI baru. Perilaku SQL Server tidak berubah: 297 URL GET commit sebelumnya vs kode baru -> 296 identik byte demi byte (hanya `version`).
+
+Pengujian: `docs/07` §54 (Modul 68).
+
+---
+
 ## Catatan v2.60.3 - JSON schema per panggilan Gemma & langkah protect
 
 **Masalah**: AI Summary rapat "HR Projects Update" (v2.60.1) hanya mencakup 34% dari 22 poin acuan (notulen manual rapat internal). Spike baca-saja dengan Gemma asli: (1) dengan `format: 'json'` Gemma merusak struktur JSON di langkah map lalu berputar sampai `num_predict` / "token repeat limit", sehingga bagian rapat yang paling padat keputusan dihitung kosong; (2) merge membuang angka, keputusan, dan target yang masih ada di topik map. Detail dan hasil uji nyata: `changelog/v2.60.3.md`.

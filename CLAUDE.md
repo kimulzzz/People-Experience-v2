@@ -8,10 +8,13 @@ experience ("Kejar Mimpi" framework: 70% Survey Index + 30% Outcome Index).
 
 - **Frontend**: React 19 + Vite 8 + Tailwind CSS v4, Recharts, Lucide icons — `src/`
 - **Backend**: Node.js + Express 5 REST API — `server/server.js`
-- **Storage**: two interchangeable backends behind the `server/db/storage.js` dispatcher,
+- **Storage**: three interchangeable backends behind the `server/db/storage.js` dispatcher,
   chosen by `STORAGE_BACKEND` in `.env`: `sql` = local **Microsoft SQL Server** (`PeopleExperiencePX`,
-  active since v2.22.0) or `json` = `server/data/store.json` (default if unset; the rollback path).
-  All storage calls are async (`await storage.x()`). See `docs/08`
+  active since v2.22.0; on-premise production), `pg` = **PostgreSQL 15+** (since v2.61.0; temporary UAT
+  hosting, dummy data only) or `json` = `server/data/store.json` (default if unset; the rollback path).
+  `sql` and `pg` run the SAME `sqlStorage.js` through `server/db/dialects/` (`mssql.js` / `pg.js`) - write
+  storage code once, with `@name` params and the `D.*` helpers. All storage calls are async
+  (`await storage.x()`). See `docs/08` (§33 for PostgreSQL)
 - **Reporting**: PPTXgenJS (PowerPoint export), QR code generation, CSV import/export
 - **Local AI**: Ollama + Gemma 3 4B (`localAiService.js`, `mediaSummaryService.js`) ONLY for the AI Summary of event
   videos (since v2.28.0); alert/event narratives are rule-based — always has a rule-based fallback, never required
@@ -60,7 +63,7 @@ Frontend proxies `/api`, `/uploads`, `/exports` to `http://localhost:<PORT>` (se
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(539-case regression suite on SQL Server, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(547-case regression suite on SQL Server, 548 on PostgreSQL, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -76,8 +79,8 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (539 cases on SQL; v2.60.3 run 532/532, 7 skipped (event modules 8/24; media modules run); full JSON suite not re-run since v2.30.1) |
-| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (41 `px_*` tables), JSON→SQL migration, rollback |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (547 cases on SQL Server, 548 on PostgreSQL; v2.61.0 run SQL 547/547, 0 skipped (media + event modules run), pg live copy 548/548; JSON 334/342 with 8 pre-existing failures) |
+| `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (41 `px_*` tables), JSON→SQL migration, rollback; PostgreSQL backend `schema.pg.sql` + dialect layer (§33, v2.61.0) |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
 ## Compliance constraints (do not violate)
@@ -897,6 +900,31 @@ domain model, not just descriptive:
 - **v2.60.4** (2026-10-29, see `changelog/v2.60.4.md`, `docs/05` "Catatan v2.60.4", `docs/07` §53): Signature Program Events - the AI Summary block of every video card
   is collapsed by default like the Full AI transcript (`<details open>` removed in `EventManager.jsx`; user request). Frontend only. Suite SQL 460/460, 9 skipped + media modules
   27/32/38/41/42/43 skipped, event modules 8/24 ran.
+
+- **v2.61.0** (2026-11-03, see `changelog/v2.61.0.md`, `docs/03`, `docs/04` "Catatan v2.61.0", `docs/07` §54, `docs/08` §33, `SQLServerDB.md` §30): user wants two databases -
+  SQL Server for the future on-premise PRODUCTION, PostgreSQL for a temporary UAT host on Render.com; chose ONE code path with a dialect layer (no `pgStorage.js`). The 100%
+  on-premise rule applies to production; UAT may be off-premise with DUMMY/seed data only (no real Exit Interview rows, ESS files, accounts). Render deploy (`render.yaml` etc.) is
+  a LATER step. New `STORAGE_BACKEND=pg` (unknown values -> json): `DATABASE_URL` or `PG_HOST/PG_PORT/PG_USER/PG_PASSWORD/PG_DATABASE`, `PG_SSL=1` (TLS without certificate check;
+  do NOT add `?sslmode=require` to `DATABASE_URL` - it overrides `PG_SSL` and pg 8 then verifies fully), `PG_POOL_MAX` (10); dependency `pg` ^8.23.1. `server/db/dialects/`
+  (`index.js`, `mssql.js`, `pg.js`, same contract): query runner (`@name` -> `$n` by tokenizer on pg), transactions, `upsert` (MERGE / ON CONFLICT; `holdlock` only in
+  `saveExitInterviewUpload` + `saveSocialMediaStats`), `rowCount()` (SQL Server: `SELECT @@ROWCOUNT` in the same batch, NOCOUNT-safe), explicit-id inserts, bulk insert, catalog,
+  config-snapshot I/O, SQL fragments (`top`/`limit`, `now`, `dateStr`, `year`/`month`, `bin`, TRUE/FALSE, output/returning, lock hints). `schema.pg.sql` = same 41 tables in schema
+  `dbo`, text = CITEXT (case-insensitive like SQL Server; exact compare via `bin()`), nullable uniques NULLS NOT DISTINCT (PostgreSQL 15+, checked), schema creates `citext` (role
+  needs the right). Types like mssql (COUNT/NUMERIC number, DATE = UTC midnight, BOOLEAN), session UTC; identity sequences synced after import/restore and at boot, never moved back.
+  `sqlStorage.js` T-SQL-only constructs rewritten for both (temp tables, DECLARE/IF, UPDATE..FROM, DELETE alias FROM, batches, ISNULL -> COALESCE); SQL Server unchanged (297 GET URLs:
+  296 byte-identical, only `version`). `migrate.js` (+ `--reset`), `db:export`, `auth:create-admin` work on pg; empty pg + first boot = same demo seed. `/api/health` with login:
+  `backend:"pg"`, "PostgreSQL (Connected)". No new endpoint/setting/table/UI. Gotchas: storage code must stay dialect-neutral (`D.sql.*`, `D.upsert`, `D.rowCount`, one statement per
+  `testDb` call); pg suite runs use `server/data/backups/regression-config-snapshot.pg.json`; new `skipTest(reason)` (SKIPPED, not passed) - Modules 56/59/61 skip "live data absent" on
+  a fresh seed; CITEXT ignores SQL Server length limits, trailing spaces count on pg, non-ASCII order may differ. Render later: PostgreSQL 15+ with citext, SSL rule above, set
+  `SETTINGS_ENCRYPTION_KEY` as a Render env var (else a new key on the throw-away disk -> stored e-mail password unreadable after redeploy), uploads (`server/uploads`,
+  `server/data/*-uploads`) lost on redeploy without a persistent disk, no Ollama/Video Extractor (AI rule-based), first admin via `npm run auth:create-admin` with the pg env or
+  `DEFAULT_INITIAL_PASSWORD`, dummy data only. Local test PostgreSQL 17.10 portable (EnterpriseDB zip, NOT a service): binaries `D:\Tools\pgsql`, data `D:\Tools\pgsql-data`, port
+  5433 on 127.0.0.1, DB `px_pg_test`; start `D:\Tools\pgsql\bin\pg_ctl.exe -D D:\Tools\pgsql-data -l D:\Tools\pgsql-data\server.log -o "-p 5433 -c listen_addresses=127.0.0.1" start`;
+  its password is kept outside the repo. Docker Desktop does not work on this laptop (no WSL distro). Tests: `tests/helpers/testDb.js`, Module 68 (8 on SQL Server, 9 on pg, skipped
+  on JSON), Module 62 fix -> SQL 547/547, 0 skipped (media + event modules ran); pg live copy 548/548 (x2); fresh pg targeted 133/133 + 3 data skips; full suite not re-run after
+  the last small dialect-helper fix; static `await runTest(` 535. JSON 334/342 = same 8 failures as the previous commit (pre-existing, not fixed). QC: LULUS DENGAN CATATAN (R1
+  HOLDLOCK everywhere, R2 NOCOUNT fixed). Not fixed (both backends): USER scope check is case-sensitive (`?directorate=business banking` -> 403); CSV importer accepts unknown
+  divisions. Not tested: `SEED_DEMO_DATA=false` on pg, concurrent writes under pg table locks, Render itself.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

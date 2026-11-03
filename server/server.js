@@ -147,14 +147,15 @@ app.get('/api/health', async (req, res) => {
   const checkAi = req.user && req.query.check_ai === '1';
   const ollama = checkAi ? await isOllamaAvailable() : null;
 
-  // Report the REAL state of the active storage backend (for SQL Server: a live query).
+  // Report the REAL state of the active storage backend (for SQL Server / PostgreSQL: a live query).
   let database;
-  if (storage.backend === 'sql') {
+  if (storage.backend === 'sql' || storage.backend === 'pg') {
+    const label = storage.backend === 'pg' ? 'PostgreSQL' : 'MS SQL Server';
     try {
       const h = await storage.health();
       database = {
-        mode: 'MS SQL Server (Connected)',
-        backend: 'sql',
+        mode: `${label} (Connected)`,
+        backend: storage.backend,
         server: h.server,
         database: h.database,
         edition: h.edition,
@@ -162,7 +163,7 @@ app.get('/api/health', async (req, res) => {
         tables: h.tables
       };
     } catch (err) {
-      database = { mode: 'MS SQL Server (ERROR)', backend: 'sql', error: err.message };
+      database = { mode: `${label} (ERROR)`, backend: storage.backend, error: err.message };
     }
   } else {
     database = { mode: 'Local File Store (Active)', backend: 'json', store_file: 'server/data/store.json' };
@@ -170,12 +171,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.60.4' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.61.0' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.60.4',
+    version: '2.61.0',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',

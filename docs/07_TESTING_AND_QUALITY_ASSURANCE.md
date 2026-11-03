@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    67 MODUL PENGUJIAN    │     539 AUTOMATED TESTS     │       100% PASS RATE          │
+│    68 MODUL PENGUJIAN    │  547 TESTS (SQL) / 548 (PG) │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -1591,3 +1591,47 @@ Run suite penuh SQL (developer, backend kedua :5002): **532/532 lulus, 0 gagal, 
 - Perubahan hanya di frontend (`EventManager.jsx`, atribut `open` blok AI Summary dihapus); tidak ada modul atau tes baru, jumlah suite tetap 539.
 - Suite penuh di backend kedua :5002 dengan `TEST_SKIP_MODULES=27,32,38,41,42,43` (modul media di-skip karena kode media/ringkasan tidak tersentuh; modul event 8 dan 24 IKUT jalan karena `EventManager.jsx` tersentuh): **460/460 PASS, 0 gagal, 9 tes di-skip** + 6 modul media di-skip sebagai blok.
 - Tampilan dicek di Browser pane: pada event berisi 4 video, 8 blok `<details>` (AI Summary + Full AI transcript) tertutup saat event dibuka; klik judul membukanya. Tidak ada tes UI otomatis.
+
+---
+
+## 54. v2.61.0 - Modul 68: SQL Server dan PostgreSQL berperilaku sama (satu kode storage)
+
+Suite kini bisa dijalankan di tiga backend: `STORAGE_BACKEND=sql` (SQL Server), `pg` (PostgreSQL, baru) dan `json`. Fixture yang butuh akses database mentah lewat `tests/helpers/testDb.js` (runner dialek yang sama dengan `sqlStorage.js`; parameter `@name`, satu statement per panggilan, boolean lewat `db.sql.TRUE`/`FALSE`). Run di PostgreSQL memakai file snapshot konfigurasi sendiri `server/data/backups/regression-config-snapshot.pg.json` (SQL Server tetap `regression-config-snapshot.json`), jadi run SQL Server tidak pernah bertemu snapshot PostgreSQL.
+
+### Modul 68 - paritas storage SQL Server / PostgreSQL (8 tes di SQL Server, 9 di PostgreSQL; di-skip di JSON)
+
+| # | Jenis | Skenario |
+| :--- | :--- | :--- |
+| 1 | Positif | Username dicari tanpa beda huruf, ejaan tersimpan yang dikembalikan |
+| 2 | Negatif | Username yang hanya beda huruf = duplikat; username tak dikenal -> `null` |
+| 3 | Positif/Negatif | Nama direktorat UNIQUE tanpa beda huruf di database itu sendiri; key setting cocok dalam huruf apa pun, perbandingan persis (`bin`) tidak |
+| 4 | Positif | DATE bolak-balik tanpa geser hari (apa pun zona waktu proses); DATE mentah = `Date` UTC tengah malam; timestamp UTC |
+| 5 | Positif | Boolean, COUNT(*) dan NUMERIC kembali sebagai tipe JS yang sama (boolean / number) |
+| 6 | Positif | Setelah insert dengan id identity eksplisit, id berikutnya lebih tinggi; id tidak pernah dipakai ulang setelah barisnya dihapus (`syncIdentities` tidak mundur) |
+| 7 | Positif | Absensi baru setelah seed/import (id absensi eksplisit) mendapat id baru, tanpa duplicate key |
+| 8 | Positif | Khusus PostgreSQL: parameter `@name` menjadi `$n` hanya di luar teks berkutip; nama yang sama memakai nomor yang sama |
+| 9 | Positif | Clean-up: akun, baris direktorat, baris reminder-log dan absensi Modul 68 sudah tidak ada |
+
+### Perubahan harness
+
+- **`skipTest(reason)`** di dalam `runTest`: tes berhenti sebagai SKIPPED dengan alasan, dikurangkan dari total lulus/gagal; ringkasan menampilkan "N test(s) SKIPPED". Dipakai untuk pengecekan data yang hanya ada di database live.
+- **Modul 56, 59, 61**: SKIP dengan alasan "live data absent" di database yang baru di-seed (nilai bulanan metrik 1/3 dari Admin, former name "Consumer & Emerging Business Banking", nilai bulanan OUTCOME tersimpan).
+- **Modul 62**: harapan "tanpa upload" diperbaiki - pertanyaan template bagian event metrik 12 dipotong ke satu blok event.
+
+### Hasil
+
+| Run | Hasil |
+| :--- | :--- |
+| Suite penuh SQL Server (DB live, kode baru di backend kedua, config guard aktif) | **547/547 lulus, 0 gagal, 0 skip**; modul media 27/32/38/41/42/43 dan event 8/24 ikut jalan |
+| Suite penuh PostgreSQL, salinan data live | 548/548, dua kali |
+| PostgreSQL baru di-seed, sebelum perbaikan tes | 540/544 (4 tes bergantung data live) |
+| Modul 45, 47, 53, 55, 56, 58, 59, 60, 61, 62, 68 setelah perbaikan | SQL Server 135/135; PostgreSQL baru di-seed 133/133 + 3 skip berbasis data; PostgreSQL salinan live 136/136 |
+| JSON | 334/342; 8 kegagalan yang sama juga terjadi pada commit sebelumnya (server JSON menyimpan data di memori sementara suite membaca in-process) - bukan dari perubahan ini, perlu diperbaiki terpisah |
+
+Ukuran suite = **547** di SQL Server (539 + 8) dan **548** di PostgreSQL (+ tes konversi parameter). `await runTest(` statis 535 (526 + 9: Modul 68 punya 9 panggilan, satu khusus PostgreSQL). Suite penuh TIDAK dijalankan ulang setelah perbaikan kecil terakhir (hanya helper dialek); modul terarah di atas dijalankan.
+
+**Paritas di luar suite**: commit sebelumnya vs kode baru di SQL Server, 297 URL GET -> 296 identik byte demi byte (hanya `version`). SQL Server vs PostgreSQL atas data live yang diekspor: 277/297 identik, 19 dijelaskan (id dibuat ulang, akun tidak ikut ekspor, info server, `email_settings.updated_at`) + 1 timestamp zip sesaat.
+
+**QC**: LULUS DENGAN CATATAN, tanpa bug fungsional; PostgreSQL baru di-seed diuji end-to-end di UI dan dengan probe API positif/negatif. Catatan R1 (HOLDLOCK di semua upsert) dan R2 (`SET NOCOUNT ON`) diperbaiki sesudahnya; R2 dicek dengan `SET NOCOUNT ON` yang di-rollback di SQL Server (`rowsAffected` driver `[]` vs `rowCount()` 5).
+
+**Tidak diuji**: `SEED_DEMO_DATA=false` di PostgreSQL; tulis bersamaan di bawah lock tabel PostgreSQL; Render (`DATABASE_URL` + `PG_SSL`, izin `citext`). Temuan lama yang tidak diperbaiki: cek cakupan USER membedakan huruf (`?directorate=business banking` -> 403); importer CSV menerima divisi di luar direktori.

@@ -1,5 +1,6 @@
 // server/db/migrate.js
-// One-time migration of the JSON file store (server/data/store.json) into Microsoft SQL Server.
+// One-time migration of the JSON file store (server/data/store.json) into Microsoft SQL Server, or - with
+// STORAGE_BACKEND=pg (v2.61.0) - into PostgreSQL (DATABASE_URL or PG_*; same code, see dialects/).
 //
 //   node server/db/migrate.js            create the schema and load store.json (refuses if the
 //                                        database already contains data)
@@ -8,11 +9,12 @@
 //
 // It only READS store.json - the JSON store is never modified, so it remains a valid fallback.
 // Prerequisite: SQL Server installed + provisioned (scripts/sqlserver/Setup-SqlServer.ps1),
-// which writes the DB_* settings this script reads from .env.
+// which writes the DB_* settings this script reads from .env (PostgreSQL: an existing database).
 require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
 const fs = require('fs');
 const path = require('path');
 const storage = require('./sqlStorage');
+const dialect = require('./dialects');
 
 const args = process.argv.slice(2);
 const reset = args.includes('--reset');
@@ -73,19 +75,19 @@ async function main() {
 
   const expected = jsonCounts(store);
   let mismatches = 0;
-  console.log('\nTable                      JSON store   SQL Server');
+  console.log(`\nTable                      JSON store   ${dialect.label}`);
   for (const key of Object.keys(expected)) {
     const ok = expected[key] === loaded[key];
     if (!ok) mismatches++;
     console.log(`${(ok ? 'OK  ' : 'DIFF') + ' ' + key.padEnd(22)} ${String(expected[key]).padStart(10)} ${String(loaded[key]).padStart(12)}`);
   }
   const after = await storage.health();
-  console.log(`\nVerified in SQL Server: ${JSON.stringify(after.tables)}`);
+  console.log(`\nVerified in ${dialect.label}: ${JSON.stringify(after.tables)}`);
   if (mismatches) console.log(`\n${mismatches} table(s) differ - rows listed as "skipped" above were orphans (event no longer exists).`);
   // v2.31.0: an older store.json still holds the demo directorate names - rename them right away
   // (the server would otherwise do it on its next boot).
   await storage.migrateDirectorates();
-  console.log('\nMIGRATE_OK. Next: set STORAGE_BACKEND=sql in .env and restart the server.');
+  console.log(`\nMIGRATE_OK. Next: set STORAGE_BACKEND=${dialect.name} in .env and restart the server.`);
 }
 
 main()

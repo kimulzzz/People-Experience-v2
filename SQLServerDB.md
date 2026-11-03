@@ -32,7 +32,7 @@ Template ada di `.env.example`. Nilai aktual ditulis otomatis oleh `scripts/sqls
 
 | Variabel | Nilai | Keterangan |
 | :--- | :--- | :--- |
-| `STORAGE_BACKEND` | `sql` | `sql` = SQL Server, `json` = file `server/data/store.json` (jalur rollback) |
+| `STORAGE_BACKEND` | `sql` | `sql` = SQL Server, `json` = file `server/data/store.json` (jalur rollback); `pg` = PostgreSQL untuk UAT (v2.61.0, lihat §30) |
 | `DB_SERVER` | `localhost` | |
 | `DB_PORT` | `1433` | |
 | `DB_NAME` | `PeopleExperiencePX` | |
@@ -301,3 +301,12 @@ Kolom `px_users.menu_access` (`NVARCHAR(400) NULL`, JSON berisi 6 menu `true`/`f
 - Sejak v2.60.1 (tanpa perubahan skema): topik rapat bisa memuat `agenda`, dan `summary_topic_stats` mendapat `agenda_mode`, `agendas`, `detect_calls`, `agenda_candidates`, `blocks`, `coverage_restored`. Rincian: `docs/08` §31.
 - Sejak v2.60.3 (tanpa perubahan skema): `summary_topic_stats` mendapat `protected_points`. Rincian: `docs/08` §32.
 - Pemeriksaan: `SELECT media_id, file_name, summary_source, summary_topic_stats FROM dbo.px_media WHERE summary_topics IS NOT NULL;`
+
+## 30. Backend PostgreSQL untuk UAT (v2.61.0)
+
+- SQL Server tetap database PRODUKSI on-premise. Sejak v2.61.0 kode storage yang sama (`sqlStorage.js`) juga bisa jalan di **PostgreSQL 15+** (`STORAGE_BACKEND=pg`) untuk hosting UAT sementara (Render.com, belum di-deploy) - **hanya data dummy/seed**. Perbedaan kedua database ada di `server/db/dialects/` (`mssql.js` untuk SQL Server); skema PostgreSQL = `server/db/schema.pg.sql` (41 tabel yang sama). Rincian: `docs/08` §33.
+- **Perilaku SQL Server tidak berubah** (297 URL GET commit sebelumnya vs kode baru -> 296 identik, hanya `version`). Yang ditulis ulang di `sqlStorage.js`: tabel temp, `DECLARE`/`IF`, `UPDATE ... FROM`, `DELETE alias FROM`, batch multi-statement, `ISNULL` -> `COALESCE`.
+- **Jumlah baris berubah** (`rowCount()` di `mssql.js`) tetap dibaca dengan `SELECT @@ROWCOUNT` dalam batch yang sama seperti kode lama, bukan dari `rowsAffected` driver - yang kosong (`[]`) bila instance/login memakai `SET NOCOUNT ON` (dicek QC dengan transaksi yang di-rollback: `rowsAffected` `[]` vs `rowCount()` 5).
+- **`MERGE ... WITH (HOLDLOCK)`** hanya pada upsert Exit Interview (`saveExitInterviewUpload`) dan social media metrik 1 (`saveSocialMediaStats`), sama seperti sebelumnya; upsert lain `MERGE` tanpa hint.
+- Setting `DB_*` di §2 tidak berubah. Variabel PostgreSQL (`DATABASE_URL` atau `PG_*`, `PG_SSL`, `PG_POOL_MAX`) hanya dibaca bila `STORAGE_BACKEND=pg`; nilainya tidak ditulis di dokumen ini.
+- Suite regresi di PostgreSQL memakai snapshot konfigurasi sendiri `server/data/backups/regression-config-snapshot.pg.json`; SQL Server tetap `regression-config-snapshot.json`.

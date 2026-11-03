@@ -1,5 +1,9 @@
 // tests/regressionTest.js
 const assert = require('assert');
+// v2.61.0: the suite runs on SQL Server (STORAGE_BACKEND=sql), PostgreSQL (pg, same storage code) or the JSON store.
+// Direct fixture SQL goes through tests/helpers/testDb.js (the storage's dialect runner), never a driver of its own.
+const testDb = require('./helpers/testDb');
+const { isDbBackend } = testDb;
 
 // Overridable so the suite can run against a second backend (e.g. one pointed at a fake transcribe API).
 const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:5000';
@@ -72,10 +76,20 @@ function runTest(name, fn) {
       console.log(`  ✅ PASS: ${name}`);
     })
     .catch(err => {
+      if (err && err.skipTest) {   // skipTest(): the data this check needs is not in this database - SKIPPED, not passed
+        totalTests--;
+        skippedTests++;
+        console.log(`  ⏭️  SKIP: ${name}\n     Reason: ${err.message}`);
+        return;
+      }
       failedTests++;
       console.error(`  ❌ FAIL: ${name}`);
       console.error(`     Reason: ${err.message}`);
     });
+}
+// Inside a test: stop it as SKIPPED with a reason (v2.61.0: checks of live-only data, e.g. on a freshly seeded database).
+function skipTest(reason) {
+  throw Object.assign(new Error(reason), { skipTest: true });
 }
 
 // --- LOGIN (v2.26.0): every /api route needs a session, so the suite logs in first. ---
@@ -120,8 +134,8 @@ async function setupSuiteLogin() {
   if (!username || !password) {
     require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
     const storage = require('../server/db/storage');
-    if (storage.backend !== 'sql') {
-      throw new Error('Set TEST_ADMIN_USER and TEST_ADMIN_PASSWORD (create the account with `npm run auth:create-admin`) - the suite can only create its own admin on the SQL backend.');
+    if (!isDbBackend(storage.backend)) {
+      throw new Error('Set TEST_ADMIN_USER and TEST_ADMIN_PASSWORD (create the account with `npm run auth:create-admin`) - the suite can only create its own admin on a database backend (SQL Server / PostgreSQL).');
     }
     const { hashPassword, generateTempPassword } = require('../server/services/authService');
     username = `rt-suite-${Date.now().toString(36)}`;
@@ -158,7 +172,9 @@ async function teardownSuiteLogin() {
 //   TEST_RESTORE_STALE_SNAPSHOT=1  restore it, delete the file, then run the suite as usual (with a fresh snapshot)
 //   TEST_DISCARD_STALE_SNAPSHOT=1  keep the live configuration, rename the file to *.discarded-<stamp>.json, run the suite
 // JSON backend: the server keeps store.json in memory, so the suite cannot put it back - back the file up and restore it.
-const CONFIG_SNAPSHOT_FILE = require('path').join(__dirname, '..', 'server', 'data', 'backups', 'regression-config-snapshot.json');
+// one file per database backend, so a SQL Server run never meets a PostgreSQL snapshot (or the other way round)
+const CONFIG_SNAPSHOT_FILE = require('path').join(__dirname, '..', 'server', 'data', 'backups',
+  String(process.env.STORAGE_BACKEND || '').toLowerCase() === 'pg' ? 'regression-config-snapshot.pg.json' : 'regression-config-snapshot.json');
 let configGuard = null; // { storage, snapshot } while the guard is active
 
 const describeRestore = r => [
@@ -214,7 +230,7 @@ async function handleStaleConfigSnapshot(storage, file, choice = staleChoiceFrom
 async function checkStaleConfigSnapshot() {
   require('dotenv').config({ path: require('path').join(__dirname, '..', '.env'), quiet: true });
   const storage = require('../server/db/storage');
-  if (storage.backend !== 'sql') return;
+  if (!isDbBackend(storage.backend)) return;
   await handleStaleConfigSnapshot(storage, CONFIG_SNAPSHOT_FILE);
 }
 
@@ -222,7 +238,7 @@ async function startConfigGuard() {
   const fs = require('fs');
   require('dotenv').config({ path: require('path').join(__dirname, '..', '.env'), quiet: true });
   const storage = require('../server/db/storage');
-  if (storage.backend !== 'sql') {
+  if (!isDbBackend(storage.backend)) {
     console.log('  ⚠️  Configuration guard OFF: JSON backend (the server keeps store.json in memory) - back up server/data/store.json before the run and restore it afterwards.\n');
     return;
   }
@@ -314,7 +330,7 @@ async function runRegressionSuite() {
 
   // --- SUMMARY ---
   console.log('\n================================================================');
-  console.log(`📊 REGRESSION TEST SUMMARY: ${passedTests}/${totalTests} Tests Passed (${failedTests} Failed)${SKIP_MODULES.size ? `, ${skippedTests} test(s) SKIPPED + whole module block(s) skipped: modules ${[...SKIP_MODULES].join(', ')}` : ''}`);
+  console.log(`📊 REGRESSION TEST SUMMARY: ${passedTests}/${totalTests} Tests Passed (${failedTests} Failed)${skippedTests ? `, ${skippedTests} test(s) SKIPPED` : ''}${SKIP_MODULES.size ? ` + whole module block(s) skipped: modules ${[...SKIP_MODULES].join(', ')}` : ''}`);
   console.log('================================================================\n');
 
   await teardownSuiteLogin();
@@ -1793,13 +1809,13 @@ async function runAllModules() {
   console.log('\n📦 MODULE 28: Storage Backend — JSON Store or SQL Server (Positive & Negative Testing)');
 
   let healthDb = null;
-  await runTest('[POSITIVE] /api/health reports the REAL active storage backend (json or sql), not a label guessed from env vars', async () => {
+  await runTest('[POSITIVE] /api/health reports the REAL active storage backend (json, sql or pg), not a label guessed from env vars', async () => {
     const res = await fetch(`${BASE_URL}/api/health`);
     const body = await res.json();
     healthDb = body.database;
-    assert.ok(['json', 'sql'].includes(healthDb.backend), `Unexpected backend: ${healthDb.backend}`);
-    if (healthDb.backend === 'sql') {
-      assert.strictEqual(healthDb.mode, 'MS SQL Server (Connected)');
+    assert.ok(['json', 'sql', 'pg'].includes(healthDb.backend), `Unexpected backend: ${healthDb.backend}`);
+    if (isDbBackend(healthDb.backend)) {
+      assert.strictEqual(healthDb.mode, healthDb.backend === 'pg' ? 'PostgreSQL (Connected)' : 'MS SQL Server (Connected)');
       assert.ok(healthDb.server && healthDb.database, 'SQL health must name the server and database');
     } else {
       assert.strictEqual(healthDb.mode, 'Local File Store (Active)');
@@ -1807,7 +1823,7 @@ async function runAllModules() {
   });
 
   await runTest('[POSITIVE] SQL backend only: health shows live row counts read from the database (survey responses, metrics, events, media)', async () => {
-    if (healthDb.backend !== 'sql') return; // JSON store: nothing to check
+    if (!isDbBackend(healthDb.backend)) return; // JSON store: nothing to check
     assert.ok(healthDb.tables.metrics >= LIVE_METRIC_IDS.length && healthDb.tables.metrics > 0, 'metrics table must be populated');
     assert.ok(healthDb.tables.survey_responses > 0, 'survey responses must be populated');
     assert.ok(healthDb.tables.events >= 1, 'events table must be populated');
@@ -3263,17 +3279,14 @@ async function runAllModules() {
       // SQL Server: a real v2.26.0 row (directorate/division columns, no scope rows) is converted by the boot migration
       require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
       const storage = require('../server/db/storage');
-      if (storage.backend !== 'sql') { console.log('     (SQL part skipped: JSON backend - its migration runs when auth.json is loaded and is covered by the units above)'); return; }
-      const sql = require('mssql');
-      const pool = await new sql.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
-        user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
+      if (!isDbBackend(storage.backend)) { console.log('     (SQL part skipped: JSON backend - its migration runs when auth.json is loaded and is covered by the units above)'); return; }
       const made = [];
       try {
         for (const [suffix, role, dir, div] of [['g1', 'USER', A, divX], ['g2', 'USER', B, null], ['g3', 'ADMIN', A, divX]]) {
           const created = await storage.createUser({ is_test_account: true, username: `rt${suffix}${stamp}`, full_name: 'Legacy', email: '', role, password_hash: 'x', scopes: [] });
           made.push(created.user_id);
-          await pool.request().input('id', sql.Int, created.user_id).input('d', sql.NVarChar, dir).input('v', sql.NVarChar, div)
-            .query('DELETE FROM dbo.px_user_scopes WHERE user_id = @id; UPDATE dbo.px_users SET directorate = @d, division = @v WHERE user_id = @id');
+          await testDb.query('DELETE FROM dbo.px_user_scopes WHERE user_id = @id', { id: created.user_id });
+          await testDb.query('UPDATE dbo.px_users SET directorate = @d, division = @v WHERE user_id = @id', { id: created.user_id, d: dir, v: div });
         }
         await storage.migrateLegacyUserScopes();
         await storage.migrateLegacyUserScopes(); // idempotent
@@ -3287,11 +3300,10 @@ async function runAllModules() {
         assert.deepStrictEqual((await storage.getUserById(g1.user_id)).scopes, [{ directorate: C, divisions: null }]);
         // deleting the account removes its scope rows (cascade)
         await storage.deleteUser(g1.user_id);
-        const left = await pool.request().input('id', sql.Int, g1.user_id).query('SELECT COUNT(*) AS c FROM dbo.px_user_scopes WHERE user_id = @id');
-        assert.strictEqual(left.recordset[0].c, 0);
+        const left = await testDb.query('SELECT COUNT(*) AS c FROM dbo.px_user_scopes WHERE user_id = @id', { id: g1.user_id });
+        assert.strictEqual(left[0].c, 0);
       } finally {
         for (const id of made) await storage.deleteUser(id);
-        await pool.close();
         if (typeof storage.close === 'function' && !tempAdmin) await storage.close();
       }
     });
@@ -3718,10 +3730,7 @@ async function runAllModules() {
       await runTest('[POSITIVE] Boot top-up (SQL Server): NULL survey_source of a SURVEY metric is filled (text with ESS -> ESS, otherwise SYSTEM), an admin\'s value is never overwritten, OUTCOME stays NULL, ESS with the reminder flag off is switched on, and running it twice changes nothing', async () => {
         require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
         const storage = require('../server/db/storage');
-        if (storage.backend !== 'sql') { console.log('     (skipped: JSON backend - its backfill runs when store.json is loaded and is covered by the unit run documented in docs/07)'); return; }
-        const sql = require('mssql');
-        const pool = await new sql.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
-          user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
+        if (!isDbBackend(storage.backend)) { console.log('     (skipped: JSON backend - its backfill runs when store.json is loaded and is covered by the unit run documented in docs/07)'); return; }
         try {
           const withText = await mkSurvey39('REGRESSION SRC Top ESS text', { source_of_data: 'ESS (Employee Sentiment Survey)' });
           const plain = await mkSurvey39('REGRESSION SRC Top plain', { source_of_data: 'Event Evaluation Form' });
@@ -3732,8 +3741,8 @@ async function runAllModules() {
           const ids = [withText, plain, adminChoice, essOff].map(x => x.body.metric_id);
           assert.ok(ids.every(Boolean));
           // simulate a database from before v2.29.0 for three metrics, and an ESS metric whose flag was switched off behind the app's back
-          await pool.request().query(`UPDATE dbo.px_metrics SET survey_source = NULL WHERE metric_id IN (${ids[0]}, ${ids[1]})`);
-          await pool.request().query(`UPDATE dbo.px_metrics SET requires_manual_upload = 0 WHERE metric_id = ${ids[3]}`);
+          await testDb.query(`UPDATE dbo.px_metrics SET survey_source = NULL WHERE metric_id IN (${ids[0]}, ${ids[1]})`);
+          await testDb.query(`UPDATE dbo.px_metrics SET requires_manual_upload = ${testDb.sql.FALSE} WHERE metric_id = ${ids[3]}`);
           await storage.topUpSurveySource();
           await storage.enforceEssManualUpload();
           await storage.topUpSurveySource(); await storage.enforceEssManualUpload(); // idempotent
@@ -3743,9 +3752,8 @@ async function runAllModules() {
           assert.strictEqual((await getMetric39(ids[3])).requires_manual_upload, true, 'ESS flag switched back on');
           assert.strictEqual((await getMetric39(outId)).survey_source, null, 'OUTCOME stays NULL');
           // the database also refuses a value outside SYSTEM/ESS
-          await assert.rejects(() => pool.request().query(`UPDATE dbo.px_metrics SET survey_source = 'FOO' WHERE metric_id = ${ids[1]}`), /CK_px_metrics_survey_source|CHECK/i);
+          await assert.rejects(() => testDb.query(`UPDATE dbo.px_metrics SET survey_source = 'FOO' WHERE metric_id = ${ids[1]}`), /CK_px_metrics_survey_source|CHECK/i);
         } finally {
-          await pool.close();
           if (typeof storage.close === 'function' && !tempAdmin) await storage.close();
         }
       });
@@ -3885,7 +3893,7 @@ async function runAllModules() {
   console.log('\n📦 MODULE 37: Standard Initial Password - env DEFAULT_INITIAL_PASSWORD (Positive & Negative Testing)');
   {
     const storage37 = require('../server/db/storage');
-    if (storage37.backend !== 'sql') {
+    if (!isDbBackend(storage37.backend)) {
       console.log('  ⏭️  SKIP: Module 37 needs the SQL backend (in-process auth routes over the same database)');
     } else {
       const express = require('express');
@@ -4033,7 +4041,7 @@ async function runAllModules() {
       const real = summarySvc.parseModelAnswer('RINGKASAN: Orang yang sebelumnya pasif dan banyak menyendiri, mencari ketenangan, namun kemudian sembuh. Ia mulai menyadari bahwa hal tersebut terasa sangat mengganggu, terutama ketika mengingat bahwa manusia sebenarnya berada dalam kerugian. Akhirnya, ia berani keluar dan mencoba menjadi bagian dari kehidupan, agar tidak menyia-nyiakan waktu.\n\nPOIN:\n- Orang tersebut sebelumnya banyak menyendiri dan mencari ketenangan.\n- Ia menyadari bahwa tindakannya terasa sangat mengganggu.\n- Ia mengingat bahwa manusia sebenarnya berada dalam kerugian.\n- Ia berani keluar dan mencoba menjadi bagian dari kehidupan.\n- Ia ingin agar waktunya tidak terbuang sia-sia.');
       assert.strictEqual(summarySvc.validateAnswer(real, REAL_TR, 'id'), null, 'the real stored Gemma summary must not be over-rejected');
     });
-    if (storage38.backend !== 'sql') {
+    if (!isDbBackend(storage38.backend)) {
       console.log('  ⏭️  SKIP: Module 38 needs the SQL backend (second backend over the same database)');
     } else {
       const http38 = require('http');
@@ -4589,7 +4597,7 @@ async function runAllModules() {
       assert.ok(!/accept="image\/\*,video\/\*"/.test(src), 'the file picker must not offer SVG through image/*');
     });
 
-    if (st41.backend !== 'sql') {
+    if (!isDbBackend(st41.backend)) {
       console.log('  ⏭️  SKIP: Module 41 file/pipeline tests need the SQL backend (they use the database directly and a second backend)');
       await runTest('[POSITIVE] Both storage backends allow updateMedia to change file_path (and only through that whitelist)', async () => {
         const read = f => fs41.readFileSync(path41.join(__dirname, '..', 'server', 'db', f), 'utf8');
@@ -5119,7 +5127,7 @@ async function runAllModules() {
     });
 
     const processing42 = (await st42.getAllMedia()).filter(m => m.transcript_status === 'PROCESSING');
-    if (st42.backend !== 'sql') {
+    if (!isDbBackend(st42.backend)) {
       console.log('  ⏭️  SKIP: Module 42 pipeline tests need the SQL backend (they use the database directly and a second backend)');
     } else if (processing42.length) {
       console.log(`  ⏭️  SKIP: Module 42 pipeline tests need no video in PROCESSING (found ${processing42.length}); try again when the pipeline is idle`);
@@ -5535,14 +5543,12 @@ async function runAllModules() {
     const OLD44 = ['Commercial & Corporate Banking', 'Consumer Banking', 'Digital Banking', 'Finance & Operations', 'Information Technology', 'Internal Audit & Legal'];
     require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
     const storage44 = require('../server/db/storage');
-    const sql44 = storage44.backend === 'sql' ? require('mssql') : null;
-    const pool44 = sql44 ? await new sql44.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
-      user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect() : null;
+    const pool44 = isDbBackend(storage44.backend);   // true = fixtures straight in the database (testDb)
     // EMPLOYEE survey rows as { directorate, division } (SQL: the table; JSON: store.json as the server saved it)
     const employeeRows44 = async () => {
       if (pool44) {
-        return (await pool44.request().query(`SELECT org_unit_1 AS directorate, org_unit_2 AS division, COUNT(*) AS n FROM dbo.px_survey_uploaded_responses
-                                              WHERE respondent_type = 'EMPLOYEE' GROUP BY org_unit_1, org_unit_2`)).recordset;
+        return testDb.query(`SELECT org_unit_1 AS directorate, org_unit_2 AS division, COUNT(*) AS n FROM dbo.px_survey_uploaded_responses
+                                              WHERE respondent_type = 'EMPLOYEE' GROUP BY org_unit_1, org_unit_2`);
       }
       const store = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', 'server', 'data', 'store.json'), 'utf8'));
       return (store.surveyUploadedResponses || [])
@@ -5630,21 +5636,19 @@ async function runAllModules() {
         await runTest('[POSITIVE/NEGATIVE] A leftover old name is renamed (EMPLOYEE row by division override, user scope expanded), a campus row with the same text is NOT touched, and a rerun changes 0 rows', async () => {
           let userId = null;
           try {
-            const ins = (type, o1, o2) => pool44.request().input('u', sql44.NVarChar, tag44).input('t', sql44.VarChar, type).input('o1', sql44.NVarChar, o1).input('o2', sql44.NVarChar, o2)
-              .query(`INSERT INTO dbo.px_survey_uploaded_responses (upload_id, metric_id, respondent_type, respondent_id, org_unit_1, org_unit_2, rating_score, survey_date)
-                      VALUES (@u, 8, @t, @u, @o1, @o2, 4, '2020-01-01')`);
+            const ins = (type, o1, o2) => testDb.query(`INSERT INTO dbo.px_survey_uploaded_responses (upload_id, metric_id, respondent_type, respondent_id, org_unit_1, org_unit_2, rating_score, survey_date)
+                      VALUES (@u, 8, @t, @u, @o1, @o2, 4, '2020-01-01')`, { u: tag44, t: type, o1, o2 });
             await ins('EMPLOYEE', 'Finance & Operations', 'Treasury Operations');
             await ins('EMPLOYEE', ' consumer banking', 'Wealth Management');
             await ins('CAMPUS_STUDENT', 'Information Technology', 'Teknik Informatika');
             const user = await storage44.createUser({ is_test_account: true, username: tag44, full_name: 'Module 44', email: '', role: 'USER', password_hash: 'x', scopes: [] });
             userId = user.user_id;
-            await pool44.request().input('id', sql44.Int, userId).query(`INSERT INTO dbo.px_user_scopes (user_id, directorate, division) VALUES (@id, N'Finance & Operations', NULL)`);
+            await testDb.query(`INSERT INTO dbo.px_user_scopes (user_id, directorate, division) VALUES (@id, 'Finance & Operations', NULL)`, { id: userId });
 
             const counts = await storage44.migrateDirectorates();
             assert.strictEqual(counts.survey_responses, 2, JSON.stringify(counts));
             assert.strictEqual(counts.user_scopes, 1, JSON.stringify(counts));
-            const rows = (await pool44.request().input('u', sql44.NVarChar, tag44)
-              .query('SELECT respondent_type, org_unit_1, org_unit_2 FROM dbo.px_survey_uploaded_responses WHERE upload_id = @u ORDER BY response_id')).recordset;
+            const rows = await testDb.query('SELECT respondent_type, org_unit_1, org_unit_2 FROM dbo.px_survey_uploaded_responses WHERE upload_id = @u ORDER BY response_id', { u: tag44 });
             assert.deepStrictEqual(rows.map(r => `${r.respondent_type}|${r.org_unit_1}|${r.org_unit_2}`), [
               `EMPLOYEE|${cur44('Treasury & Capital Market')}|Treasury Operations`, `EMPLOYEE|${cur44('Consumer & EBB')}|Wealth Management`, 'CAMPUS_STUDENT|Information Technology|Teknik Informatika']);
             assert.deepStrictEqual((await storage44.getUserById(userId)).scopes, [
@@ -5654,13 +5658,13 @@ async function runAllModules() {
             const again = await storage44.migrateDirectorates();
             assert.deepStrictEqual(Object.values(again).filter(v => v !== 0), [], JSON.stringify(again));
           } finally {
-            await pool44.request().input('u', sql44.NVarChar, tag44).query('DELETE FROM dbo.px_survey_uploaded_responses WHERE upload_id = @u');
+            await testDb.query('DELETE FROM dbo.px_survey_uploaded_responses WHERE upload_id = @u', { u: tag44 });
             if (userId) await storage44.deleteUser(userId);
           }
         });
       }
     } finally {
-      if (pool44) await pool44.close();
+      // (testDb shares the storage pool - nothing to close here)
     }
   }
 
@@ -5709,7 +5713,7 @@ async function runAllModules() {
       return { username, email: `${username}@example.test`, cookie };
     };
     const asUj45 = async (u, q) => (await rawFetch(`${BASE_URL}${q}`, asUser(u.cookie))).json();
-    const storageBackendIsSql45 = () => require('../server/db/storage').backend === 'sql';
+    const storageBackendIsSql45 = () => isDbBackend(require('../server/db/storage').backend);
     let rcTouched = false; // an upload to the real Role Clarity metric happened (restore its seed result afterwards)
 
     try {
@@ -5960,22 +5964,18 @@ async function runAllModules() {
         if (rb.upload_id) uploads45.push(rb.upload_id); else console.error('     cleanup: Role Clarity seed result could not be restored', JSON.stringify(rb).slice(0, 200));
         if (storageBackendIsSql45()) {
           // SQL: exact restore - the rows go back on the seed upload, the test uploads leave the history
-          const sql = require('mssql');
-          const pool = await new sql.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
-            user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
-          try {
-            await pool.request().input('m', sql.Int, RC).input('u', sql.NVarChar, `seed-ess-${RC}-2025-11`)
-              .query('UPDATE dbo.px_ess_results SET upload_id = @u WHERE metric_id = @m AND survey_year = 2025 AND survey_month = 11');
+          {
+            await testDb.query('UPDATE dbo.px_ess_results SET upload_id = @u WHERE metric_id = @m AND survey_year = 2025 AND survey_month = 11',
+              { m: RC, u: `seed-ess-${RC}-2025-11` });
             // v2.50.0: an upload stores a question snapshot per row; the seed rows hold only the file's header text
             const cur45 = await currentDirectorateName();   // v2.51.0: the seed spells the four renamed directorates the new way
             for (const r of require('../server/db/seedData').initialEssResults.filter(x => x.metric_id === RC && x.survey_year === 2025 && x.survey_month === 11)) {
-              await pool.request().input('m', sql.Int, RC).input('q', sql.NVarChar(sql.MAX), JSON.stringify(r.questions)).input('d', sql.NVarChar, r.directorate ? cur45(r.directorate) : r.directorate)
-                .query(`UPDATE dbo.px_ess_results SET questions_json = @q WHERE metric_id = @m AND survey_year = 2025 AND survey_month = 11
-                        AND ${r.org_level === 'BANKWIDE' ? "org_level = 'BANKWIDE'" : "org_level = 'DIRECTORATE' AND directorate = @d"}`);
+              const p = { m: RC, q: JSON.stringify(r.questions) };
+              if (r.org_level !== 'BANKWIDE') p.d = r.directorate ? cur45(r.directorate) : r.directorate;
+              await testDb.query(`UPDATE dbo.px_ess_results SET questions_json = @q WHERE metric_id = @m AND survey_year = 2025 AND survey_month = 11
+                        AND ${r.org_level === 'BANKWIDE' ? "org_level = 'BANKWIDE'" : "org_level = 'DIRECTORATE' AND directorate = @d"}`, p);
             }
-            for (const id of uploads45.filter(Boolean)) await pool.request().input('u', sql.NVarChar, id).query('DELETE FROM dbo.px_survey_uploads WHERE upload_id = @u');
-          } finally {
-            await pool.close();
+            for (const id of uploads45.filter(Boolean)) await testDb.query('DELETE FROM dbo.px_survey_uploads WHERE upload_id = @u', { u: id });
           }
         }
       }
@@ -6005,7 +6005,7 @@ async function runAllModules() {
     const rc46 = params46.find(m => m.metric_type === 'SURVEY' && m.survey_source === 'ESS' && /role clarity/i.test(m.metric_name));
     const RC46 = rc46 ? rc46.metric_id : 9;
     const SYS46 = 8; // Onboarding 30/60/90 (SYSTEM survey, employee metric)
-    const isSql46 = () => require('../server/db/storage').backend === 'sql';
+    const isSql46 = () => isDbBackend(require('../server/db/storage').backend);
 
     await runTest('[POSITIVE] YTD of the current year ends with the current month: a response dated next month is left out of YTD but counted in MTD of that month (planted and removed again)', async () => {
       if (M46 === 12) { console.log('     (December: there is no later month in this year - only the window equality is checked)'); }
@@ -6031,18 +6031,13 @@ async function runAllModules() {
         assert.strictEqual(metricOf46(await calc46(`mode=YTD&year=${Y46}`), SYS46).sample_size, ytd0, `a response dated ${next}-05 is outside YTD ${Y46}`);
         assert.strictEqual(metricOf46(await calc46(`mode=MTD&year=${Y46}&month=${mm46(M46 + 1)}`), SYS46).sample_size, mtd0 + 1, `but inside MTD ${next}`);
       } finally {
-        const sql = require('mssql');
-        const pool = await new sql.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
-          user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
-        try {
+        {
           // only this test's own probe: by upload id when known, else by its unique NIP + file name
-          const ids = uploadId ? [uploadId] : (await pool.request().query("SELECT upload_id FROM dbo.px_survey_uploads WHERE file_name = 'module46_window_probe.csv'")).recordset.map(r => r.upload_id);
+          const ids = uploadId ? [uploadId] : (await testDb.query("SELECT upload_id FROM dbo.px_survey_uploads WHERE file_name = 'module46_window_probe.csv'")).map(r => r.upload_id);
           for (const id of ids) {
-            await pool.request().input('u', sql.NVarChar, id).query('DELETE FROM dbo.px_survey_uploaded_responses WHERE upload_id = @u');
-            await pool.request().input('u', sql.NVarChar, id).query('DELETE FROM dbo.px_survey_uploads WHERE upload_id = @u');
+            await testDb.query('DELETE FROM dbo.px_survey_uploaded_responses WHERE upload_id = @u', { u: id });
+            await testDb.query('DELETE FROM dbo.px_survey_uploads WHERE upload_id = @u', { u: id });
           }
-        } finally {
-          await pool.close();
         }
       }
     });
@@ -6116,11 +6111,8 @@ async function runAllModules() {
       await runTest('[POSITIVE/NEGATIVE] (SQL Server) An admin ESS upload of a 2026 period survives the boot (seed top-up + dummy cleanup) and becomes the latest result: MTD / YTD 2026-06 read it, 2026-05 still carries 2025-11; removed again afterwards', async () => {
         const st = require('../server/db/storage');
         const ess46 = require('../server/services/essSummaryService');
-        const sql = require('mssql');
         const file = await essXlsx([ESS_HEAD('Role Clarity & DS Support Index', ['Q1', 'Q2', 'Q3']), ['PT Bank CIMB Niaga Tbk', 'Bankwide', 2026, 'June', 321, 0.7777, 0.7, 0.8, 0.8]]);
         let uploadId = null;
-        const pool = await new sql.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
-          user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
         try {
           const res = await postEssFile(RC46, file, 'module46_overwrite_probe.xlsx');
           const body = await res.json();
@@ -6134,13 +6126,12 @@ async function runAllModules() {
           assert.strictEqual(metricOf46(await calc46('mode=YTD&year=2026'), RC46).ess_period, '2026-06');
           assert.deepStrictEqual([metricOf46(await calc46('mode=MTD&year=2026&month=05'), RC46).ess_period, metricOf46(await calc46('mode=MTD&year=2026&month=05'), RC46).normalized_score], ['2025-11', 92]);
         } finally {
-          await pool.request().input('m', sql.Int, RC46).query('DELETE FROM dbo.px_ess_results WHERE metric_id = @m AND survey_year = 2026 AND survey_month = 6');
+          await testDb.query('DELETE FROM dbo.px_ess_results WHERE metric_id = @m AND survey_year = 2026 AND survey_month = 6', { m: RC46 });
           if (uploadId) {
-            await pool.request().input('u', sql.NVarChar, uploadId).query('DELETE FROM dbo.px_survey_uploads WHERE upload_id = @u');
+            await testDb.query('DELETE FROM dbo.px_survey_uploads WHERE upload_id = @u', { u: uploadId });
             const f = require('path').join(ess46.ESS_UPLOAD_DIR, `${uploadId}.xlsx`);
             if (require('fs').existsSync(f)) require('fs').unlinkSync(f);
           }
-          await pool.close();
         }
       });
     }
@@ -6257,12 +6248,11 @@ async function runAllModules() {
   // Fixtures live in months no other data uses (March + November 2019, January 2030) and are removed at the end by NIK prefix
   // and by this run's upload ids (SQL Server only: the JSON server keeps its data in memory, so the module is skipped there).
   console.log('\n📦 MODULE 47: Exit Interview dashboard - .xlsx upload, aggregates, YTD/MTD + directorate filter, USER scope (Positive & Negative Testing)');
-  if (require('../server/db/storage').backend !== 'sql') {
+  if (!isDbBackend(require('../server/db/storage').backend)) {
     console.log('  ⏭️  SKIPPED: Module 47 needs the SQL Server backend (its fixtures are removed through SQL)');
   } else if (!skipModuleBlock(47)) {
     const exitSvc = require('../server/services/exitInterviewService');
     const { buildXlsx: buildXlsx47, readFirstSheet: readSheet47 } = require('../server/services/xlsxUtils');
-    const sql47 = require('mssql');
     const directory47 = await (await rawFetch(`${BASE_URL}/api/directorates`)).json();
     const dirA = directory47.find(d => d.divisions.length > 0);
     const dirB = directory47.find(d => d.directorate_name !== dirA.directorate_name);
@@ -6541,21 +6531,21 @@ async function runAllModules() {
         assert.ok(months.some(m => m.year === 2030 && m.month === 1 && m.dummy === 0 && m.total === 9));
       });
     } finally {
-      const pool = await new sql47.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
-        user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
       try {
         // only this module's own rows: the fixture NIK prefixes and the upload batches made by this run
-        await pool.request().query("DELETE FROM dbo.px_exit_interviews WHERE nik LIKE 'RT47-%' OR nik LIKE 'RT47N-%'");
+        await testDb.query("DELETE FROM dbo.px_exit_interviews WHERE nik LIKE 'RT47-%' OR nik LIKE 'RT47N-%'");
         const ids = [...uploadIds47];
-        (await pool.request().input('t', sql47.DateTime2(3), runStart47).query("SELECT upload_id FROM dbo.px_exit_interview_uploads WHERE file_name LIKE 'module47[_]%' AND uploaded_at >= DATEADD(minute, -5, @t)"))
-          .recordset.forEach(r => { if (!ids.includes(r.upload_id)) ids.push(r.upload_id); });
+        (await testDb.query("SELECT upload_id FROM dbo.px_exit_interview_uploads WHERE file_name LIKE 'module47!_%' ESCAPE '!' AND uploaded_at >= @t",
+          { t: new Date(new Date(runStart47).getTime() - 5 * 60 * 1000) }))
+          .forEach(r => { if (!ids.includes(r.upload_id)) ids.push(r.upload_id); });
         for (const id of ids) {
-          await pool.request().input('u', sql47.NVarChar, id).query('DELETE FROM dbo.px_exit_interviews WHERE upload_id = @u; DELETE FROM dbo.px_exit_interview_uploads WHERE upload_id = @u');
+          await testDb.query('DELETE FROM dbo.px_exit_interviews WHERE upload_id = @u', { u: id });
+          await testDb.query('DELETE FROM dbo.px_exit_interview_uploads WHERE upload_id = @u', { u: id });
           const f = require('path').join(exitSvc.EXIT_UPLOAD_DIR, `${id}.xlsx`);
           if (fs47.existsSync(f)) fs47.unlinkSync(f);
         }
       } finally {
-        await pool.close();
+        // (testDb shares the storage pool - nothing to close here)
       }
       for (const id of userIds47) await adminJson('DELETE', `/api/admin/users/${id}`);
     }
@@ -6639,13 +6629,12 @@ async function runAllModules() {
     }
 
     const storage48 = require('../server/db/storage');
-    if (storage48.backend !== 'sql') {
+    if (!isDbBackend(storage48.backend)) {
       console.log('  ⏭️  SKIP: Module 48 part B needs the SQL backend (in-process auth routes over the same database)');
     } else {
       const express = require('express');
       const auth48 = require('../server/services/authService');
       const crypto48 = require('crypto');
-      const sql48 = require('mssql');
       const app48 = express();
       app48.set('trust proxy', true); // a made-up client IP per run identifies this part's own rows for the cleanup
       app48.use(express.json());
@@ -6703,13 +6692,9 @@ async function runAllModules() {
         await new Promise(resolve => server48.close(resolve));
         for (const id of ids48) { try { await storage48.deleteUser(id); } catch (_) { /* ignore */ } }
         // part B's fixture rows (this run's made-up IP only): written by a non-test admin, so they would stay visible
-        const pool48 = await new sql48.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
-          user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
-        try {
-          const del = await pool48.request().input('ip', sql48.NVarChar, ip48).query('DELETE FROM dbo.px_audit_log WHERE ip = @ip');
-          if (!del.rowsAffected[0]) console.error('     cleanup: no Module 48 audit fixture rows found');
-        } finally {
-          await pool48.close();
+        {
+          const del = await testDb.rowCount('DELETE FROM dbo.px_audit_log WHERE ip = @ip', { ip: ip48 });
+          if (!del) console.error('     cleanup: no Module 48 audit fixture rows found');
         }
       }
     }
@@ -7232,7 +7217,7 @@ async function runAllModules() {
         // the upgrade step itself (SQL backend: in-process storage over the same database; JSON runs it when auth.json loads)
         require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
         const st = require('../server/db/storage');
-        if (st.backend !== 'sql') { console.log('     (upgrade-step part skipped: JSON backend - the step runs when auth.json is loaded)'); return; }
+        if (!isDbBackend(st.backend)) { console.log('     (upgrade-step part skipped: JSON backend - the step runs when auth.json is loaded)'); return; }
         const mk = async (suffix, scopes, menu_access) => {
           const c = await st.createUser({ is_test_account: true, username: `rt51m${suffix}${stamp51}`, full_name: 'Regression 51 migration', email: '', role: 'USER', password_hash: 'x', scopes, menu_access });
           users51.push(c.user_id);
@@ -7274,7 +7259,7 @@ async function runAllModules() {
     const RC52 = (realEss52.find(m => /role clarity/i.test(m.metric_name)) || { metric_id: 9 }).metric_id;
     const metrics52 = [];
     const essUploads52 = [];
-    const isSql52 = () => require('../server/db/storage').backend === 'sql';
+    const isSql52 = () => isDbBackend(require('../server/db/storage').backend);
     const mkMetric52 = async (name, source, questions) => {
       const res = await adminJson('POST', '/api/admin/metrics', { metric_name: name, metric_type: 'SURVEY', scale_type: 'PERCENTAGE', survey_source: source, journey_id: 2, checkpoint_id: 5, target_value: 85, min_threshold: 80 });
       assert.strictEqual(res.status, 201);
@@ -7465,7 +7450,7 @@ async function runAllModules() {
   console.log('\n📦 MODULE 53: Directorate master - add / rename / delete / merge directorates and divisions, cascade, former names, boot protection (Positive & Negative Testing)');
   if (!skipModuleBlock(53)) {
     const st53 = require('../server/db/storage');
-    const isSql53 = st53.backend === 'sql';
+    const isSql53 = isDbBackend(st53.backend);
     const dn53 = require('../server/db/directoryNames');
     const dm53 = require('../server/db/directorateMigration');
     const seed53 = require('../server/db/seedData');
@@ -7489,13 +7474,8 @@ async function runAllModules() {
     const settings0 = await (await fetch(`${BASE_URL}/api/settings`)).json();
     const managers0 = settings0.event_manager_directorates;
     const flag0 = settings0.directory_admin_managed;
-    const pool53 = isSql53 ? await new (require('mssql').ConnectionPool)({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
-      user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect() : null;
-    const q53 = async (text, params = {}) => {
-      const r = pool53.request();
-      Object.entries(params).forEach(([k, v]) => r.input(k, v));
-      return (await r.query(text)).recordset;
-    };
+    const pool53 = isSql53;   // fixtures straight in the database (testDb)
+    const q53 = (text, params = {}) => testDb.query(text, params);
     const createDir53 = async (name, divisions) => {
       const r = await aj53('POST', '/api/admin/directorates', { name, divisions });
       assert.strictEqual(r.status, 201, JSON.stringify(r.body));
@@ -7899,7 +7879,7 @@ async function runAllModules() {
           assert.strictEqual(ex.status, 200);
           assert.strictEqual((await ex.json()).counts.total_records, 2);
           assert.strictEqual((await q53('SELECT directorate FROM dbo.px_users WHERE user_id = @id', { id: U1.id }))[0].directorate, B0);
-          assert.strictEqual((await q53("SELECT COUNT(*) AS n FROM dbo.px_survey_uploaded_responses WHERE org_unit_1 = @d AND org_unit_2 COLLATE Latin1_General_100_BIN2 = N'rt53 div uno'", { d: B0 }))[0].n, 2, 'exact spelling');
+          assert.strictEqual((await q53(`SELECT COUNT(*) AS n FROM dbo.px_survey_uploaded_responses WHERE org_unit_1 = @d AND ${testDb.sql.bin('org_unit_2')} = 'rt53 div uno'`, { d: B0 }))[0].n, 2, 'exact spelling');
         }
         const audit = await (await fetch(`${BASE_URL}/api/admin/audit-log?limit=50&include_test=1`)).json();
         assert.ok(audit.some(e2 => e2.action === 'DIRECTORATE_MERGE' && String(e2.target).includes(`"${A2}" -> "${B0}"`)));
@@ -8024,11 +8004,12 @@ async function runAllModules() {
         try {
           await q53("DELETE FROM dbo.px_exit_interviews WHERE nik LIKE 'RT53-%'");
           for (const id of exitUploads53) {
-            await q53('DELETE FROM dbo.px_exit_interviews WHERE upload_id = @u; DELETE FROM dbo.px_exit_interview_uploads WHERE upload_id = @u', { u: id });
+            await q53('DELETE FROM dbo.px_exit_interviews WHERE upload_id = @u', { u: id });
+            await q53('DELETE FROM dbo.px_exit_interview_uploads WHERE upload_id = @u', { u: id });
             const f = require('path').join(exitSvc53.EXIT_UPLOAD_DIR, `${id}.xlsx`);
             if (require('fs').existsSync(f)) require('fs').unlinkSync(f);
           }
-          await q53("DELETE FROM dbo.px_recruitment_sla_by_unit WHERE unit LIKE 'RT53 %' + @s", { s: stamp53 });
+          await q53('DELETE FROM dbo.px_recruitment_sla_by_unit WHERE unit LIKE @p', { p: `RT53 %${stamp53}` });
         } catch (err) {
           console.error('     Module 53 SQL cleanup:', err.message);
         }
@@ -8040,10 +8021,11 @@ async function runAllModules() {
       }
       if (pool53) {
         try {
-          await q53("DELETE FROM dbo.px_directorate_aliases WHERE alias_name LIKE 'RT53 %' + @s OR directorate_name LIKE 'RT53 %' + @s; DELETE FROM dbo.px_division_aliases WHERE directorate_name LIKE 'RT53 %' + @s", { s: stamp53 });
+          await q53('DELETE FROM dbo.px_directorate_aliases WHERE alias_name LIKE @p OR directorate_name LIKE @p', { p: `RT53 %${stamp53}` });
+          await q53('DELETE FROM dbo.px_division_aliases WHERE directorate_name LIKE @p', { p: `RT53 %${stamp53}` });
           if (flag0 !== true) await st53.setSetting('directory_admin_managed', flag0 === undefined ? false : flag0);   // the suite does not leave the flag behind
         } finally {
-          await pool53.close();
+          // (testDb shares the storage pool - nothing to close here)
         }
       }
     }
@@ -8056,7 +8038,7 @@ async function runAllModules() {
   console.log('\n📦 MODULE 54: Configuration guard, parameter audit trail, orphan spelling on adopt, manual former names, ESS question templates (Positive & Negative Testing)');
   if (!skipModuleBlock(54)) {
     const st54 = require('../server/db/storage');
-    const isSql54 = st54.backend === 'sql';
+    const isSql54 = isDbBackend(st54.backend);
     const stamp54 = Date.now().toString(36);
     const N54 = x => `RT54 ${x} ${stamp54}`;
     const EV54 = 'ev-perspektif-2024-q1';
@@ -8536,22 +8518,15 @@ async function runAllModules() {
   // (the cleanup goes through SQL; on SQL the JSON backend is also checked in-process, with store.json / auth.json restored
   // byte-identically).
   console.log('\n📦 MODULE 55: Social media data of metric 1 - template, .xlsx upload, drilldown table, integration removed (Positive & Negative Testing)');
-  if (require('../server/db/storage').backend !== 'sql') {
+  if (!isDbBackend(require('../server/db/storage').backend)) {
     console.log('  ⏭️  SKIPPED: Module 55 needs the SQL Server backend (its fixtures are removed through SQL)');
   } else if (!skipModuleBlock(55)) {
     const st55 = require('../server/db/storage');
     const sm55 = require('../server/services/socialMediaService');
     const { buildXlsx: buildXlsx55, readFirstSheet: readSheet55 } = require('../server/services/xlsxUtils');
-    const sql55 = require('mssql');
     const fs55 = require('fs');
     const path55 = require('path');
-    const pool55 = await new sql55.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
-      user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
-    const q55 = async (text, params = {}) => {
-      const r = pool55.request();
-      Object.entries(params).forEach(([k, v]) => r.input(k, v));
-      return (await r.query(text)).recordset || [];
-    };
+    const q55 = (text, params = {}) => testDb.query(text, params);   // fixtures straight in the database (testDb)
     const HEAD55 = ['Platform', 'Year', 'Month', 'Followers', 'Reach', 'Engagement'];
     const xlsx55 = rows => buildXlsx55([HEAD55, ...rows]);
     const uploadIds55 = [];
@@ -8813,12 +8788,13 @@ async function runAllModules() {
       });
 
       await runTest('[POSITIVE] v2.53.0 guarded DROP of px_integration_tokens: gone after boot; a table that holds rows is KEPT (never dropped with data), once empty it is DROPPED, then ABSENT (idempotent)', async () => {
-        const exists = async () => !!(await q55("SELECT OBJECT_ID(N'dbo.px_integration_tokens', N'U') AS id"))[0].id;
+        const exists = () => testDb.tableExists('px_integration_tokens');
         assert.strictEqual(await exists(), false, 'the boot of this backend dropped the empty table');
         assert.deepStrictEqual(await st55.dropRetiredIntegrationTokens(), { state: 'ABSENT', rows: 0 });
         let created = false;
         try {
-          await q55('CREATE TABLE dbo.px_integration_tokens (token_id INT NOT NULL); INSERT INTO dbo.px_integration_tokens (token_id) VALUES (1)');
+          await q55('CREATE TABLE dbo.px_integration_tokens (token_id INT NOT NULL)');
+          await q55('INSERT INTO dbo.px_integration_tokens (token_id) VALUES (1)');
           created = true;
           assert.deepStrictEqual(await st55.dropRetiredIntegrationTokens(), { state: 'KEPT', rows: 1 });
           assert.strictEqual(await exists(), true, 'a table with rows is kept');
@@ -8827,7 +8803,7 @@ async function runAllModules() {
           assert.strictEqual(await exists(), false);
           assert.deepStrictEqual(await st55.dropRetiredIntegrationTokens(), { state: 'ABSENT', rows: 0 });
         } finally {
-          if (created) await q55("IF OBJECT_ID(N'dbo.px_integration_tokens', N'U') IS NOT NULL DROP TABLE dbo.px_integration_tokens");
+          if (created) await testDb.dropTableIfExists('px_integration_tokens');
         }
       });
 
@@ -8886,7 +8862,8 @@ async function runAllModules() {
           sqlOut = await run(st55);
         } finally {
           files.forEach((f, i) => { if (saved[i] === null) { if (fs55.existsSync(f)) fs55.unlinkSync(f); } else fs55.writeFileSync(f, saved[i]); });
-          await q55("DELETE FROM dbo.px_social_media_stats WHERE stat_year = 2097; DELETE FROM dbo.px_social_media_uploads WHERE upload_id LIKE 'rt55-parity-%'");
+          await q55('DELETE FROM dbo.px_social_media_stats WHERE stat_year = 2097');
+          await q55("DELETE FROM dbo.px_social_media_uploads WHERE upload_id LIKE 'rt55-parity-%'");
         }
         files.forEach((f, i) => assert.ok(saved[i] === null ? !fs55.existsSync(f) : Buffer.compare(fs55.readFileSync(f), saved[i]) === 0, `${path55.basename(f)} restored byte-identically`));
         assert.deepStrictEqual(jsonOut, sqlOut);
@@ -8899,14 +8876,15 @@ async function runAllModules() {
       try {
         const ids = [...new Set(uploadIds55.filter(Boolean))];
         for (const id of ids) {
-          await q55('DELETE FROM dbo.px_social_media_stats WHERE upload_id = @u; DELETE FROM dbo.px_social_media_uploads WHERE upload_id = @u', { u: id });
+          await q55('DELETE FROM dbo.px_social_media_stats WHERE upload_id = @u', { u: id });
+          await q55('DELETE FROM dbo.px_social_media_uploads WHERE upload_id = @u', { u: id });
           const f = path55.join(sm55.SOCIAL_UPLOAD_DIR, `${id}.xlsx`);
           if (fs55.existsSync(f)) fs55.unlinkSync(f);
         }
         // the seed rows this module inserted itself (2099-06 replaced by the upload, 2099-07) - the fixture years were empty before
         if (preExisting55 === 0) await q55("DELETE FROM dbo.px_social_media_stats WHERE stat_year IN (2018, 2097, 2099) AND source = 'SEED'");
       } finally {
-        await pool55.close();
+        // (testDb shares the storage pool - nothing to close here)
       }
       for (const id of userIds55) await adminJson('DELETE', `/api/admin/users/${id}`);
     }
@@ -8917,7 +8895,7 @@ async function runAllModules() {
   // read. SQL Server only (config guard snapshot + in-process JSON parity check with store.json / auth.json restored
   // byte-identically).
   console.log('\n📦 MODULE 56: Tiered score (metrics 1, 2, 3, 14; N/A) & monthly values of OUTCOME metrics - template, upload, evidence, Last update (Positive & Negative Testing)');
-  if (require('../server/db/storage').backend !== 'sql') {
+  if (!isDbBackend(require('../server/db/storage').backend)) {
     console.log('  ⏭️  SKIPPED: Module 56 needs the SQL Server backend (config guard snapshot and in-process JSON parity check)');
   } else if (!skipModuleBlock(56)) {
     const st56 = require('../server/db/storage');
@@ -9049,6 +9027,7 @@ async function runAllModules() {
         // expect what is stored. v2.55.0: metric 1 = the AVERAGE of its 2026 months up to this month
         const nowKey56 = new Date().getFullYear() * 100 + new Date().getMonth() + 1;
         const m1Rows = (await st56.getOutcomeValues(1)).filter(r => r.year === 2026 && 2026 * 100 + r.month <= nowKey56);
+        if (!m1Rows.length) skipTest('live data absent: no stored 2026 month of metric 1 (uploaded by the Admin on the live database; a fresh seed has none)');
         const m1Avg = m1Rows.reduce((s, r) => s + Number(r.value), 0) / m1Rows.length;
         const m1Pct = Math.round(tiers56.tieredScore(m1Avg, B1).percent * 100) / 100;
         const m1Status = m1Pct < m1.min_threshold ? 'CRITICAL' : (m1Pct < 60 ? 'WARNING' : 'HEALTHY');
@@ -9059,6 +9038,7 @@ async function runAllModules() {
         assert.deepStrictEqual(m3.score_tiers, { unit: 'percent', bounds: B3 });
         // v2.55.0: metric 3 = the AVERAGE of its 2026 months too (75.04% Sept 2026 at v2.54.0; a whole year once uploaded)
         const m3Rows = (await st56.getOutcomeValues(3)).filter(r => r.year === 2026 && 2026 * 100 + r.month <= nowKey56);
+        if (!m3Rows.length) skipTest('live data absent: no stored 2026 month of metric 3 (uploaded by the Admin on the live database; a fresh seed has none)');
         const m3Avg = m3Rows.reduce((s, r) => s + Number(r.value), 0) / m3Rows.length;
         const m3t = tiers56.tieredScore(m3Avg, B3);
         assert.deepStrictEqual([m3.raw_value, m3.normalized_score, m3.tier_info.tier, m3.tier_info.capped, m3.target_value, m3.target_value_normalized, m3.outcome_aggregation],
@@ -9438,12 +9418,8 @@ async function runAllModules() {
         } finally {
           files.forEach((f, i) => { if (saved[i] === null) { if (fs56.existsSync(f)) fs56.unlinkSync(f); } else fs56.writeFileSync(f, saved[i]); });
           await st56.deleteMetric(fakeId).catch(() => {}); // no px_metrics row -> throws; the rows go via the SQL below
-          const sql56 = require('mssql');
-          const pool = await new sql56.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
-            user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
-          try {
-            await pool.request().input('id', sql56.Int, fakeId).query('DELETE FROM dbo.px_outcome_values WHERE metric_id = @id; DELETE FROM dbo.px_outcome_uploads WHERE metric_id = @id;');
-          } finally { await pool.close(); }
+          await testDb.query('DELETE FROM dbo.px_outcome_values WHERE metric_id = @id', { id: fakeId });
+          await testDb.query('DELETE FROM dbo.px_outcome_uploads WHERE metric_id = @id', { id: fakeId });
         }
         files.forEach((f, i) => assert.ok(saved[i] === null ? !fs56.existsSync(f) : Buffer.compare(fs56.readFileSync(f), saved[i]) === 0, `${path56.basename(f)} restored byte-identically`));
         assert.deepStrictEqual(jsonOut, sqlOut);
@@ -9550,7 +9526,7 @@ async function runAllModules() {
   // files - the documented metric-delete cascade) and to far-past years (2003 / 2004); metric 1 is only read, its stored
   // months are compared before / after. The JSON parity check restores store.json / auth.json byte-identically. SQL Server only.
   console.log('\n📦 MODULE 58: Metric 1 - yearly upload (Metrics | Jan..Dec), AVERAGE of the months through the tiers, social media drilldown hidden (Positive & Negative Testing)');
-  if (require('../server/db/storage').backend !== 'sql') {
+  if (!isDbBackend(require('../server/db/storage').backend)) {
     console.log('  ⏭️  SKIPPED: Module 58 needs the SQL Server backend (in-process JSON parity check)');
   } else if (!skipModuleBlock(58)) {
     const st58 = require('../server/db/storage');
@@ -9843,7 +9819,7 @@ async function runAllModules() {
   // and uploads - the metric-delete cascade) and to far-past months (2004). The live metrics 5 / 7 / 12 / 19 / 20 are only read;
   // their part rows are compared before / after. The user's template files are read in-process only (never uploaded). SQL only.
   console.log('\n📦 MODULE 59: Composite summary metrics - part summary upload, per-part average, N/A parts, events, score column (Positive & Negative Testing)');
-  if (require('../server/db/storage').backend !== 'sql') {
+  if (!isDbBackend(require('../server/db/storage').backend)) {
     console.log('  ⏭️  SKIPPED: Module 59 needs the SQL Server backend (its fixture parts are inserted through SQL)');
   } else if (!skipModuleBlock(59)) {
     const st59 = require('../server/db/storage');
@@ -9853,14 +9829,7 @@ async function runAllModules() {
     const seed59 = require('../server/db/seedData');
     const fs59 = require('fs');
     const path59 = require('path');
-    const sql59 = require('mssql');
-    const pool59 = await new sql59.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
-      user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
-    const q59 = async (text, params = {}) => {
-      const r = pool59.request();
-      Object.entries(params).forEach(([k, v]) => r.input(k, v));
-      return (await r.query(text)).recordset || [];
-    };
+    const q59 = (text, params = {}) => testDb.query(text, params);   // fixtures straight in the database (testDb)
     const stamp59 = Date.now().toString(36);
     const metricIds59 = [];
     const TPL = path59.join(__dirname, '..', 'docs', 'Template Survey');
@@ -9917,6 +9886,8 @@ async function runAllModules() {
         };
         if (!Object.values(files).every(f => fs59.existsSync(path59.join(TPL, f)))) return; // the user's files are not in the repository
         const resolver = buildResolver59(await st59.getDirectorates(), await st59.getDirectoryAliases());
+        // the Meet & Greet file names "Consumer & Emerging Business Banking" - a former name the Admin added on the live database
+        if (!resolver.directorate('Consumer & Emerging Business Banking')) skipTest('live data absent: the former name "Consumer & Emerging Business Banking" (added by the Admin on the live database) is not in this directory');
         const rows = [];
         const now = new Date(2026, 9, 21);
         for (const [key, f] of Object.entries(files)) {
@@ -10114,7 +10085,8 @@ async function runAllModules() {
           sqlOut = await run(st59);
         } finally {
           files.forEach((f, i) => { if (saved[i] === null) { if (fs59.existsSync(f)) fs59.unlinkSync(f); } else fs59.writeFileSync(f, saved[i]); });
-          await q59('DELETE FROM dbo.px_metric_part_results WHERE metric_id = @id; DELETE FROM dbo.px_metric_part_uploads WHERE metric_id = @id', { id: fakeId });
+          await q59('DELETE FROM dbo.px_metric_part_results WHERE metric_id = @id', { id: fakeId });
+          await q59('DELETE FROM dbo.px_metric_part_uploads WHERE metric_id = @id', { id: fakeId });
         }
         files.forEach((f, i) => assert.ok(saved[i] === null ? !fs59.existsSync(f) : Buffer.compare(fs59.readFileSync(f), saved[i]) === 0, `${path59.basename(f)} restored byte-identically`));
         assert.deepStrictEqual(jsonOut, sqlOut);
@@ -10131,7 +10103,6 @@ async function runAllModules() {
       });
     } finally {
       for (const id of [...metricIds59].reverse()) await adminJson('DELETE', `/api/admin/metrics/${id}`);
-      await pool59.close();
     }
   }
 
@@ -10232,6 +10203,10 @@ async function runAllModules() {
     let userDir61 = null;
     try {
       await runTest('[POSITIVE] OUTCOME monthly values (metric 14 LATEST, metrics 1 / 3 AVERAGE): kind OUTCOME_VALUES, same rows as the outcome evidence CSV (YTD year, one month, ALL), newest first, one "Average" line heading each year for AVERAGE metrics; mode/year/month = period', async () => {
+        // the stored months are live data (Admin uploads); a fresh seed has none, so these metrics show their static value instead
+        for (const id of [14, 1, 3]) {
+          if (!(await require('../server/db/storage').getOutcomeValues(id)).length) skipTest(`live data absent: metric ${id} has no stored monthly values in this database (a fresh seed has none)`);
+        }
         for (const id of [14, 1, 3]) {
           for (const period of ['2026', '2026-09', 'ALL']) {
             const { status, body } = await history61(id, `period=${period}`);
@@ -10329,7 +10304,7 @@ async function runAllModules() {
         }
       });
 
-      if (st61.backend === 'sql') {
+      if (isDbBackend(st61.backend)) {
         // a USER scoped to one directorate that has ESS directorate rows
         const essAdmin = (await history61(9, 'period=2026')).body;
         userDir61 = (essAdmin.rows.find(r => r.Level === 'Directorate') || {}).Directorate;
@@ -10390,7 +10365,7 @@ async function runAllModules() {
   // temporary USER (is_test_account) is created and deleted. The HTTP part is SQL only; the JSON contract is checked in-process
   // with store.json / auth.json restored byte-identically.
   console.log('\n📦 MODULE 62: Summary Questions - configured questions per summary part, by-position upload, template, snapshot in History / Evidence (Positive & Negative Testing)');
-  if (require('../server/db/storage').backend !== 'sql') {
+  if (!isDbBackend(require('../server/db/storage').backend)) {
     console.log('  ⏭️  SKIPPED: Module 62 needs the SQL Server backend (its fixture parts are inserted through SQL)');
   } else if (!skipModuleBlock(62)) {
     const st62 = require('../server/db/storage');
@@ -10398,14 +10373,7 @@ async function runAllModules() {
     const { buildXlsx: buildXlsx62, readFirstSheet: readSheet62 } = require('../server/services/xlsxUtils');
     const fs62 = require('fs');
     const path62 = require('path');
-    const sql62 = require('mssql');
-    const pool62 = await new sql62.ConnectionPool({ server: process.env.DB_SERVER || 'localhost', port: parseInt(process.env.DB_PORT || '1433', 10), database: process.env.DB_NAME || 'PeopleExperiencePX',
-      user: process.env.DB_USER, password: process.env.DB_PASSWORD, options: { encrypt: false, trustServerCertificate: true } }).connect();
-    const q62 = async (text, params = {}) => {
-      const r = pool62.request();
-      Object.entries(params).forEach(([k, v]) => r.input(k, v));
-      return (await r.query(text)).recordset || [];
-    };
+    const q62 = (text, params = {}) => testDb.query(text, params);   // fixtures straight in the database (testDb)
     const stamp62 = Date.now().toString(36);
     const metricIds62 = [];
     const addPart62 = (metricId, key, name, order, template = null) => q62('INSERT INTO dbo.px_metric_parts (metric_id, part_key, part_name, sort_order, template_json) VALUES (@m, @k, @n, @o, @t)',
@@ -10462,7 +10430,11 @@ async function runAllModules() {
           const cols = (latest && latest.columns) || {};
           const expected = latest
             ? (Array.isArray(cols.questions_snapshot) ? cols.questions_snapshot.map(q => q.text) : pq62.firstEventBlock(cols.question_labels || [], cols.event_labels || []))
-            : ((p.template && !p.template.score_column && p.template.question_labels) || []);
+            : (p.template && !p.template.score_column && Array.isArray(p.template.question_labels)
+              ? (Array.isArray(p.template.event_labels) && p.template.event_labels.length
+                ? pq62.firstEventBlock(p.template.question_labels, p.template.event_labels)   // event part: the questions of ONE event block
+                : p.template.question_labels)
+              : []);
           assert.deepStrictEqual(p.questions.map(q => q.text), expected, `metric ${p.metric_id} ${p.part_key}`);
           compared++;
           if (p.part_key === 'DAY1_SURVEY' && latest) {
@@ -10662,7 +10634,6 @@ async function runAllModules() {
     } finally {
       if (user62) await st62.deleteUser(user62.user_id);
       for (const id of [...metricIds62].reverse()) await adminJson('DELETE', `/api/admin/metrics/${id}`);
-      await pool62.close();
     }
   }
 
@@ -11073,7 +11044,7 @@ async function runAllModules() {
     });
 
     const storage65 = require('../server/db/storage');
-    if (storage65.backend !== 'sql') {
+    if (!isDbBackend(storage65.backend)) {
       console.log('  ⏭️  SKIP: Module 65 pipeline tests need the SQL backend (second backend over the same database)');
     } else {
       const http65 = require('http');
@@ -11669,7 +11640,7 @@ async function runAllModules() {
     });
 
     const storage66 = require('../server/db/storage');
-    if (storage66.backend !== 'sql') {
+    if (!isDbBackend(storage66.backend)) {
       console.log('  ⏭️  SKIP: Module 66 pipeline tests need the SQL backend (second backend over the same database)');
     } else {
       const http66 = require('http');
@@ -12108,7 +12079,7 @@ async function runAllModules() {
     });
 
     const storage67 = require('../server/db/storage');
-    if (storage67.backend !== 'sql') {
+    if (!isDbBackend(storage67.backend)) {
       console.log('  ⏭️  SKIP: Module 67 pipeline tests need the SQL backend (second backend over the same database)');
     } else {
       const http67 = require('http');
@@ -12292,6 +12263,128 @@ async function runAllModules() {
         for (const id of users67) assert.ok(!(await storage67.getUserById(id)), 'temporary admin deleted');
       });
     }
+  }
+  // --- MODULE 68 (v2.61.0): ONE STORAGE CODE, TWO DATABASES - SQL Server and PostgreSQL behave the same ---
+  // The traps of running sqlStorage.js on PostgreSQL (dialects/pg.js): case-insensitive lookups and uniqueness (SQL Server's
+  // collation; pg: CITEXT), DATE values without a time-zone shift, booleans / COUNT(*) / NUMERIC as the same JS types, and identity
+  // values after explicit-id inserts (never reused). The same assertions run on SQL Server (the contract both must meet); JSON: skipped.
+  // Fixtures: a test account, one directorate row and reminder-log rows, all named with this run's stamp and removed again.
+  console.log('\n📦 MODULE 68: SQL Server / PostgreSQL parity of the storage layer - case-insensitive lookups, dates, booleans, identity after explicit ids (Positive & Negative Testing)');
+  if (!isDbBackend(require('../server/db/storage').backend)) {
+    console.log('  ⏭️  SKIPPED: Module 68 needs a database backend (SQL Server or PostgreSQL)');
+  } else if (!skipModuleBlock(68)) {
+    const st68 = require('../server/db/storage');
+    const D68 = require('../server/db/dialects');
+    const stamp68 = Date.now().toString(36);
+    const users68 = [];
+    const logIds68 = [];
+    const dirs68 = [];
+    let attendance68 = null;
+    try {
+      await runTest(`[POSITIVE] (${D68.label}) Usernames are looked up case-insensitively, the stored spelling is returned`, async () => {
+        const u = await st68.createUser({ is_test_account: true, username: `rt68-Mixed-${stamp68}`, full_name: 'Regression 68', email: '', role: 'USER', password_hash: 'x', scopes: [] });
+        users68.push(u.user_id);
+        for (const probe of [`rt68-mixed-${stamp68}`, `RT68-MIXED-${stamp68.toUpperCase()}`]) {
+          const found = await st68.getUserByUsername(probe);
+          assert.ok(found, `found by "${probe}"`);
+          assert.deepStrictEqual([found.user_id, found.username], [u.user_id, `rt68-Mixed-${stamp68}`]);
+        }
+      });
+
+      await runTest(`[NEGATIVE] (${D68.label}) A username that differs only in case is a duplicate; an unknown username gives null`, async () => {
+        await assert.rejects(() => st68.createUser({ is_test_account: true, username: `RT68-MIXED-${stamp68}`, full_name: 'Regression 68 twin', email: '', role: 'USER', password_hash: 'x', scopes: [] }),
+          err => err.code === 'DUPLICATE_USER');
+        assert.strictEqual(await st68.getUserByUsername(`rt68-nobody-${stamp68}`), null);
+      });
+
+      await runTest(`[POSITIVE/NEGATIVE] (${D68.label}) Directorate names are UNIQUE regardless of case in the database itself; setting keys match in any case, an exact (BIN) comparison does not`, async () => {
+        const name = `RT68 Unique ${stamp68}`;
+        const ins = await testDb.query(`INSERT INTO dbo.px_directorates (directorate_name) ${D68.sql.outInserted('directorate_id')} VALUES (@n) ${D68.sql.returning('directorate_id')}`, { n: name });
+        dirs68.push(ins[0].directorate_id);
+        await assert.rejects(() => testDb.query('INSERT INTO dbo.px_directorates (directorate_name) VALUES (@n)', { n: name.toLowerCase() }),
+          err => D68.isUniqueViolation(err), 'a lower-case twin is refused by the unique key');
+        assert.strictEqual((await testDb.query('SELECT directorate_id FROM dbo.px_directorates WHERE directorate_name = @n', { n: name.toUpperCase() }))[0].directorate_id, ins[0].directorate_id);
+        assert.strictEqual((await testDb.query('SELECT COUNT(*) AS n FROM dbo.px_app_settings WHERE setting_key = @k', { k: 'PX_INDEX_WEIGHTS' }))[0].n, 1);
+        assert.strictEqual((await testDb.query(`SELECT COUNT(*) AS n FROM dbo.px_app_settings WHERE ${D68.sql.bin('setting_key')} = @k`, { k: 'PX_INDEX_WEIGHTS' }))[0].n, 0);
+        assert.strictEqual((await testDb.query(`SELECT COUNT(*) AS n FROM dbo.px_app_settings WHERE ${D68.sql.bin('setting_key')} = @k`, { k: 'px_index_weights' }))[0].n, 1);
+      });
+
+      await runTest(`[POSITIVE] (${D68.label}) DATE values round-trip without a day shift (process time zone ${Intl.DateTimeFormat().resolvedOptions().timeZone}); a raw DATE is a Date at UTC midnight; timestamps are UTC`, async () => {
+        for (const day of ['2026-01-01', '2026-02-28', '2026-12-31', '2024-02-29']) {
+          const e = await st68.addReminderLog({ metric_id: 990068, expected_period: `rt68-${stamp68}`, sent_on: day, status: 'FAILED', pic_email: 'rt68@example.invalid', error_message: 'Module 68 fixture' });
+          logIds68.push(e.log_id);
+          const back = (await st68.getReminderLogFor(990068, `rt68-${stamp68}`)).find(x => x.log_id === e.log_id);
+          assert.strictEqual(back.sent_on, day);
+          assert.ok(Math.abs(new Date(back.attempted_at).getTime() - Date.now()) < 5 * 60 * 1000, `attempted_at is now (UTC), got ${back.attempted_at}`);
+          const raw = (await testDb.query('SELECT sent_on FROM dbo.px_reminder_log WHERE log_id = @id', { id: e.log_id }))[0].sent_on;
+          assert.ok(raw instanceof Date, 'a DATE column is read as a Date');
+          assert.strictEqual(raw.toISOString(), `${day}T00:00:00.000Z`);
+        }
+        assert.strictEqual(await st68.hasSurveyDataInPeriod(990068, '2026-01-01', '2026-02-01'), false);
+      });
+
+      await runTest(`[POSITIVE] (${D68.label}) Booleans, COUNT(*) and NUMERIC come back as the same JS types (boolean / number)`, async () => {
+        const u = await st68.getUserById(users68[0]);
+        assert.deepStrictEqual([u.is_active, u.must_change_password, u.is_test_account], [true, true, true]);
+        const raw = (await testDb.query('SELECT is_active, is_test_account, failed_attempts FROM dbo.px_users WHERE user_id = @id', { id: users68[0] }))[0];
+        assert.deepStrictEqual([typeof raw.is_active, raw.is_active, raw.is_test_account, raw.failed_attempts], ['boolean', true, true, 0]);
+        const n = (await testDb.query('SELECT COUNT(*) AS n FROM dbo.px_users'))[0].n;
+        assert.strictEqual(typeof n, 'number');
+        const ess = await testDb.query(`SELECT ${D68.sql.top(1)} index_score FROM dbo.px_ess_results ORDER BY ess_result_id ${D68.sql.limit(1)}`);
+        if (ess.length) assert.strictEqual(typeof ess[0].index_score, 'number', 'DECIMAL / NUMERIC -> number');
+        const flipped = await st68.updateUser(users68[0], { is_active: false });
+        assert.strictEqual(flipped.is_active, false);
+        assert.strictEqual((await testDb.query(`SELECT COUNT(*) AS n FROM dbo.px_users WHERE user_id = @id AND is_active = ${D68.sql.FALSE}`, { id: users68[0] }))[0].n, 1);
+      });
+
+      await runTest(`[POSITIVE] (${D68.label}) After an insert with an explicit identity value the next generated id is higher, and an id is never handed out again after its row was deleted`, async () => {
+        const max = (await testDb.query('SELECT COALESCE(MAX(log_id), 0) AS m FROM dbo.px_reminder_log'))[0].m;
+        const explicit = max + 2;
+        await D68.insertWithIdentity(null, 'px_reminder_log', `INSERT INTO dbo.px_reminder_log (log_id, metric_id, expected_period, sent_on, status, pic_email)
+          VALUES (@id, 990068, @p, '2026-03-01', 'FAILED', 'rt68@example.invalid')`, { id: explicit, p: `rt68-${stamp68}` });
+        logIds68.push(explicit);
+        await D68.syncIdentities(null, ['px_reminder_log']);   // import / restore do this after explicit ids (SQL Server: nothing to do)
+        const next = await st68.addReminderLog({ metric_id: 990068, expected_period: `rt68-${stamp68}`, sent_on: '2026-03-02', status: 'FAILED', pic_email: 'rt68@example.invalid' });
+        logIds68.push(next.log_id);
+        assert.ok(next.log_id > explicit, `generated ${next.log_id} after explicit ${explicit}`);
+        await testDb.query('DELETE FROM dbo.px_reminder_log WHERE log_id IN (@a, @b)', { a: explicit, b: next.log_id });
+        await D68.syncIdentities(null, ['px_reminder_log']);   // must not move back to MAX + 1
+        const later = await st68.addReminderLog({ metric_id: 990068, expected_period: `rt68-${stamp68}`, sent_on: '2026-03-03', status: 'FAILED', pic_email: 'rt68@example.invalid' });
+        logIds68.push(later.log_id);
+        assert.ok(later.log_id > next.log_id, `id ${later.log_id} is not a reused one (last was ${next.log_id})`);
+      });
+
+      await runTest(`[POSITIVE] (${D68.label}) A new attendance after the seed / import (explicit attendance ids) gets a fresh id - no duplicate key`, async () => {
+        const ev = (await st68.getEvents())[0];
+        if (!ev) { console.log('     (no event in this database - nothing to check)'); return; }
+        const maxAtt = (await testDb.query('SELECT COALESCE(MAX(attendance_id), 0) AS m FROM dbo.px_attendances'))[0].m;
+        attendance68 = await st68.addAttendance({ event_id: ev.event_id, nip: `RT68${stamp68}`, employee_name: 'Regression 68', cimb_email: 'rt68@example.invalid' });
+        assert.ok(attendance68.attendance_id > maxAtt, `${attendance68.attendance_id} > ${maxAtt}`);
+        await assert.rejects(() => st68.addAttendance({ event_id: ev.event_id, nip: `rt68${stamp68}`, employee_name: 'Twin', cimb_email: 'rt68@example.invalid' }),
+          /already checked in/, 'the same NIP in another case is the same respondent (unique per event)');
+      });
+
+      if (D68.name === 'pg') {
+        await runTest('[POSITIVE] (PostgreSQL) Named parameters become $n outside quoted text only; the same name reuses its number', async () => {
+          const c = D68.toPositional("SELECT 'a@b.c' AS mail, @x AS x, \"@y\", @x -- @z\n");
+          assert.strictEqual(c.text, "SELECT 'a@b.c' AS mail, $1 AS x, \"@y\", $1 -- @z\n");
+          assert.deepStrictEqual(c.names, ['x']);
+          await assert.rejects(() => D68.query('SELECT @missing AS v', {}), /missing parameter @missing/);
+        });
+      }
+    } finally {
+      if (attendance68) { try { await st68.deleteAttendance(attendance68.event_id, attendance68.nip); } catch (_) { /* ignore */ } }
+      for (const id of logIds68) await testDb.query('DELETE FROM dbo.px_reminder_log WHERE log_id = @id', { id });
+      await testDb.query('DELETE FROM dbo.px_reminder_log WHERE metric_id = 990068 AND expected_period = @p', { p: `rt68-${stamp68}` });
+      for (const id of dirs68) await testDb.query('DELETE FROM dbo.px_directorates WHERE directorate_id = @id', { id });
+      for (const id of users68) { try { await st68.deleteUser(id); } catch (_) { /* ignore */ } }
+    }
+    await runTest('[POSITIVE] Clean-up: the Module 68 account, directorate row, reminder-log rows and attendance are gone', async () => {
+      assert.strictEqual(await st68.getUserByUsername(`rt68-mixed-${stamp68}`), null);
+      assert.strictEqual((await testDb.query('SELECT COUNT(*) AS n FROM dbo.px_reminder_log WHERE metric_id = 990068'))[0].n, 0);
+      assert.strictEqual((await testDb.query('SELECT COUNT(*) AS n FROM dbo.px_directorates WHERE directorate_name = @n', { n: `RT68 Unique ${stamp68}` }))[0].n, 0);
+      if (attendance68) assert.ok(!(await st68.getAttendancesByEvent(attendance68.event_id)).some(a => a.nip === attendance68.nip));
+    });
   }
 }
 

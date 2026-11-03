@@ -1,14 +1,14 @@
 // server/db/exportToJson.js
-// ROLLBACK helper: exports everything in SQL Server back into the store.json format, so the
-// app can fall back to the JSON file store (STORAGE_BACKEND=json) WITHOUT losing any edits that
-// were made while SQL Server was the active backend.
+// ROLLBACK helper: exports everything in SQL Server (or, with STORAGE_BACKEND=pg, PostgreSQL - v2.61.0) back into the
+// store.json format, so the app can fall back to the JSON file store (STORAGE_BACKEND=json) WITHOUT losing any edits that
+// were made while the database was the active backend.
 //
 //   node server/db/exportToJson.js                 writes server/data/store.from-sql.json (safe, nothing replaced)
 //   node server/db/exportToJson.js --replace       backs up the current store.json to server/data/backups/
 //                                                  and replaces it with the SQL data (use stop-the-server first)
 //   node server/db/exportToJson.js --out some.json write to a custom path
 //
-// Read-only on SQL Server. See docs/08_DATABASE_SCHEMA_AND_MIGRATION.md ("Rollback").
+// Read-only on the database. See docs/08_DATABASE_SCHEMA_AND_MIGRATION.md ("Rollback").
 require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
 const fs = require('fs');
 const path = require('path');

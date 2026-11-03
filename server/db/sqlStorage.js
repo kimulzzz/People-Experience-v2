@@ -1,13 +1,15 @@
 // server/db/sqlStorage.js
-// Microsoft SQL Server storage backend (STORAGE_BACKEND=sql). Implements the exact same
-// (async) method contract as jsonStorage.js, so server.js and the services never know which
-// backend they are talking to. Every read goes to SQL Server; nothing is cached in memory.
+// Database storage backend: Microsoft SQL Server (STORAGE_BACKEND=sql) or PostgreSQL (STORAGE_BACKEND=pg, v2.61.0). Implements
+// the exact same (async) method contract as jsonStorage.js, so server.js and the services never know which backend they are
+// talking to. Every read goes to the database; nothing is cached in memory. ONE code path for both databases: what differs
+// (driver, placeholders, transactions, bulk insert, catalog checks, constructs spelled differently) lives in dialects/mssql.js
+// and dialects/pg.js (D); the SQL below is written once and uses the dialect's fragments (S = D.sql) where the two differ.
 //
 // Photos & videos of Signature Events are NOT stored in the database: the files stay on disk
 // under server/uploads and px_media.file_path holds their path (plus caption + AI transcript).
 const fs = require('fs');
-const path = require('path');
-const sql = require('mssql');
+const D = require('./dialects');   // SQL Server or PostgreSQL (STORAGE_BACKEND)
+const S = D.sql;
 const seed = require('./seedData');
 const { defaultUnitForScale, parseUnit } = require('./metricUnit');
 const { readTierConfig, resolveTierConfig } = require('./scoreTiers');
@@ -24,82 +26,19 @@ const dirNames = require('./directoryNames');
 const { seedQuestions: seedPartQuestions } = require('./partQuestions');
 const { nameKey, buildResolver, currentSeedName, directoryError } = dirNames;
 
-// ------------------------------------------------------------------ connection
-let poolPromise = null;
-
-function connectionConfig() {
-  return {
-    server: process.env.DB_SERVER || 'localhost',
-    port: parseInt(process.env.DB_PORT || '1433', 10),
-    database: process.env.DB_NAME || 'PeopleExperiencePX',
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    options: {
-      encrypt: String(process.env.DB_ENCRYPT || 'false').toLowerCase() === 'true',
-      trustServerCertificate: String(process.env.DB_TRUST_SERVER_CERTIFICATE || 'true').toLowerCase() !== 'false'
-    },
-    pool: { max: 10, min: 0, idleTimeoutMillis: 30000 },
-    connectionTimeout: 15000,
-    requestTimeout: 120000
-  };
-}
-
-function getPool() {
-  if (!poolPromise) {
-    const pool = new sql.ConnectionPool(connectionConfig());
-    pool.on('error', err => console.error('[sqlStorage] pool error:', err.message));
-    poolPromise = pool.connect().catch(err => {
-      poolPromise = null; // allow a later retry instead of caching the failure
-      throw err;
-    });
-  }
-  return poolPromise;
-}
-
+// ------------------------------------------------------------------ query runner (dialect)
 // Typed-parameter helpers for the few cases where inference is not enough.
 const T = {
-  date: v => ({ __t: sql.VarChar(10), v }),                 // 'YYYY-MM-DD' -> implicit DATE conversion
-  max: v => ({ __t: sql.NVarChar(sql.MAX), v })
+  date: v => D.typed('date', v),                 // 'YYYY-MM-DD' for a DATE column
+  max: v => D.typed('max', v)                    // long text
 };
 
-function bindParams(request, params) {
-  for (const [name, v] of Object.entries(params || {})) {
-    if (v && typeof v === 'object' && v.__t) request.input(name, v.__t, v.v);
-    else if (v === null || v === undefined) request.input(name, sql.NVarChar(sql.MAX), null);
-    else if (typeof v === 'boolean') request.input(name, sql.Bit, v);
-    else if (typeof v === 'number') request.input(name, Number.isInteger(v) ? sql.Int : sql.Float, v);
-    else if (v instanceof Date) request.input(name, sql.DateTime2(3), v);
-    else request.input(name, sql.NVarChar(sql.MAX), String(v));
-  }
-  return request;
-}
-
-// Runs a parameterized query on the pool, or inside a transaction when `tx` is given.
+// Runs a parameterized query (named @params) on the pool, or inside a transaction when `tx` is given -> rows.
 async function run(text, params, tx) {
-  const request = tx ? new sql.Request(tx) : (await getPool()).request();
-  bindParams(request, params);
-  const result = await request.query(text);
-  return result.recordset || [];
+  return (await D.query(text, params, tx)).rows;
 }
-
-async function inTransaction(work) {
-  const pool = await getPool();
-  const tx = new sql.Transaction(pool);
-  await tx.begin();
-  try {
-    const out = await work(tx);
-    await tx.commit();
-    return out;
-  } catch (err) {
-    try { await tx.rollback(); } catch (_) { /* already rolled back */ }
-    throw err;
-  }
-}
-
-function isUniqueViolation(err) {
-  const n = err && (err.number || (err.originalError && err.originalError.info && err.originalError.info.number));
-  return n === 2627 || n === 2601;
-}
+const inTransaction = work => D.inTransaction(work);
+const isUniqueViolation = err => D.isUniqueViolation(err);
 
 // ------------------------------------------------------------------ small converters
 const iso = d => (d instanceof Date ? d.toISOString() : (d || null));
@@ -118,11 +57,10 @@ function toSqlDate(v) {
   const d = new Date(`${s}T00:00:00Z`);
   return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s ? s : null;
 }
-const sqlDateObj = s => new Date(`${s}T00:00:00Z`);
 
 // ------------------------------------------------------------------ row mappers
 const METRIC_SELECT = `
-  SELECT m.*, CONVERT(char(10), m.last_data_date, 23) AS last_data_date_str,
+  SELECT m.*, ${S.dateStr('m.last_data_date')} AS last_data_date_str,
          t.target_value, t.target_display, t.min_threshold
   FROM dbo.px_metrics m
   LEFT JOIN dbo.px_metric_targets t ON t.metric_id = m.metric_id`;
@@ -284,7 +222,7 @@ function questionParams(q, index) {
 const RESPONSE_SELECT = `
   SELECT response_id, upload_id, metric_id, respondent_type, respondent_id, respondent_name,
          respondent_email, org_unit_1, org_unit_2, ratings_json, rating_score, verbatim_feedback,
-         CONVERT(char(10), survey_date, 23) AS survey_date, source, created_at
+         ${S.dateStr('survey_date')} AS survey_date, source, created_at
   FROM dbo.px_survey_uploaded_responses`;
 
 function rowToResponse(r) {
@@ -350,30 +288,20 @@ function normalizeResponse(r) {
 
 // Bulk-inserts normalized responses (thousands of rows in one round trip, in the given order -
 // response_id is assigned in that order). `uploadId` overrides each row's own upload_id when set.
+const RESPONSE_BULK_COLUMNS = [
+  { name: 'upload_id', type: 'nvarchar', len: 64 }, { name: 'metric_id', type: 'int' }, { name: 'respondent_type', type: 'varchar', len: 20 },
+  { name: 'respondent_id', type: 'nvarchar', len: 100 }, { name: 'respondent_name', type: 'nvarchar', len: 200 },
+  { name: 'respondent_email', type: 'nvarchar', len: 200 }, { name: 'org_unit_1', type: 'nvarchar', len: 200 },
+  { name: 'org_unit_2', type: 'nvarchar', len: 200 }, { name: 'ratings_json', type: 'max' }, { name: 'rating_score', type: 'float', nullable: true },
+  { name: 'verbatim_feedback', type: 'max' }, { name: 'survey_date', type: 'date' }, { name: 'source', type: 'varchar', len: 40 },
+  { name: 'created_at', type: 'datetime' }
+];
 async function bulkInsertResponses(tx, uploadId, rows) {
-  if (!rows.length) return;
-  const table = new sql.Table('dbo.px_survey_uploaded_responses');
-  table.create = false;
-  table.columns.add('upload_id', sql.NVarChar(64), { nullable: false });
-  table.columns.add('metric_id', sql.Int, { nullable: false });
-  table.columns.add('respondent_type', sql.VarChar(20), { nullable: false });
-  table.columns.add('respondent_id', sql.NVarChar(100), { nullable: false });
-  table.columns.add('respondent_name', sql.NVarChar(200), { nullable: false });
-  table.columns.add('respondent_email', sql.NVarChar(200), { nullable: false });
-  table.columns.add('org_unit_1', sql.NVarChar(200), { nullable: false });
-  table.columns.add('org_unit_2', sql.NVarChar(200), { nullable: false });
-  table.columns.add('ratings_json', sql.NVarChar(sql.MAX), { nullable: false });
-  table.columns.add('rating_score', sql.Float, { nullable: true });
-  table.columns.add('verbatim_feedback', sql.NVarChar(sql.MAX), { nullable: false });
-  table.columns.add('survey_date', sql.Date, { nullable: false });
-  table.columns.add('source', sql.VarChar(40), { nullable: false });
-  table.columns.add('created_at', sql.DateTime2(3), { nullable: false });
-  rows.forEach(n => table.rows.add(
+  await D.bulkInsert(tx, 'px_survey_uploaded_responses', RESPONSE_BULK_COLUMNS, rows.map(n => [
     uploadId || n.upload_id || 'unknown-upload', n.metric_id, n.respondent_type, n.respondent_id, n.respondent_name, n.respondent_email,
     n.org_unit_1, n.org_unit_2, n.ratings_json, n.rating_score, n.verbatim_feedback,
-    sqlDateObj(n.survey_date), n.source, n.created_at
-  ));
-  await new sql.Request(tx).bulk(table);
+    n.survey_date, n.source, n.created_at
+  ]));
 }
 
 // ------------------------------------------------------------------ survey question catalogue (px_survey_questions)
@@ -459,7 +387,7 @@ async function topUpDirectory(seedList = seed.initialDirectorates) {
   if (!todo.length) return 0;
   await inTransaction(async tx => {
     for (const [name, division_name] of todo) {
-      await run(`IF NOT EXISTS (SELECT 1 FROM dbo.px_directorates WHERE directorate_name = @name) INSERT INTO dbo.px_directorates (directorate_name) VALUES (@name)`, { name }, tx);
+      await run(`INSERT INTO dbo.px_directorates (directorate_name) SELECT @name WHERE NOT EXISTS (SELECT 1 FROM dbo.px_directorates WHERE directorate_name = @name)`, { name }, tx);
       if (division_name) {
         await run(`INSERT INTO dbo.px_divisions (directorate_id, division_name)
                    SELECT d.directorate_id, @division_name FROM dbo.px_directorates d WHERE d.directorate_name = @name
@@ -496,7 +424,7 @@ async function topUpScoreTiers() {
     const cfg = sm && readTierConfig(sm.score_tiers);
     if (!cfg) continue;
     const done = await inTransaction(async tx => {
-      const rows = await run('UPDATE dbo.px_metrics SET score_tiers = @cfg OUTPUT INSERTED.metric_id WHERE metric_id = @id AND score_tiers IS NULL',
+      const rows = await run(`UPDATE dbo.px_metrics SET score_tiers = @cfg ${S.outInserted('metric_id')} WHERE metric_id = @id AND score_tiers IS NULL ${S.returning('metric_id')}`,
         { id, cfg: JSON.stringify(cfg) }, tx);
       if (!rows.length) return false;
       if (up.raw) await run('UPDATE dbo.px_metrics SET raw_value = @to WHERE metric_id = @id AND raw_value = @from', { id, from: parseFloat(up.raw.from), to: parseFloat(up.raw.to) }, tx);
@@ -516,13 +444,13 @@ async function topUpOutcomeAggregation() {
   for (const sm of seed.initialMetrics) {
     const agg = sm.metric_type === 'OUTCOME' ? readOutcomeAggregation(sm.outcome_aggregation) : null;
     if (agg) {
-      const rows = await run(`UPDATE dbo.px_metrics SET outcome_aggregation = @agg OUTPUT INSERTED.metric_id
-                              WHERE metric_id = @id AND metric_type = 'OUTCOME' AND outcome_aggregation IS NULL`, { id: sm.metric_id, agg });
+      const rows = await run(`UPDATE dbo.px_metrics SET outcome_aggregation = @agg ${S.outInserted('metric_id')}
+                              WHERE metric_id = @id AND metric_type = 'OUTCOME' AND outcome_aggregation IS NULL ${S.returning('metric_id')}`, { id: sm.metric_id, agg });
       if (rows.length) console.log(`[sqlStorage] Metric ${sm.metric_id} now reads its uploaded months as ${agg}.`);
     }
     const status = readDataStatus(sm.data_status);
     if (status) {
-      const rows = await run('UPDATE dbo.px_metrics SET data_status = @status OUTPUT INSERTED.metric_id WHERE metric_id = @id AND data_status IS NULL',
+      const rows = await run(`UPDATE dbo.px_metrics SET data_status = @status ${S.outInserted('metric_id')} WHERE metric_id = @id AND data_status IS NULL ${S.returning('metric_id')}`,
         { id: sm.metric_id, status });
       if (rows.length) console.log(`[sqlStorage] Metric ${sm.metric_id}: data status ${status}${status === 'NOT_AVAILABLE' ? ' (N/A, not counted)' : ''}.`);
     }
@@ -548,9 +476,9 @@ async function topUpSurveySource() {
 // for any ESS metric where it is off; the admin routes refuse to turn it off again, so after the first boot that
 // needed it this finds nothing. Returns the ids it changed (logged so the change is traceable).
 async function enforceEssManualUpload() {
-  const rows = await run(`SELECT metric_id FROM dbo.px_metrics WHERE survey_source = 'ESS' AND requires_manual_upload = 0 ORDER BY metric_id`);
+  const rows = await run(`SELECT metric_id FROM dbo.px_metrics WHERE survey_source = 'ESS' AND requires_manual_upload = ${S.FALSE} ORDER BY metric_id`);
   if (!rows.length) return;
-  await run(`UPDATE dbo.px_metrics SET requires_manual_upload = 1 WHERE survey_source = 'ESS' AND requires_manual_upload = 0`);
+  await run(`UPDATE dbo.px_metrics SET requires_manual_upload = ${S.TRUE} WHERE survey_source = 'ESS' AND requires_manual_upload = ${S.FALSE}`);
   console.log(`[sqlStorage] ESS metrics are always uploaded manually: requires_manual_upload turned on for metric(s) ${rows.map(r => r.metric_id).join(', ')}.`);
 }
 
@@ -558,11 +486,9 @@ async function enforceEssManualUpload() {
 // PERCENTAGE. Switches the ones that are not (the admin route stores ESS questions as PERCENTAGE, so after the first
 // boot that needed it this finds nothing). SYSTEM survey questions are never touched. Returns the number of rows changed.
 async function enforceEssPercentageQuestions() {
-  const rows = await run(`UPDATE q SET q.question_type = 'PERCENTAGE' FROM dbo.px_survey_questions q
-                          JOIN dbo.px_metrics m ON m.metric_id = q.metric_id
-                          WHERE m.metric_type = 'SURVEY' AND m.survey_source = 'ESS' AND q.question_type <> 'PERCENTAGE';
-                          SELECT @@ROWCOUNT AS n;`);
-  const n = rows[0] ? rows[0].n : 0;
+  const n = await rowCount(null, `UPDATE dbo.px_survey_questions SET question_type = 'PERCENTAGE'
+                          WHERE question_type <> 'PERCENTAGE'
+                            AND metric_id IN (SELECT m.metric_id FROM dbo.px_metrics m WHERE m.metric_type = 'SURVEY' AND m.survey_source = 'ESS')`);
   if (n) console.log(`[sqlStorage] ESS questions are percentages: ${n} question(s) of ESS metrics switched to type PERCENTAGE.`);
   return n;
 }
@@ -578,10 +504,8 @@ async function cleanupRemovedEssDummySeed() {
     let rows = 0;
     let uploads = 0;
     for (const id of ids) {
-      const r = await run('DELETE FROM dbo.px_ess_results WHERE upload_id = @id; SELECT @@ROWCOUNT AS n;', { id }, tx);
-      const u = await run('DELETE FROM dbo.px_survey_uploads WHERE upload_id = @id AND uploaded_by = @by; SELECT @@ROWCOUNT AS n;', { id, by: 'Seed (dummy)' }, tx);
-      rows += r[0] ? r[0].n : 0;
-      uploads += u[0] ? u[0].n : 0;
+      rows += await rowCount(tx, 'DELETE FROM dbo.px_ess_results WHERE upload_id = @id', { id });
+      uploads += await rowCount(tx, 'DELETE FROM dbo.px_survey_uploads WHERE upload_id = @id AND uploaded_by = @by', { id, by: 'Seed (dummy)' });
     }
     return { uploads, rows };
   });
@@ -638,10 +562,10 @@ async function writeUserScopes(tx, user_id, scopes) {
 // at is_test = 0 are looked at and a row is only ever set to 1, so running it again marks 0 rows. Nothing is deleted.
 async function markHistoricalTestAudit() {
   const accounts = new Map((await run('SELECT username, is_test_account FROM dbo.px_users')).map(u => [u.username.toLowerCase(), !!u.is_test_account]));
-  const rows = await run('SELECT audit_id, username, target FROM dbo.px_audit_log WHERE is_test = 0');
+  const rows = await run(`SELECT audit_id, username, target FROM dbo.px_audit_log WHERE is_test = ${S.FALSE}`);
   const ids = rows.filter(r => isHistoricalTestRow(r, accounts)).map(r => Number(r.audit_id));
   for (let i = 0; i < ids.length; i += 500) {
-    await run(`UPDATE dbo.px_audit_log SET is_test = 1 WHERE is_test = 0 AND audit_id IN (${ids.slice(i, i + 500).join(',')})`);
+    await run(`UPDATE dbo.px_audit_log SET is_test = ${S.TRUE} WHERE is_test = ${S.FALSE} AND audit_id IN (${ids.slice(i, i + 500).join(',')})`);
   }
   return { marked: ids.length, visible: rows.length - ids.length };
 }
@@ -650,9 +574,9 @@ async function markHistoricalTestAudit() {
 // empty = all divisions). Only users without any scope row are touched, so it is safe on every boot.
 async function migrateLegacyUserScopes() {
   await run(`INSERT INTO dbo.px_user_scopes (user_id, directorate, division)
-                         SELECT u.user_id, u.directorate, NULLIF(LTRIM(RTRIM(u.division)), N'')
+                         SELECT u.user_id, u.directorate, NULLIF(LTRIM(RTRIM(u.division)), '')
                          FROM dbo.px_users u
-                         WHERE u.role = N'USER' AND u.directorate IS NOT NULL AND LTRIM(RTRIM(u.directorate)) <> N''
+                         WHERE u.role = 'USER' AND u.directorate IS NOT NULL AND LTRIM(RTRIM(u.directorate)) <> ''
                            AND NOT EXISTS (SELECT 1 FROM dbo.px_user_scopes s WHERE s.user_id = u.user_id)`);
 }
 
@@ -661,9 +585,9 @@ async function migrateLegacyUserScopes() {
 // Signature Program Events through menu_access instead - nobody loses access. Only accounts still at NULL are touched.
 // onlyUserIds limits it to those accounts (regression suite). Returns the number of accounts changed.
 async function migrateEventManagerMenuAccess({ onlyUserIds } = {}) {
-  const setting = (await run("SELECT setting_value FROM dbo.px_app_settings WHERE setting_key = N'event_manager_directorates'"))[0];
+  const setting = (await run("SELECT setting_value FROM dbo.px_app_settings WHERE setting_key = 'event_manager_directorates'"))[0];
   const managerDirs = setting ? parseJson(setting.setting_value, []) : [];
-  const users = await withScopes((await run("SELECT * FROM dbo.px_users WHERE role = N'USER' AND menu_access IS NULL")).map(rowToUser));
+  const users = await withScopes((await run("SELECT * FROM dbo.px_users WHERE role = 'USER' AND menu_access IS NULL")).map(rowToUser));
   const targets = users.filter(u => (!onlyUserIds || onlyUserIds.includes(u.user_id)) && coversEventManagerDirectorate(u.scopes, managerDirs));
   for (const u of targets) {
     await run('UPDATE dbo.px_users SET menu_access = @m WHERE user_id = @id AND menu_access IS NULL',
@@ -675,7 +599,6 @@ async function migrateEventManagerMenuAccess({ onlyUserIds } = {}) {
 // v2.31.0: renames the 8 old demo directorates to the bank's 12 real ones everywhere a directorate
 // name is stored (mapping in directorateMigration.js). Runs at boot before any top-up; only rows that
 // still carry an old name are touched, so a second run changes 0 rows. Returns the rows changed per table.
-const BIN = 'COLLATE Latin1_General_100_BIN2';
 async function migrateDirectorates() {
   const counts = { directorates_removed: 0, divisions_moved: 0, survey_responses: 0, attendances: 0, user_scopes: 0, users: 0, app_settings: 0, operational_records: 0 };
   await inTransaction(async tx => {
@@ -692,7 +615,8 @@ async function migrateDirectorates() {
     });
     const plan = managed ? null : planDirectory(current, seed.initialDirectorates, { mapTarget: currentSeedName });
     if (plan) {
-      await run('DELETE FROM dbo.px_divisions; DELETE FROM dbo.px_directorates;', {}, tx);
+      await run('DELETE FROM dbo.px_divisions', {}, tx);
+      await run('DELETE FROM dbo.px_directorates', {}, tx);
       for (const d of plan.directorates) await insertDirectorate(tx, d);
       counts.directorates_removed = plan.removed;
       counts.divisions_moved = plan.moved;
@@ -703,17 +627,17 @@ async function migrateDirectorates() {
     const resolver = await directoryResolver(tx);
     const opts = { isCurrent: resolver.isCurrent, mapTarget: name => resolver.directorate(name) || (managed ? null : currentSeedName(name)) };
 
-    // Columns holding (directorate, division): renamed per distinct exact pair.
+    // Columns holding (directorate, division): renamed per distinct exact (case-sensitive) pair.
     const renamePairs = async (table, dirCol, divCol, where) => {
-      const pairs = await run(`SELECT ${dirCol} ${BIN} AS dir, ${divCol ? `${divCol} ${BIN}` : 'NULL'} AS div, COUNT(*) AS n
+      const pairs = await run(`SELECT ${S.bin(dirCol)} AS dir, ${divCol ? S.bin(divCol) : 'NULL'} AS div, COUNT(*) AS n
                                FROM dbo.${table} WHERE ${dirCol} IS NOT NULL ${where ? `AND ${where}` : ''}
-                               GROUP BY ${dirCol} ${BIN}${divCol ? `, ${divCol} ${BIN}` : ''}`, {}, tx);
+                               GROUP BY ${S.bin(dirCol)}${divCol ? `, ${S.bin(divCol)}` : ''}`, {}, tx);
       let changed = 0;
       for (const p of pairs) {
         const to = renamedDirectorate(p.dir, p.div, opts);
         if (!to) continue;
-        await run(`UPDATE dbo.${table} SET ${dirCol} = @to WHERE ${dirCol} ${BIN} = @dir
-                   ${divCol ? (p.div === null ? `AND ${divCol} IS NULL` : `AND ${divCol} ${BIN} = @div`) : ''} ${where ? `AND ${where}` : ''}`,
+        await run(`UPDATE dbo.${table} SET ${dirCol} = @to WHERE ${S.bin(dirCol)} = @dir
+                   ${divCol ? (p.div === null ? `AND ${divCol} IS NULL` : `AND ${S.bin(divCol)} = @div`) : ''} ${where ? `AND ${where}` : ''}`,
           { to, dir: p.dir, div: p.div }, tx);
         changed += p.n;
       }
@@ -745,7 +669,7 @@ async function migrateDirectorates() {
       if (!rows.length) continue;
       const next = migrateDirectorateOptions(parseJson(rows[0].setting_value, null), opts);
       if (!next) continue;
-      await run('UPDATE dbo.px_app_settings SET setting_value = @v, updated_at = SYSUTCDATETIME() WHERE setting_key = @k', { k, v: T.max(JSON.stringify(next)) }, tx);
+      await run(`UPDATE dbo.px_app_settings SET setting_value = @v, updated_at = ${S.now} WHERE setting_key = @k`, { k, v: T.max(JSON.stringify(next)) }, tx);
       counts.app_settings++;
     }
   });
@@ -758,8 +682,8 @@ async function migrateDirectorates() {
 // Inserts any default setting that is not in the table yet (never overwrites an admin's value).
 async function seedAppSettings(tx) {
   for (const [key, def] of Object.entries(seed.initialAppSettings || {})) {
-    await run(`IF NOT EXISTS (SELECT 1 FROM dbo.px_app_settings WHERE setting_key = @key)
-                 INSERT INTO dbo.px_app_settings (setting_key, setting_value, description) VALUES (@key, @value, @description)`,
+    await run(`INSERT INTO dbo.px_app_settings (setting_key, setting_value, description)
+                 SELECT @key, @value, @description WHERE NOT EXISTS (SELECT 1 FROM dbo.px_app_settings WHERE setting_key = @key)`,
       { key, value: T.max(JSON.stringify(def.value)), description: def.description || '' }, tx);
   }
 }
@@ -772,7 +696,7 @@ async function topUpOptionLabels() {
     if (!rows.length) continue;
     const next = seed.upgradeLegacyOptionLabels(key, parseJson(rows[0].setting_value, null));
     if (!next) continue;
-    await run('UPDATE dbo.px_app_settings SET setting_value = @value, updated_at = SYSUTCDATETIME() WHERE setting_key = @key',
+    await run(`UPDATE dbo.px_app_settings SET setting_value = @value, updated_at = ${S.now} WHERE setting_key = @key`,
       { key, value: T.max(JSON.stringify(next)) });
     console.log(`[sqlStorage] Setting '${key}': Indonesian default option labels replaced with the English ones.`);
   }
@@ -786,7 +710,7 @@ async function topUpAddedOptions() {
     if (!rows.length) continue;
     const next = seed.addMissingOptions(key, parseJson(rows[0].setting_value, null));
     if (!next) continue;
-    await run('UPDATE dbo.px_app_settings SET setting_value = @value, updated_at = SYSUTCDATETIME() WHERE setting_key = @key',
+    await run(`UPDATE dbo.px_app_settings SET setting_value = @value, updated_at = ${S.now} WHERE setting_key = @key`,
       { key, value: T.max(JSON.stringify(next)) });
     console.log(`[sqlStorage] Setting '${key}': added option(s) ${seed.ADDED_OPTION_VALUES[key].join(', ')}.`);
   }
@@ -803,7 +727,7 @@ const rowToReminderLog = r => ({
   pic_email: r.pic_email,
   error_message: r.error_message
 });
-const REMINDER_LOG_SELECT = `SELECT log_id, metric_id, expected_period, CONVERT(char(10), sent_on, 23) AS sent_on, attempted_at,
+const reminderLogSelect = (top = '') => `SELECT ${top} log_id, metric_id, expected_period, ${S.dateStr('sent_on')} AS sent_on, attempted_at,
                               status, pic_email, error_message FROM dbo.px_reminder_log`;
 
 // ------------------------------------------------------------------ e-mail sender settings (px_email_settings)
@@ -821,12 +745,9 @@ const rowToEmailSettings = r => ({
 });
 
 async function upsertEmailSettings(tx, s) {
-  await run(`MERGE dbo.px_email_settings AS t USING (SELECT 1 AS setting_id) AS src ON t.setting_id = src.setting_id
-             WHEN MATCHED THEN UPDATE SET enabled = @enabled, provider = @provider, smtp_host = @smtp_host, smtp_port = @smtp_port,
-               smtp_secure = @smtp_secure, smtp_user = @smtp_user, smtp_password_enc = @smtp_password_enc, from_name = @from_name,
-               from_email = @from_email, updated_at = SYSUTCDATETIME()
-             WHEN NOT MATCHED THEN INSERT (setting_id, enabled, provider, smtp_host, smtp_port, smtp_secure, smtp_user, smtp_password_enc, from_name, from_email)
-               VALUES (1, @enabled, @provider, @smtp_host, @smtp_port, @smtp_secure, @smtp_user, @smtp_password_enc, @from_name, @from_email);`, {
+  const cols = Object.fromEntries(['enabled', 'provider', 'smtp_host', 'smtp_port', 'smtp_secure', 'smtp_user', 'smtp_password_enc', 'from_name', 'from_email']
+    .map(c => [c, `@${c}`]));
+  await run(D.upsert({ table: 'px_email_settings', key: { setting_id: '1' }, cols, update: { ...cols, updated_at: S.now } }), {
     enabled: !!s.enabled, provider: s.provider || 'GMAIL', smtp_host: s.smtp_host || '', smtp_port: parseInt(s.smtp_port || 465, 10),
     smtp_secure: s.smtp_secure !== false, smtp_user: s.smtp_user || '', smtp_password_enc: T.max(s.smtp_password_enc || ''),
     from_name: s.from_name || '', from_email: s.from_email || ''
@@ -915,11 +836,8 @@ async function updateMetricRow(tx, m) {
 }
 
 async function upsertTarget(tx, metric_id, target) {
-  await run(`MERGE dbo.px_metric_targets AS t
-             USING (SELECT @metric_id AS metric_id) AS s ON t.metric_id = s.metric_id
-             WHEN MATCHED THEN UPDATE SET target_value = @target_value, target_display = @target_display, min_threshold = @min_threshold
-             WHEN NOT MATCHED THEN INSERT (metric_id, target_value, target_display, min_threshold)
-               VALUES (@metric_id, @target_value, @target_display, @min_threshold);`, {
+  await run(D.upsert({ table: 'px_metric_targets', key: { metric_id: '@metric_id' },
+    cols: { target_value: '@target_value', target_display: '@target_display', min_threshold: '@min_threshold' } }), {
     metric_id,
     target_value: parseFloat(target.target_value),
     target_display: target.target_display === undefined || target.target_display === null ? '' : String(target.target_display),
@@ -929,7 +847,7 @@ async function upsertTarget(tx, metric_id, target) {
 
 async function insertDirectorate(tx, d) {
   const name = d.directorate_name || d.name;
-  const rows = await run(`INSERT INTO dbo.px_directorates (directorate_name) OUTPUT INSERTED.directorate_id VALUES (@name)`, { name }, tx);
+  const rows = await run(`INSERT INTO dbo.px_directorates (directorate_name) ${S.outInserted('directorate_id')} VALUES (@name) ${S.returning('directorate_id')}`, { name }, tx);
   const id = rows[0].directorate_id;
   const divisions = [...new Set(d.divisions || d.sub_directorates || [])];
   for (const division_name of divisions) {
@@ -938,11 +856,7 @@ async function insertDirectorate(tx, d) {
 }
 
 async function clearParameters(tx) {
-  await run(`DELETE FROM dbo.px_metric_targets;
-             DELETE FROM dbo.px_survey_questions;
-             DELETE FROM dbo.px_metrics;
-             DELETE FROM dbo.px_checkpoints;
-             DELETE FROM dbo.px_journeys;`, {}, tx);
+  for (const t of ['px_metric_targets', 'px_survey_questions', 'px_metrics', 'px_checkpoints', 'px_journeys']) await run(`DELETE FROM dbo.${t}`, {}, tx);
   // v2.51.0: the directorate master is not part of "Reset Default" any more (it is managed in Admin Parameters ->
   // Directorates; resetting it would undo the Admin's renames / merges and orphan the data that carries the names).
 
@@ -1049,11 +963,9 @@ async function importStore(store, log = () => {}) {
     let att = 0;
     for (const a of store.attendances || []) {
       if (!eventIds.has(a.event_id)) { log(`  skipped attendance ${a.attendance_id}: unknown event ${a.event_id}`); continue; }
-      // IDENTITY_INSERT is switched on/off inside the same batch (it can be scoped to one batch).
-      await run(`SET IDENTITY_INSERT dbo.px_attendances ON;
-                 INSERT INTO dbo.px_attendances (attendance_id, event_id, nip, employee_name, cimb_email, directorate, division, attendance_timestamp)
-                 VALUES (@attendance_id, @event_id, @nip, @employee_name, @cimb_email, @directorate, @division, @ts);
-                 SET IDENTITY_INSERT dbo.px_attendances OFF;`, {
+      // the original id is kept (SQL Server: IDENTITY_INSERT switched on/off inside the same batch; pg: sequence synced below)
+      await D.insertWithIdentity(tx, 'px_attendances', `INSERT INTO dbo.px_attendances (attendance_id, event_id, nip, employee_name, cimb_email, directorate, division, attendance_timestamp)
+                 VALUES (@attendance_id, @event_id, @nip, @employee_name, @cimb_email, @directorate, @division, @ts)`, {
         attendance_id: a.attendance_id, event_id: a.event_id, nip: String(a.nip), employee_name: a.employee_name,
         cimb_email: a.cimb_email, directorate: a.directorate || 'General', division: a.division || 'General',
         ts: toDateObj(a.attendance_timestamp)
@@ -1065,10 +977,8 @@ async function importStore(store, log = () => {}) {
     let fb = 0;
     for (const f of store.feedbackResponses || []) {
       if (!eventIds.has(f.event_id)) { log(`  skipped feedback ${f.response_id}: unknown event ${f.event_id}`); continue; }
-      await run(`SET IDENTITY_INSERT dbo.px_feedback_responses ON;
-                 INSERT INTO dbo.px_feedback_responses (response_id, event_id, nip, ratings_json, verbatim, submitted_at)
-                 VALUES (@response_id, @event_id, @nip, @ratings_json, @verbatim, @ts);
-                 SET IDENTITY_INSERT dbo.px_feedback_responses OFF;`, {
+      await D.insertWithIdentity(tx, 'px_feedback_responses', `INSERT INTO dbo.px_feedback_responses (response_id, event_id, nip, ratings_json, verbatim, submitted_at)
+                 VALUES (@response_id, @event_id, @nip, @ratings_json, @verbatim, @ts)`, {
         response_id: f.response_id, event_id: f.event_id, nip: String(f.nip),
         ratings_json: T.max(JSON.stringify(f.ratings || {})), verbatim: T.max(f.verbatim || ''), ts: toDateObj(f.submitted_at)
       }, tx);
@@ -1201,17 +1111,14 @@ async function importStore(store, log = () => {}) {
       }
     }
     counts.operational_records = ops;
+    await D.syncIdentities(tx);   // pg: identity sequences past the ids inserted explicitly (SQL Server: nothing to do)
   });
   return counts;
 }
 
 // ------------------------------------------------------------------ schema + seeding
-async function applySchema() {
-  const text = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-  const batches = text.split(/^\s*GO\s*$/gim).map(b => b.trim()).filter(Boolean);
-  const pool = await getPool();
-  for (const batch of batches) await pool.request().batch(batch);
-}
+// schema.sql (SQL Server) or schema.pg.sql (PostgreSQL) - both idempotent
+const applySchema = () => D.applySchema();
 
 // A brand-new database gets the standard seed/demo dataset (same as a first-ever JSON boot).
 async function seedIfEmpty() {
@@ -1228,7 +1135,7 @@ async function seedIfEmpty() {
 async function topUpSeedResponses() {
   const seedRows = seed.initialSurveyUploadedResponses || [];
   if (!seedRows.length) return;
-  const existing = await run(`SELECT metric_id, CONVERT(char(10), survey_date, 23) AS d, respondent_id
+  const existing = await run(`SELECT metric_id, ${S.dateStr('survey_date')} AS d, respondent_id
                               FROM dbo.px_survey_uploaded_responses WHERE upload_id = @u`, { u: 'seed-batch-2026' });
   const have = new Set(existing.map(r => `${r.metric_id}|${r.d}|${r.respondent_id}`));
   const missing = seedRows.map(normalizeResponse).filter(n => !have.has(`${n.metric_id}|${n.survey_date}|${n.respondent_id}`));
@@ -1243,9 +1150,9 @@ async function topUpSeedResponses() {
     n.org_unit_1 = dir;
   });
   await inTransaction(async tx => {
-    await run(`IF NOT EXISTS (SELECT 1 FROM dbo.px_survey_uploads WHERE upload_id = @u)
-                 INSERT INTO dbo.px_survey_uploads (upload_id, metric_id, file_name, total_rows, valid_rows, invalid_rows, calculated_avg_score, uploaded_by)
-                 VALUES (@u, NULL, N'Master_Survey_Baseline_Q1_2026.csv', @n, @n, 0, 4.5, N'System Scheduler (Air-Gapped)')`,
+    await run(`INSERT INTO dbo.px_survey_uploads (upload_id, metric_id, file_name, total_rows, valid_rows, invalid_rows, calculated_avg_score, uploaded_by)
+                 SELECT @u, NULL, 'Master_Survey_Baseline_Q1_2026.csv', @n, @n, 0, 4.5, 'System Scheduler (Air-Gapped)'
+                 WHERE NOT EXISTS (SELECT 1 FROM dbo.px_survey_uploads WHERE upload_id = @u)`,
       { u: 'seed-batch-2026', n: seedRows.length }, tx);
     await bulkInsertResponses(tx, 'seed-batch-2026', missing);
   });
@@ -1288,15 +1195,17 @@ async function cleanupEssRespondentRows(outerTx) {
   const work = async tx => {
     const ids = (await essMetricIds(tx)).map(id => parseInt(id, 10)).filter(Number.isInteger);
     if (!ids.length) return { responses: 0, uploads: 0 };
-    const rows = await run(`SELECT DISTINCT upload_id INTO #ess_up FROM dbo.px_survey_uploaded_responses WHERE metric_id IN (${ids.join(', ')});
-      DELETE FROM dbo.px_survey_uploaded_responses WHERE metric_id IN (${ids.join(', ')});
-      DECLARE @r INT = @@ROWCOUNT;
-      DELETE u FROM dbo.px_survey_uploads u WHERE u.upload_id IN (SELECT upload_id FROM #ess_up)
-        AND NOT EXISTS (SELECT 1 FROM dbo.px_survey_uploaded_responses x WHERE x.upload_id = u.upload_id);
-      DECLARE @u INT = @@ROWCOUNT;
-      DROP TABLE #ess_up;
-      SELECT @r AS responses, @u AS uploads;`, {}, tx);
-    return rows[0] || { responses: 0, uploads: 0 };
+    const touched = (await run(`SELECT DISTINCT upload_id FROM dbo.px_survey_uploaded_responses WHERE metric_id IN (${ids.join(', ')})`, {}, tx))
+      .map(r => r.upload_id);
+    const responses = await rowCount(tx, `DELETE FROM dbo.px_survey_uploaded_responses WHERE metric_id IN (${ids.join(', ')})`);
+    let uploads = 0;
+    for (let i = 0; i < touched.length; i += 500) {          // the batches left empty
+      const params = {};
+      const names = touched.slice(i, i + 500).map((u, j) => { params[`u${j}`] = u; return `@u${j}`; });
+      uploads += await rowCount(tx, `DELETE FROM dbo.px_survey_uploads WHERE upload_id IN (${names.join(', ')})
+        AND upload_id NOT IN (SELECT x.upload_id FROM dbo.px_survey_uploaded_responses x)`, params);
+    }
+    return { responses, uploads };
   };
   return outerTx ? work(outerTx) : inTransaction(work);
 }
@@ -1317,9 +1226,9 @@ async function topUpEssSeed() {
     for (const uploadId of todo) {
       const up = (seed.initialEssUploads || []).find(u => u.upload_id === uploadId);
       if (up) {
-        await run(`IF NOT EXISTS (SELECT 1 FROM dbo.px_survey_uploads WHERE upload_id = @upload_id)
-                     INSERT INTO dbo.px_survey_uploads (upload_id, metric_id, file_name, total_rows, valid_rows, invalid_rows, calculated_avg_score, uploaded_by, uploaded_at)
-                     VALUES (@upload_id, @metric_id, @file_name, @total_rows, @valid_rows, @invalid_rows, @avg, @uploaded_by, @uploaded_at)`, {
+        await run(`INSERT INTO dbo.px_survey_uploads (upload_id, metric_id, file_name, total_rows, valid_rows, invalid_rows, calculated_avg_score, uploaded_by, uploaded_at)
+                     SELECT @upload_id, @metric_id, @file_name, @total_rows, @valid_rows, @invalid_rows, @avg, @uploaded_by, @uploaded_at
+                     WHERE NOT EXISTS (SELECT 1 FROM dbo.px_survey_uploads WHERE upload_id = @upload_id)`, {
           upload_id: up.upload_id, metric_id: up.metric_id, file_name: up.file_name, total_rows: up.total_rows, valid_rows: up.valid_rows,
           invalid_rows: up.invalid_rows, avg: up.calculated_avg_score, uploaded_by: up.uploaded_by, uploaded_at: toDateObj(up.uploaded_at)
         }, tx);
@@ -1334,7 +1243,7 @@ async function topUpEssSeed() {
 const EXIT_TEXT_COLS = ['nik', 'employee_name', 'leaving_reason', 'leaving_reason_detail', 'grade', 'score_factor', 'directorate', 'division',
   'destination_industry', 'new_company', 'new_company_std', 'new_position', 'pull_factors', 'improve_factors', 'new_company_offers',
   'internal_factors', 'alumni_network', 'privacy_consent', 'recommend', 'suggestions'];
-const EXIT_SELECT = 'SELECT e.*, CONVERT(char(10), e.effective_date, 23) AS effective_date_str FROM dbo.px_exit_interviews e';
+const EXIT_SELECT = `SELECT e.*, ${S.dateStr('e.effective_date')} AS effective_date_str FROM dbo.px_exit_interviews e`;
 const rowToExit = r => {
   const out = { exit_id: r.exit_id, upload_id: r.upload_id };
   EXIT_TEXT_COLS.forEach(c => { out[c] = r[c] === undefined ? null : r[c]; });
@@ -1379,39 +1288,32 @@ async function insertExitUpload(tx, u) {
   }, tx);
 }
 
+const EXIT_BULK_COLUMNS = [
+  { name: 'upload_id', type: 'nvarchar', len: 64 }, { name: 'nik', type: 'nvarchar', len: 50 }, { name: 'employee_name', type: 'nvarchar', len: 200 },
+  { name: 'effective_date', type: 'date' },
+  ...['leaving_reason', 'leaving_reason_detail'].map(c => ({ name: c, type: 'nvarchar', len: 100, nullable: true })),
+  ...['grade', 'score_factor'].map(c => ({ name: c, type: 'nvarchar', len: 20, nullable: true })),
+  { name: 'directorate', type: 'nvarchar', len: 200 }, { name: 'division', type: 'nvarchar', len: 200, nullable: true },
+  ...['destination_industry', 'new_company', 'new_company_std', 'new_position'].map(c => ({ name: c, type: 'nvarchar', len: 500, nullable: true })),
+  ...['pull_factors', 'improve_factors', 'new_company_offers', 'internal_factors'].map(c => ({ name: c, type: 'max', nullable: true })),
+  { name: 'career_scores_json', type: 'nvarchar', len: 400, nullable: true },
+  ...['alumni_network', 'privacy_consent', 'recommend'].map(c => ({ name: c, type: 'varchar', len: 3, nullable: true })),
+  { name: 'suggestions', type: 'max', nullable: true }, { name: 'source', type: 'varchar', len: 20 }, { name: 'created_at', type: 'datetime' }
+];
 async function bulkInsertExitRows(tx, rows) {
-  if (!rows.length) return;
-  const table = new sql.Table('dbo.px_exit_interviews');
-  table.create = false;
-  table.columns.add('upload_id', sql.NVarChar(64), { nullable: false });
-  table.columns.add('nik', sql.NVarChar(50), { nullable: false });
-  table.columns.add('employee_name', sql.NVarChar(200), { nullable: false });
-  table.columns.add('effective_date', sql.Date, { nullable: false });
-  ['leaving_reason', 'leaving_reason_detail'].forEach(c => table.columns.add(c, sql.NVarChar(100), { nullable: true }));
-  ['grade', 'score_factor'].forEach(c => table.columns.add(c, sql.NVarChar(20), { nullable: true }));
-  table.columns.add('directorate', sql.NVarChar(200), { nullable: false });
-  table.columns.add('division', sql.NVarChar(200), { nullable: true });
-  ['destination_industry', 'new_company', 'new_company_std', 'new_position'].forEach(c => table.columns.add(c, sql.NVarChar(500), { nullable: true }));
-  ['pull_factors', 'improve_factors', 'new_company_offers', 'internal_factors'].forEach(c => table.columns.add(c, sql.NVarChar(sql.MAX), { nullable: true }));
-  table.columns.add('career_scores_json', sql.NVarChar(400), { nullable: true });
-  ['alumni_network', 'privacy_consent', 'recommend'].forEach(c => table.columns.add(c, sql.VarChar(3), { nullable: true }));
-  table.columns.add('suggestions', sql.NVarChar(sql.MAX), { nullable: true });
-  table.columns.add('source', sql.VarChar(20), { nullable: false });
-  table.columns.add('created_at', sql.DateTime2(3), { nullable: false });
-  rows.forEach(r => table.rows.add(
-    r.upload_id, r.nik, r.employee_name || '', sqlDateObj(r.effective_date), r.leaving_reason || null, r.leaving_reason_detail || null,
+  await D.bulkInsert(tx, 'px_exit_interviews', EXIT_BULK_COLUMNS, rows.map(r => [
+    r.upload_id, r.nik, r.employee_name || '', r.effective_date, r.leaving_reason || null, r.leaving_reason_detail || null,
     r.grade || null, r.score_factor || null, r.directorate, r.division || null, r.destination_industry || null, r.new_company || null,
     r.new_company_std || null, r.new_position || null, r.pull_factors || null, r.improve_factors || null, r.new_company_offers || null,
     r.internal_factors || null, Array.isArray(r.career_scores) ? JSON.stringify(r.career_scores) : null, r.alumni_network || null,
     r.privacy_consent || null, r.recommend || null, r.suggestions || null, r.source || 'SEED_DUMMY', toDateObj(r.created_at)
-  ));
-  await new sql.Request(tx).bulk(table);
+  ]));
 }
 
 async function exitMonthCounts() {
-  return (await run(`SELECT YEAR(effective_date) AS y, MONTH(effective_date) AS m, COUNT(*) AS total,
+  return (await run(`SELECT ${S.year('effective_date')} AS y, ${S.month('effective_date')} AS m, COUNT(*) AS total,
                             SUM(CASE WHEN source = 'SEED_DUMMY' THEN 1 ELSE 0 END) AS dummy
-                     FROM dbo.px_exit_interviews GROUP BY YEAR(effective_date), MONTH(effective_date) ORDER BY y, m`))
+                     FROM dbo.px_exit_interviews GROUP BY ${S.year('effective_date')}, ${S.month('effective_date')} ORDER BY y, m`))
     .map(r => ({ year: r.y, month: r.m, total: r.total, dummy: r.dummy }));
 }
 
@@ -1442,7 +1344,7 @@ async function topUpExitInterviewSeed() {
 }
 
 // ------------------------------------------------------------------ social media statistics of metric 1 (v2.52.0)
-const SOCIAL_PLATFORM_ORDER = "CASE s.platform WHEN N'Instagram' THEN 1 WHEN N'LinkedIn' THEN 2 ELSE 3 END";
+const SOCIAL_PLATFORM_ORDER = "CASE s.platform WHEN 'Instagram' THEN 1 WHEN 'LinkedIn' THEN 2 ELSE 3 END";
 const rowToSocialStat = r => ({
   stat_id: r.stat_id,
   platform: r.platform,
@@ -1531,7 +1433,7 @@ const rowToOutcomeUpload = r => ({
   period_to: r.period_to || null,
   uploaded_at: iso(r.uploaded_at)
 });
-const DECIMAL_VALUE = v => ({ __t: sql.Decimal(18, 4), v });
+const DECIMAL_VALUE = v => D.typed('decimal_18_4', v);
 
 async function insertOutcomeUpload(tx, u) {
   await run(`INSERT INTO dbo.px_outcome_uploads (upload_id, metric_id, file_name, uploaded_by, total_rows, inserted_rows, updated_rows, replaced_seed_rows, period_from, period_to${u.uploaded_at ? ', uploaded_at' : ''})
@@ -1610,8 +1512,8 @@ async function insertPartResult(tx, r) {
              VALUES (@metric_id, @part_key, @upload_id, @org_level, @directorate, @y, @m, @score, @respondents, @questions, @period_text${r.created_at ? ', @created_at' : ''})`, {
     metric_id: parseInt(r.metric_id, 10), part_key: r.part_key, upload_id: r.upload_id || null, org_level: r.org_level,
     directorate: r.org_level === 'DIRECTORATE' ? r.directorate : null, y: parseInt(r.year, 10), m: parseInt(r.month, 10),
-    score: { __t: sql.Decimal(18, 8), v: r.score === null || r.score === undefined ? null : r.score },
-    respondents: r.respondents === null || r.respondents === undefined ? { __t: sql.Int, v: null } : parseInt(r.respondents, 10), questions: T.max(JSON.stringify(r.questions || [])), period_text: r.period_text ? String(r.period_text).slice(0, 100) : null,
+    score: D.typed('decimal_18_8', r.score === null || r.score === undefined ? null : r.score),
+    respondents: r.respondents === null || r.respondents === undefined ? D.typed('int', null) : parseInt(r.respondents, 10), questions: T.max(JSON.stringify(r.questions || [])), period_text: r.period_text ? String(r.period_text).slice(0, 100) : null,
     ...(r.created_at ? { created_at: toDateObj(r.created_at) } : {})
   }, tx);
 }
@@ -1622,8 +1524,9 @@ async function topUpMetricParts() {
   (seed.initialMetricParts || []).forEach(p => { if (!byMetric.has(p.metric_id)) byMetric.set(p.metric_id, []); byMetric.get(p.metric_id).push(p); });
   for (const [metricId, parts] of byMetric) {
     const added = await inTransaction(async tx => {
+      await D.lockTable(tx, 'px_metric_parts');   // pg (SQL Server: the lock hint below)
       const exists = await run(`SELECT (SELECT COUNT(*) FROM dbo.px_metrics WHERE metric_id = @id) AS m,
-                                       (SELECT COUNT(*) FROM dbo.px_metric_parts WITH (UPDLOCK, HOLDLOCK) WHERE metric_id = @id) AS p`, { id: metricId }, tx);
+                                       (SELECT COUNT(*) FROM dbo.px_metric_parts ${S.lockHint} WHERE metric_id = @id) AS p`, { id: metricId }, tx);
       if (!exists[0].m || exists[0].p) return 0;
       for (const p of parts) await insertMetricPart(tx, p);
       // seed.METRIC_PART_UPGRADES: the metric's scale / unit / target, only while they are still the old seed values
@@ -1648,7 +1551,7 @@ async function topUpPartQuestions() {
   const parts = (await run('SELECT * FROM dbo.px_metric_parts WHERE questions_json IS NULL ORDER BY metric_id, sort_order, part_id')).map(rowToMetricPart);
   let n = 0;
   for (const p of parts) {
-    const latest = (await run(`SELECT TOP 1 * FROM dbo.px_metric_part_uploads WHERE metric_id = @m AND part_key = @k ORDER BY uploaded_at DESC, upload_id DESC`,
+    const latest = (await run(`SELECT ${S.top(1)} * FROM dbo.px_metric_part_uploads WHERE metric_id = @m AND part_key = @k ORDER BY uploaded_at DESC, upload_id DESC ${S.limit(1)}`,
       { m: p.metric_id, k: p.part_key })).map(rowToPartUpload)[0] || null;
     const rows = latest ? (await run('SELECT * FROM dbo.px_metric_part_results WHERE upload_id = @u', { u: latest.upload_id })).map(rowToPartResult) : [];
     const questions = seedPartQuestions(p, latest, rows);
@@ -1662,21 +1565,20 @@ async function topUpPartQuestions() {
 // v2.52.0: metric 1 is bankwide social media data - its old recruitment-SLA rows per unit were wrong data. Removed at every
 // boot (idempotent; only metric 1, the other metrics' drilldown tables are untouched). Returns the rows deleted.
 async function removeMetric1SlaRows() {
-  const rows = await run('DELETE FROM dbo.px_recruitment_sla_by_unit WHERE metric_id = 1; SELECT @@ROWCOUNT AS n;');
-  return rows[0] ? rows[0].n : 0;
+  return rowCount(null, 'DELETE FROM dbo.px_recruitment_sla_by_unit WHERE metric_id = 1');
 }
 
 // v2.53.0: the integration tokens of v2.52.0 are removed (on-premise app, Excel upload only). Their table is dropped at
 // every boot / migrate while it exists and is EMPTY; a table that still holds rows is kept (nothing reads it any more)
 // and reported, never dropped with data in it. Returns { state: 'ABSENT' | 'DROPPED' | 'KEPT', rows }.
 async function dropRetiredIntegrationTokens() {
-  if (!(await run("SELECT OBJECT_ID(N'dbo.px_integration_tokens', N'U') AS id"))[0].id) return { state: 'ABSENT', rows: 0 };
+  if (!(await D.tableExists('px_integration_tokens'))) return { state: 'ABSENT', rows: 0 };
   const rows = (await run('SELECT COUNT(*) AS n FROM dbo.px_integration_tokens'))[0].n;
   if (rows) {
     console.warn(`[sqlStorage] px_integration_tokens still holds ${rows} row(s) - kept (the integration feature was removed in v2.53.0; nothing uses them). Drop it by hand once checked.`);
     return { state: 'KEPT', rows };
   }
-  await run("IF OBJECT_ID(N'dbo.px_integration_tokens', N'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM dbo.px_integration_tokens) DROP TABLE dbo.px_integration_tokens");
+  await D.dropTableIfExists('px_integration_tokens', { onlyIfEmpty: true });
   console.log('[sqlStorage] Dropped the empty table px_integration_tokens (integration feature removed in v2.53.0).');
   return { state: 'DROPPED', rows: 0 };
 }
@@ -1790,15 +1692,16 @@ async function isDirectoryManaged(tx) {
 // The first Admin change of the directory: from now on the boot never tops the master up from the seed.
 async function markDirectoryManaged(tx) {
   const def = (seed.initialAppSettings || {})[DIRECTORY_FLAG] || {};
-  await run(`IF EXISTS (SELECT 1 FROM dbo.px_app_settings WHERE setting_key = @k)
-               UPDATE dbo.px_app_settings SET setting_value = N'true', updated_at = SYSUTCDATETIME() WHERE setting_key = @k AND setting_value <> N'true'
-             ELSE INSERT INTO dbo.px_app_settings (setting_key, setting_value, description) VALUES (@k, N'true', @d)`,
+  await run(`UPDATE dbo.px_app_settings SET setting_value = 'true', updated_at = ${S.now} WHERE setting_key = @k AND setting_value <> 'true'`,
+    { k: DIRECTORY_FLAG }, tx);
+  await run(`INSERT INTO dbo.px_app_settings (setting_key, setting_value, description)
+             SELECT @k, 'true', @d WHERE NOT EXISTS (SELECT 1 FROM dbo.px_app_settings WHERE setting_key = @k)`,
   { k: DIRECTORY_FLAG, d: def.description || '' }, tx);
 }
 
 // [{ source, directorate, division, n }] for directoryNames.summarizeUsage (settings = one row per listed directorate)
 async function directoryUsageRows(tx) {
-  const parts = DIRECTORY_SOURCES.map(s => `SELECT '${s.source}' AS source, ${s.dir} AS directorate, ${s.div || 'CAST(NULL AS NVARCHAR(200))'} AS division, COUNT(*) AS n
+  const parts = DIRECTORY_SOURCES.map(s => `SELECT '${s.source}' AS source, ${s.dir} AS directorate, ${s.div || S.nullText} AS division, COUNT(*) AS n
     FROM dbo.${s.table} ${s.where ? `WHERE ${s.where}` : ''} GROUP BY ${s.dir}${s.div ? `, ${s.div}` : ''}`);
   const rows = await run(parts.join('\nUNION ALL\n'), {}, tx);
   for (const k of DIRECTORATE_SETTING_KEYS) {
@@ -1822,16 +1725,15 @@ async function findDirectorate(tx, id) {
   return d;
 }
 
-// #3: every directory change runs in one transaction; a deadlock (1205) with a parallel change is retried once, a UNIQUE
+// #3: every directory change runs in one transaction; a deadlock (SQL Server 1205, pg 40P01) with a parallel change is retried once, a UNIQUE
 // violation (a parallel change took the name, or the database collation sees two names as equal) becomes a clean 409.
 async function directoryTx(work) {
   for (let attempt = 1; ; attempt++) {
     try {
       return await inTransaction(work);
     } catch (err) {
-      const n = err && (err.number || (err.originalError && err.originalError.info && err.originalError.info.number));
-      if (n === 1205 && attempt === 1) continue;
-      if (n === 1205) throw directoryError(409, 'Another directory change ran at the same time. Nothing was changed - reload and try again.');
+      if (D.isDeadlock(err) && attempt === 1) continue;
+      if (D.isDeadlock(err)) throw directoryError(409, 'Another directory change ran at the same time. Nothing was changed - reload and try again.');
       if (isUniqueViolation(err)) throw directoryError(409, 'That name is already in use (possibly by a change made at the same time, or a name the database treats as equal). Nothing was changed - reload and try again.');
       throw err;
     }
@@ -1855,9 +1757,9 @@ async function checkOrphanAdoption(tx, name, confirmAdopt) {
   return orphans;
 }
 
+// Rows changed by one INSERT / UPDATE / DELETE statement
 async function rowCount(tx, text, params) {
-  const r = await run(`${text}; SELECT @@ROWCOUNT AS n;`, params, tx);
-  return r.length ? r[0].n : 0;
+  return D.rowCount(text, params, tx);
 }
 
 // Rewrites the scope list of every login for which rewrite(list) returns a new list (null = unchanged).
@@ -1911,7 +1813,7 @@ async function cascadeDirectorate(tx, from, to, merge = null) {
     const rows = await run('SELECT setting_value FROM dbo.px_app_settings WHERE setting_key = @k', { k }, tx);
     const next = rows.length ? dirNames.renameDirectorateOption(parseJson(rows[0].setting_value, null), from, to) : null;
     if (!next) continue;
-    await run('UPDATE dbo.px_app_settings SET setting_value = @v, updated_at = SYSUTCDATETIME() WHERE setting_key = @k', { k, v: T.max(JSON.stringify(next)) }, tx);
+    await run(`UPDATE dbo.px_app_settings SET setting_value = @v, updated_at = ${S.now} WHERE setting_key = @k`, { k, v: T.max(JSON.stringify(next)) }, tx);
     counts.settings++;
   }
   return counts;
@@ -1926,8 +1828,8 @@ async function moveDirectorateAliases(tx, from, to) {
   await run('UPDATE dbo.px_directorate_aliases SET directorate_name = @to WHERE directorate_name = @from', { from, to }, tx);
   if (nameKey(from) !== nameKey(to)) {
     await run('INSERT INTO dbo.px_directorate_aliases (alias_name, directorate_name) VALUES (@from, @to)', { from, to }, tx);
-    await run(`DELETE s FROM dbo.px_division_aliases s WHERE s.directorate_name = @from
-                 AND EXISTS (SELECT 1 FROM dbo.px_division_aliases t WHERE t.directorate_name = @to AND t.alias_name = s.alias_name)`, { from, to }, tx);
+    await run(`DELETE FROM dbo.px_division_aliases WHERE directorate_name = @from
+                 AND alias_name IN (SELECT t.alias_name FROM dbo.px_division_aliases t WHERE t.directorate_name = @to)`, { from, to }, tx);
   }
   await run('UPDATE dbo.px_division_aliases SET directorate_name = @to WHERE directorate_name = @from', { from, to }, tx);
   return released ? released.directorate_name : null;
@@ -1940,7 +1842,7 @@ async function adoptOrphanSpelling(tx, name, divisions = []) {
   await cascadeDirectorate(tx, name, name);
   for (const div of divisions) {
     for (const s of DIRECTORY_SOURCES.filter(x => x.div && x.source !== 'user_scopes')) {
-      await run(`UPDATE dbo.${s.table} SET ${s.div} = @div WHERE ${s.dir} = @dir AND ${s.div} = @div AND ${s.div} ${BIN} <> @div${s.where ? ` AND ${s.where}` : ''}`, { dir: name, div }, tx);
+      await run(`UPDATE dbo.${s.table} SET ${s.div} = @div WHERE ${s.dir} = @dir AND ${s.div} = @div AND ${S.bin(s.div)} <> @div${s.where ? ` AND ${s.where}` : ''}`, { dir: name, div }, tx);
     }
     await rewriteScopes(tx, list => dirNames.respelledScopes(list, dirNames.renameScopeDivision(list, name, div, div)));
   }
@@ -2056,8 +1958,8 @@ async function mergeDirectorate(id, targetId) {
     await run('DELETE FROM dbo.px_directorates WHERE directorate_id = @id', { id: src.directorate_id }, tx);
     await moveDirectorateAliases(tx, src.directorate_name, tgt.directorate_name);
     // a former division name equal to a division the target has now is no longer a former name
-    await run(`DELETE a FROM dbo.px_division_aliases a JOIN dbo.px_divisions v ON v.division_name = a.alias_name AND v.directorate_id = @t
-               WHERE a.directorate_name = @tn`, { t: tgt.directorate_id, tn: tgt.directorate_name }, tx);
+    await run(`DELETE FROM dbo.px_division_aliases WHERE directorate_name = @tn
+               AND alias_name IN (SELECT v.division_name FROM dbo.px_divisions v WHERE v.directorate_id = @t)`, { t: tgt.directorate_id, tn: tgt.directorate_name }, tx);
     await markDirectoryManaged(tx);
     return { from: src.directorate_name, to: tgt.directorate_name, divisions_moved: moved.length, divisions_merged: merged.length, counts, scope_changes: scopeChanges };
   });
@@ -2200,36 +2102,12 @@ const CONFIG_TABLES = ['px_journeys', 'px_checkpoints', 'px_metrics', 'px_metric
 // Tables restored together (deleting a directorate deletes its divisions)
 const CONFIG_GROUPS = { px_divisions: 'px_directorates', px_directorates: 'px_directorates' };
 
-async function configColumns(tx, table) {
-  return run(`SELECT c.name, t.name AS type_name, c.max_length, c.precision, c.scale, c.is_identity
-              FROM sys.columns c JOIN sys.types t ON t.user_type_id = c.user_type_id
-              WHERE c.object_id = OBJECT_ID(@t) AND c.is_computed = 0 ORDER BY c.column_id`, { t: `dbo.${table}` }, tx);
-}
+// [{ name, is_identity, ... }] of a table, in column order (catalog query of the dialect)
+const configColumns = (tx, table) => D.tableColumns(tx, table);
 
 // A cell as JSON (a date keeps its exact instant) and back
 const encodeConfigCell = v => (v instanceof Date ? { $date: v.toISOString() } : v);
 const decodeConfigCell = v => (v && typeof v === 'object' && typeof v.$date === 'string' ? new Date(v.$date) : v);
-
-function configSqlType(c) {
-  const len = c.max_length === -1 ? sql.MAX : null;
-  switch (c.type_name) {
-    case 'int': return sql.Int;
-    case 'bigint': return sql.BigInt;
-    case 'smallint': return sql.SmallInt;
-    case 'tinyint': return sql.TinyInt;
-    case 'bit': return sql.Bit;
-    case 'float': return sql.Float;
-    case 'real': return sql.Real;
-    case 'decimal': case 'numeric': return sql.Decimal(c.precision, c.scale);
-    case 'date': return sql.Date;
-    case 'datetime2': return sql.DateTime2(c.scale);
-    case 'datetime': return sql.DateTime;
-    case 'varchar': return sql.VarChar(len || c.max_length);
-    case 'char': return sql.Char(c.max_length);
-    case 'nchar': return sql.NChar(c.max_length / 2);
-    default: return sql.NVarChar(len || Math.max(1, c.max_length / 2));
-  }
-}
 
 async function readConfigTable(tx, table) {
   const columns = await configColumns(tx, table);
@@ -2247,13 +2125,13 @@ function sameConfigTable(a, b) {
 async function snapshotConfiguration() {
   const tables = {};
   for (const t of CONFIG_TABLES) tables[t] = await readConfigTable(null, t);
-  const cfg = connectionConfig();
-  return { kind: 'px-config-snapshot', version: 1, backend: 'sql', server: cfg.server, database: cfg.database, taken_at: new Date().toISOString(), tables };
+  const cfg = D.identity();
+  return { kind: 'px-config-snapshot', version: 1, backend: D.name, server: cfg.server, database: cfg.database, taken_at: new Date().toISOString(), tables };
 }
 
 function checkConfigSnapshot(snap) {
-  const cfg = connectionConfig();
-  if (!snap || snap.kind !== 'px-config-snapshot' || snap.backend !== 'sql' || !snap.tables) throw new Error('Not a SQL Server configuration snapshot.');
+  const cfg = D.identity();
+  if (!snap || snap.kind !== 'px-config-snapshot' || snap.backend !== D.name || !snap.tables) throw new Error(`Not a ${D.label} configuration snapshot.`);
   if (snap.database !== cfg.database || snap.server !== cfg.server) throw new Error(`The snapshot belongs to ${snap.server}/${snap.database}, not to ${cfg.server}/${cfg.database}.`);
   const missing = CONFIG_TABLES.filter(t => !snap.tables[t]);
   if (missing.length) throw new Error(`The snapshot has no rows for ${missing.join(', ')}.`);
@@ -2301,28 +2179,11 @@ async function restoreConfiguration(snap) {
       const columns = await configColumns(tx, t);
       const snapCols = snap.tables[t].columns;
       const cols = columns.filter(c => snapCols.includes(c.name));
-      const identity = columns.some(c => c.is_identity);
-      const text = `${identity ? `SET IDENTITY_INSERT dbo.${t} ON; ` : ''}INSERT INTO dbo.${t} (${cols.map(c => `[${c.name}]`).join(', ')})
-                    VALUES (${cols.map((c, i) => `@p${i}`).join(', ')});${identity ? ` SET IDENTITY_INSERT dbo.${t} OFF;` : ''}`;
-      for (const row of snap.tables[t].rows) {
-        const request = new sql.Request(tx);
-        cols.forEach((c, i) => request.input(`p${i}`, configSqlType(c), decodeConfigCell(row[snapCols.indexOf(c.name)])));
-        await request.query(text);
-      }
+      const identity = columns.some(c => c.is_identity);   // ids kept (SQL Server: IDENTITY_INSERT; pg: sequence synced)
+      await D.insertRawRows(tx, t, cols, snap.tables[t].rows.map(row => cols.map(c => decodeConfigCell(row[snapCols.indexOf(c.name)]))), identity);
     }
     // only after the configuration is back: the data of the metrics created after the snapshot (same statements as deleteMetric)
-    for (const id of ids) {
-      await run(`DELETE FROM dbo.px_metric_targets WHERE metric_id = @id; DELETE FROM dbo.px_survey_questions WHERE metric_id = @id; DELETE FROM dbo.px_reminder_log WHERE metric_id = @id;
-        DELETE FROM dbo.px_survey_uploaded_responses WHERE metric_id = @id;
-        DELETE FROM dbo.px_ess_results WHERE metric_id = @id;
-        DELETE FROM dbo.px_survey_uploads WHERE metric_id = @id;
-        DELETE FROM dbo.px_outcome_values WHERE metric_id = @id;
-        DELETE FROM dbo.px_outcome_uploads WHERE metric_id = @id;
-        DELETE FROM dbo.px_metric_part_results WHERE metric_id = @id;
-        DELETE FROM dbo.px_metric_part_uploads WHERE metric_id = @id;
-        DELETE FROM dbo.px_metric_parts WHERE metric_id = @id;
-        DELETE FROM dbo.px_metrics WHERE metric_id = @id;`, { id }, tx);
-    }
+    for (const id of ids) await deleteMetricRows(tx, id);
     return { restored: todo, extra: cmp.extra_metrics, essUploadIds: essIds, outcomeUploadIds: outcomeIds };
   });
   const { essOriginalFilePath } = require('../services/essSummaryService');   // lazy: that service requires the storage
@@ -2332,20 +2193,28 @@ async function restoreConfiguration(snap) {
   return { removed_metrics: extra, restored_tables: restored, removed_ess_files: essUploadIds.length };
 }
 
+// The documented metric-delete cascade (targets, questions, reminder log, survey / ESS / outcome / part data, the metric).
+const METRIC_DATA_TABLES = ['px_metric_targets', 'px_survey_questions', 'px_reminder_log', 'px_survey_uploaded_responses', 'px_ess_results',
+  'px_survey_uploads', 'px_outcome_values', 'px_outcome_uploads', 'px_metric_part_results', 'px_metric_part_uploads', 'px_metric_parts', 'px_metrics'];
+async function deleteMetricRows(tx, id) {
+  for (const t of METRIC_DATA_TABLES) await run(`DELETE FROM dbo.${t} WHERE metric_id = @id`, { id }, tx);
+}
+
 // ------------------------------------------------------------------ the storage API
 const storage = {
   // ---- lifecycle / health
   async init() {
-    await getPool();
+    await D.getPool();
     // v2.32.0: the boot that creates px_ess_results is the upgrade boot (one-time ESS per-respondent cleanup below)
-    const essUpgrade = !(await run("SELECT OBJECT_ID(N'dbo.px_ess_results', N'U') AS id"))[0].id;
+    const essUpgrade = !(await D.tableExists('px_ess_results'));
     // v2.43.0: the boot that adds px_audit_log.is_test marks the audit rows of old test-run accounts (once)
-    const auditTestUpgrade = (await run("SELECT COL_LENGTH(N'dbo.px_audit_log', N'is_test') AS c"))[0].c === null;
+    const auditTestUpgrade = !(await D.columnExists('px_audit_log', 'is_test'));
     // v2.49.0: the boot that adds px_users.menu_access moves the old event managers to menu access (once)
-    const menuAccessUpgrade = (await run("SELECT COL_LENGTH(N'dbo.px_users', N'menu_access') AS c"))[0].c === null;
+    const menuAccessUpgrade = !(await D.columnExists('px_users', 'menu_access'));
     await applySchema();
     await dropRetiredIntegrationTokens();
     await seedIfEmpty();
+    await D.syncIdentities();        // pg: identity sequences never behind the highest id (never moved back; SQL Server: no-op)
     await migrateDirectorates();     // v2.31.0: old demo directorate names -> the 12 real ones (before any top-up)
     await inTransaction(async tx => { await seedSurveyQuestions(tx); await seedAppSettings(tx); await seedEmailSettings(tx); });
     await topUpOptionLabels();
@@ -2390,22 +2259,18 @@ const storage = {
     console.log(`[sqlStorage] Connected to ${info.server} / ${info.database} (${info.edition})`);
   },
   async health() {
-    const rows = await run(`SELECT @@SERVERNAME AS server, DB_NAME() AS db,
-                                   CONVERT(nvarchar(200), SERVERPROPERTY('Edition')) AS edition,
-                                   CONVERT(nvarchar(50), SERVERPROPERTY('ProductVersion')) AS version,
-                                   (SELECT COUNT(*) FROM dbo.px_metrics) AS metrics,
-                                   (SELECT COUNT(*) FROM dbo.px_survey_uploaded_responses) AS responses,
-                                   (SELECT COUNT(*) FROM dbo.px_events) AS events,
-                                   (SELECT COUNT(*) FROM dbo.px_media) AS media`);
-    const r = rows[0];
+    const info = await D.serverInfo();
+    const r = (await run(`SELECT (SELECT COUNT(*) FROM dbo.px_metrics) AS metrics,
+                                 (SELECT COUNT(*) FROM dbo.px_survey_uploaded_responses) AS responses,
+                                 (SELECT COUNT(*) FROM dbo.px_events) AS events,
+                                 (SELECT COUNT(*) FROM dbo.px_media) AS media`))[0];
     return {
-      connected: true, server: r.server, database: r.db, edition: r.edition, version: r.version,
+      connected: true, server: info.server, database: info.database, edition: info.edition, version: info.version,
       tables: { metrics: r.metrics, survey_responses: r.responses, events: r.events, media: r.media }
     };
   },
-  async close() {
-    if (poolPromise) { const pool = await poolPromise; poolPromise = null; await pool.close(); }
-  },
+  close: () => D.close(),
+  dialect: D.name,                 // 'sql' (SQL Server) | 'pg' (PostgreSQL)
   importStore,
   applySchema,
   migrateDirectorates,
@@ -2418,33 +2283,33 @@ const storage = {
       'px_survey_uploads', 'px_media', 'px_feedback_responses', 'px_attendances', 'px_event_questions', 'px_events',
       'px_reminder_log', 'px_email_settings', 'px_app_settings', 'px_survey_questions', 'px_custom_survey_questions', 'px_master_survey_questions', 'px_division_aliases', 'px_directorate_aliases', 'px_divisions', 'px_directorates', 'px_action_library',
       'px_metric_targets', 'px_metrics', 'px_checkpoints', 'px_journeys'];
-    for (const t of tables) await run(`IF OBJECT_ID(N'dbo.${t}', N'U') IS NOT NULL DROP TABLE dbo.${t}`);
+    for (const t of tables) await D.dropTableIfExists(t);
   },
 
   // ---- survey upload reminders
   // Is there ANY survey response for this metric dated in [startDate, endDate)? (YYYY-MM-DD strings)
   async hasSurveyDataInPeriod(metric_id, startDate, endDate) {
-    const rows = await run(`SELECT TOP 1 1 AS x FROM dbo.px_survey_uploaded_responses
-                            WHERE metric_id = @metric_id AND survey_date >= @start AND survey_date < @end
-                            UNION ALL
-                            SELECT TOP 1 1 FROM dbo.px_ess_results   -- an ESS summary (v2.32.0) is dated on the 1st of its month
-                            WHERE metric_id = @metric_id AND DATEFROMPARTS(survey_year, survey_month, 1) >= @start
-                              AND DATEFROMPARTS(survey_year, survey_month, 1) < @end`,
+    const rows = await run(`SELECT CASE WHEN EXISTS (SELECT 1 FROM dbo.px_survey_uploaded_responses
+                                              WHERE metric_id = @metric_id AND survey_date >= @start AND survey_date < @end)
+                                  OR EXISTS (SELECT 1 FROM dbo.px_ess_results   -- an ESS summary (v2.32.0) is dated on the 1st of its month
+                                              WHERE metric_id = @metric_id AND ${S.dateFromParts('survey_year', 'survey_month', 1)} >= @start
+                                                AND ${S.dateFromParts('survey_year', 'survey_month', 1)} < @end)
+                            THEN 1 ELSE 0 END AS x`,
       { metric_id: parseInt(metric_id, 10), start: T.date(startDate), end: T.date(endDate) });
-    return rows.length > 0;
+    return rows[0].x === 1;
   },
   async getReminderLog(limit = 50) {
-    const rows = await run(`${REMINDER_LOG_SELECT.replace('SELECT', 'SELECT TOP (@limit)')} ORDER BY log_id DESC`, { limit: parseInt(limit, 10) });
+    const rows = await run(`${reminderLogSelect(S.top('(@limit)'))} ORDER BY log_id DESC ${S.limit('@limit')}`, { limit: parseInt(limit, 10) });
     return rows.map(rowToReminderLog);
   },
   async getReminderLogFor(metric_id, expected_period) {
-    const rows = await run(`${REMINDER_LOG_SELECT} WHERE metric_id = @metric_id AND expected_period = @period ORDER BY log_id`,
+    const rows = await run(`${reminderLogSelect()} WHERE metric_id = @metric_id AND expected_period = @period ORDER BY log_id`,
       { metric_id: parseInt(metric_id, 10), period: String(expected_period) });
     return rows.map(rowToReminderLog);
   },
   async addReminderLog(entry) {
     const rows = await run(`INSERT INTO dbo.px_reminder_log (metric_id, expected_period, sent_on, status, pic_email, error_message)
-                            OUTPUT INSERTED.log_id VALUES (@metric_id, @period, @sent_on, @status, @pic_email, @error)`, {
+                            ${S.outInserted('log_id')} VALUES (@metric_id, @period, @sent_on, @status, @pic_email, @error) ${S.returning('log_id')}`, {
       metric_id: parseInt(entry.metric_id, 10), period: String(entry.expected_period), sent_on: T.date(entry.sent_on),
       status: entry.status, pic_email: entry.pic_email || '', error: entry.error_message ? String(entry.error_message).slice(0, 500) : null
     });
@@ -2468,8 +2333,8 @@ const storage = {
     return out;
   },
   async setSetting(key, value) {
-    const rows = await run(`UPDATE dbo.px_app_settings SET setting_value = @value, updated_at = SYSUTCDATETIME()
-                            OUTPUT INSERTED.setting_key WHERE setting_key = @key`, { key: String(key), value: T.max(JSON.stringify(value)) });
+    const rows = await run(`UPDATE dbo.px_app_settings SET setting_value = @value, updated_at = ${S.now}
+                            ${S.outInserted('setting_key')} WHERE setting_key = @key ${S.returning('setting_key')}`, { key: String(key), value: T.max(JSON.stringify(value)) });
     if (!rows.length) throw new Error(`Setting "${key}" not found.`);
     return value;
   },
@@ -2501,7 +2366,7 @@ const storage = {
     try {
       return await inTransaction(async tx => {
         const rows = await run(`INSERT INTO dbo.px_users (username, full_name, email, password_hash, role, is_active, must_change_password, is_test_account, menu_access)
-                                OUTPUT INSERTED.* VALUES (@username, @full_name, @email, @password_hash, @role, @is_active, @mcp, @is_test, @menu_access)`, {
+                                ${S.outInserted('*')} VALUES (@username, @full_name, @email, @password_hash, @role, @is_active, @mcp, @is_test, @menu_access) ${S.returning('*')}`, {
           username: u.username, full_name: u.full_name, email: u.email || '', password_hash: u.password_hash, role: u.role,
           is_active: u.is_active === undefined ? true : !!u.is_active, mcp: u.must_change_password === undefined ? true : !!u.must_change_password,
           is_test: u.is_test_account === true, menu_access: menuAccessText(u.menu_access)
@@ -2528,12 +2393,12 @@ const storage = {
     // patch.scopes replaces the whole scope list (together with any other field, in one transaction)
     if (patch.scopes === undefined) {
       if (!sets.length) return this.getUserById(user_id);
-      const rows = await run(`UPDATE dbo.px_users SET ${sets.join(', ')} OUTPUT INSERTED.* WHERE user_id = @id`, params);
+      const rows = await run(`UPDATE dbo.px_users SET ${sets.join(', ')} ${S.outInserted('*')} WHERE user_id = @id ${S.returning('*')}`, params);
       return rows[0] ? (await withScopes([rowToUser(rows[0])]))[0] : null;
     }
     return inTransaction(async tx => {
       const rows = sets.length
-        ? await run(`UPDATE dbo.px_users SET ${sets.join(', ')} OUTPUT INSERTED.* WHERE user_id = @id`, params, tx)
+        ? await run(`UPDATE dbo.px_users SET ${sets.join(', ')} ${S.outInserted('*')} WHERE user_id = @id ${S.returning('*')}`, params, tx)
         : await run('SELECT * FROM dbo.px_users WHERE user_id = @id', { id: params.id }, tx);
       if (!rows[0]) return null;
       await writeUserScopes(tx, params.id, patch.scopes);
@@ -2543,7 +2408,7 @@ const storage = {
   async deleteUser(user_id) {
     const id = parseInt(user_id, 10);
     const before = await this.getUserById(id);
-    const rows = await run('DELETE FROM dbo.px_users OUTPUT DELETED.* WHERE user_id = @id', { id });
+    const rows = await run(`DELETE FROM dbo.px_users ${S.outDeleted('*')} WHERE user_id = @id ${S.returning('*')}`, { id });
     return rows[0] ? { ...rowToUser(rows[0]), scopes: before ? before.scopes : [] } : null;
   },
   async createSession({ token_hash, user_id, expires_at, last_activity_at }) {
@@ -2557,21 +2422,22 @@ const storage = {
   },
   // Records real user activity on one session (login / POST /api/auth/activity only - never on ordinary requests).
   async setSessionActivity(token_hash, at) {
-    const rows = await run('UPDATE dbo.px_sessions SET last_activity_at = @at OUTPUT INSERTED.token_hash WHERE token_hash = @token_hash',
+    const rows = await run(`UPDATE dbo.px_sessions SET last_activity_at = @at ${S.outInserted('token_hash')} WHERE token_hash = @token_hash ${S.returning('token_hash')}`,
       { token_hash, at: at ? new Date(at) : new Date() });
     return rows.length > 0;
   },
   // Returns true when a session row was actually removed (lets the idle sign-out audit exactly once).
   async deleteSession(token_hash) {
-    const rows = await run('DELETE FROM dbo.px_sessions OUTPUT DELETED.token_hash WHERE token_hash = @token_hash', { token_hash: token_hash || '' });
+    const rows = await run(`DELETE FROM dbo.px_sessions ${S.outDeleted('token_hash')} WHERE token_hash = @token_hash ${S.returning('token_hash')}`, { token_hash: token_hash || '' });
     return rows.length > 0;
   },
   async deleteSessionsForUser(user_id, exceptTokenHash) {
-    await run('DELETE FROM dbo.px_sessions WHERE user_id = @id AND (@except IS NULL OR token_hash <> @except)',
-      { id: parseInt(user_id, 10), except: exceptTokenHash || null });
+    const params = { id: parseInt(user_id, 10) };
+    if (exceptTokenHash) params.except = exceptTokenHash;
+    await run(`DELETE FROM dbo.px_sessions WHERE user_id = @id${exceptTokenHash ? ' AND token_hash <> @except' : ''}`, params);
   },
   async purgeExpiredSessions() {
-    await run('DELETE FROM dbo.px_sessions WHERE expires_at < SYSUTCDATETIME()');
+    await run(`DELETE FROM dbo.px_sessions WHERE expires_at < ${S.now}`);
   },
   async addAuditLog(e) {
     await run('INSERT INTO dbo.px_audit_log (user_id, username, action, target, ip, is_test) VALUES (@user_id, @username, @action, @target, @ip, @is_test)', {
@@ -2581,7 +2447,8 @@ const storage = {
   },
   // Test-run rows (is_test) are left out unless includeTest; the limit applies after that filter.
   async getAuditLog(limit = 200, { includeTest = false } = {}) {
-    const rows = await run(`SELECT TOP (@limit) * FROM dbo.px_audit_log ${includeTest ? '' : 'WHERE is_test = 0 '}ORDER BY audit_id DESC`, { limit: Math.max(1, Math.min(parseInt(limit, 10) || 200, 1000)) });
+    const rows = await run(`SELECT ${S.top('(@limit)')} * FROM dbo.px_audit_log ${includeTest ? '' : `WHERE is_test = ${S.FALSE} `}ORDER BY audit_id DESC ${S.limit('@limit')}`,
+      { limit: Math.max(1, Math.min(parseInt(limit, 10) || 200, 1000)) });
     return rows.map(r => ({ audit_id: Number(r.audit_id), occurred_at: iso(r.occurred_at), user_id: r.user_id, username: r.username, action: r.action, target: r.target, ip: r.ip, is_test: !!r.is_test }));
   },
   markHistoricalTestAudit: () => markHistoricalTestAudit(),
@@ -2596,7 +2463,8 @@ const storage = {
   },
   async addJourney(journeyData) {
     return inTransaction(async tx => {
-      const maxId = (await run('SELECT ISNULL(MAX(journey_id), 0) AS m FROM dbo.px_journeys WITH (UPDLOCK, HOLDLOCK)', {}, tx))[0].m;
+      await D.lockTable(tx, 'px_journeys');
+      const maxId = (await run(`SELECT COALESCE(MAX(journey_id), 0) AS m FROM dbo.px_journeys ${S.lockHint}`, {}, tx))[0].m;
       const j = {
         journey_id: maxId + 1,
         journey_code: (journeyData.journey_code || `JOURNEY_${maxId + 1}`).toUpperCase().trim(),
@@ -2645,7 +2513,8 @@ const storage = {
   },
   async addCheckpoint(cpData) {
     return inTransaction(async tx => {
-      const maxId = (await run('SELECT ISNULL(MAX(checkpoint_id), 0) AS m FROM dbo.px_checkpoints WITH (UPDLOCK, HOLDLOCK)', {}, tx))[0].m;
+      await D.lockTable(tx, 'px_checkpoints');
+      const maxId = (await run(`SELECT COALESCE(MAX(checkpoint_id), 0) AS m FROM dbo.px_checkpoints ${S.lockHint}`, {}, tx))[0].m;
       const cp = {
         checkpoint_id: maxId + 1,
         journey_id: parseInt(cpData.journey_id || 1),
@@ -2710,7 +2579,8 @@ const storage = {
   },
   async addMetric(metricData) {
     return inTransaction(async tx => {
-      const maxId = (await run('SELECT ISNULL(MAX(metric_id), 0) AS m FROM dbo.px_metrics WITH (UPDLOCK, HOLDLOCK)', {}, tx))[0].m;
+      await D.lockTable(tx, 'px_metrics');
+      const maxId = (await run(`SELECT COALESCE(MAX(metric_id), 0) AS m FROM dbo.px_metrics ${S.lockHint}`, {}, tx))[0].m;
       const newId = maxId + 1;
       const isEmployee = metricData.is_employee_metric !== undefined ? Boolean(metricData.is_employee_metric) : true;
       const surveySource = resolveSurveySource({ requested: metricData.survey_source, metricType: (metricData.metric_type || 'SURVEY').toUpperCase() });
@@ -2815,18 +2685,7 @@ const storage = {
     const id = parseInt(metric_id, 10);
     const current = await this.getMetricById(id);
     if (!current) throw new Error(`Metric #${id} not found.`);
-    await inTransaction(async tx => {
-      await run(`DELETE FROM dbo.px_metric_targets WHERE metric_id = @id; DELETE FROM dbo.px_survey_questions WHERE metric_id = @id; DELETE FROM dbo.px_reminder_log WHERE metric_id = @id;
-        DELETE FROM dbo.px_survey_uploaded_responses WHERE metric_id = @id;
-        DELETE FROM dbo.px_ess_results WHERE metric_id = @id;
-        DELETE FROM dbo.px_survey_uploads WHERE metric_id = @id;
-        DELETE FROM dbo.px_outcome_values WHERE metric_id = @id;
-        DELETE FROM dbo.px_outcome_uploads WHERE metric_id = @id;
-        DELETE FROM dbo.px_metric_part_results WHERE metric_id = @id;
-        DELETE FROM dbo.px_metric_part_uploads WHERE metric_id = @id;
-        DELETE FROM dbo.px_metric_parts WHERE metric_id = @id;
-        DELETE FROM dbo.px_metrics WHERE metric_id = @id;`, { id }, tx);
-    });
+    await inTransaction(tx => deleteMetricRows(tx, id));
     return current;
   },
   async resetParametersToDefault() {
@@ -2880,8 +2739,8 @@ const storage = {
   async updateMetricScore(metric_id, raw_value, normalized_score, notes = '') {
     const id = parseInt(metric_id, 10);
     const rows = await run(`UPDATE dbo.px_metrics SET raw_value = @raw, normalized_score = @norm,
-                              notes = CASE WHEN @notes <> N'' THEN @notes ELSE notes END
-                            OUTPUT INSERTED.metric_id WHERE metric_id = @id`,
+                              notes = CASE WHEN @notes <> '' THEN @notes ELSE notes END
+                            ${S.outInserted('metric_id')} WHERE metric_id = @id ${S.returning('metric_id')}`,
       { id, raw: parseFloat(raw_value), norm: parseFloat(normalized_score), notes: T.max(notes || '') });
     return rows.length ? this.getMetricById(id) : null;
   },
@@ -2903,11 +2762,11 @@ const storage = {
     return rows[0] ? rowToEvent(rows[0]) : undefined;
   },
   async getEventByPreCode(pre_event_code) {
-    const rows = await run('SELECT TOP 1 * FROM dbo.px_events WHERE UPPER(pre_event_code) = UPPER(@c) ORDER BY event_seq', { c: String(pre_event_code) });
+    const rows = await run(`SELECT ${S.top(1)} * FROM dbo.px_events WHERE UPPER(pre_event_code) = UPPER(@c) ORDER BY event_seq ${S.limit(1)}`, { c: String(pre_event_code) });
     return rows[0] ? rowToEvent(rows[0]) : undefined;
   },
   async getEventByPostCode(post_event_code) {
-    const rows = await run('SELECT TOP 1 * FROM dbo.px_events WHERE UPPER(post_event_code) = UPPER(@c) ORDER BY event_seq', { c: String(post_event_code) });
+    const rows = await run(`SELECT ${S.top(1)} * FROM dbo.px_events WHERE UPPER(post_event_code) = UPPER(@c) ORDER BY event_seq ${S.limit(1)}`, { c: String(post_event_code) });
     return rows[0] ? rowToEvent(rows[0]) : undefined;
   },
   async createEvent(eventData) {
@@ -2972,7 +2831,7 @@ const storage = {
     };
     try {
       const rows = await run(`INSERT INTO dbo.px_attendances (event_id, nip, employee_name, cimb_email, directorate, division)
-                              OUTPUT INSERTED.* VALUES (@event_id, @nip, @employee_name, @cimb_email, @directorate, @division)`, p);
+                              ${S.outInserted('*')} VALUES (@event_id, @nip, @employee_name, @cimb_email, @directorate, @division) ${S.returning('*')}`, p);
       return rowToAttendance(rows[0]);
     } catch (err) {
       if (isUniqueViolation(err)) throw new Error(`NIP ${attendanceData.nip} has already checked in to this event.`);
@@ -2980,7 +2839,7 @@ const storage = {
     }
   },
   async deleteAttendance(event_id, nip) {
-    const rows = await run('DELETE FROM dbo.px_attendances OUTPUT DELETED.* WHERE event_id = @event_id AND nip = @nip', { event_id: String(event_id), nip: String(nip) });
+    const rows = await run(`DELETE FROM dbo.px_attendances ${S.outDeleted('*')} WHERE event_id = @event_id AND nip = @nip ${S.returning('*')}`, { event_id: String(event_id), nip: String(nip) });
     if (!rows.length) throw new Error(`Attendance record of NIP ${nip} in event "${event_id}" not found.`);
     return rowToAttendance(rows[0]);
   },
@@ -3021,7 +2880,7 @@ const storage = {
   async addFeedbackResponse(feedbackData) {
     try {
       const rows = await run(`INSERT INTO dbo.px_feedback_responses (event_id, nip, ratings_json, verbatim)
-                              OUTPUT INSERTED.* VALUES (@event_id, @nip, @ratings, @verbatim)`, {
+                              ${S.outInserted('*')} VALUES (@event_id, @nip, @ratings, @verbatim) ${S.returning('*')}`, {
         event_id: feedbackData.event_id, nip: feedbackData.nip.trim(),
         ratings: T.max(JSON.stringify(feedbackData.ratings || {})), verbatim: T.max(feedbackData.verbatim || '')
       });
@@ -3032,7 +2891,7 @@ const storage = {
     }
   },
   async deleteFeedbackResponse(event_id, nip) {
-    const rows = await run('DELETE FROM dbo.px_feedback_responses OUTPUT DELETED.* WHERE event_id = @event_id AND nip = @nip', { event_id: String(event_id), nip: String(nip) });
+    const rows = await run(`DELETE FROM dbo.px_feedback_responses ${S.outDeleted('*')} WHERE event_id = @event_id AND nip = @nip ${S.returning('*')}`, { event_id: String(event_id), nip: String(nip) });
     if (!rows.length) throw new Error(`Feedback of NIP ${nip} in event "${event_id}" not found.`);
     return rowToFeedback(rows[0]);
   },
@@ -3052,8 +2911,8 @@ const storage = {
     const count = (await run('SELECT COUNT(*) AS c FROM dbo.px_media'))[0].c;
     const rows = await run(`INSERT INTO dbo.px_media (media_id, event_id, file_name, file_path, file_type, caption,
                               ai_generated_description, highlight_order, transcript_status)
-                            OUTPUT INSERTED.* VALUES (@media_id, @event_id, @file_name, @file_path, @file_type, @caption,
-                              @ai, @highlight_order, @transcript_status)`, {
+                            ${S.outInserted('*')} VALUES (@media_id, @event_id, @file_name, @file_path, @file_type, @caption,
+                              @ai, @highlight_order, @transcript_status) ${S.returning('*')}`, {
       media_id: mediaItem.media_id || `med-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       event_id: mediaItem.event_id,
       file_name: mediaItem.file_name,
@@ -3096,12 +2955,12 @@ const storage = {
     setIf('summary_topics', 'summary_topics', v => T.max(v === null ? null : JSON.stringify(v)));
     setIf('summary_topic_stats', 'summary_topic_stats', v => (v === null ? null : JSON.stringify(v).slice(0, 1000)));
     if (!sets.length) return this.getMediaById(media_id);
-    const rows = await run(`UPDATE dbo.px_media SET ${sets.join(', ')} OUTPUT INSERTED.* WHERE media_id = @id`, params);
+    const rows = await run(`UPDATE dbo.px_media SET ${sets.join(', ')} ${S.outInserted('*')} WHERE media_id = @id ${S.returning('*')}`, params);
     return rows[0] ? rowToMedia(rows[0]) : null;
   },
   // Returns the removed record (so the caller can delete its file from disk), or null.
   async deleteMedia(media_id) {
-    const rows = await run('DELETE FROM dbo.px_media OUTPUT DELETED.* WHERE media_id = @id', { id: String(media_id) });
+    const rows = await run(`DELETE FROM dbo.px_media ${S.outDeleted('*')} WHERE media_id = @id ${S.returning('*')}`, { id: String(media_id) });
     return rows[0] ? rowToMedia(rows[0]) : null;
   },
 
@@ -3127,8 +2986,8 @@ const storage = {
     return (await run('SELECT metric_id FROM dbo.px_acknowledged_alerts ORDER BY acknowledged_at, metric_id')).map(r => r.metric_id);
   },
   async acknowledgeAlert(metric_id) {
-    await run(`IF NOT EXISTS (SELECT 1 FROM dbo.px_acknowledged_alerts WHERE metric_id = @id)
-                 INSERT INTO dbo.px_acknowledged_alerts (metric_id) VALUES (@id)`, { id: parseInt(metric_id, 10) });
+    await run(`INSERT INTO dbo.px_acknowledged_alerts (metric_id)
+                 SELECT @id WHERE NOT EXISTS (SELECT 1 FROM dbo.px_acknowledged_alerts WHERE metric_id = @id)`, { id: parseInt(metric_id, 10) });
     return true;
   },
   async resetAcknowledgedAlerts() {
@@ -3144,9 +3003,9 @@ const storage = {
     return selectResponses(['metric_id = @metric_id'], { metric_id: parseInt(metric_id, 10) });
   },
   async getAllUploadedVerbatims() {
-    const rows = await run(`SELECT metric_id, respondent_id, verbatim_feedback, CONVERT(char(10), survey_date, 23) AS d
+    const rows = await run(`SELECT metric_id, respondent_id, verbatim_feedback, ${S.dateStr('survey_date')} AS d
                             FROM dbo.px_survey_uploaded_responses
-                            WHERE LEN(LTRIM(RTRIM(verbatim_feedback))) > 3 ORDER BY response_id`);
+                            WHERE ${S.len('LTRIM(RTRIM(verbatim_feedback))')} > 3 ORDER BY response_id`);
     return rows.map(r => ({ metric_id: r.metric_id, nip: r.respondent_id, verbatim: r.verbatim_feedback, date: r.d }));
   },
   async saveSurveyUploadBatch(batchData, responses = []) {
@@ -3184,8 +3043,8 @@ const storage = {
   },
   // Latest (year, month) with an ESS result of this metric on or before endYear-endMonth; null when there is none.
   async getLatestEssPeriod(metric_id, endYear, endMonth) {
-    const rows = await run(`SELECT TOP 1 survey_year, survey_month FROM dbo.px_ess_results
-                            WHERE metric_id = @id AND survey_year * 100 + survey_month <= @k ORDER BY survey_year DESC, survey_month DESC`,
+    const rows = await run(`SELECT ${S.top(1)} survey_year, survey_month FROM dbo.px_ess_results
+                            WHERE metric_id = @id AND survey_year * 100 + survey_month <= @k ORDER BY survey_year DESC, survey_month DESC ${S.limit(1)}`,
       { id: parseInt(metric_id, 10), k: parseInt(endYear, 10) * 100 + parseInt(endMonth || 12, 10) });
     return rows[0] ? { year: rows[0].survey_year, month: rows[0].survey_month } : null;
   },
@@ -3208,10 +3067,10 @@ const storage = {
       await run(`INSERT INTO dbo.px_survey_uploads (upload_id, metric_id, file_name, total_rows, valid_rows, invalid_rows, calculated_avg_score, uploaded_by, uploaded_at, questions_snapshot_json)
                  VALUES (@upload_id, @metric_id, @file_name, @total_rows, @valid_rows, @invalid_rows, @calculated_avg_score, @uploaded_by, @uploaded_at, @snap)`,
         { ...record, questions_snapshot: undefined, uploaded_at: new Date(record.uploaded_at), snap: record.questions_snapshot ? T.max(JSON.stringify(record.questions_snapshot)) : null }, tx);
-      const del = await run(`DELETE FROM dbo.px_ess_results WHERE metric_id = @id AND survey_year = @y AND survey_month = @m; SELECT @@ROWCOUNT AS n;`,
-        { id: record.metric_id, y: parseInt(meta.survey_year, 10), m: parseInt(meta.survey_month, 10) }, tx);
+      const del = await rowCount(tx, 'DELETE FROM dbo.px_ess_results WHERE metric_id = @id AND survey_year = @y AND survey_month = @m',
+        { id: record.metric_id, y: parseInt(meta.survey_year, 10), m: parseInt(meta.survey_month, 10) });
       for (const r of rows) await insertEssResult(tx, record.upload_id, { ...r, metric_id: record.metric_id, survey_year: meta.survey_year, survey_month: meta.survey_month });
-      return del[0] ? del[0].n : 0;
+      return del;
     });
     return { record, replaced_rows: replaced };
   },
@@ -3228,7 +3087,7 @@ const storage = {
   // [{ year, month, total, dummy }] per month that has exit rows.
   getExitInterviewMonthCounts: exitMonthCounts,
   async getExitInterviewUploads() {
-    const rows = await run(`SELECT u.*, CONVERT(char(10), u.period_from, 23) AS period_from_str, CONVERT(char(10), u.period_to, 23) AS period_to_str
+    const rows = await run(`SELECT u.*, ${S.dateStr('u.period_from')} AS period_from_str, ${S.dateStr('u.period_to')} AS period_to_str
                             FROM dbo.px_exit_interview_uploads u ORDER BY u.uploaded_at DESC, u.upload_id DESC`);
     return rows.map(rowToExitUpload);
   },
@@ -3242,24 +3101,19 @@ const storage = {
         const months = [...new Set(rows.map(r => r.effective_date.slice(0, 7)))];
         for (const ym of months) {
           const b = monthBounds(ym);
-          const del = await run(`DELETE FROM dbo.px_exit_interviews WHERE source = 'SEED_DUMMY' AND effective_date >= @s AND effective_date < @e;
-                                  SELECT @@ROWCOUNT AS n;`, { s: T.date(b.start), e: T.date(b.end) }, tx);
-          removed += del[0] ? del[0].n : 0;
+          removed += await rowCount(tx, `DELETE FROM dbo.px_exit_interviews WHERE source = 'SEED_DUMMY' AND effective_date >= @s AND effective_date < @e`,
+            { s: T.date(b.start), e: T.date(b.end) });
         }
       }
       let inserted = 0;
       let updated = 0;
       for (const r of rows) {
         const p = exitParams({ ...r, source: meta.source }, meta.upload_id);
-        const setList = EXIT_TEXT_COLS.filter(c => c !== 'nik').map(c => `${c} = @${c}`).join(', ');
-        const res = await run(`MERGE dbo.px_exit_interviews WITH (HOLDLOCK) AS t
-                                 USING (SELECT @nik AS nik, CAST(@effective_date AS DATE) AS effective_date) AS s
-                                 ON t.nik = s.nik AND t.effective_date = s.effective_date
-                               WHEN MATCHED THEN UPDATE SET upload_id = @upload_id, ${setList}, career_scores_json = @career_scores_json,
-                                 source = @source, updated_at = SYSUTCDATETIME()
-                               WHEN NOT MATCHED THEN INSERT (upload_id, effective_date, career_scores_json, source, ${EXIT_TEXT_COLS.join(', ')})
-                                 VALUES (@upload_id, @effective_date, @career_scores_json, @source, ${EXIT_TEXT_COLS.map(c => '@' + c).join(', ')})
-                               OUTPUT $action AS act;`, p, tx);
+        // key (nik, effective_date) - compared case-insensitively on the NIK (SQL Server collation / pg citext)
+        const cols = { upload_id: '@upload_id', ...Object.fromEntries(EXIT_TEXT_COLS.filter(c => c !== 'nik').map(c => [c, `@${c}`])),
+          career_scores_json: '@career_scores_json', source: '@source' };
+        const res = await run(D.upsert({ table: 'px_exit_interviews', key: { nik: '@nik', effective_date: '@effective_date' },
+          keyCast: { effective_date: { mssql: 'DATE' } }, cols, update: { ...cols, updated_at: S.now }, holdlock: true, action: true }), p, tx);
         if (res[0] && res[0].act === 'UPDATE') updated++; else inserted++;
       }
       const record = { ...meta, total_rows: rows.length, inserted_rows: inserted, updated_rows: updated, removed_dummy_rows: removed };
@@ -3283,7 +3137,7 @@ const storage = {
   },
   // { year, month } of the newest row (any source), or null
   async getLatestSocialMediaPeriod() {
-    const rows = await run('SELECT TOP 1 stat_year, stat_month FROM dbo.px_social_media_stats ORDER BY stat_year DESC, stat_month DESC');
+    const rows = await run(`SELECT ${S.top(1)} stat_year, stat_month FROM dbo.px_social_media_stats ORDER BY stat_year DESC, stat_month DESC ${S.limit(1)}`);
     return rows[0] ? { year: rows[0].stat_year, month: rows[0].stat_month } : null;
   },
   // newest first
@@ -3300,21 +3154,14 @@ const storage = {
       const months = [...new Set(rows.map(r => `${r.year}-${r.month}`))];
       for (const ym of months) {
         const [y, m] = ym.split('-').map(n => parseInt(n, 10));
-        const del = await run(`DELETE FROM dbo.px_social_media_stats WHERE source = 'SEED' AND stat_year = @y AND stat_month = @m;
-                               SELECT @@ROWCOUNT AS n;`, { y, m }, tx);
-        replaced += del[0] ? del[0].n : 0;
+        replaced += await rowCount(tx, `DELETE FROM dbo.px_social_media_stats WHERE source = 'SEED' AND stat_year = @y AND stat_month = @m`, { y, m });
       }
       let inserted = 0;
       let updated = 0;
       for (const r of rows) {
-        const res = await run(`MERGE dbo.px_social_media_stats WITH (HOLDLOCK) AS t
-                                 USING (SELECT @platform AS platform, @y AS stat_year, @m AS stat_month) AS s
-                                 ON t.platform = s.platform AND t.stat_year = s.stat_year AND t.stat_month = s.stat_month
-                               WHEN MATCHED THEN UPDATE SET followers = @followers, reach = @reach, engagement = @engagement, source = @source,
-                                 upload_id = @upload_id, updated_at = SYSUTCDATETIME()
-                               WHEN NOT MATCHED THEN INSERT (platform, stat_year, stat_month, followers, reach, engagement, source, upload_id)
-                                 VALUES (@platform, @y, @m, @followers, @reach, @engagement, @source, @upload_id)
-                               OUTPUT $action AS act;`, {
+        const cols = { followers: '@followers', reach: '@reach', engagement: '@engagement', source: '@source', upload_id: '@upload_id' };
+        const res = await run(D.upsert({ table: 'px_social_media_stats', key: { platform: '@platform', stat_year: '@y', stat_month: '@m' },
+          cols, update: { ...cols, updated_at: S.now }, holdlock: true, action: true }), {
           platform: r.platform, y: r.year, m: r.month, followers: r.followers, reach: r.reach, engagement: r.engagement,
           source: meta.source, upload_id: meta.upload_id
         }, tx);
@@ -3407,25 +3254,24 @@ const storage = {
       let deleted = 0;
       if (options.replaceYear) {
         const keep = rows.map(r => parseInt(r.month, 10)).filter(m => m >= 1 && m <= 12);
-        const del = await run(`DELETE FROM dbo.px_outcome_values WHERE metric_id = @metric_id AND stat_year = @y
-                               ${keep.length ? `AND stat_month NOT IN (${keep.join(', ')})` : ''}; SELECT @@ROWCOUNT AS n;`,
-          { metric_id: parseInt(meta.metric_id, 10), y: parseInt(options.replaceYear, 10) }, tx);
-        deleted = del[0] ? del[0].n : 0;
+        deleted = await rowCount(tx, `DELETE FROM dbo.px_outcome_values WHERE metric_id = @metric_id AND stat_year = @y
+                               ${keep.length ? `AND stat_month NOT IN (${keep.join(', ')})` : ''}`,
+          { metric_id: parseInt(meta.metric_id, 10), y: parseInt(options.replaceYear, 10) });
       }
       for (const r of rows) {
-        const res = await run(`DECLARE @old VARCHAR(20) = (SELECT source FROM dbo.px_outcome_values WITH (UPDLOCK, HOLDLOCK)
-                                                         WHERE metric_id = @metric_id AND stat_year = @y AND stat_month = @m);
-                               IF @old IS NULL
-                                 INSERT INTO dbo.px_outcome_values (metric_id, stat_year, stat_month, value, notes, source, upload_id)
-                                 VALUES (@metric_id, @y, @m, @value, @notes, 'UPLOAD', @upload_id);
-                               ELSE
-                                 UPDATE dbo.px_outcome_values SET value = @value, notes = @notes, source = 'UPLOAD', upload_id = @upload_id,
-                                   updated_at = SYSUTCDATETIME() WHERE metric_id = @metric_id AND stat_year = @y AND stat_month = @m;
-                               SELECT @old AS old;`, {
-          metric_id: parseInt(meta.metric_id, 10), y: r.year, m: r.month, value: DECIMAL_VALUE(r.value),
-          notes: r.notes ? String(r.notes).slice(0, 500) : null, upload_id: meta.upload_id
-        }, tx);
-        const old = res[0] ? res[0].old : null;
+        const key = { metric_id: parseInt(meta.metric_id, 10), y: r.year, m: r.month };
+        // the stored month (if any) stays locked until the transaction ends, then it is updated - otherwise inserted
+        const cur = await run(`SELECT source FROM dbo.px_outcome_values ${S.lockHint}
+                               WHERE metric_id = @metric_id AND stat_year = @y AND stat_month = @m ${S.forUpdate}`, key, tx);
+        const old = cur[0] ? cur[0].source : null;
+        const values = { ...key, value: DECIMAL_VALUE(r.value), notes: r.notes ? String(r.notes).slice(0, 500) : null, upload_id: meta.upload_id };
+        if (old === null) {
+          await run(`INSERT INTO dbo.px_outcome_values (metric_id, stat_year, stat_month, value, notes, source, upload_id)
+                     VALUES (@metric_id, @y, @m, @value, @notes, 'UPLOAD', @upload_id)`, values, tx);
+        } else {
+          await run(`UPDATE dbo.px_outcome_values SET value = @value, notes = @notes, source = 'UPLOAD', upload_id = @upload_id,
+                       updated_at = ${S.now} WHERE metric_id = @metric_id AND stat_year = @y AND stat_month = @m`, values, tx);
+        }
         if (old === null || old === undefined) inserted++;
         else { updated++; if (old === 'SEED') replaced++; }
       }
@@ -3436,14 +3282,13 @@ const storage = {
   },
   // { metric_id: 'YYYY-MM-DD' }: the newest survey date of every metric with survey rows ("Last update", v2.54.0)
   async getLatestSurveyDates() {
-    const rows = await run('SELECT metric_id, CONVERT(char(10), MAX(survey_date), 23) AS d FROM dbo.px_survey_uploaded_responses GROUP BY metric_id');
+    const rows = await run(`SELECT metric_id, ${S.dateStr('MAX(survey_date)')} AS d FROM dbo.px_survey_uploaded_responses GROUP BY metric_id`);
     return Object.fromEntries(rows.map(r => [r.metric_id, r.d]));
   },
   dropRetiredIntegrationTokens, // v2.53.0 boot / migrate cleanup (SQL only; the JSON store drops auth.json integrationTokens on load)
 
   async deleteEssResultsForMetric(metric_id) {
-    const rows = await run('DELETE FROM dbo.px_ess_results WHERE metric_id = @id; SELECT @@ROWCOUNT AS n;', { id: parseInt(metric_id, 10) });
-    return rows[0] ? rows[0].n : 0;
+    return rowCount(null, 'DELETE FROM dbo.px_ess_results WHERE metric_id = @id', { id: parseInt(metric_id, 10) });
   },
 
   // ---- target & threshold admin settings
@@ -3510,7 +3355,7 @@ const storage = {
   // Question sets an admin has edited (used by the JSON export / rollback path).
   async _customizedQuestions() {
     const out = {};
-    (await this._questionRows('WHERE is_customized = 1')).forEach(r => { (out[r.metric_id] = out[r.metric_id] || []).push(rowToSurveyQuestion(r)); });
+    (await this._questionRows(`WHERE is_customized = ${S.TRUE}`)).forEach(r => { (out[r.metric_id] = out[r.metric_id] || []).push(rowToSurveyQuestion(r)); });
     return out;
   },
   async saveSurveyQuestions(metric_id, questions) {
@@ -3527,7 +3372,7 @@ const storage = {
 
   // Distinct years that actually have survey response data (always including the current year).
   async getAvailableSurveyYears() {
-    const rows = await run('SELECT DISTINCT YEAR(survey_date) AS y FROM dbo.px_survey_uploaded_responses UNION SELECT DISTINCT survey_year FROM dbo.px_ess_results');
+    const rows = await run(`SELECT DISTINCT ${S.year('survey_date')} AS y FROM dbo.px_survey_uploaded_responses UNION SELECT DISTINCT survey_year FROM dbo.px_ess_results`);
     const years = new Set(rows.map(r => String(r.y)));
     years.add(CURRENT_YEAR);
     return Array.from(years).sort();
