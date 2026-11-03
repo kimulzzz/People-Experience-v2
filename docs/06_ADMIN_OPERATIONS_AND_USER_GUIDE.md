@@ -704,6 +704,6 @@ UAT sementara di Render.com: satu Web Service `px-uat` (API + frontend hasil bui
 | Jaringan kantor | Pastikan `*.onrender.com` bisa dibuka dari jaringan kantor sebelum UAT dijadwalkan |
 | Data | **Jangan pernah** mengunggah file atau data asli (ESS, Termination Report, foto/video internal) ke UAT |
 
-**Keputusan terbuka (belum diputuskan user)**: baris seed ESS 2025-11 metrik 9 (Role Clarity & DS Support; `ESS_ROLE_CLARITY_ROWS` di `server/db/seedData.js`) adalah nilai agregat per direktorat yang PERSIS sama dengan file asli "ESS 2025 Result_Role Clarity & DS Support.xlsx" (file itu sudah ada di repo git sejak v2.32.0). Dengan `SEED_DEMO_DATA=true` nilai itu akan tampil di situs UAT publik. Perlu diputuskan apakah diganti dummy sebelum UAT dibuka.
+**Keputusan (user, 2026-11-03): dibiarkan apa adanya** - tidak diganti dummy. Latar belakang: baris seed ESS 2025-11 metrik 9 (Role Clarity & DS Support; `ESS_ROLE_CLARITY_ROWS` di `server/db/seedData.js`) adalah nilai agregat per direktorat yang PERSIS sama dengan file asli "ESS 2025 Result_Role Clarity & DS Support.xlsx" (file itu sudah ada di repo git sejak v2.32.0). Dengan `SEED_DEMO_DATA=true` nilai itu tampil di situs UAT publik; user menerima hal ini.
 
 **Belum diverifikasi di Render sendiri** (hanya disimulasikan lokal): TLS, hasil `generateValue` yang sebenarnya, ketersediaan Node `24.19.0`, izin membuat ekstensi `citext`, penerusan Host/Origin, `req.ip` di balik beberapa hop proxy (bila salah, semua penguji berbagi satu bucket rate limit login gagal), build dengan npm 11.

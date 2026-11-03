@@ -939,8 +939,8 @@ domain model, not just descriptive:
   unknown `/api|/uploads|/exports` -> JSON 404; public attendance/feedback for an unknown event -> 404 `Event not found` (was raw FK error 400 on SQL/pg, orphan row on JSON); boot
   no-accounts warning mentions the bootstrap env. Gotchas: after the first admin changed the password, REMOVE `BOOTSTRAP_ADMIN_USERNAME` (and `DEFAULT_INITIAL_PASSWORD`) - with all admins
   inactive a restart would recreate one with the shared password; never change the generated key; free PG expires after 30 days (+14 grace); uploads lost on every redeploy (auto-deploy
-  on push); transcripts always fail there (message points at 127.0.0.1:8000) so no AI summaries; `docs/UAT/` is local only and NOT gitignored. OPEN (user to decide): metric 9's seed ESS
-  2025-11 rows (`ESS_ROLE_CLARITY_ROWS`, `seedData.js`) equal the real file's aggregates and would show on the public UAT. Tests: Module 69 (11) -> suite 558 SQL / 559 pg by count (static
+  on push); transcripts always fail there (message points at 127.0.0.1:8000) so no AI summaries; `docs/UAT/` is local only and NOT gitignored. DECIDED 2026-11-03 (user): metric 9's seed ESS
+  2025-11 rows (`ESS_ROLE_CLARITY_ROWS`, `seedData.js`) equal the real file's aggregates and stay as they are on the public UAT (not replaced by dummy). Tests: Module 69 (11) -> suite 558 SQL / 559 pg by count (static
   546); full SQL 469/469, 16 skipped, BEFORE the 4 QC follow-up fixes; after them modules 8/24/34/69 SQL 36/36 + 1 skip, pg 37/37; pg auth modules 75/75; full suite not re-run, JSON not
   run. Local Render simulation OK (~150 MB peak). QC: LULUS DENGAN CATATAN. Not verified on Render itself: TLS, generateValue, Node 24.19.0, citext right, Host/Origin passthrough, `req.ip`
   behind several proxy hops (shared failed-login bucket), npm 11 build.
