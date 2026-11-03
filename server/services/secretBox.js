@@ -7,12 +7,25 @@
 // first, then the .env file itself (a process that did not load .env — e.g. a script or a test —
 // must reuse the existing key, never mint a second one, or previously stored secrets would
 // become undecryptable).
+// v2.61.1: the environment may also hold the key as base64 of 32 bytes - what Render's `generateValue: true` produces
+// (render.yaml). The .env file and a newly generated key stay 64 hex characters.
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
 const ENV_FILE = path.join(__dirname, '..', '..', '.env');
 const KEY_RE = /^[0-9a-f]{64}$/i;
+const BASE64_KEY_RE = /^[A-Za-z0-9+/_-]{43}=?$/; // 32 bytes as base64 (standard or URL-safe, padding optional)
+
+// The 32-byte key from a valid hex or base64 text, else null.
+function keyBytes(text) {
+  if (KEY_RE.test(text || '')) return Buffer.from(text, 'hex');
+  if (BASE64_KEY_RE.test(text || '')) {
+    const buf = Buffer.from(text, 'base64');
+    return buf.length === 32 ? buf : null;
+  }
+  return null;
+}
 
 function readKeyFromEnvFile() {
   try {
@@ -24,9 +37,21 @@ function readKeyFromEnvFile() {
   }
 }
 
+// Warned once per process: a value is set in the environment but is not a usable key (never printed).
+let warnedInvalidEnvKey = false;
+
 function getKey() {
-  let hex = process.env.SETTINGS_ENCRYPTION_KEY;
-  if (!KEY_RE.test(hex || '')) hex = readKeyFromEnvFile();
+  // surrounding blanks / a line break pasted into a hosting dashboard are not part of the key
+  const envText = typeof process.env.SETTINGS_ENCRYPTION_KEY === 'string' ? process.env.SETTINGS_ENCRYPTION_KEY.trim() : '';
+  const fromEnv = keyBytes(envText);
+  if (fromEnv) return fromEnv;
+  if (envText && !warnedInvalidEnvKey) {
+    warnedInvalidEnvKey = true;
+    console.warn('[secretBox] WARNING: SETTINGS_ENCRYPTION_KEY is set but is not a valid key (expected 64 hex characters, or base64 of 32 bytes ' +
+      'such as the Render generateValue) - it is ignored and the key from .env (or a newly generated one) is used. Secrets encrypted with ' +
+      'another key cannot be read. Fix the variable and restart.');
+  }
+  let hex = readKeyFromEnvFile();
   if (!KEY_RE.test(hex || '')) {
     hex = crypto.randomBytes(32).toString('hex');
     try {
@@ -64,4 +89,4 @@ function decrypt(payload) {
   }
 }
 
-module.exports = { encrypt, decrypt };
+module.exports = { encrypt, decrypt, keyBytes }; // keyBytes: exposed for the regression suite

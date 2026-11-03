@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    68 MODUL PENGUJIAN    │  547 TESTS (SQL) / 548 (PG) │       100% PASS RATE          │
+│    69 MODUL PENGUJIAN    │  558 TESTS (SQL) / 559 (PG) │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -1635,3 +1635,38 @@ Ukuran suite = **547** di SQL Server (539 + 8) dan **548** di PostgreSQL (+ tes 
 **QC**: LULUS DENGAN CATATAN, tanpa bug fungsional; PostgreSQL baru di-seed diuji end-to-end di UI dan dengan probe API positif/negatif. Catatan R1 (HOLDLOCK di semua upsert) dan R2 (`SET NOCOUNT ON`) diperbaiki sesudahnya; R2 dicek dengan `SET NOCOUNT ON` yang di-rollback di SQL Server (`rowsAffected` driver `[]` vs `rowCount()` 5).
 
 **Tidak diuji**: `SEED_DEMO_DATA=false` di PostgreSQL; tulis bersamaan di bawah lock tabel PostgreSQL; Render (`DATABASE_URL` + `PG_SSL`, izin `citext`). Temuan lama yang tidak diperbaiki: cek cakupan USER membedakan huruf (`?directorate=business banking` -> 403); importer CSV menerima divisi di luar direktori.
+
+---
+
+## 55. v2.61.1 - Modul 69: UAT Render (Admin bootstrap dari env, kunci base64, 404 rapi)
+
+### Modul 69 - 11 tes
+
+| # | Jenis | Skenario |
+| :--- | :--- | :--- |
+| 1 | Positif | Belum ada Admin: satu ADMIN dibuat dengan password awal, wajib ganti password, bukan akun tes; audit `USER_CREATE` tanpa password |
+| 2 | Positif | Idempoten: dengan Admin aktif tidak ada yang dibuat dan tepat satu baris log; Admin NONAKTIF tidak dihitung |
+| 3 | Negatif | `DEFAULT_INITIAL_PASSWORD` tidak ada / kosong / hanya spasi: tidak ada yang dibuat, peringatan jelas |
+| 4 | Negatif | Tanpa `BOOTSTRAP_ADMIN_USERNAME` tidak terjadi apa pun dan tidak ada log; username tidak valid atau milik akun non-Admin -> tidak ada yang dibuat (peringatan) |
+| 5 | Negatif | `BOOTSTRAP_ADMIN_EMAIL` tidak valid dibuang (peringatan); error storage dicatat dan tidak pernah melempar (server tetap start) |
+| 6 | Positif | Storage asli dengan Admin aktif (backend database): `ADMIN_EXISTS`, tidak ada akun maupun baris audit baru. Skip di JSON dan bila database tidak punya Admin aktif |
+| 7 | Positif | `SETTINGS_ENCRYPTION_KEY` base64 32 byte (Render `generateValue`) mengenkripsi/mendekripsi; kunci hex tidak berubah; panjang lain/sampah ditolak |
+| 8 | Negatif | Path tak dikenal `/api` dan `/uploads` -> 404 JSON (bukan halaman HTML); tanpa login 401 JSON |
+| 9 | Negatif | Kunci dengan spasi/baris baru tetap jalan; nilai TIDAK valid dilaporkan sekali (nilai tidak dicetak) dan tidak ada kunci baru ditulis ke `.env`. Skip bila `.env` belum punya kunci (fallback akan menulisnya) |
+| 10 | Negatif | Check-in / feedback publik dengan kode event tak dikenal: 404 `Event not found` (tanpa teks error database), tidak ada yang tersimpan |
+| 11 | Negatif | Frontend hasil build (`dist/`) dilayani: file `/assets` yang hilang atau path berekstensi -> 404, deep link rute klien tetap 200 aplikasi. Skip bila backend tidak melayani `dist/` |
+
+Tes 1-5 memakai store in-memory dan env/log tiruan yang disuntikkan ke `ensureBootstrapAdmin({ store, env, log })`, jadi tidak ada akun yang dibuat di database live.
+
+### Hasil
+
+| Run | Hasil |
+| :--- | :--- |
+| Suite penuh SQL Server, SEBELUM 4 perbaikan lanjutan QC (`TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`) | **469/469 lulus, 0 gagal, 16 skip** |
+| PostgreSQL, modul auth 34, 35, 36, 37, 48, 49, 51, 69 | 75/75 |
+| Setelah perbaikan lanjutan QC, modul 8, 24, 34, 69 | SQL Server 36/36 + 1 skip (tes `dist/`); PostgreSQL dengan `dist/` dilayani 37/37 |
+| Simulasi Render lokal (perintah build Render, `NODE_ENV=production`, `PORT` 10000, database pg baru) | Build ~15 dtk; seed + Admin bootstrap pada boot pertama; login -> ganti password -> Dashboard; deep link OK; cookie `HttpOnly; Secure; SameSite=Strict` di balik `X-Forwarded-Proto: https`; transkrip video gagal dengan rapi; boot kedua idempoten; memori puncak ~150 MB |
+
+Ukuran suite = **558** di SQL Server (547 + 11) dan **559** di PostgreSQL (548 + 11). `await runTest(` statis 546 (535 + 11). Suite penuh TIDAK dijalankan ulang setelah perbaikan lanjutan QC; suite JSON penuh tidak dijalankan.
+
+**QC**: LULUS DENGAN CATATAN, tanpa bug fungsional/keamanan (simulasi produksi sendiri, dua boot bersamaan -> satu Admin, tidak ada promosi akun, tidak ada rahasia di log/respons, kunci tetap terbaca setelah restart, header proxy ala Render, Origin asing 403). Empat catatan ringan diperbaiki (fallback SPA asset, JSON 404, 404 event tak dikenal, pesan boot). **Tidak diuji**: Render sendiri (lihat `docs/06` "Deploy UAT ke Render (v2.61.1)").

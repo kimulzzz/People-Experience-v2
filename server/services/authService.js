@@ -767,11 +767,56 @@ async function warnIfNoUsers() {
     if ((await storage.countUsers()) === 0) {
       console.warn('=======================================================');
       console.warn('[auth] WARNING: there are no login accounts yet. Nobody can sign in to the application.');
-      console.warn('[auth] Buat Admin pertama:  npm run auth:create-admin');
+      console.warn('[auth] Create the first Admin with:  npm run auth:create-admin');
+      console.warn('[auth] Without a shell (e.g. Render): set BOOTSTRAP_ADMIN_USERNAME and DEFAULT_INITIAL_PASSWORD, then restart.');
       console.warn('=======================================================');
     }
   } catch (err) {
     console.error('[auth] failed to check accounts:', err.message);
+  }
+}
+
+// Bootstrap admin (v2.61.1): a host without a shell (Render free plan) cannot run `npm run auth:create-admin`, so the
+// first ADMIN can come from the environment. Only when BOOTSTRAP_ADMIN_USERNAME is set AND no active ADMIN exists at
+// all: one ADMIN with that username (optional BOOTSTRAP_ADMIN_NAME / BOOTSTRAP_ADMIN_EMAIL), password = the standard
+// initial password DEFAULT_INITIAL_PASSWORD (required - without it nothing is created), must change it at first login.
+// The password is never logged or written to the audit trail. Idempotent: with an active admin it does nothing.
+// `store`, `env` and `log` are injectable for the regression suite (default: the real storage, process.env, console).
+async function ensureBootstrapAdmin({ store = storage, env = process.env, log = console } = {}) {
+  const username = typeof env.BOOTSTRAP_ADMIN_USERNAME === 'string' ? env.BOOTSTRAP_ADMIN_USERNAME.trim() : '';
+  if (!username) return { status: 'DISABLED' };
+  try {
+    if ((await store.listUsers()).some(u => u.role === 'ADMIN' && u.is_active)) {
+      log.log('[auth] Bootstrap admin: an active Admin account already exists - nothing created.');
+      return { status: 'ADMIN_EXISTS' };
+    }
+    if (!USERNAME_RE.test(username)) {
+      log.warn('[auth] WARNING: BOOTSTRAP_ADMIN_USERNAME must be 3-50 characters (letters, digits, dot, hyphen, underscore) - no Admin created.');
+      return { status: 'INVALID_USERNAME' };
+    }
+    const password = typeof env.DEFAULT_INITIAL_PASSWORD === 'string' && env.DEFAULT_INITIAL_PASSWORD.trim() ? env.DEFAULT_INITIAL_PASSWORD : null;
+    if (!password) {
+      log.warn('[auth] WARNING: BOOTSTRAP_ADMIN_USERNAME is set but DEFAULT_INITIAL_PASSWORD is empty - no Admin created. Set both and restart.');
+      return { status: 'NO_PASSWORD' };
+    }
+    if (await store.getUserByUsername(username)) {
+      log.warn(`[auth] WARNING: bootstrap username "${username}" already belongs to a non-Admin or inactive account - not changed, no Admin created.`);
+      return { status: 'USERNAME_TAKEN' };
+    }
+    const fullName = (typeof env.BOOTSTRAP_ADMIN_NAME === 'string' && env.BOOTSTRAP_ADMIN_NAME.trim().slice(0, 200)) || 'Administrator PX';
+    const emailIn = typeof env.BOOTSTRAP_ADMIN_EMAIL === 'string' ? env.BOOTSTRAP_ADMIN_EMAIL.trim() : '';
+    const email = emailIn && EMAIL_RE.test(emailIn) && emailIn.length <= 200 ? emailIn : '';
+    if (emailIn && !email) log.warn('[auth] WARNING: BOOTSTRAP_ADMIN_EMAIL is not a valid e-mail address - the Admin is created without one.');
+    const created = await store.createUser({
+      username, full_name: fullName, email, role: 'ADMIN', password_hash: await hashPassword(password),
+      is_active: true, must_change_password: true, is_test_account: false
+    });
+    await store.addAuditLog({ user_id: null, username: 'system:bootstrap-admin', action: 'USER_CREATE', target: `${created.username} (ADMIN) from BOOTSTRAP_ADMIN_USERNAME`, ip: null, is_test: false });
+    log.log(`[auth] Bootstrap admin "${created.username}" created with the standard initial password (DEFAULT_INITIAL_PASSWORD); it must be changed at the first sign-in.`);
+    return { status: 'CREATED', user_id: created.user_id };
+  } catch (err) {
+    log.error('[auth] Bootstrap admin failed:', err.message);
+    return { status: 'ERROR' };
   }
 }
 
@@ -781,5 +826,5 @@ module.exports = {
   getAuthSettings, getIdleTimeoutMinutes, clearIdleTimeoutCache, toPublicUser, isEventManager, canSeeRespondentData, redactRespondent,
   MENU_KEYS, DEFAULT_USER_MENU_ACCESS, hasMenu, requireMenu, menuAccessFromBody,
   isPicOfMetric, picMetricIds, picMetrics, getPicMetric, requirePicMetric, rowsForViewer, respondentScopeFor, audit, resolveScope, isInScope, describeScopes,
-  parseCookies, requireRole, requireLogin, requireEventManager, scopeFilter, registerAuthRoutes, warnIfNoUsers
+  parseCookies, requireRole, requireLogin, requireEventManager, scopeFilter, registerAuthRoutes, warnIfNoUsers, ensureBootstrapAdmin
 };

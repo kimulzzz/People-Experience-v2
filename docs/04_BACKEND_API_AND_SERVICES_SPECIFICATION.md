@@ -607,6 +607,24 @@ Pengujian: `docs/07` §31 (Modul 46).
 
 ---
 
+## Catatan v2.61.1 - Admin pertama dari env, kunci enkripsi base64, 404 rapi (UAT Render)
+
+**Ringkasan**: persiapan hosting UAT di Render (`render.yaml`, data dummy saja; runbook: `docs/06` "Deploy UAT ke Render (v2.61.1)"). Tidak ada endpoint, setting atau tabel baru; `/api/health` `version` = `2.61.1`. Rincian: `changelog/v2.61.1.md`.
+
+| Bagian | Perubahan |
+| :--- | :--- |
+| `authService.ensureBootstrapAdmin({ store, env, log })` | Dipanggil saat boot setelah storage siap, sebelum `listen`. Hanya bila `BOOTSTRAP_ADMIN_USERNAME` diisi dan tidak ada ADMIN aktif: satu ADMIN, password = `DEFAULT_INITIAL_PASSWORD` (scrypt), `must_change_password` true, `is_test_account` false, nama `BOOTSTRAP_ADMIN_NAME` (default "Administrator PX"), e-mail `BOOTSTRAP_ADMIN_EMAIL` (dibuang bila tidak valid). Audit `USER_CREATE` oleh `system:bootstrap-admin`, tanpa password. Status kembali: `DISABLED`, `ADMIN_EXISTS`, `INVALID_USERNAME`, `NO_PASSWORD`, `USERNAME_TAKEN` (akun USER/nonaktif tidak pernah dinaikkan/diaktifkan), `CREATED`, `ERROR` (dicatat di log, tidak pernah melempar) |
+| `warnIfNoUsers()` | Pesan Inggris; menyebut `npm run auth:create-admin` dan, tanpa shell, `BOOTSTRAP_ADMIN_USERNAME` + `DEFAULT_INITIAL_PASSWORD` |
+| `secretBox.js` | `SETTINGS_ENCRYPTION_KEY` dari env: 64 hex ATAU base64 32 byte (standar/URL-safe, padding opsional), di-`trim`. Nilai tidak valid -> satu `console.warn` per proses (tanpa nilai), lalu kunci `.env` / kunci baru. Ekspor baru `keyBytes` (untuk suite) |
+| Fallback SPA (`dist/`) | `index.html` hanya untuk GET/HEAD dan bukan untuk `/assets/...` atau path berakhiran ekstensi file -> asset yang hilang = 404 (dulu `index.html` 200) |
+| Path tak dikenal `/api/*`, `/uploads/*`, `/exports/*` | JSON 404 `{"error":"Not found"}`; tanpa login 401 JSON |
+| `POST /api/events/:id/attendance`, `POST /api/events/:id/feedback` (publik) | Event tidak ada -> 404 `{"error":"Event not found"}` sebelum menyimpan (dulu 400 dengan teks foreign key mentah di SQL Server/PostgreSQL; JSON store menyimpan absensi yatim) |
+| Env baru (opsional) | `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_NAME`, `BOOTSTRAP_ADMIN_EMAIL` |
+
+Pengujian: `docs/07` §55 (Modul 69).
+
+---
+
 ## Catatan v2.61.0 - Backend ketiga PostgreSQL (`STORAGE_BACKEND=pg`) lewat lapisan dialek
 
 **Ringkasan**: `server/db/storage.js` mengenal `STORAGE_BACKEND` = `sql` | `pg` | `json` (nilai lain -> `json`). `sql` dan `pg` sama-sama memuat `sqlStorage.js`; dialeknya (`server/db/dialects/index.js` -> `mssql.js` atau `pg.js`) memegang driver, konversi parameter, transaksi, `upsert`, `rowCount`, insert id eksplisit, bulk insert, cek katalog, I/O snapshot konfigurasi dan fragmen SQL. Kontrak storage untuk `server.js` dan service tidak berubah. Tujuan: SQL Server = produksi on-premise, PostgreSQL = UAT sementara (Render, belum di-deploy; data dummy saja). Skema, koneksi dan batasan: `docs/08` §33; rincian: `changelog/v2.61.0.md`.

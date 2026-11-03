@@ -12386,6 +12386,245 @@ async function runAllModules() {
       if (attendance68) assert.ok(!(await st68.getAttendancesByEvent(attendance68.event_id)).some(a => a.nip === attendance68.nip));
     });
   }
+
+  // --- MODULE 69 (v2.61.1): RENDER UAT - bootstrap admin from the environment, Render-generated encryption key, JSON 404 ---
+  // A host without a shell (Render free plan) gets its first Admin from BOOTSTRAP_ADMIN_USERNAME + DEFAULT_INITIAL_PASSWORD at
+  // boot (auth.ensureBootstrapAdmin). The "no Admin yet" paths cannot run on the shared live database (it has Admins), so they
+  // run on an in-memory store with the same four storage methods; the "Admin present" path also runs on the REAL storage of a
+  // database backend (nothing is created there). Passwords are made up per run and must never reach a log line or the audit trail.
+  console.log('\n📦 MODULE 69: Render UAT - bootstrap Admin from env, base64 SETTINGS_ENCRYPTION_KEY, JSON 404 for unknown API paths (Positive & Negative Testing)');
+  if (!skipModuleBlock(69)) {
+    const auth69 = require('../server/services/authService');
+    const crypto69 = require('crypto');
+    const PW69 = 'Boot-' + crypto69.randomBytes(6).toString('hex') + 'Q7'; // made up for this run only
+    // in-memory store: listUsers / getUserByUsername / createUser / addAuditLog, like both storage backends
+    const fakeStore = (users = [], { failList = false } = {}) => {
+      const st = { users: users.map(u => ({ ...u })), audit: [], created: 0 };
+      st.listUsers = async () => { if (failList) throw new Error('database unavailable'); return st.users.map(u => ({ ...u })); };
+      st.getUserByUsername = async n => st.users.find(u => u.username.toLowerCase() === String(n).toLowerCase()) || null;
+      st.createUser = async u => { st.created++; const rec = { ...u, user_id: st.users.length + 1 }; st.users.push(rec); return { ...rec }; };
+      st.addAuditLog = async e => { st.audit.push({ ...e }); };
+      return st;
+    };
+    const fakeLog = () => {
+      const lines = [];
+      return { lines, log: (...a) => lines.push(['log', a.join(' ')]), warn: (...a) => lines.push(['warn', a.join(' ')]), error: (...a) => lines.push(['error', a.join(' ')]) };
+    };
+    const env69 = extra => ({ BOOTSTRAP_ADMIN_USERNAME: 'uat-admin', DEFAULT_INITIAL_PASSWORD: PW69, ...extra });
+    const noSecret = (st, log) => {
+      const accounts = st.users.map(u => Object.fromEntries(Object.entries(u).filter(([k]) => k !== 'password_hash')));
+      const text = JSON.stringify(st.audit) + JSON.stringify(log.lines) + JSON.stringify(accounts);
+      assert.strictEqual(text.includes(PW69), false, 'the initial password must not appear in logs / audit / account fields');
+    };
+
+    await runTest('[POSITIVE] No Admin yet: one ADMIN is created with the initial password, must change it, is not a test account; audited as USER_CREATE without the password', async () => {
+      const st = fakeStore(); const log = fakeLog();
+      const r = await auth69.ensureBootstrapAdmin({ store: st, env: env69({ BOOTSTRAP_ADMIN_NAME: 'UAT Admin', BOOTSTRAP_ADMIN_EMAIL: 'uat.admin@example.invalid' }), log });
+      assert.strictEqual(r.status, 'CREATED');
+      assert.strictEqual(st.users.length, 1);
+      const u = st.users[0];
+      assert.strictEqual(u.username, 'uat-admin');
+      assert.strictEqual(u.role, 'ADMIN');
+      assert.strictEqual(u.must_change_password, true);
+      assert.strictEqual(u.is_active, true);
+      assert.strictEqual(u.is_test_account, false);
+      assert.strictEqual(u.full_name, 'UAT Admin');
+      assert.strictEqual(u.email, 'uat.admin@example.invalid');
+      assert.ok(/^scrypt\$/.test(u.password_hash), 'scrypt hash, not clear text');
+      assert.strictEqual(await auth69.verifyPassword(PW69, u.password_hash), true, 'the hash is of DEFAULT_INITIAL_PASSWORD');
+      assert.strictEqual(st.audit.length, 1);
+      assert.strictEqual(st.audit[0].action, 'USER_CREATE');
+      assert.strictEqual(st.audit[0].username, 'system:bootstrap-admin');
+      assert.strictEqual(st.audit[0].is_test, false);
+      assert.ok(st.audit[0].target.startsWith('uat-admin (ADMIN)'));
+      assert.strictEqual(log.lines.filter(([lvl]) => lvl === 'log').length, 1, 'one info line');
+      noSecret(st, log);
+    });
+
+    await runTest('[POSITIVE] Idempotent: with an active Admin nothing is created and exactly one line is logged; an INACTIVE Admin does not count', async () => {
+      const st = fakeStore([{ user_id: 1, username: 'admin', role: 'ADMIN', is_active: true }]); const log = fakeLog();
+      assert.strictEqual((await auth69.ensureBootstrapAdmin({ store: st, env: env69(), log })).status, 'ADMIN_EXISTS');
+      assert.strictEqual(st.created, 0);
+      assert.strictEqual(st.audit.length, 0);
+      assert.strictEqual(log.lines.length, 1);
+      // second boot of a fresh store: created once, then no second Admin
+      const st2 = fakeStore(); const log2 = fakeLog();
+      assert.strictEqual((await auth69.ensureBootstrapAdmin({ store: st2, env: env69(), log: log2 })).status, 'CREATED');
+      assert.strictEqual((await auth69.ensureBootstrapAdmin({ store: st2, env: env69(), log: log2 })).status, 'ADMIN_EXISTS');
+      assert.strictEqual(st2.users.length, 1);
+      // only an inactive Admin (and a USER) -> a new Admin is created
+      const st3 = fakeStore([{ user_id: 1, username: 'old-admin', role: 'ADMIN', is_active: false }, { user_id: 2, username: 'someone', role: 'USER', is_active: true }]);
+      assert.strictEqual((await auth69.ensureBootstrapAdmin({ store: st3, env: env69(), log: fakeLog() })).status, 'CREATED');
+      assert.strictEqual(st3.users.filter(u => u.role === 'ADMIN' && u.is_active).length, 1);
+    });
+
+    await runTest('[NEGATIVE] DEFAULT_INITIAL_PASSWORD missing / empty / blanks: nothing is created, a clear warning is logged', async () => {
+      for (const value of [undefined, '', '   ']) {
+        const st = fakeStore(); const log = fakeLog();
+        const env = env69();
+        if (value === undefined) delete env.DEFAULT_INITIAL_PASSWORD; else env.DEFAULT_INITIAL_PASSWORD = value;
+        assert.strictEqual((await auth69.ensureBootstrapAdmin({ store: st, env, log })).status, 'NO_PASSWORD');
+        assert.strictEqual(st.created, 0);
+        assert.strictEqual(st.audit.length, 0);
+        assert.ok(log.lines.some(([lvl, t]) => lvl === 'warn' && /DEFAULT_INITIAL_PASSWORD/.test(t)), 'warning names the missing variable');
+      }
+    });
+
+    await runTest('[NEGATIVE] Without BOOTSTRAP_ADMIN_USERNAME nothing happens and nothing is logged; an invalid username or one taken by a non-Admin creates nothing (warning)', async () => {
+      for (const value of [undefined, '', '  ']) {
+        const st = fakeStore(); const log = fakeLog();
+        const env = env69();
+        if (value === undefined) delete env.BOOTSTRAP_ADMIN_USERNAME; else env.BOOTSTRAP_ADMIN_USERNAME = value;
+        assert.strictEqual((await auth69.ensureBootstrapAdmin({ store: st, env, log })).status, 'DISABLED');
+        assert.strictEqual(st.created, 0);
+        assert.strictEqual(log.lines.length, 0);
+      }
+      for (const bad of ['ab', 'with space', 'x'.repeat(51), 'a<b>c']) {
+        const st = fakeStore(); const log = fakeLog();
+        assert.strictEqual((await auth69.ensureBootstrapAdmin({ store: st, env: env69({ BOOTSTRAP_ADMIN_USERNAME: bad }), log })).status, 'INVALID_USERNAME');
+        assert.strictEqual(st.created, 0);
+        assert.ok(log.lines.some(([lvl]) => lvl === 'warn'));
+      }
+      const st = fakeStore([{ user_id: 7, username: 'UAT-Admin', role: 'USER', is_active: true }]); const log = fakeLog();
+      assert.strictEqual((await auth69.ensureBootstrapAdmin({ store: st, env: env69(), log })).status, 'USERNAME_TAKEN');
+      assert.strictEqual(st.created, 0);
+      assert.strictEqual(st.users[0].role, 'USER', 'the existing account is not promoted');
+      noSecret(st, log);
+    });
+
+    await runTest('[NEGATIVE] An invalid BOOTSTRAP_ADMIN_EMAIL is dropped (warning); a storage error is logged and never throws (the server still starts)', async () => {
+      const st = fakeStore(); const log = fakeLog();
+      assert.strictEqual((await auth69.ensureBootstrapAdmin({ store: st, env: env69({ BOOTSTRAP_ADMIN_EMAIL: 'not-an-email' }), log })).status, 'CREATED');
+      assert.strictEqual(st.users[0].email, '');
+      assert.strictEqual(st.users[0].full_name, 'Administrator PX');
+      assert.ok(log.lines.some(([lvl, t]) => lvl === 'warn' && /BOOTSTRAP_ADMIN_EMAIL/.test(t)));
+      const st2 = fakeStore([], { failList: true }); const log2 = fakeLog();
+      assert.strictEqual((await auth69.ensureBootstrapAdmin({ store: st2, env: env69(), log: log2 })).status, 'ERROR');
+      assert.ok(log2.lines.some(([lvl]) => lvl === 'error'));
+      noSecret(st2, log2);
+    });
+
+    await runTest('[POSITIVE] Real storage with an active Admin (database backends): ADMIN_EXISTS, no account and no audit row added', async () => {
+      const st69 = require('../server/db/storage');
+      if (!isDbBackend(st69.backend)) skipTest('the JSON backend keeps its accounts in the running server memory (in-process storage would rewrite auth.json)');
+      const before = await st69.listUsers();
+      if (!before.some(u => u.role === 'ADMIN' && u.is_active)) skipTest('this database has no active Admin');
+      const auditBefore = (await st69.getAuditLog(1, { includeTest: true }))[0];
+      const log = fakeLog();
+      const r = await auth69.ensureBootstrapAdmin({ env: env69({ BOOTSTRAP_ADMIN_USERNAME: `rt69-${Date.now().toString(36)}` }), log });
+      assert.strictEqual(r.status, 'ADMIN_EXISTS');
+      assert.strictEqual((await st69.listUsers()).length, before.length);
+      const auditAfter = (await st69.getAuditLog(1, { includeTest: true }))[0];
+      assert.strictEqual(auditAfter && auditAfter.audit_id, auditBefore && auditBefore.audit_id, 'no audit row written');
+    });
+
+    await runTest('[POSITIVE] SETTINGS_ENCRYPTION_KEY as base64 of 32 bytes (Render generateValue) encrypts/decrypts; hex keys unchanged; other lengths/garbage refused', async () => {
+      const box = require('../server/services/secretBox');
+      const saved = process.env.SETTINGS_ENCRYPTION_KEY;
+      try {
+        const raw = crypto69.randomBytes(32);
+        for (const text of [raw.toString('base64'), raw.toString('base64').replace(/=$/, ''), raw.toString('base64url')]) {
+          assert.ok(box.keyBytes(text) && box.keyBytes(text).equals(raw), `accepted: ${text.length} chars`);
+        }
+        assert.ok(box.keyBytes(raw.toString('hex')).equals(raw), 'hex key as before');
+        for (const bad of [crypto69.randomBytes(31).toString('base64'), crypto69.randomBytes(33).toString('base64'), crypto69.randomBytes(24).toString('hex'), 'not a key', '', undefined]) {
+          assert.strictEqual(box.keyBytes(bad), null, `refused: ${String(bad).length} chars`);
+        }
+        process.env.SETTINGS_ENCRYPTION_KEY = raw.toString('base64');
+        const enc = box.encrypt('rt69-secret');
+        assert.strictEqual(box.decrypt(enc), 'rt69-secret');
+        assert.strictEqual(process.env.SETTINGS_ENCRYPTION_KEY, raw.toString('base64'), 'the env key is not rewritten');
+        process.env.SETTINGS_ENCRYPTION_KEY = crypto69.randomBytes(32).toString('base64');
+        assert.strictEqual(box.decrypt(enc), '', 'another key cannot decrypt');
+      } finally {
+        if (saved === undefined) delete process.env.SETTINGS_ENCRYPTION_KEY; else process.env.SETTINGS_ENCRYPTION_KEY = saved;
+      }
+    });
+
+    await runTest('[NEGATIVE] Unknown /api and /uploads paths answer 404 JSON (not an HTML page); without a login 401 JSON', async () => {
+      for (const p of ['/api/rt69-no-such-route', '/api/admin/rt69-no-such-route', '/uploads/rt69-no-such-file.mp4']) {
+        const r = await fetch(`${BASE_URL}${p}`);
+        assert.strictEqual(r.status, 404, p);
+        assert.ok(/application\/json/.test(r.headers.get('content-type') || ''), `${p} content-type`);
+        assert.strictEqual((await r.json()).error, 'Not found');
+      }
+      const anon = await nativeFetch(`${BASE_URL}/api/rt69-no-such-route`);
+      assert.strictEqual(anon.status, 401);
+      assert.ok(/application\/json/.test(anon.headers.get('content-type') || ''));
+    });
+
+    await runTest('[NEGATIVE] SETTINGS_ENCRYPTION_KEY with surrounding blanks / a line break still works; a present but INVALID value is reported once (value never printed) and no new key is written to .env', async () => {
+      const box = require('../server/services/secretBox');
+      const fs69 = require('fs');
+      const envPath69 = require('path').join(__dirname, '..', '.env');
+      const keysInEnvFile = () => (fs69.existsSync(envPath69) ? (fs69.readFileSync(envPath69, 'utf8').match(/^SETTINGS_ENCRYPTION_KEY=[0-9a-f]{64}\s*$/gim) || []).length : 0);
+      // the invalid-value path falls back to the key in .env; without one there it would generate and write a key - not here
+      if (keysInEnvFile() === 0) skipTest('no SETTINGS_ENCRYPTION_KEY in .env (the fallback would write one)');
+      const before = keysInEnvFile();
+      const saved = process.env.SETTINGS_ENCRYPTION_KEY;
+      const origWarn = console.warn;
+      const warned = [];
+      try {
+        const raw = crypto69.randomBytes(32);
+        process.env.SETTINGS_ENCRYPTION_KEY = ` ${raw.toString('base64')}\r\n`;
+        const enc = box.encrypt('rt69-trim');
+        process.env.SETTINGS_ENCRYPTION_KEY = raw.toString('base64');
+        assert.strictEqual(box.decrypt(enc), 'rt69-trim', 'the trimmed key is the key');
+        process.env.SETTINGS_ENCRYPTION_KEY = `${raw.toString('hex')}  `;
+        assert.strictEqual(box.decrypt(enc), 'rt69-trim', 'hex spelling of the same key, trailing blanks ignored');
+
+        const bad = crypto69.randomBytes(16).toString('hex'); // 16 bytes: too short
+        console.warn = (...a) => warned.push(a.join(' '));
+        process.env.SETTINGS_ENCRYPTION_KEY = bad;
+        const enc2 = box.encrypt('rt69-fallback');
+        process.env.SETTINGS_ENCRYPTION_KEY = 'still-not-a-key';
+        box.encrypt('rt69-fallback-2');
+        console.warn = origWarn;
+        const mine = warned.filter(w => /SETTINGS_ENCRYPTION_KEY/.test(w));
+        assert.strictEqual(mine.length, 1, 'one clear warning per process');
+        assert.ok(/64 hex characters/.test(mine[0]) && /base64 of 32 bytes/.test(mine[0]), 'names the expected formats');
+        assert.strictEqual(mine[0].includes(bad), false, 'the value is never printed');
+        assert.strictEqual(keysInEnvFile(), before, 'no new key appended to .env');
+        delete process.env.SETTINGS_ENCRYPTION_KEY; // -> the .env key, which the fallback used
+        assert.strictEqual(box.decrypt(enc2), 'rt69-fallback');
+      } finally {
+        console.warn = origWarn;
+        if (saved === undefined) delete process.env.SETTINGS_ENCRYPTION_KEY; else process.env.SETTINGS_ENCRYPTION_KEY = saved;
+      }
+    });
+
+    await runTest('[NEGATIVE] Public check-in / feedback for an unknown event code: 404 "Event not found" (no database error text), nothing stored', async () => {
+      const ev69 = `rt69-no-event-${Date.now().toString(36)}`;
+      const post69 = (p, body) => nativeFetch(`${BASE_URL}${p}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const att = await post69(`/api/events/${ev69}/attendance`, { nip: 'RT69001', employee_name: 'Regression 69', cimb_email: 'rt69@example.test', directorate: 'General', division: 'General' });
+      assert.strictEqual(att.status, 404);
+      assert.deepStrictEqual(await att.json(), { error: 'Event not found' });
+      const fb = await post69(`/api/events/${ev69}/feedback`, { nip: 'RT69001', ratings: { q1: 5 }, verbatim: 'rt69' });
+      assert.strictEqual(fb.status, 404);
+      assert.deepStrictEqual(await fb.json(), { error: 'Event not found' });
+      // validation still comes first (400), and a real event code is not affected by the check
+      assert.strictEqual((await post69(`/api/events/${ev69}/attendance`, {})).status, 400);
+      assert.strictEqual((await post69(`/api/events/${ev69}/feedback`, {})).status, 400);
+      const st69 = require('../server/db/storage');
+      if (isDbBackend(st69.backend)) {
+        assert.strictEqual((await st69.getAttendancesByEvent(ev69)).length, 0);
+        assert.strictEqual((await testDb.query('SELECT COUNT(*) AS n FROM dbo.px_feedback_responses WHERE event_id = @e', { e: ev69 }))[0].n, 0);
+      }
+    });
+
+    await runTest('[NEGATIVE] Built frontend (dist/) served: a missing /assets file or file-like path is 404, a client deep link still gets the app', async () => {
+      const root = await nativeFetch(`${BASE_URL}/`);
+      if (root.status !== 200 || !(await root.text()).includes('<div id="root">')) skipTest('this backend does not serve a built frontend (no dist/)');
+      for (const p of ['/assets/index-rt69missing.js', '/assets/rt69-old.css', '/rt69-missing.png', '/deep/rt69.map']) {
+        const r = await nativeFetch(`${BASE_URL}${p}`);
+        assert.strictEqual(r.status, 404, p);
+        assert.ok(!/text\/html/.test(r.headers.get('content-type') || '') || !(await r.text()).includes('<div id="root">'), `${p} is not index.html`);
+      }
+      const deep = await nativeFetch(`${BASE_URL}/some/client/route?tab=rt69`);
+      assert.strictEqual(deep.status, 200);
+      assert.ok((await deep.text()).includes('<div id="root">'), 'deep link gets index.html');
+    });
+  }
 }
 
 runRegressionSuite().catch(async err => {

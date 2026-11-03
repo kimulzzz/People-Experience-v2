@@ -6,6 +6,7 @@ Sejak 2026-10-23 catatan setiap versi disimpan dalam file tersendiri di folder [
 
 | Versi | Tanggal | Ringkasan |
 |---|---|---|
+| [2.61.1](changelog/v2.61.1.md) | 2026-11-03 | ☁️ UAT di Render: Blueprint `render.yaml`, Admin pertama dari env, kunci enkripsi base64 dan 404 yang rapi (Added / Fixed) |
 | [2.61.0](changelog/v2.61.0.md) | 2026-11-03 | 🗄️ Backend ketiga PostgreSQL (`STORAGE_BACKEND=pg`) untuk UAT, satu kode storage lewat lapisan dialek (Added) |
 | [2.60.4](changelog/v2.60.4.md) | 2026-10-29 | 🎛️ AI Summary dan transkrip video tertutup saat event dibuka (Changed) |
 | [2.60.3](changelog/v2.60.3.md) | 2026-10-29 | 🧠 AI Summary rapat lebih lengkap: JSON schema per panggilan Gemma & poin penting dilindungi saat merge (Changed / Fixed) |

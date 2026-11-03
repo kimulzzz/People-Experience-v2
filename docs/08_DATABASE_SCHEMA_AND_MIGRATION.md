@@ -585,6 +585,22 @@ server/db/storage.js ── STORAGE_BACKEND=sql ─┐
 
 **Batasan PostgreSQL**: `CITEXT` tidak menegakkan batas panjang kolom SQL Server; spasi di akhir teks ikut dibandingkan (SQL Server mengabaikannya); urutan teks non-ASCII bisa berbeda (tidak ada logika aplikasi yang bergantung padanya). Belum diuji: `SEED_DEMO_DATA=false` di PostgreSQL, tulis bersamaan di bawah lock tabel, Render sendiri.
 
-**Catatan deploy Render (langkah berikutnya, belum dikerjakan)**: PostgreSQL 15+ dengan `citext`; aturan SSL di atas; `SETTINGS_ENCRYPTION_KEY` harus diset sebagai env var (kalau tidak, kunci baru ditulis ke disk sementara dan password e-mail tersimpan tidak terbaca setelah redeploy); `server/uploads` dan `server/data/*-uploads` hilang saat redeploy tanpa persistent disk (baris DB tetap); tanpa Ollama/Video Extractor (transkrip tidak tersedia, AI Summary rule-based); data dummy saja.
+**Catatan deploy Render** (dikerjakan di v2.61.1, lihat §34): PostgreSQL 15+ dengan `citext`; aturan SSL di atas; `SETTINGS_ENCRYPTION_KEY` harus diset sebagai env var (kalau tidak, kunci baru ditulis ke disk sementara dan password e-mail tersimpan tidak terbaca setelah redeploy); `server/uploads` dan `server/data/*-uploads` hilang saat redeploy tanpa persistent disk (baris DB tetap); tanpa Ollama/Video Extractor (transkrip tidak tersedia, AI Summary rule-based); data dummy saja.
 
 Diverifikasi oleh Modul 68 (`docs/07` §54). API: `docs/04` "Catatan v2.61.0".
+
+---
+
+## 34. Pembaruan v2.61.1 - Database UAT di Render (`render.yaml`)
+
+Langkah deploy yang di §33 disebut "belum dikerjakan" kini ada sebagai Blueprint `render.yaml` (runbook: `docs/06` "Deploy UAT ke Render (v2.61.1)"). Tidak ada perubahan skema (tetap 41 tabel), tabel, atau migrasi.
+
+| Hal | Nilai di `render.yaml` |
+| :--- | :--- |
+| Database | `px-uat-db`, `databaseName` `peopleexperiencepx`, `user` `px_app`, `postgresMajorVersion` `"17"` (skema butuh 15+ dan `citext`), `region` singapore, `plan` free |
+| Akses | `ipAllowList: []` = hanya jaringan privat Render; web service memakai URL internal (`DATABASE_URL` `fromDatabase` `connectionString`), jadi tanpa `PG_SSL` dan tanpa `sslmode` |
+| Isi awal | Boot pertama = seed demo yang sama (`SEED_DEMO_DATA=true`): simulasi lokal 2640 baris survei, 143 baris ESS, 1816 baris demo Exit Interview, 27 metrik, 12 direktorat; boot kedua idempoten |
+| Admin pertama | Dibuat saat boot dari `BOOTSTRAP_ADMIN_USERNAME` + `DEFAULT_INITIAL_PASSWORD` bila tidak ada Admin aktif (tabel `px_users`, audit `px_audit_log` `USER_CREATE` oleh `system:bootstrap-admin`) |
+| Kunci enkripsi | `SETTINGS_ENCRYPTION_KEY` dibuat Render (base64 32 byte, diterima `secretBox.js` sejak v2.61.1); jangan diubah, kalau tidak password e-mail di `px_email_settings` tidak terbaca |
+
+**Batasan**: PostgreSQL free kedaluwarsa 30 hari setelah dibuat (+14 hari masa tenggang, lalu dihapus) - upgrade plan atau buat ulang. File unggahan tidak ada di database dan hilang setiap redeploy (tanpa persistent disk); baris `px_media` dll. tetap. Data dummy saja. Belum diuji di Render sendiri: izin membuat `citext`, TLS, `generateValue` yang sebenarnya.

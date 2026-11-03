@@ -153,7 +153,7 @@ flowchart TD
 
 Persistensi kini dapat dipilih lewat `STORAGE_BACKEND` di `.env`: `json` (default; `server/data/store.json` + cache memori, node "Transactional JSON Store" pada diagram di atas) atau `sql` (**Microsoft SQL Server lokal**, database `PeopleExperiencePX`, tanpa cache — setiap pembacaan = query). Sejak v2.61.0 ada pilihan ketiga `pg` (**PostgreSQL 15+**) yang menjalankan kode `sqlStorage.js` yang sama lewat lapisan dialek `server/db/dialects/` (SQL Server = `mssql.js`, PostgreSQL = `pg.js`); fitur baru cukup ditulis sekali untuk kedua database. `server/db/storage.js` hanya dispatcher; semua pemanggil memakai `await storage.x()` sehingga kontrak kedua backend identik. Foto & video Signature Event **tidak** masuk database: file tetap di `server/uploads/`, database menyimpan path + metadata + transkrip AI. Tetap 100% on-premise (SQL Server berjalan di mesin yang sama; login aplikasi `px_app` hanya `db_owner` database itu). Skema, migrasi, rollback, dan operasional: lihat **`docs/08_DATABASE_SCHEMA_AND_MIGRATION.md`**.
 
-**Peran tiap backend (v2.61.0)**: SQL Server = PRODUKSI on-premise (aturan 100% on-premise tetap berlaku penuh di sana). PostgreSQL = hosting UAT sementara di Render.com (cloud; langkah deploy belum dikerjakan) dan hanya boleh berisi **data dummy/seed** - tanpa baris Exit Interview asli, file ESS asli, atau akun asli. Di host UAT tidak ada Ollama/Video Extractor, jadi transkrip video tidak tersedia dan AI Summary jatuh ke rule-based. Rincian PostgreSQL: `docs/08` §33.
+**Peran tiap backend (v2.61.0)**: SQL Server = PRODUKSI on-premise (aturan 100% on-premise tetap berlaku penuh di sana). PostgreSQL = hosting UAT sementara di Render.com (cloud; sejak v2.61.1 lewat `render.yaml`, lihat "Hosting UAT di Render (v2.61.1)" di bawah) dan hanya boleh berisi **data dummy/seed** - tanpa baris Exit Interview asli, file ESS asli, atau akun asli. Di host UAT tidak ada Ollama/Video Extractor, jadi transkrip video tidak tersedia dan AI Summary jatuh ke rule-based. Rincian PostgreSQL: `docs/08` §33.
 
 ---
 
@@ -189,6 +189,23 @@ Browser --GET /api/... (cookie otomatis)--> authGate: cookie -> hash -> px_sessi
 - **ngrok**: `server.allowedHosts`/`preview.allowedHosts` mengizinkan `.ngrok-free.app`, `.ngrok-free.dev`, `.ngrok.app`, `.ngrok.dev`, `.ngrok.io` (+ `ALLOWED_HOSTS` di `.env` untuk domain lain); host lain tetap 403 dari Vite. Jalankan `ngrok http 3000`, **tanpa** `--host-header=rewrite`, supaya Host = Origin dan pemeriksaan CSRF backend lolos (login dari Origin asing tetap 403).
 - **Kepatuhan**: ngrok adalah layanan cloud. Semua lalu lintas, termasuk login dan data karyawan, melewati server ngrok, sehingga bertentangan dengan aturan 100% on-premise. Pakai hanya untuk demo/uji, sebaiknya dengan data dummy.
 - **Batasan**: lewat proxy semua pengguna terlihat sebagai `127.0.0.1`, jadi rate limit login per IP berlaku bersama. `TRUST_PROXY=1` membuat backend membaca `X-Forwarded-For` dari ngrok, tetapi header itu bisa dipalsukan oleh klien lokal yang tidak lewat ngrok. Cookie sesi tanpa flag `Secure` (Vite → backend memakai http), tetap terkirim di https ngrok.
+
+---
+
+## ☁️ Hosting UAT di Render (v2.61.1)
+
+```
+Browser --HTTPS--> Render (TLS, proxy) --http--> Web Service px-uat: node server/server.js
+                                                   |  API /api, /uploads, /exports + frontend dist/ (satu origin)
+                                                   +--DATABASE_URL (internal)--> Render PostgreSQL px-uat-db (STORAGE_BACKEND=pg)
+                                                   x  tanpa Ollama, tanpa Video Extractor, tanpa persistent disk
+```
+
+- **Satu Web Service**: `npm run build` di Render menghasilkan `dist/`, lalu Express melayani API dan frontend dari origin yang sama (tanpa Vite dev server). Dibutuhkan cookie sesi `SameSite=Strict` dan cek Origin vs Host. Rute klien (deep link) mendapat `index.html`; asset yang hilang (mis. `/assets/<hash>.js` lama setelah redeploy) dijawab 404, path tak dikenal di `/api`, `/uploads`, `/exports` dijawab JSON 404.
+- **Proxy**: Render mengakhiri HTTPS; `TRUST_PROXY=1` membuat `req.secure` (flag `Secure` cookie) dan `req.ip` dibaca dari header `X-Forwarded-*`. `TZ=Asia/Jakarta` karena bulan berjalan, jendela YTD dan jam reminder memakai jam server (Render berjalan di UTC).
+- **Admin pertama tanpa shell**: `BOOTSTRAP_ADMIN_USERNAME` + `DEFAULT_INITIAL_PASSWORD` (diketik di dashboard Render) -> satu ADMIN saat boot bila belum ada Admin aktif, wajib ganti password saat login pertama. Kunci `SETTINGS_ENCRYPTION_KEY` dibuat Render (base64, diterima `secretBox.js`).
+- **Kepatuhan**: Render adalah layanan cloud. UAT di sana hanya boleh berisi **data dummy/seed**; aturan 100% on-premise berlaku untuk produksi (SQL Server).
+- Langkah deploy, batas Render free, risiko, dan keputusan yang masih terbuka: **`docs/06` "Deploy UAT ke Render (v2.61.1)"**.
 
 ---
 

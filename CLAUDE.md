@@ -63,7 +63,7 @@ Frontend proxies `/api`, `/uploads`, `/exports` to `http://localhost:<PORT>` (se
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(547-case regression suite on SQL Server, 548 on PostgreSQL, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(558-case regression suite on SQL Server, 559 on PostgreSQL, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -78,8 +78,8 @@ domain model, not just descriptive:
 | `03_SYSTEM_ARCHITECTURE_AND_DATA_FLOW.md` | Client-server architecture, DFDs, survey data lifecycle, on-premise/security constraints |
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
-| `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (547 cases on SQL Server, 548 on PostgreSQL; v2.61.0 run SQL 547/547, 0 skipped (media + event modules run), pg live copy 548/548; JSON 334/342 with 8 pre-existing failures) |
+| `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation; "Deploy UAT ke Render (v2.61.1)" runbook |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (558 cases on SQL Server, 559 on PostgreSQL; v2.61.1 full run SQL 469/469, 16 skipped (media + event 8/24 modules), before the last QC follow-up fixes; v2.61.0 JSON 334/342 with 8 pre-existing failures) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (41 `px_*` tables), JSON→SQL migration, rollback; PostgreSQL backend `schema.pg.sql` + dialect layer (§33, v2.61.0) |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
@@ -925,6 +925,25 @@ domain model, not just descriptive:
   the last small dialect-helper fix; static `await runTest(` 535. JSON 334/342 = same 8 failures as the previous commit (pre-existing, not fixed). QC: LULUS DENGAN CATATAN (R1
   HOLDLOCK everywhere, R2 NOCOUNT fixed). Not fixed (both backends): USER scope check is case-sensitive (`?directorate=business banking` -> 403); CSV importer accepts unknown
   divisions. Not tested: `SEED_DEMO_DATA=false` on pg, concurrent writes under pg table locks, Render itself.
+
+- **v2.61.1** (2026-11-03, see `changelog/v2.61.1.md`, `docs/06` "Deploy UAT ke Render (v2.61.1)" (runbook), `docs/03` "Hosting UAT di Render", `docs/04` "Catatan v2.61.1", `docs/07` §55,
+  `docs/08` §34): temporary UAT on Render.com (decided: UAT may be off-premise with DUMMY data only; production stays on-prem SQL Server): ONE Web Service serving API + built `dist/` +
+  Render PostgreSQL, no Ollama/Video Extractor; Render free has no shell and no persistent disk. New `render.yaml` Blueprint: web `px-uat` (node, singapore, free; `starter` = always on),
+  build `npm ci --include=dev && npm run build` (NODE_ENV=production skips devDependencies, Vite is one), start `node server/server.js`, health `/api/health`; env `NODE_VERSION` 24.19.0
+  (no `engines` in package.json), `TZ` Asia/Jakarta (month/YTD/reminder hour use the server clock; Render = UTC), `STORAGE_BACKEND=pg`, `DATABASE_URL` fromDatabase (internal, no `PG_SSL`),
+  `SEED_DEMO_DATA` true, `TRUST_PROXY` 1, `SETTINGS_ENCRYPTION_KEY` generateValue, `BOOTSTRAP_ADMIN_USERNAME` + `DEFAULT_INITIAL_PASSWORD` sync:false (typed in the dashboard, never in
+  the repo); DB `px-uat-db` (PG 17, free, `ipAllowList: []`). `authService.ensureBootstrapAdmin({store, env, log})` (boot, before listen): only with `BOOTSTRAP_ADMIN_USERNAME` set AND no
+  ACTIVE admin -> one ADMIN, password = `DEFAULT_INITIAL_PASSWORD`, must change it, not a test account, optional `BOOTSTRAP_ADMIN_NAME`/`_EMAIL`, audit `USER_CREATE` by
+  `system:bootstrap-admin`; never promotes/reactivates a taken username; errors logged, server still starts. `secretBox.js`: env key may be base64 of 32 bytes (Render generateValue),
+  trimmed; invalid -> one warning (value never printed) then the old fallback. `server.js`: SPA fallback GET/HEAD only and not for `/assets/...` or file-like paths (missing chunk -> 404);
+  unknown `/api|/uploads|/exports` -> JSON 404; public attendance/feedback for an unknown event -> 404 `Event not found` (was raw FK error 400 on SQL/pg, orphan row on JSON); boot
+  no-accounts warning mentions the bootstrap env. Gotchas: after the first admin changed the password, REMOVE `BOOTSTRAP_ADMIN_USERNAME` (and `DEFAULT_INITIAL_PASSWORD`) - with all admins
+  inactive a restart would recreate one with the shared password; never change the generated key; free PG expires after 30 days (+14 grace); uploads lost on every redeploy (auto-deploy
+  on push); transcripts always fail there (message points at 127.0.0.1:8000) so no AI summaries; `docs/UAT/` is local only and NOT gitignored. OPEN (user to decide): metric 9's seed ESS
+  2025-11 rows (`ESS_ROLE_CLARITY_ROWS`, `seedData.js`) equal the real file's aggregates and would show on the public UAT. Tests: Module 69 (11) -> suite 558 SQL / 559 pg by count (static
+  546); full SQL 469/469, 16 skipped, BEFORE the 4 QC follow-up fixes; after them modules 8/24/34/69 SQL 36/36 + 1 skip, pg 37/37; pg auth modules 75/75; full suite not re-run, JSON not
+  run. Local Render simulation OK (~150 MB peak). QC: LULUS DENGAN CATATAN. Not verified on Render itself: TLS, generateValue, Node 24.19.0, citext right, Host/Origin passthrough, `req.ip`
+  behind several proxy hops (shared failed-login bucket), npm 11 build.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

@@ -201,6 +201,7 @@ mengubahnya; sudah diperbaiki di v2.12.0 (lihat `CHANGELOG.md`).
 1. Di folder proyek jalankan `npm run auth:create-admin` (opsi: `-- --username 8801923 --name "Nama" --email nama@...`; default username `admin`).
 2. Catat **password sementara** yang tampil di konsol — hanya muncul sekali. Tidak ada password bawaan di kode/repo; namun bila env `DEFAULT_INITIAL_PASSWORD` di `.env` terisi (opsional, v2.27.2), password awal standar itulah yang dipakai (tidak dicetak di konsol) dan tetap wajib diganti saat login pertama. Login dengan akun itu; aplikasi langsung meminta ganti password (min 10 karakter, ada huruf dan angka).
 3. Lupa password Admin / semua Admin terkunci: `npm run auth:create-admin -- --username <akun> --reset-password`.
+4. Host tanpa shell (mis. Render, v2.61.1): isi env `BOOTSTRAP_ADMIN_USERNAME` + `DEFAULT_INITIAL_PASSWORD` lalu restart; Admin dibuat saat boot hanya bila belum ada Admin aktif. Lihat "Deploy UAT ke Render (v2.61.1)" di akhir dokumen ini.
 
 **Manage Users** (Admin Parameters → tab Manage Users sejak v2.41.0; sebelumnya tombol Header; hanya Admin):
 - **Tambah user**: isi username/NIP, nama, email (opsional), role. Role **User** wajib memiliki minimal satu cakupan data (lihat bawah); role **Admin** tidak terikat cakupan. Setelah disimpan, **password sementara tampil sekali** — salin dan sampaikan ke yang bersangkutan; saat login pertama ia wajib menggantinya. Bila `DEFAULT_INITIAL_PASSWORD` terisi, yang tampil adalah password awal standar dengan catatan "Password awal standar — wajib diganti saat login pertama". **Risiko**: sebelum pemilik akun login pertama, siapa pun yang tahu password awal itu dapat masuk ke akun tersebut — minta ganti segera. Password pengganti tetap harus lolos kebijakan dan tidak boleh sama dengan password awal.
@@ -669,3 +670,40 @@ Hal yang perlu diketahui:
 - Env `MEDIA_MAX_MB` di `.env` kini hanya cadangan bila setting tidak bisa dibaca.
 
 **Lokasi file media**: foto/video tersimpan sebagai file di `server/uploads/` pada mesin server (di `.gitignore`, tidak ikut git maupun backup database `.bak`); database hanya menyimpan path-nya (`px_media.file_path`, mis. `/uploads/<nama file>`) beserta transkrip/ringkasan. Selama transkrip berjalan ada hard link sementara di `server/tmp-transcribe/` (lihat v2.30.2). Backup folder `server/uploads/` terpisah dari database.
+
+## ☁️ Deploy UAT ke Render (v2.61.1)
+
+UAT sementara di Render.com: satu Web Service `px-uat` (API + frontend hasil build dari origin yang sama) + Render PostgreSQL `px-uat-db` (`STORAGE_BACKEND=pg`). Konfigurasi ada di `render.yaml` (Blueprint) di root repo; nilai rahasia tidak pernah ada di file itu. **Hanya data dummy/seed** - produksi tetap SQL Server on-premise. Rincian teknis: `changelog/v2.61.1.md`, arsitektur: `docs/03` "Hosting UAT di Render (v2.61.1)".
+
+**Langkah deploy (sekali)**:
+
+1. Buat akun Render (daftar dengan GitHub) dan beri akses ke repo proyek.
+2. **New -> Blueprint**, pilih repo dan branch `People_Experience`. Render menampilkan dua resource: `px-uat` (web service) dan `px-uat-db` (database).
+3. Isi dua variabel yang diminta:
+   - `BOOTSTRAP_ADMIN_USERNAME` - username Admin pertama (mis. `uatadmin`; 3-50 karakter: huruf, angka, titik, minus, garis bawah).
+   - `DEFAULT_INITIAL_PASSWORD` - password awal yang KUAT. Aplikasi tidak memeriksa kekuatan password awal, padahal situs UAT ada di internet publik.
+   - Biarkan `SETTINGS_ENCRYPTION_KEY` dibuat Render (`generateValue`) dan **jangan pernah diubah** (password e-mail yang tersimpan tidak terbaca lagi). Jangan set `PG_SSL` dan jangan menambah `sslmode` ke `DATABASE_URL` (koneksi internal).
+   - Opsional: `BOOTSTRAP_ADMIN_NAME` (default "Administrator PX") dan `BOOTSTRAP_ADMIN_EMAIL`.
+   
+   Lalu **Apply**.
+4. Tunggu database dibuat, build (`npm ci --include=dev && npm run build`) dan deploy selesai. Log service memuat baris `Bootstrap admin "<username>" created ...`. Boot pertama juga mengisi data demo (seed).
+5. Buka `https://px-uat.onrender.com` (atau nama yang diberikan Render), login dengan username dan password awal tadi, lalu ganti password (min 10 karakter, ada huruf dan angka) -> Dashboard.
+6. Setelah itu, di dashboard Render hapus `DEFAULT_INITIAL_PASSWORD` (akun baru lalu mendapat password sementara acak sekali tampil) dan `BOOTSTRAP_ADMIN_USERNAME`. Buat akun penguji UAT di Admin Parameters -> **Manage Users**. Bila ada skrip UAT yang disiapkan secara lokal (folder `docs/UAT/`, tidak ada di repo), gunakan sebagai panduan uji.
+
+**Mengapa env bootstrap harus dihapus**: Admin bootstrap dibuat setiap boot yang tidak menemukan Admin **aktif**. Bila semua Admin menjadi nonaktif (hanya bisa lewat edit database langsung) dan kedua env masih terisi, restart membuat Admin baru dengan password awal bersama. Bila username bootstrap sudah dipakai akun USER atau akun nonaktif, tidak ada yang dibuat dan akun itu tidak diubah (peringatan di log).
+
+**Batas dan risiko UAT di Render**:
+
+| Hal | Akibat |
+| :--- | :--- |
+| PostgreSQL free | Kedaluwarsa 30 hari setelah dibuat (+14 hari masa tenggang, lalu dihapus) -> upgrade plan atau buat ulang (data UAT hilang) |
+| Web service free | Tidur setelah 15 menit tanpa trafik (cold start ~30-60 dtk) dan ada batas jam per bulan. UAT selalu hidup: `plan: starter` di `render.yaml` |
+| Tanpa persistent disk | File unggahan (foto, video, PPT, file asli ESS / Exit Interview / social media) hilang setiap redeploy/restart; baris database tetap -> kartu media "File not available". Auto-deploy berjalan setiap push ke branch `People_Experience` |
+| Tanpa Ollama / Video Extractor | Transkrip video selalu gagal dengan pesan "Start the Video Extractor API" yang menunjuk `127.0.0.1:8000` (bisa membingungkan penguji - jelaskan di awal UAT); karena transkrip tidak pernah selesai, tidak ada AI Summary |
+| E-mail PIC di seed | Fiktif. Bila pengirim diisi di Email Settings, reminder akan benar-benar mencoba mengirim e-mail |
+| Jaringan kantor | Pastikan `*.onrender.com` bisa dibuka dari jaringan kantor sebelum UAT dijadwalkan |
+| Data | **Jangan pernah** mengunggah file atau data asli (ESS, Termination Report, foto/video internal) ke UAT |
+
+**Keputusan terbuka (belum diputuskan user)**: baris seed ESS 2025-11 metrik 9 (Role Clarity & DS Support; `ESS_ROLE_CLARITY_ROWS` di `server/db/seedData.js`) adalah nilai agregat per direktorat yang PERSIS sama dengan file asli "ESS 2025 Result_Role Clarity & DS Support.xlsx" (file itu sudah ada di repo git sejak v2.32.0). Dengan `SEED_DEMO_DATA=true` nilai itu akan tampil di situs UAT publik. Perlu diputuskan apakah diganti dummy sebelum UAT dibuka.
+
+**Belum diverifikasi di Render sendiri** (hanya disimulasikan lokal): TLS, hasil `generateValue` yang sebenarnya, ketersediaan Node `24.19.0`, izin membuat ekstensi `citext`, penerusan Host/Origin, `req.ip` di balik beberapa hop proxy (bila salah, semua penguji berbagi satu bucket rate limit login gagal), build dengan npm 11.

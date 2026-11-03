@@ -171,12 +171,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.61.0' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.61.1' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.61.0',
+    version: '2.61.1',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',
@@ -1774,6 +1774,10 @@ app.post('/api/events/:id/attendance', async (req, res) => {
       return res.status(400).json({ error: 'Invalid email format.' });
     }
 
+    // v2.61.1: an unknown event code is a clean 404 on every backend (SQL Server / PostgreSQL refused it with the raw
+    // foreign-key error text, the JSON store accepted an orphan row)
+    if (!(await storage.getEventById(req.params.id))) return res.status(404).json({ error: 'Event not found' });
+
     // v2.51.0: a former directorate / division name (renamed or merged) is stored under the current one
     const resolver = await loadResolver(storage);
     const currentDir = directorate ? resolver.directorate(directorate) : null;
@@ -1801,6 +1805,7 @@ app.post('/api/events/:id/feedback', async (req, res) => {
     if (!nip) {
       return res.status(400).json({ error: 'NIP is required to verify participation.' });
     }
+    if (!(await storage.getEventById(req.params.id))) return res.status(404).json({ error: 'Event not found' });
 
     const record = await storage.addFeedbackResponse({
       event_id: req.params.id,
@@ -1993,15 +1998,23 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
 
 // Serve frontend dist assets for production
 const DIST_DIR = path.join(__dirname, '..', 'dist');
+const isBackendPath = p => /^\/(api|uploads|exports)(\/|$)/.test(p);
+const isStaticFilePath = p => /^\/assets(\/|$)/.test(p) || /\.[A-Za-z0-9]{1,8}$/.test(p);
 if (fs.existsSync(DIST_DIR)) {
   app.use(express.static(DIST_DIR));
+  // SPA deep links: a page refresh on a client route gets index.html (GET/HEAD only, never for backend paths).
   app.use((req, res, next) => {
-    if (req.path.startsWith('/api') || req.path.startsWith('/uploads') || req.path.startsWith('/exports')) {
-      return next();
-    }
+    // A missing file (old /assets/<hash>.js after a redeploy, /favicon.png ...) must stay a 404, not index.html served as
+    // JavaScript: client routes never contain a dot in their last segment.
+    if ((req.method !== 'GET' && req.method !== 'HEAD') || isBackendPath(req.path) || isStaticFilePath(req.path)) return next();
     res.sendFile(path.join(DIST_DIR, 'index.html'));
   });
 }
+// Unknown API / file paths answer JSON, not Express' HTML "Cannot GET" page.
+app.use((req, res, next) => {
+  if (!isBackendPath(req.path)) return next();
+  res.status(404).json({ error: 'Not found' });
+});
 
 // Start Server — after the storage backend is ready (a no-op for the JSON file store; for SQL
 // Server it opens the connection pool, verifies the schema and tops up the seed data).
@@ -2011,7 +2024,9 @@ const storageReady = Promise.resolve(typeof storage.init === 'function' ? storag
 // keep Node's defaults (they only concern the header and idle keep-alive connections, not long uploads or jobs; the
 // transcript and summary jobs run in the background and the HTTP answer of their routes is immediate).
 const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS || String(120 * 60 * 1000), 10);
-storageReady.then(() => { const httpServer = app.listen(PORT, () => {
+// v2.61.1: a host without a shell (Render) gets its first Admin from BOOTSTRAP_ADMIN_USERNAME + DEFAULT_INITIAL_PASSWORD
+// (no-op without the env or when an active Admin exists; never throws).
+storageReady.then(() => auth.ensureBootstrapAdmin()).then(() => { const httpServer = app.listen(PORT, () => {
   console.log(`=======================================================`);
   console.log(`🚀 CIMB Niaga People Experience Backend is running`);
   console.log(`📡 URL: http://localhost:${PORT}`);
