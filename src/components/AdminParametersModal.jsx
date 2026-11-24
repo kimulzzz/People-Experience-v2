@@ -36,6 +36,7 @@ import EmailSettingsModal from './EmailSettingsModal';
 import UserManagementModal from './UserManagementModal';
 import DirectoryManager from './DirectoryManager';
 import PartQuestionsManager from './PartQuestionsManager';
+import PxCategoriesCard from './PxCategoriesCard';
 import { metricNo, byDisplayNo } from '../utils/metricNumber';
 import { MEDIA_MAX_MB_RANGE, mediaLimitLabel } from '../utils/mediaLimit';
 
@@ -809,6 +810,18 @@ All survey data (responses) and question settings of this metric will also be de
                   setOptionCatalogs(prev => ({ ...prev, px_index_weights: value }));
                   setErrorMessage('');
                   setSaveSuccess(`PX Index weights saved: Survey ${value.survey}% + Outcome ${value.outcome}%.`);
+                  if (onParametersUpdated) onParametersUpdated();
+                }}
+                onError={(msg) => { setSaveSuccess(''); setErrorMessage(msg); }}
+              />
+
+              {/* PX Index categories (score ranges + label), v2.63.0 */}
+              <PxCategoriesCard
+                initial={optionCatalogs.px_index_categories || null}
+                onSaved={(value) => {
+                  setOptionCatalogs(prev => ({ ...prev, px_index_categories: value }));
+                  setErrorMessage('');
+                  setSaveSuccess('PX Index categories saved.');
                   if (onParametersUpdated) onParametersUpdated();
                 }}
                 onError={(msg) => { setSaveSuccess(''); setErrorMessage(msg); }}

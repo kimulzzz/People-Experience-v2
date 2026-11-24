@@ -45,7 +45,7 @@ Dokumentasi ini disusun secara sistematis mulai dari fondasi konsep (*Brains & M
 - **Backend Core**: Node.js, Express.js REST API, Multi-format CSV Engine.
 - **Storage Layer**: Local JSON transactional store (`data/store.json`) dengan sinkronisasi memori real-time (100% On-Premise compliant, tanpa dependensi cloud pihak ketiga).
 - **Automation & Reporting**: PPTXgenJS (Otomasi PowerPoint Corporate Deck), UTF-8 BOM CSV Generator, Dynamic Question Header Compiler.
-- **Testing Engine**: Native Node.js Assertion Regression Runner (558 test pada SQL Server, 559 pada PostgreSQL, v2.61.1; run penuh terakhir SQL Server: 469/469 lulus, 16 dilewati (modul media dan event 8/24 di-skip), dijalankan sebelum perbaikan lanjutan QC; lihat docs/07 §55).
+- **Testing Engine**: Native Node.js Assertion Regression Runner (566 test pada SQL Server, 567 pada PostgreSQL, v2.63.0; run penuh terakhir SQL Server: 469/469 lulus, 16 dilewati (modul media dan event 8/24 di-skip), dijalankan sebelum perbaikan lanjutan QC; lihat docs/07 §55).
 
 ---
 

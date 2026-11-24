@@ -607,6 +607,16 @@ Pengujian: `docs/07` §31 (Modul 46).
 
 ---
 
+## Catatan v2.63.0 - Kategori PX Index (`px_index_categories`)
+
+| Bagian | Isi |
+| :--- | :--- |
+| Setting `px_index_categories` | `[{ label, min, color }]` dari skor tertinggi; kategori terakhir `min` 0; 2-10 kategori. Validasi + default: `server/db/pxCategories.js` |
+| `PUT /api/admin/settings/px_index_categories` | Admin; 400 dengan alasan bila tidak valid; audit `SETTINGS_CHANGE` |
+| `GET /api/metrics/calculate` -> `px_category` | `{ label, color, min, max, range_label }` atau `null` (tanpa PX Index); dinilai dari PX Index 2 desimal. Panggilan internal per bulan/per direktorat (`skipTrends`) tidak menghitungnya |
+
+`/api/health` `version` = 2.63.0. Tidak ada tabel atau env baru. Detail: `changelog/v2.63.0.md`.
+
 ## Catatan v2.62.0 - Metrik 6 dan 26 dari ringkasan bulanan
 
 Tidak ada endpoint, tabel, setting, atau env baru; `/api/health` `version` = 2.62.0. `METRIC_PART_UPGRADES` (seed) mendapat kunci 6 dan 26 serta field `data_status`, diterapkan `topUpMetricParts()` di kedua backend hanya bila metrik belum punya bagian dan nilainya masih default lama. `metricPartsService.validatePartSheet`: skala PERCENT menolak `0 < nilai <= 1`. Upload/template/evidence/history memakai `/api/admin/metric-parts/6/PREBOARDING_ENGAGEMENT/*` dan `/api/admin/metric-parts/26/EXIT_SURVEY/*`. Detail: `changelog/v2.62.0.md`.

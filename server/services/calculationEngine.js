@@ -9,6 +9,7 @@ const { readTierConfig, tieredScore } = require('../db/scoreTiers');
 const { isOutcomeUploadMetric, evidenceTypeOf, selectOutcomeValue, loadLastUpdateContext, lastUpdateFor, aggregationOf } = require('./outcomeValueService');
 const { isDataNotAvailable, DATA_NOT_AVAILABLE_REASON } = require('../db/dataStatus');
 const { partsByMetric, compositeValue } = require('./metricPartsService');
+const { pxCategoryFor } = require('../db/pxCategories');
 const { displayNumberMap, loadDisplayNumbers } = require('../db/metricNumbers');
 
 // Default year for YTD/unparseable period requests, derived from the real server clock
@@ -54,6 +55,12 @@ async function getPxWeights() {
   return value;
 }
 function clearPxWeightsCache() { pxWeightsCache = { value: null, at: 0 }; }
+
+// PX Index category (v2.63.0): px_app_settings.px_index_categories, read for the scorecard only (not its inner per-month /
+// per-directorate calls). Judged on the rounded PX Index, the number the user sees.
+async function getPxCategory(score) {
+  return pxCategoryFor(score, (await storage.getSettings()).px_index_categories);
+}
 
 /**
  * Normalizes raw metric value into 0-100 scale based on scale type.
@@ -861,6 +868,7 @@ async function calculatePEIndex(filterInput = 'YTD', options = {}) {
     },
     px_index: round2(pxIndex),
     pe_index: round2(pxIndex), // backward compatibility
+    px_category: options.skipTrends ? null : await getPxCategory(round2(pxIndex)), // v2.63.0: { label, color, min, max, range_label } | null
     px_index_basis: pxIndexBasis, // 'BOTH' | 'SURVEY_ONLY' | 'OUTCOME_ONLY' | 'NONE' (v2.36.0)
     survey_index: round2(surveyIndex),
     outcome_index: round2(outcomeIndex),

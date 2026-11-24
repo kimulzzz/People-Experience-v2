@@ -608,3 +608,7 @@ Langkah deploy yang di §33 disebut "belum dikerjakan" kini ada sebagai Blueprin
 ## 35. Pembaruan v2.62.0 - Bagian ringkasan metrik 6 dan 26 (tanpa perubahan skema)
 
 Saat boot `px_metric_parts` mendapat baris `(6, PREBOARDING_ENGAGEMENT)` dan `(26, EXIT_SURVEY)` bila metriknya ada dan belum punya bagian; dalam transaksi yang sama skala, satuan, target dan `data_status` metrik diganti hanya bila masih nilai seed lama (lihat `changelog/v2.62.0.md`). Tetap 41 tabel.
+
+## 36. Pembaruan v2.63.0 - Setting `px_index_categories` (tanpa perubahan skema)
+
+Satu baris baru di `px_app_settings` (JSON `[{ label, min, color }]`), ditambahkan saat boot bila belum ada dan tidak pernah menimpa editan Admin. Tetap 41 tabel.

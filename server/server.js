@@ -12,6 +12,7 @@ dotenv.config();
 const storage = require('./db/storage');
 const { calculatePEIndex, getMetricDetail, computeMonthlyTrends, getLastCompleteMonth, normalizeTarget, syncLiveEventMetrics,
   pxWeightsError, clearPxWeightsCache } = require('./services/calculationEngine');
+const { pxCategoriesError, normalizePxCategories } = require('./db/pxCategories');
 const { normalizeScopes } = require('./db/scopeUtils');
 const { loadResolver, NAME_MAX_LENGTH, RESERVED_DIRECTORATE_NAMES, RESERVED_DIVISION_NAMES } = require('./db/directoryNames');
 const { getAlertsAndRecommendations } = require('./services/alertEngine');
@@ -171,12 +172,12 @@ app.get('/api/health', async (req, res) => {
 
   // Without a login only the bare status is shown (no database server / host details).
   if (!req.user) {
-    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.62.0' });
+    return res.json({ status: 'online', system: 'CIMB Niaga People Experience Integrated System', version: '2.63.0' });
   }
   res.json({
     status: 'online',
     system: 'CIMB Niaga People Experience Integrated System',
-    version: '2.62.0',
+    version: '2.63.0',
     local_ai: {
       ollama_status: ollama === null ? 'not checked (add ?check_ai=1)' : (ollama ? 'connected' : 'offline (summaries fall back to the rule engine)'),
       model: process.env.OLLAMA_MODEL || 'gemma3:4b',
@@ -223,6 +224,15 @@ app.put('/api/admin/settings/:key', async (req, res) => {
       const saved = await storage.setSetting(key, { survey: value.survey, outcome: value.outcome });
       clearPxWeightsCache();
       await auth.audit(req, 'SETTINGS_CHANGE', { target: `${key}: ${current ? `${current.survey}/${current.outcome}` : '-'} -> ${saved.survey}/${saved.outcome}` });
+      return res.json({ key, value: saved });
+    }
+    if (key === 'px_index_categories') {
+      // v2.63.0: [{ label, min, color }], highest range first, the last one from 0
+      const invalid = pxCategoriesError(value);
+      if (invalid) return res.status(400).json({ error: invalid });
+      const saved = await storage.setSetting(key, normalizePxCategories(value));
+      const text = list => (Array.isArray(list) ? list.map(c => `${c.label} ${c.min}`).join(', ') : '-');
+      await auth.audit(req, 'SETTINGS_CHANGE', { target: `${key}: ${text(saved)}` });
       return res.json({ key, value: saved });
     }
     if (NUMERIC_SETTINGS[key]) {

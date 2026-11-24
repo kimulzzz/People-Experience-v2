@@ -12387,6 +12387,65 @@ async function runAllModules() {
     });
   }
 
+  // --- MODULE 71 (v2.63.0): PX INDEX CATEGORIES (px_app_settings.px_index_categories) ---
+  console.log('\n📦 MODULE 71: PX Index categories - range rules, setting validation, label on the scorecard (Positive & Negative Testing)');
+  if (!skipModuleBlock(71)) {
+    const { DEFAULT_PX_CATEGORIES, pxCategoryFor, pxCategoriesError } = require('../server/db/pxCategories');
+    const KEY71 = 'px_index_categories';
+    const put71 = value => adminJson('PUT', `/api/admin/settings/${KEY71}`, { value });
+    const stored71 = async () => (await (await adminJson('GET', '/api/settings')).json())[KEY71];
+    const before71 = await stored71();
+    const calc71 = async (qs = 'mode=YTD') => (await fetch(`${BASE_URL}/api/metrics/calculate?${qs}`)).json();
+    try {
+      await runTest('[POSITIVE] Default ranges: >= 85 Exceptional, >= 75 Strong, >= 65 Moderate, >= 50 Needs Improvement, < 50 Critical - the borders belong to the higher category, no score has no category', async () => {
+        const label = s => { const c = pxCategoryFor(s, DEFAULT_PX_CATEGORIES); return c && c.label; };
+        assert.strictEqual(pxCategoriesError(DEFAULT_PX_CATEGORIES), null);
+        assert.deepStrictEqual([100, 85, 84.99, 75, 74.99, 65, 64.99, 50, 49.99, 0].map(label),
+          ['Exceptional', 'Exceptional', 'Strong', 'Strong', 'Moderate', 'Moderate', 'Needs Improvement', 'Needs Improvement', 'Critical', 'Critical']);
+        assert.deepStrictEqual([label(null), label(undefined), label(NaN)], [null, null, null]);
+        assert.deepStrictEqual(DEFAULT_PX_CATEGORIES.map(c => pxCategoryFor(c.min, DEFAULT_PX_CATEGORIES).range_label), ['>= 85 - 100', '>= 75 - < 85', '>= 65 - < 75', '>= 50 - < 65', '< 50']);
+      });
+
+      await runTest('[POSITIVE] The scorecard carries the category of its own PX Index (bankwide and under a directorate filter) and follows a saved change at once; audited', async () => {
+        const saved = await stored71();
+        assert.strictEqual(pxCategoriesError(saved), null);
+        const dir = (await (await fetch(`${BASE_URL}/api/directorates`)).json())[0].name;
+        for (const qs of ['mode=YTD', `mode=YTD&directorate=${encodeURIComponent(dir)}`]) {
+          const c = await calc71(qs);
+          assert.deepStrictEqual(c.px_category, pxCategoryFor(c.px_index, saved), qs);
+        }
+        const px = (await calc71()).px_index;
+        const cut = Math.max(Math.floor(px) - 1, 1);
+        const r = await put71([{ label: '  RT71 High ', min: cut, color: '#123abc' }, { label: 'RT71 Low', min: 0, color: '#000000' }]);
+        assert.strictEqual(r.status, 200, JSON.stringify(await r.clone().json()));
+        assert.deepStrictEqual(await stored71(), [{ label: 'RT71 High', min: cut, color: '#123ABC' }, { label: 'RT71 Low', min: 0, color: '#000000' }]);
+        assert.strictEqual((await calc71()).px_category.label, 'RT71 High');
+        assert.strictEqual((await put71([{ label: 'RT71 High', min: 99.99, color: '#123ABC' }, { label: 'RT71 Low', min: 0, color: '#000000' }])).status, 200);
+        assert.strictEqual((await calc71()).px_category.label, 'RT71 Low');
+        const st71 = require('../server/db/storage');
+        if (isDbBackend(st71.backend)) assert.ok((await st71.getAuditLog(20, { includeTest: true })).some(a => a.action === 'SETTINGS_CHANGE' && String(a.target).startsWith(`${KEY71}:`)));
+      });
+
+      await runTest('[NEGATIVE] Invalid category lists are refused with 400 and leave the setting unchanged (gap at 0, not descending, duplicate label, bad limit / color, too few / many); without Admin 401', async () => {
+        const ok = await stored71();
+        const a = { label: 'A', min: 50, color: '#111111' };
+        const z = { label: 'Z', min: 0, color: '#222222' };
+        const bad = [null, 'x', {}, [], [z], [a], [a, { ...z, min: 10 }], [z, a], [a, { ...a, label: 'B' }, z], [a, { ...z, label: 'a' }], [{ ...a, label: ' ' }, z], [{ ...a, label: 'L'.repeat(41) }, z],
+          [{ ...a, min: 100 }, z], [{ ...a, min: -1 }, z], [{ ...a, min: '50' }, z], [{ ...a, min: 50.123 }, z], [{ ...a, color: 'red' }, z], [{ ...a, color: '#12' }, z], [null, z],
+          Array.from({ length: 11 }, (_, i) => ({ label: `C${i}`, min: 50 - i * 5, color: '#111111' }))];
+        for (const value of bad) {
+          const r = await put71(value);
+          assert.strictEqual(r.status, 400, JSON.stringify(value));
+          assert.ok((await r.json()).error);
+        }
+        assert.deepStrictEqual(await stored71(), ok);
+        assert.strictEqual((await nativeFetch(`${BASE_URL}/api/admin/settings/${KEY71}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: ok }) })).status, 401);
+      });
+    } finally {
+      await put71(before71);
+    }
+  }
+
   // --- MODULE 70 (v2.62.0): EXIT SURVEY (metric 26, shown as #25) AND PRE-BOARDING (metric 6, shown as #5) FROM MONTHLY SUMMARIES ---
   // Read-only on the live data: the template / validation / scoring run in-process; the live metric is only read.
   console.log('\n📦 MODULE 70: Exit Survey (metric 26, bankwide %) and Pre-boarding Engagement (metric 6, 1-5 like metric 7) scored from monthly summaries (Positive & Negative Testing)');

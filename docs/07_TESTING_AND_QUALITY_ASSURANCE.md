@@ -9,7 +9,7 @@ Untuk menjamin akurasi komputasi finansial/HR perbankan, kepatuhan arsitektur, d
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │              CIMB NIAGA PEOPLE EXPERIENCE - REGRESSION TEST SUITE                      │
 ├──────────────────────────┬─────────────────────────────┬───────────────────────────────┤
-│    69 MODUL PENGUJIAN    │  558 TESTS (SQL) / 559 (PG) │       100% PASS RATE          │
+│    71 MODUL PENGUJIAN    │  566 TESTS (SQL) / 567 (PG) │       100% PASS RATE          │
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -1682,3 +1682,13 @@ Ukuran suite = **558** di SQL Server (547 + 11) dan **559** di PostgreSQL (548 +
 | 5 | Negatif | Pecahan 0,9 / 1 dan nilai > 100 ditolak; 0, 1,5 dan 100 diterima; skala 1-5 tidak terpengaruh |
 
 Tes 1-3 hanya membaca data live (skip bila datanya tidak ada). Modul 60/61 dan `LEGACY_FIXTURE_METRICS` kini tanpa 6 dan 26. Suite penuh SQL Server **476/476**, 17 skip (`TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`). Ukuran suite 563 (SQL Server) / 564 (PostgreSQL). JSON dan PostgreSQL tidak dijalankan; tanpa QC terpisah.
+
+## 57. v2.63.0 - Modul 71: Kategori PX Index
+
+| # | Jenis | Yang diuji |
+| :--- | :--- | :--- |
+| 1 | Positif | Rentang default termasuk nilai batas (85, 84,99, 75, ...), tanpa skor -> tanpa kategori, `range_label` |
+| 2 | Positif | `px_category` = kategori PX Index sendiri (bankwide dan filter direktorat); perubahan setting langsung berlaku; audit |
+| 3 | Negatif | 20 daftar tidak valid -> 400, setting tetap; tanpa sesi -> 401 |
+
+Modul mengembalikan setting semula di akhir. Suite penuh SQL Server **479/479**, 17 skip (`TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`). Ukuran suite **566** (SQL Server) / **567** (PostgreSQL). JSON dan PostgreSQL tidak dijalankan.

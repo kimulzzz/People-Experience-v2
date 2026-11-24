@@ -671,6 +671,10 @@ Hal yang perlu diketahui:
 
 **Lokasi file media**: foto/video tersimpan sebagai file di `server/uploads/` pada mesin server (di `.gitignore`, tidak ikut git maupun backup database `.bak`); database hanya menyimpan path-nya (`px_media.file_path`, mis. `/uploads/<nama file>`) beserta transkrip/ringkasan. Selama transkrip berjalan ada hard link sementara di `server/tmp-transcribe/` (lihat v2.30.2). Backup folder `server/uploads/` terpisah dari database.
 
+### Kategori PX Index (v2.63.0)
+
+Admin Parameters -> Journey Parameters -> **PX Index Categories**. Setiap baris: warna, label, batas bawah. Kategori berlaku dari batas bawahnya sampai tepat di bawah batas kategori di atasnya; baris terakhir selalu mulai dari 0. Default: Exceptional 85, Strong 75, Moderate 65, Needs Improvement 50, Critical 0. **Add Category** menambah baris di atas baris terakhir (2-10 kategori). Setelah **Save Categories**, label di sebelah skor PX Index pada Dashboard langsung mengikuti.
+
 ## ☁️ Deploy UAT ke Render (v2.61.1)
 
 UAT sementara di Render.com: satu Web Service `px-uat` (API + frontend hasil build dari origin yang sama) + Render PostgreSQL `px-uat-db` (`STORAGE_BACKEND=pg`). Konfigurasi ada di `render.yaml` (Blueprint) di root repo; nilai rahasia tidak pernah ada di file itu. **Hanya data dummy/seed** - produksi tetap SQL Server on-premise. Rincian teknis: `changelog/v2.61.1.md`, arsitektur: `docs/03` "Hosting UAT di Render (v2.61.1)".

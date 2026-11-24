@@ -248,6 +248,10 @@ $$\text{Nilai bagian} = \text{rata-rata nilai bulan di jendela} \qquad \text{Nil
 
 ---
 
+### 3.11 Kategori PX Index (sejak v2.63.0)
+
+PX Index (dibulatkan 2 desimal) diberi label menurut rentang: >= 85 Exceptional, >= 75 Strong, >= 65 Moderate, >= 50 Needs Improvement, < 50 Critical. Batas, label dan warna diatur Admin (`px_index_categories`). Label tidak memengaruhi skor maupun status metrik.
+
 ## ⏳ 4. Model Agregasi Waktu: Period Filter (YTD vs MTD)
 
 Aturan sejak v2.36.0; periode MTD per metrik diubah di v2.37.0; periode ESS diubah lagi di v2.50.0 (*carry-forward*, lihat butir 3). Jendela periode dihitung di `server/db/filterUtils.js` (`ytdEndMonth`, `periodWindow`, `parseFilterOptions`) dan dipakai kedua backend storage (`sqlStorage.buildResponseFilter`, `jsonStorage.applyResponseFilters`), sehingga SQL Server dan JSON membaca baris yang sama.

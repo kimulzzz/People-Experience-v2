@@ -6,6 +6,7 @@ Sejak 2026-10-23 catatan setiap versi disimpan dalam file tersendiri di folder [
 
 | Versi | Tanggal | Ringkasan |
 |---|---|---|
+| [2.63.0](changelog/v2.63.0.md) | 2026-11-24 | 🏅 Kategori PX Index menurut rentang skor, label di Dashboard dan setting Admin (Added) |
 | [2.62.0](changelog/v2.62.0.md) | 2026-11-24 | 📈 Exit Survey (#25) dan Pre-boarding Engagement Index (#5) dihitung dari ringkasan bulanan (Changed) |
 | [2.61.1](changelog/v2.61.1.md) | 2026-11-03 | ☁️ UAT di Render: Blueprint `render.yaml`, Admin pertama dari env, kunci enkripsi base64 dan 404 yang rapi (Added / Fixed) |
 | [2.61.0](changelog/v2.61.0.md) | 2026-11-03 | 🗄️ Backend ketiga PostgreSQL (`STORAGE_BACKEND=pg`) untuk UAT, satu kode storage lewat lapisan dialek (Added) |

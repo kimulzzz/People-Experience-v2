@@ -1665,6 +1665,7 @@ function generateSocialMediaSeed(months = SOCIAL_MEDIA_SEED_MONTHS) {
 }
 
 // Admin-managed UI values (px_app_settings). Seeded once, then read from the database only.
+const { DEFAULT_PX_CATEGORIES } = require('./pxCategories');
 const initialAppSettings = {
   // Option catalogs for Parameter Admin / Survey Questions. Only the LABELS are editable: the
   // values drive calculation logic (normalisation, reminders, who is an "employee" metric...).
@@ -1731,6 +1732,8 @@ const initialAppSettings = {
   px_index_target: { value: 85, description: 'Target PX Index (%) — garis target pada Performance Trend chart' },
   // v2.48.0: bobot PX Index (bilangan bulat 0-100, jumlah harus 100) — Admin Parameters -> Index Weights
   px_index_weights: { value: { survey: 70, outcome: 30 }, description: 'Bobot PX Index: % Survey Index + % Outcome Index (jumlah 100)' },
+  // v2.63.0: kategori PX Index menurut rentang skor (batas bawah, dari tertinggi) — Admin Parameters -> Journey Parameters
+  px_index_categories: { value: DEFAULT_PX_CATEGORIES.map(c => ({ ...c })), description: 'Kategori PX Index per rentang skor: label, batas bawah (%), warna' },
   event_program_categories: {
     value: [
       { value: 'Perspektif', label: 'Perspektif' },

@@ -77,6 +77,7 @@ export default function Dashboard({
   // v2.36.0: an index is null when none of its metrics has data in the selected period
   const fmtIndex = v => (v === null || v === undefined ? '—' : v.toFixed(2));
   const pxBasis = calculationData.px_index_basis;
+  const pxCategory = calculationData.px_category || null;
   // Survey / Outcome weights of the PX Index (Admin Parameters -> Index Weights, v2.48.0)
   const pxWeights = calculationData.px_weights || null;
   const weightPct = key => (pxWeights ? `${pxWeights[key]}%` : '');
@@ -122,11 +123,19 @@ export default function Dashboard({
               )}
             </div>
 
-            <div className="flex items-baseline space-x-3">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
               <span className="text-6xl sm:text-7xl font-extrabold tracking-tight text-white">
                 {fmtIndex(currentPxIndex)}
               </span>
               {currentPxIndex !== null && <span className="text-2xl font-bold text-red-100">/ 100</span>}
+              {/* PX Index category (Admin Parameters -> Journey Parameters -> PX Index Categories, v2.63.0) */}
+              {pxCategory && (
+                <span className="inline-flex items-center gap-2 self-center px-4 py-1.5 rounded-full bg-white text-base sm:text-lg font-extrabold shadow-md"
+                  style={{ color: pxCategory.color }} title={`PX Index ${pxCategory.range_label}: ${pxCategory.label}`}>
+                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: pxCategory.color }} />
+                  {pxCategory.label}
+                </span>
+              )}
             </div>
 
             <p className="text-sm text-red-50 font-medium">

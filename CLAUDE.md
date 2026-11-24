@@ -63,7 +63,7 @@ Frontend proxies `/api`, `/uploads`, `/exports` to `http://localhost:<PORT>` (se
 
 Other scripts: `npm run server` (backend only), `npm run client` (frontend only),
 `npm run build` (production build), `npm run preview`, `node tests/regressionTest.js`
-(558-case regression suite on SQL Server, 559 on PostgreSQL, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
+(566-case regression suite on SQL Server, 567 on PostgreSQL, see `docs/07_TESTING_AND_QUALITY_ASSURANCE.md`; `npm run db:migrate` / `npm run db:export` for SQL Server, see `docs/08`).
 
 ## Documentation map (`docs/`)
 
@@ -79,7 +79,7 @@ domain model, not just descriptive:
 | `04_BACKEND_API_AND_SERVICES_SPECIFICATION.md` | REST endpoints, service engines (`calculationEngine`, `surveyImportService`, `surveyTemplateService`, `surveyEvidenceService`, `pptGenerator`), storage layer |
 | `05_FRONTEND_UI_AND_COMPONENT_HIERARCHY.md` | React component tree, state management, modal orchestration, public check-in/feedback forms |
 | `06_ADMIN_OPERATIONS_AND_USER_GUIDE.md` | Admin survey template setup, CSV template/evidence downloads, signature event management, PPT report generation; "Deploy UAT ke Render (v2.61.1)" runbook |
-| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (558 cases on SQL Server, 559 on PostgreSQL; v2.61.1 full run SQL 469/469, 16 skipped (media + event 8/24 modules), before the last QC follow-up fixes; v2.61.0 JSON 334/342 with 8 pre-existing failures) |
+| `07_TESTING_AND_QUALITY_ASSURANCE.md` | Regression test suite (566 cases on SQL Server, 567 on PostgreSQL; v2.63.0 full run SQL 479/479, 17 skipped; v2.61.1 full run SQL 469/469, 16 skipped (media + event 8/24 modules), before the last QC follow-up fixes; v2.61.0 JSON 334/342 with 8 pre-existing failures) |
 | `08_DATABASE_SCHEMA_AND_MIGRATION.md` | SQL Server schema (41 `px_*` tables), JSON→SQL migration, rollback; PostgreSQL backend `schema.pg.sql` + dialect layer (§33, v2.61.0) |
 | `SURVEY_IMPORT_GUIDE.md` | CSV survey import format and rules; ESS summary `.xlsx` layout (since v2.32.0) |
 
@@ -950,6 +950,11 @@ domain model, not just descriptive:
   `PREBOARDING_ENGAGEMENT` 1-5) with a one-time boot upgrade (scale/unit/target + `data_status` -> AVAILABLE) - no longer N/A (left N/A: 4, 8, 10, 23). Under a directorate filter #25 = NO_DATA. PERCENT parts refuse 0 < v <= 1 (Excel % cells).
   Uploaded in-process by scripts (audit `script:import-exit-survey` / `script:import-preboarding`); the Exit file was converted to the standard layout, Jan-Mar 2025 fractions normalised. PX YTD 2026 89.53 -> 90.12. OPEN (user's
   decision): the Pre-boarding data is IDENTICAL to #6's Day 1 part (counted twice). Reminders still check per-respondent rows for 6/26. Module 70 (5), Modules 60/61 + fixture adjusted -> SQL 476/476, 17 skipped (suite 563 SQL / 564 pg); JSON/pg not run; no separate QC.
+
+- **v2.63.0** (2026-11-24, see `changelog/v2.63.0.md`, `docs/01` §3.11, `docs/04`/`05` "Catatan v2.63.0", `docs/06`, `docs/07` §57, `docs/08` §36): user: PX Index categories by score range (>= 85 Exceptional, >= 75 Strong,
+  >= 65 Moderate, >= 50 Needs Improvement, < 50 Critical), label next to the Dashboard score + Admin setting. `px_app_settings.px_index_categories` = `[{ label, min, color }]` highest first, last min 0 (only lower limits stored -> no gaps);
+  rules in `server/db/pxCategories.js`; card `PxCategoriesCard.jsx` (Admin Parameters -> Journey Parameters); `PUT /api/admin/settings/px_index_categories` (audit `SETTINGS_CHANGE`); `calculate` returns `px_category` (from the 2-decimal
+  PX Index; null under `skipTrends` / no data). Scores, statuses, alerts unchanged. Module 71 (3) -> SQL 479/479, 17 skipped (suite 566 SQL / 567 pg); JSON/pg not run; no separate QC.
 
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 

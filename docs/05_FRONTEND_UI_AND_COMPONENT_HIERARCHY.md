@@ -591,3 +591,7 @@ Dashboard alasan resign (API: `docs/04` "Catatan v2.38.0"; kolom file: `docs/02`
 | `MetricDetailModal.jsx` | Prop baru `onOpenExitInterview`. Tombol **Open Exit Interview Dashboard** di bawah nama metrik bila nama atau `source_of_data` metrik cocok `/exit (survey\|interview)/i` (saat ini metrik 26 "Exit Survey — resignation experience"); dikenali dari teks, bukan dari id. |
 
 Tidak diuji otomatis: render semua komponen di atas (Modul 47 menguji lewat API). Pengecekan di browser tidak dilaporkan developer; tampilan mobile belum dicek.
+
+## Catatan v2.63.0 - Label kategori PX Index
+
+`Dashboard.jsx` menampilkan pil putih berisi titik dan teks berwarna (`calculationData.px_category`) di sebelah "/ 100"; di layar sempit pil turun ke baris berikutnya. `PxCategoriesCard.jsx` (baru) ada di Admin Parameters -> Journey Parameters, antara PX Index Weights dan Upload Limits; baris terakhir batasnya terkunci 0, tombol Save aktif hanya bila ada perubahan yang valid.
