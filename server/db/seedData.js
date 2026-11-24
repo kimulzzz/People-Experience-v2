@@ -223,8 +223,7 @@ const initialMetrics = [
     journey_id: 1,
     checkpoint_id: 3,
     metric_name: 'Pre-boarding Engagement Index',
-    metric_type: 'SURVEY',
-    data_status: 'NOT_AVAILABLE', // v2.55.0: real data not available yet -> N/A, not in the PX Index (Admin switch)
+    metric_type: 'SURVEY', // v2.62.0: scored from its uploaded monthly summary (initialMetricParts), no longer N/A
     scale_type: 'PERCENTAGE',
     source_of_data: 'Onboarding Survey (from Arjuna)',
     experience_owner: 'HR Onboarding',
@@ -692,8 +691,7 @@ const initialMetrics = [
     journey_id: 5,
     checkpoint_id: 16,
     metric_name: 'Exit Survey — resignation experience',
-    metric_type: 'SURVEY',
-    data_status: 'NOT_AVAILABLE', // v2.55.0: real data not available yet -> N/A, not in the PX Index (Admin switch)
+    metric_type: 'SURVEY', // v2.62.0: scored from its uploaded monthly summary (initialMetricParts, 0-100%), no longer N/A
     scale_type: 'RATING_5',
     source_of_data: 'Exit Interview Survey (Arjuna, will be developed)',
     experience_owner: 'HR Exit Management',
@@ -2057,13 +2055,43 @@ const initialMetricParts = [
       respondents_label: 'Jumlah Responden',
       period_label: 'Periode (Join Date)'
     }
+  },
+  // v2.62.0: metric 6 "Pre-boarding Engagement Index" (shown as #5): one part, the same layout and scoring as the parts of metric 7
+  // (the user's "Preboarding_Engagement_Survey.xlsx", sheet Pivot)
+  {
+    metric_id: 6, part_key: 'PREBOARDING_ENGAGEMENT', part_name: 'Pre-boarding Engagement Survey', sort_order: 1,
+    template: {
+      score_label: 'Pre-boarding Engagement Survey',
+      question_labels: [
+        'How was your overall first day of work experience?',
+        'How was your experience with the Meet & Greet session at CIMB Niaga?'
+      ],
+      respondents_label: 'Jumlah Responden',
+      period_label: 'Periode (Join Date)'
+    }
+  },
+  // v2.62.0: metric 26 "Exit Survey" (shown as #25): one part, a monthly percentage (0-100) without question columns. There is no
+  // result per directorate yet - only Bankwide rows are uploaded, so the metric is N/A (not counted) under a directorate filter.
+  {
+    metric_id: 26, part_key: 'EXIT_SURVEY', part_name: 'Exit Survey', sort_order: 1,
+    template: {
+      score_label: 'Exit Survey (%)',
+      score_scale: 'PERCENT',
+      question_labels: [],
+      respondents_label: 'Jumlah Responden',
+      period_label: 'Periode'
+    }
   }
 ];
 
 // v2.55.0: the configuration a metric gets ONCE, when the boot gives it its summary parts - only where the values are still the
 // old seed values (an Admin's later edit is never overwritten). Metric 12's summary score is a percentage, not a 1-5 rating.
 const METRIC_PART_UPGRADES = {
-  12: { scale_type: { from: 'RATING_5', to: 'PERCENTAGE' }, unit: { from: '/ 5', to: '%' }, target: { from: 4, to: 80, display: '> 80%' } }
+  12: { scale_type: { from: 'RATING_5', to: 'PERCENTAGE' }, unit: { from: '/ 5', to: '%' }, target: { from: 4, to: 80, display: '> 80%' } },
+  // v2.62.0: the Pre-boarding Engagement Index becomes a 1-5 summary (like metric 7), the Exit Survey a percentage; both stop being
+  // "real data not available yet"
+  6: { scale_type: { from: 'PERCENTAGE', to: 'RATING_5' }, unit: { from: '%', to: '/ 5' }, target: { from: 80, to: 4, display: '> 4.00 / 5' }, data_status: { from: 'NOT_AVAILABLE', to: 'AVAILABLE' } },
+  26: { scale_type: { from: 'RATING_5', to: 'PERCENTAGE' }, unit: { from: '/ 5', to: '%' }, target: { from: 4, to: 80, display: '> 80%' }, data_status: { from: 'NOT_AVAILABLE', to: 'AVAILABLE' } }
 };
 
 module.exports = {

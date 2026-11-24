@@ -278,11 +278,11 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
   });
 }
 
-// v2.55.0: metric 4 and the seed survey metrics with per-respondent rows (6, 8, 10, 23, 26) are N/A live ("real data not available yet");
+// v2.55.0: metric 4 and the seed survey metrics with per-respondent rows (8, 10, 23; 6 and 26 until v2.62.0) are N/A live ("real data not available yet");
 // many older modules use them (metric 8 above all) as their per-respondent fixture. For the run they are switched AVAILABLE
 // through the Admin API (audited as test-run rows) and switched back at the end (the configuration guard also restores
 // px_metrics). Re-applied after every configuration restore; Module 60 switches them back to check the live state.
-const LEGACY_FIXTURE_METRICS = [4, 6, 8, 10, 23, 26];
+const LEGACY_FIXTURE_METRICS = [4, 8, 10, 23];
 // v2.58.0: the metrics that exist when the run starts. An Admin may delete a seed metric (live: metric 4 was deleted in Admin
 // Parameters), so the count / id assertions on the 27 seed metrics read this list instead of assuming all 27 still exist.
 let LIVE_METRIC_IDS = [];
@@ -10106,23 +10106,23 @@ async function runAllModules() {
     }
   }
 
-  // --- MODULE 60 (v2.55.0): "REAL DATA NOT AVAILABLE YET" SWITCH (px_metrics.data_status; live 4, 6, 8, 10, 23, 26 = N/A) ---
-  // Switches only a metric this module creates; the six live metrics are only read.
+  // --- MODULE 60 (v2.55.0): "REAL DATA NOT AVAILABLE YET" SWITCH (px_metrics.data_status; live 4, 8, 10, 23 = N/A) ---
+  // Switches only a metric this module creates; the four live metrics are only read.
   console.log('\n📦 MODULE 60: "Real data not available yet" switch - N/A, out of every index, records hidden (Positive & Negative Testing)');
   if (!skipModuleBlock(60)) {
     const st60 = require('../server/db/storage');
     let m60 = null;
-    await setLegacyFixtures(false); // the live N/A state of 4, 6, 8, 10, 23, 26
+    await setLegacyFixtures(false); // the live N/A state of 4, 8, 10, 23
     try {
-      await runTest('[POSITIVE] Live: metrics 4, 6, 8, 10, 23, 26 are N/A ("Real data not available yet"), out of the Survey / Outcome index; their detail shows no records / responses / question scores', async () => {
+      await runTest('[POSITIVE] Live: metrics 4, 8, 10, 23 are N/A ("Real data not available yet"), out of the Survey / Outcome index; their detail shows no records / responses / question scores', async () => {
         const calc = await (await fetch(`${BASE_URL}/api/metrics/calculate?mode=YTD`)).json();
-        for (const id of [4, 6, 8, 10, 23, 26].filter(isLiveMetric)) {
+        for (const id of [4, 8, 10, 23].filter(isLiveMetric)) {
           const m = calc.metrics.find(x => x.metric_id === id);
           assert.strictEqual((await st60.getMetricById(id)).data_status, 'NOT_AVAILABLE', `metric ${id}`);
           assert.deepStrictEqual([m.status, m.not_applicable, m.not_applicable_reason, m.data_not_available, m.raw_value, m.normalized_score], ['NO_DATA', true, 'Real data not available yet', true, null, null], `metric ${id}`);
         }
         const surveys = calc.metrics.filter(x => x.metric_type === 'SURVEY' && x.has_data);
-        assert.ok(!surveys.some(x => [6, 8, 10, 23, 26].includes(x.metric_id)));
+        assert.ok(!surveys.some(x => [8, 10, 23].includes(x.metric_id)));
         const expected = surveys.reduce((a, x) => a + x.normalized_score * x.weight, 0) / surveys.reduce((a, x) => a + x.weight, 0);
         assert.ok(Math.abs(calc.survey_index - expected) < 0.01, 'Survey Index without the N/A metrics');
         const d8 = await (await fetch(`${BASE_URL}/api/metrics/8/detail?mode=YTD`)).json();
@@ -10289,9 +10289,9 @@ async function runAllModules() {
         }
       });
 
-      await runTest('[POSITIVE] N/A metrics (data_status NOT_AVAILABLE, live 4, 6, 8, 10, 23, 26): History empty with the reason, while their evidence still holds the stored rows', async () => {
+      await runTest('[POSITIVE] N/A metrics (data_status NOT_AVAILABLE, live 4, 8, 10, 23): History empty with the reason, while their evidence still holds the stored rows', async () => {
         let checked = 0;
-        for (const id of [4, 6, 8, 10, 23, 26].filter(isLiveMetric)) {
+        for (const id of [4, 8, 10, 23].filter(isLiveMetric)) {
           if ((await st61.getMetricById(id)).data_status !== 'NOT_AVAILABLE') continue;
           const { status, body } = await history61(id, 'period=2026');
           assert.strictEqual(status, 200);
@@ -12384,6 +12384,97 @@ async function runAllModules() {
       assert.strictEqual((await testDb.query('SELECT COUNT(*) AS n FROM dbo.px_reminder_log WHERE metric_id = 990068'))[0].n, 0);
       assert.strictEqual((await testDb.query('SELECT COUNT(*) AS n FROM dbo.px_directorates WHERE directorate_name = @n', { n: `RT68 Unique ${stamp68}` }))[0].n, 0);
       if (attendance68) assert.ok(!(await st68.getAttendancesByEvent(attendance68.event_id)).some(a => a.nip === attendance68.nip));
+    });
+  }
+
+  // --- MODULE 70 (v2.62.0): EXIT SURVEY (metric 26, shown as #25) AND PRE-BOARDING (metric 6, shown as #5) FROM MONTHLY SUMMARIES ---
+  // Read-only on the live data: the template / validation / scoring run in-process; the live metric is only read.
+  console.log('\n📦 MODULE 70: Exit Survey (metric 26, bankwide %) and Pre-boarding Engagement (metric 6, 1-5 like metric 7) scored from monthly summaries (Positive & Negative Testing)');
+  if (!skipModuleBlock(70)) {
+    const st70 = require('../server/db/storage');
+    const mp70 = require('../server/services/metricPartsService');
+    const seed70 = require('../server/db/seedData');
+    const { buildXlsx: buildXlsx70, readFirstSheet: readSheet70 } = require('../server/services/xlsxUtils');
+    const part70 = seed70.initialMetricParts.find(p => p.metric_id === 26);
+    const HEAD70 = ['Directorate', 'Level', 'Year', 'Month', 'Exit Survey (%)', 'Jumlah Responden', 'Periode'];
+    const NOW70 = new Date(2026, 10, 24);
+    const sheet70 = async rows => readSheet70(await buildXlsx70([HEAD70, ...rows], { sheetName: 'Pivot' }), { preferSheet: 'Pivot' });
+    const check70 = async rows => mp70.validatePartSheet(await sheet70(rows), null, NOW70, { scale: mp70.scaleOf(part70), questions: [] });
+
+    if (isLiveMetric(26)) {
+      await runTest('[POSITIVE] Live metric 26: one part EXIT_SURVEY on the % scale, metric on PERCENTAGE / %, still a SYSTEM survey metric, no longer "real data not available yet"', async () => {
+        const m = await st70.getMetricById(26);
+        assert.deepStrictEqual([m.scale_type, m.unit, m.metric_type, m.survey_source], ['PERCENTAGE', '%', 'SURVEY', 'SYSTEM']);
+        assert.notStrictEqual(m.data_status, 'NOT_AVAILABLE');
+        assert.deepStrictEqual((await st70.getMetricParts(26)).map(p => [p.part_key, mp70.scaleOf(p)]), [['EXIT_SURVEY', 'PERCENT']]);
+        const c = (await (await fetch(`${BASE_URL}/api/metrics/calculate?mode=YTD&year=2026`)).json()).metrics.find(x => x.metric_id === 26);
+        assert.deepStrictEqual([c.data_upload, c.not_applicable], ['PART_SUMMARY', false]);
+      });
+
+      await runTest('[POSITIVE] Bankwide only: YTD = the average of the stored months (counted in the Survey Index), MTD = that month; under a directorate filter the metric is NO_DATA and not counted', async () => {
+        const rows = await st70.getMetricPartResults(26);
+        if (!rows.length) skipTest('live data absent: no Exit Survey summary is uploaded on this database');
+        if (!rows.every(r => r.org_level === 'BANKWIDE')) skipTest('live data differs: the Exit Survey now has directorate rows');
+        for (const y of [...new Set(rows.map(r => r.year))]) {
+          const calc = await (await fetch(`${BASE_URL}/api/metrics/calculate?mode=YTD&year=${y}`)).json();
+          const c = calc.metrics.find(x => x.metric_id === 26);
+          const own = rows.filter(r => r.year === y && r.score !== null);
+          const avg = own.reduce((a, r) => a + r.score, 0) / own.length;
+          assert.ok(c.has_data && Math.abs(c.normalized_score - avg) < 0.01, `${y}: ${c.normalized_score} vs ${avg}`);
+          const surveys = calc.metrics.filter(x => x.metric_type === 'SURVEY' && x.has_data);
+          assert.ok(Math.abs(calc.survey_index - surveys.reduce((a, x) => a + x.normalized_score * x.weight, 0) / surveys.reduce((a, x) => a + x.weight, 0)) < 0.01, 'counted in the Survey Index');
+        }
+        const first = rows.find(r => r.score !== null);
+        const mtd = await (await fetch(`${BASE_URL}/api/metrics/calculate?mode=MTD&year=${first.year}&month=${String(first.month).padStart(2, '0')}`)).json();
+        assert.ok(Math.abs(mtd.metrics.find(x => x.metric_id === 26).normalized_score - first.score) < 0.01);
+        for (const d of (await st70.getDirectorates()).slice(0, 3).map(x => x.directorate_name)) {
+          const c = (await (await fetch(`${BASE_URL}/api/metrics/calculate?mode=YTD&year=${first.year}&directorate=${encodeURIComponent(d)}`)).json()).metrics.find(x => x.metric_id === 26);
+          assert.deepStrictEqual([c.status, c.has_data, c.normalized_score], ['NO_DATA', false, null], d);
+        }
+      });
+    }
+
+    if (isLiveMetric(6)) {
+      await runTest('[POSITIVE] Live metric 6: one part PREBOARDING_ENGAGEMENT on the 1-5 scale with its 2 questions, metric on RATING_5 / "/ 5" / target 4, no longer "real data not available yet"; score = value / 5 x 100, also per directorate', async () => {
+        const m = await st70.getMetricById(6);
+        assert.deepStrictEqual([m.scale_type, m.unit, m.metric_type, m.survey_source], ['RATING_5', '/ 5', 'SURVEY', 'SYSTEM']);
+        assert.notStrictEqual(m.data_status, 'NOT_AVAILABLE');
+        const parts = await st70.getMetricParts(6);
+        assert.deepStrictEqual(parts.map(p => [p.part_key, mp70.scaleOf(p)]), [['PREBOARDING_ENGAGEMENT', 'RATING_5']]);
+        const rows = await st70.getMetricPartResults(6);
+        if (!rows.length) skipTest('live data absent: no Pre-boarding summary is uploaded on this database');
+        const y = rows[0].year;
+        const months = [...new Set(rows.filter(r => r.year === y && r.org_level === 'BANKWIDE' && r.score !== null).map(r => r.month))];
+        const avg = months.reduce((a, mo) => a + rows.find(r => r.year === y && r.month === mo && r.org_level === 'BANKWIDE').score, 0) / months.length;
+        const c = (await (await fetch(`${BASE_URL}/api/metrics/calculate?mode=YTD&year=${y}`)).json()).metrics.find(x => x.metric_id === 6);
+        assert.ok(Math.abs(c.normalized_score - avg / 5 * 100) < 0.01, `${c.normalized_score} vs ${avg}`);
+        const dirRow = rows.find(r => r.year === y && r.org_level === 'DIRECTORATE' && r.score !== null);
+        if (dirRow) {
+          const own = rows.filter(r => r.year === y && r.directorate === dirRow.directorate && r.score !== null && r.respondents > 0);
+          const d = (await (await fetch(`${BASE_URL}/api/metrics/calculate?mode=YTD&year=${y}&directorate=${encodeURIComponent(dirRow.directorate)}`)).json()).metrics.find(x => x.metric_id === 6);
+          assert.ok(Math.abs(d.normalized_score - own.reduce((a, r) => a + r.score, 0) / own.length / 5 * 100) < 0.01, dirRow.directorate);
+        }
+      });
+    }
+
+    await runTest('[POSITIVE] Summary rows on the % scale: plain numbers accepted, the months are averaged (80, 70, 90 -> 80), an empty coming month is skipped, a directorate selection has no value', async () => {
+      const v = await check70([['CIMB Niaga', 'Bankwide', 2026, 'Jan', 80, 10], ['CIMB Niaga', 'Bankwide', 2026, 'Feb', 70, 20], ['CIMB Niaga', 'Bankwide', 2026, 'Mar', 90, 30], ['CIMB Niaga', 'Bankwide', 2026, 'Dec', '-', '-']]);
+      assert.deepStrictEqual([v.errors, v.periods], [[], ['2026-01', '2026-02', '2026-03']]);
+      const rows = v.rows.map(r => ({ ...r, part_key: 'EXIT_SURVEY', metric_id: 26 }));
+      const ytd = { mode: 'YTD', year: '2026', month: '01' };
+      const bank = mp70.compositeValue([part70], rows, ytd, null);
+      assert.deepStrictEqual([bank.value, bank.respondents, bank.parts[0].scale], [80, 60, 'PERCENT']);
+      assert.strictEqual(mp70.compositeValue([part70], rows, ytd, { directorates: ['Human Resources'] }).value, null);
+    });
+
+    await runTest('[NEGATIVE] A % cell (fraction 0.9 / 1) is refused with a clear message, so is > 100; 0, 1.5 and 100 are scores; the 1-5 scale is not affected', async () => {
+      const one = async score => (await check70([['CIMB Niaga', 'Bankwide', 2025, 'Jan', score, 42]])).errors;
+      for (const f of [0.9, 0.91, 1]) assert.ok((await one(f)).some(e => e.column === 'E' && /formatted as a percentage/.test(e.reason)), String(f));
+      assert.ok((await one(0.9))[0].reason.includes('enter 90 as a plain number'));
+      assert.ok((await one(101)).some(e => e.column === 'E'));
+      assert.deepStrictEqual([await one(0), await one(1.5), await one(100)], [[], [], []]);
+      const r5 = mp70.validatePartSheet(await sheet70([['CIMB Niaga', 'Bankwide', 2025, 'Jan', 1, 42]]), null, NOW70, { questions: [] });
+      assert.deepStrictEqual(r5.errors, []);
     });
   }
 

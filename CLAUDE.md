@@ -945,6 +945,12 @@ domain model, not just descriptive:
   run. Local Render simulation OK (~150 MB peak). QC: LULUS DENGAN CATATAN. Not verified on Render itself: TLS, generateValue, Node 24.19.0, citext right, Host/Origin passthrough, `req.ip`
   behind several proxy hops (shared failed-login bucket), npm 11 build.
 
+- **v2.62.0** (2026-11-24, see `changelog/v2.62.0.md`, `docs/01` §3.10, `docs/04` "Catatan v2.62.0", `docs/07` §56, `docs/08` §35): user: metric 26 (#25 Exit Survey) uses `docs/Template Survey/PX_EXit Survey.xlsx`
+  (monthly % + respondents 2025-2026; bankwide ONLY, no directorate data yet) and metric 6 (#5 Pre-boarding) uses `Preboarding_Engagement_Survey.xlsx` sheet Pivot "like #6". Both are now composite parts (`EXIT_SURVEY` PERCENT;
+  `PREBOARDING_ENGAGEMENT` 1-5) with a one-time boot upgrade (scale/unit/target + `data_status` -> AVAILABLE) - no longer N/A (left N/A: 4, 8, 10, 23). Under a directorate filter #25 = NO_DATA. PERCENT parts refuse 0 < v <= 1 (Excel % cells).
+  Uploaded in-process by scripts (audit `script:import-exit-survey` / `script:import-preboarding`); the Exit file was converted to the standard layout, Jan-Mar 2025 fractions normalised. PX YTD 2026 89.53 -> 90.12. OPEN (user's
+  decision): the Pre-boarding data is IDENTICAL to #6's Day 1 part (counted twice). Reminders still check per-respondent rows for 6/26. Module 70 (5), Modules 60/61 + fixture adjusted -> SQL 476/476, 17 skipped (suite 563 SQL / 564 pg); JSON/pg not run; no separate QC.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan

@@ -1529,11 +1529,12 @@ async function topUpMetricParts() {
                                        (SELECT COUNT(*) FROM dbo.px_metric_parts ${S.lockHint} WHERE metric_id = @id) AS p`, { id: metricId }, tx);
       if (!exists[0].m || exists[0].p) return 0;
       for (const p of parts) await insertMetricPart(tx, p);
-      // seed.METRIC_PART_UPGRADES: the metric's scale / unit / target, only while they are still the old seed values
+      // seed.METRIC_PART_UPGRADES: the metric's scale / unit / target / data status, only while they are still the old seed values
       const up = (seed.METRIC_PART_UPGRADES || {})[metricId];
       if (up) {
         if (up.scale_type) await run('UPDATE dbo.px_metrics SET scale_type = @to WHERE metric_id = @id AND scale_type = @from', { id: metricId, ...up.scale_type }, tx);
         if (up.unit) await run('UPDATE dbo.px_metrics SET unit = @to WHERE metric_id = @id AND (unit = @from OR unit IS NULL)', { id: metricId, ...up.unit }, tx);
+        if (up.data_status) await run('UPDATE dbo.px_metrics SET data_status = @to WHERE metric_id = @id AND data_status = @from', { id: metricId, ...up.data_status }, tx);
         if (up.target) {
           await run('UPDATE dbo.px_metric_targets SET target_value = @to, target_display = @display WHERE metric_id = @id AND target_value = @from',
             { id: metricId, from: parseFloat(up.target.from), to: parseFloat(up.target.to), display: up.target.display }, tx);

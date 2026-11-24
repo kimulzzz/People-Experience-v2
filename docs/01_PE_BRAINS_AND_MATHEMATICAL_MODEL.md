@@ -244,6 +244,8 @@ $$\text{Nilai bagian} = \text{rata-rata nilai bulan di jendela} \qquad \text{Nil
 
 **Saklar data N/A** (`px_metrics.data_status = NOT_AVAILABLE`, `server/db/dataStatus.js`): metrik 4, 6, 8, 10, 23, 26 (boot, sekali). Diperlakukan seperti N/A §3.9: `NO_DATA` + `not_applicable`, alasan "Real data not available yet", tidak masuk Survey/Outcome/PX Index, rollup, alert, trend, maupun PX Index per direktorat. Data tersimpan tidak dihapus; hapus centang = metrik dihitung lagi.
 
+**Sejak v2.62.0**: metrik 26 Exit Survey (#25) = satu bagian berskala PERCENT (hanya baris Bankwide; di bawah filter direktorat `NO_DATA`, tidak dihitung) dan metrik 6 Pre-boarding Engagement Index (#5) = satu bagian 1-5 (nilai / 5 x 100, ada baris direktorat). Keduanya tidak lagi N/A; yang tersisa N/A: 4, 8, 10, 23. Bagian PERCENT menolak nilai pecahan > 0 s/d 1 (sel berformat %).
+
 ---
 
 ## ⏳ 4. Model Agregasi Waktu: Period Filter (YTD vs MTD)

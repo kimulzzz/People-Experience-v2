@@ -504,12 +504,13 @@ function topUpStoreMetricParts(s) {
     if (!(s.metrics || []).some(m => m.metric_id === id) || s.metricParts.some(p => p.metric_id === id)) return;
     const parts = initialMetricParts.filter(p => p.metric_id === id);
     parts.forEach(p => s.metricParts.push({ metric_id: p.metric_id, part_key: p.part_key, part_name: p.part_name, sort_order: p.sort_order || 0, template: p.template ? JSON.parse(JSON.stringify(p.template)) : null }));
-    // METRIC_PART_UPGRADES (same rule as sqlStorage): scale / unit / target only while still the old seed values
+    // METRIC_PART_UPGRADES (same rule as sqlStorage): scale / unit / target / data status only while still the old seed values
     const up = (METRIC_PART_UPGRADES || {})[id];
     const m = s.metrics.find(x => x.metric_id === id);
     if (up && m) {
       if (up.scale_type && m.scale_type === up.scale_type.from) m.scale_type = up.scale_type.to;
       if (up.unit && (!m.unit || m.unit === up.unit.from)) m.unit = up.unit.to;
+      if (up.data_status && m.data_status === up.data_status.from) m.data_status = up.data_status.to;
       const t = (s.metricTargets || {})[id];
       if (up.target && parseFloat(t ? t.target_value : m.target_value) === parseFloat(up.target.from)) {
         m.target_value = parseFloat(up.target.to);

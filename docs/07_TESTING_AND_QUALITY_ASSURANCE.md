@@ -1670,3 +1670,15 @@ Tes 1-5 memakai store in-memory dan env/log tiruan yang disuntikkan ke `ensureBo
 Ukuran suite = **558** di SQL Server (547 + 11) dan **559** di PostgreSQL (548 + 11). `await runTest(` statis 546 (535 + 11). Suite penuh TIDAK dijalankan ulang setelah perbaikan lanjutan QC; suite JSON penuh tidak dijalankan.
 
 **QC**: LULUS DENGAN CATATAN, tanpa bug fungsional/keamanan (simulasi produksi sendiri, dua boot bersamaan -> satu Admin, tidak ada promosi akun, tidak ada rahasia di log/respons, kunci tetap terbaca setelah restart, header proxy ala Render, Origin asing 403). Empat catatan ringan diperbaiki (fallback SPA asset, JSON 404, 404 event tak dikenal, pesan boot). **Tidak diuji**: Render sendiri (lihat `docs/06` "Deploy UAT ke Render (v2.61.1)").
+
+## 56. v2.62.0 - Modul 70: Exit Survey (#25) dan Pre-boarding (#5) dari ringkasan bulanan
+
+| # | Jenis | Yang diuji |
+| :--- | :--- | :--- |
+| 1 | Positif | Live metrik 26: bagian `EXIT_SURVEY` PERCENT, skala PERCENTAGE, tidak lagi N/A |
+| 2 | Positif | Hanya Bankwide: YTD = rata-rata bulan (ikut Survey Index), MTD = bulan itu, filter direktorat -> `NO_DATA` |
+| 3 | Positif | Live metrik 6: bagian `PREBOARDING_ENGAGEMENT` 1-5, skor = nilai / 5 x 100, juga per direktorat |
+| 4 | Positif | Baris persen (in-process): rata-rata bulan, bulan depan kosong dilewati, direktorat tanpa nilai |
+| 5 | Negatif | Pecahan 0,9 / 1 dan nilai > 100 ditolak; 0, 1,5 dan 100 diterima; skala 1-5 tidak terpengaruh |
+
+Tes 1-3 hanya membaca data live (skip bila datanya tidak ada). Modul 60/61 dan `LEGACY_FIXTURE_METRICS` kini tanpa 6 dan 26. Suite penuh SQL Server **476/476**, 17 skip (`TEST_SKIP_MODULES=8,24,27,32,38,41,42,43`). Ukuran suite 563 (SQL Server) / 564 (PostgreSQL). JSON dan PostgreSQL tidak dijalankan; tanpa QC terpisah.

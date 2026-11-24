@@ -3,7 +3,7 @@
 // calculation engine. NOT_AVAILABLE = the metric is N/A: no value / score (status NO_DATA + not_applicable), left out of every
 // index, journey rollup, alert, trend and the PX Index by directorate; its detail shows no records. Stored data is never
 // deleted - once the Admin unticks the switch (AVAILABLE) the metric counts again. NULL = AVAILABLE (never set);
-// the boot sets the seed metrics marked NOT_AVAILABLE (4, 6, 8, 10, 23, 26) once while the column is NULL.
+// the boot sets the seed metrics marked NOT_AVAILABLE (4, 8, 10, 23; 6 and 26 until v2.62.0) once while the column is NULL.
 
 const DATA_STATUSES = ['AVAILABLE', 'NOT_AVAILABLE'];
 const DATA_NOT_AVAILABLE_REASON = 'Real data not available yet';

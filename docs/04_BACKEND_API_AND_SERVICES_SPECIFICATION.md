@@ -607,6 +607,10 @@ Pengujian: `docs/07` §31 (Modul 46).
 
 ---
 
+## Catatan v2.62.0 - Metrik 6 dan 26 dari ringkasan bulanan
+
+Tidak ada endpoint, tabel, setting, atau env baru; `/api/health` `version` = 2.62.0. `METRIC_PART_UPGRADES` (seed) mendapat kunci 6 dan 26 serta field `data_status`, diterapkan `topUpMetricParts()` di kedua backend hanya bila metrik belum punya bagian dan nilainya masih default lama. `metricPartsService.validatePartSheet`: skala PERCENT menolak `0 < nilai <= 1`. Upload/template/evidence/history memakai `/api/admin/metric-parts/6/PREBOARDING_ENGAGEMENT/*` dan `/api/admin/metric-parts/26/EXIT_SURVEY/*`. Detail: `changelog/v2.62.0.md`.
+
 ## Catatan v2.61.1 - Admin pertama dari env, kunci enkripsi base64, 404 rapi (UAT Render)
 
 **Ringkasan**: persiapan hosting UAT di Render (`render.yaml`, data dummy saja; runbook: `docs/06` "Deploy UAT ke Render (v2.61.1)"). Tidak ada endpoint, setting atau tabel baru; `/api/health` `version` = `2.61.1`. Rincian: `changelog/v2.61.1.md`.

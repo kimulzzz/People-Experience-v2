@@ -139,7 +139,7 @@ Template asli user ada di `docs/Template Survey/`. Format kolom: `docs/SURVEY_IM
 | 19 | Mandatory Learning Satisfaction Score | `Mandatory & Non Mandatory Learning_PX.xlsx` | kolom "Mandatory Learning", skala 1-5, tanpa responden |
 | 20 | Non-Mandatory Learning Satisfaction | `Mandatory & Non Mandatory Learning_PX.xlsx` | kolom "Non Mandatory Learning", skala 1-5, tanpa responden |
 
-**Belum ada data riil (N/A, `data_status = NOT_AVAILABLE`)**: metrik 4, 6, 8, 10, 23, 26 - tidak ikut PX Index, detail tanpa records. Admin mengaktifkannya lewat Admin Parameters setelah data tersedia.
+**Belum ada data riil (N/A, `data_status = NOT_AVAILABLE`)**: metrik 4, 8, 10, 23 (6 dan 26 sampai v2.61.1; sejak v2.62.0 dihitung dari ringkasan bulanan) - tidak ikut PX Index, detail tanpa records. Admin mengaktifkannya lewat Admin Parameters setelah data tersedia.
 
 ---
 

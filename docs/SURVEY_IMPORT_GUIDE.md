@@ -173,6 +173,8 @@ Sheet "Pivot" (atau sheet pertama); sheet "Raw Data" tidak pernah dibaca (bila s
 
 Metrik 19/20: satu file gabungan (`Mandatory & Non Mandatory Learning_PX.xlsx`), kolom skor dicari dari teks header "Mandatory Learning" / "Non Mandatory Learning"; unggah ke masing-masing metrik. Bulan masa depan berisi skor ditolak; baris masa depan berisi "-" dilewati. Upload ulang mengganti bulan-bulan di file untuk bagian itu. File asli tidak disimpan (nama file + SHA-256 + baris tersimpan = jejak audit).
 
+**Sejak v2.62.0** layout yang sama dipakai metrik 6 (#5 Pre-boarding, skor 1-5, 2 kolom pertanyaan) dan metrik 26 (#25 Exit Survey, skor persen 0-100 tanpa kolom pertanyaan, untuk sementara hanya baris `CIMB Niaga` / `Bankwide`). Isi skor persen sebagai angka biasa (`90`), bukan sel berformat % (`90%` tersimpan 0,9 dan ditolak).
+
 ### C. Pertanyaan terkonfigurasi (sejak v2.57.0)
 
 Kolom pertanyaan (setelah skor di kolom E) metrik 5, 7, 12 dipetakan **berdasarkan posisi** ke pertanyaan di Admin Parameters -> **Summary Questions**, bukan berdasarkan teks header (header file hanya disimpan sebagai `File_Header`).

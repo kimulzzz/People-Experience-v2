@@ -312,6 +312,8 @@ function validatePartSheet(sheetRows, resolver, now = new Date(), { scale = 'RAT
       const v = numberOf(c);
       if (v === null) { err(n, col, `${what} must be ${scaleText} or "-" (found "${cellText(c).slice(0, 30)}").`); return null; }
       if (v < minScore || v > maxScore) { err(n, col, `${what} must be ${scaleText} (found ${v}).`); return null; }
+      // v2.62.0: an Excel cell formatted as % holds a fraction (90% is stored as 0.9) - refused instead of scored as 0.9%
+      if (scale === 'PERCENT' && v > 0 && v <= 1) { err(n, col, `${what} is ${v}: the cell is probably formatted as a percentage - enter ${round4(v * 100)} as a plain number (not ${round4(v * 100)}%).`); return null; }
       return round8(v);
     };
     const score = scoreCell(cellAt(r, scoreCol), 'The score', colLetter(scoreCol));

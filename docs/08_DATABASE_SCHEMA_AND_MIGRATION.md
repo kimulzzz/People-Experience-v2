@@ -604,3 +604,7 @@ Langkah deploy yang di §33 disebut "belum dikerjakan" kini ada sebagai Blueprin
 | Kunci enkripsi | `SETTINGS_ENCRYPTION_KEY` dibuat Render (base64 32 byte, diterima `secretBox.js` sejak v2.61.1); jangan diubah, kalau tidak password e-mail di `px_email_settings` tidak terbaca |
 
 **Batasan**: PostgreSQL free kedaluwarsa 30 hari setelah dibuat (+14 hari masa tenggang, lalu dihapus) - upgrade plan atau buat ulang. File unggahan tidak ada di database dan hilang setiap redeploy (tanpa persistent disk); baris `px_media` dll. tetap. Data dummy saja. Belum diuji di Render sendiri: izin membuat `citext`, TLS, `generateValue` yang sebenarnya.
+
+## 35. Pembaruan v2.62.0 - Bagian ringkasan metrik 6 dan 26 (tanpa perubahan skema)
+
+Saat boot `px_metric_parts` mendapat baris `(6, PREBOARDING_ENGAGEMENT)` dan `(26, EXIT_SURVEY)` bila metriknya ada dan belum punya bagian; dalam transaksi yang sama skala, satuan, target dan `data_status` metrik diganti hanya bila masih nilai seed lama (lihat `changelog/v2.62.0.md`). Tetap 41 tabel.

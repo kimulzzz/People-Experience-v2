@@ -633,7 +633,7 @@ Tab **History (n)** (dulu "Internal Transaction Records" / "Respondent Records &
 | Identitas responden/peserta | Admin; PIC metrik SURVEY (cakupan sendiri) | sama |
 | Direktorat | Admin: semua (tidak dipersempit filter direktorat Dashboard); USER: metrik karyawan hanya direktorat sendiri (tanpa baris Bankwide) | Admin: semua |
 
-Metrik "Real data not available yet" (4, 6, 8, 10, 23, 26) menampilkan History kosong dengan alasannya; Evidence tetap bisa diunduh. Metrik 1 dan 3 menampilkan nilai per bulan plus baris "Average" per tahun.
+Metrik "Real data not available yet" (4, 8, 10, 23; 6 dan 26 sampai v2.61.1) menampilkan History kosong dengan alasannya; Evidence tetap bisa diunduh. Metrik 1 dan 3 menampilkan nilai per bulan plus baris "Average" per tahun.
 
 ### Summary Questions - pertanyaan template ringkasan (v2.57.0)
 
