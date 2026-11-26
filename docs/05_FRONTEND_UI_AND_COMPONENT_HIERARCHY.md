@@ -595,3 +595,7 @@ Tidak diuji otomatis: render semua komponen di atas (Modul 47 menguji lewat API)
 ## Catatan v2.63.0 - Label kategori PX Index
 
 `Dashboard.jsx` menampilkan pil putih berisi titik dan teks berwarna (`calculationData.px_category`) di sebelah "/ 100"; di layar sempit pil turun ke baris berikutnya. `PxCategoriesCard.jsx` (baru) ada di Admin Parameters -> Journey Parameters, antara PX Index Weights dan Upload Limits; baris terakhir batasnya terkunci 0, tombol Save aktif hanya bila ada perubahan yang valid.
+
+## Catatan v2.63.1 - Warna chip metrik kartu journey lebih lembut
+
+Chip metrik di kartu journey Dashboard memakai warna terang dengan teks gelap: On Target `bg-emerald-100 text-emerald-800`, Warning `bg-amber-100 text-amber-800`, Critical `bg-red-100 text-red-800` (menggantikan chip merah pekat v2.46.1). No Data / N/A / Exempted tetap abu-abu. Badge "Bankwide" di dalam chip `bg-black/10`.

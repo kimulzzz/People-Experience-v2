@@ -365,9 +365,10 @@ export default function Dashboard({
                           className={`w-full text-[10px] font-semibold pl-1.5 pr-2 py-1 rounded-md border transition flex items-center justify-between space-x-2 ${
                             isDisabled ? 'bg-black/20 text-white/50 border-white/10 opacity-70 cursor-not-allowed' :
                             isNoData ? 'bg-gray-500/60 text-white/90 border-gray-300/40 hover:bg-gray-500/70' :
-                            m.status === 'CRITICAL' ? 'bg-red-600 text-white border-white/80 ring-1 ring-red-300 hover:bg-red-700' :
-                            m.status === 'WARNING' ? 'bg-amber-500/90 text-white border-amber-300 hover:bg-amber-500' :
-                            'bg-emerald-500/90 text-white border-emerald-300 hover:bg-emerald-500'
+                            // v2.63.1: soft (light) status colors with dark text, less contrast against the card gradient
+                            m.status === 'CRITICAL' ? 'bg-red-100 text-red-800 border-red-200 hover:bg-red-50' :
+                            m.status === 'WARNING' ? 'bg-amber-100 text-amber-800 border-amber-200 hover:bg-amber-50' :
+                            'bg-emerald-100 text-emerald-800 border-emerald-200 hover:bg-emerald-50'
                           }`}
                           title={
                             isDisabled
@@ -381,7 +382,7 @@ export default function Dashboard({
                             <StatusIcon className="w-3 h-3 shrink-0" />
                             <span className={`truncate ${isDisabled ? 'line-through' : ''}`}>{metricNo(m)} - {m.metric_name}</span>
                             {m.is_bankwide_value && (
-                              <span className="shrink-0 px-1 rounded bg-white/25 text-[8px] font-bold uppercase tracking-wide" title="Non-employee metric: shown and counted at its bankwide value">Bankwide</span>
+                              <span className="shrink-0 px-1 rounded bg-black/10 text-[8px] font-bold uppercase tracking-wide" title="Non-employee metric: shown and counted at its bankwide value">Bankwide</span>
                             )}
                           </span>
                           <span className="flex items-center space-x-1 shrink-0">

@@ -956,6 +956,9 @@ domain model, not just descriptive:
   rules in `server/db/pxCategories.js`; card `PxCategoriesCard.jsx` (Admin Parameters -> Journey Parameters); `PUT /api/admin/settings/px_index_categories` (audit `SETTINGS_CHANGE`); `calculate` returns `px_category` (from the 2-decimal
   PX Index; null under `skipTrends` / no data). Scores, statuses, alerts unchanged. Module 71 (3) -> SQL 479/479, 17 skipped (suite 566 SQL / 567 pg); JSON/pg not run; no separate QC.
 
+- **v2.63.1** (2026-11-26, see `changelog/v2.63.1.md`, `docs/05` "Catatan v2.63.1"): Dashboard journey-card metric chips are soft/light (user request): `bg-emerald|amber|red-100` + `*-800` text + `*-200`
+  border (replaces the solid red CRITICAL chip of v2.46.1); No Data / N/A / Exempted unchanged; Bankwide badge `bg-black/10`. Frontend only. Suite SQL 479/479, 17 skipped.
+
 ## Workflow wajib di setiap perubahan (tanpa perlu diminta ulang)
 
 Setelah mengimplementasikan perubahan apa pun (kode, UI, atau konten), SELALU lakukan
